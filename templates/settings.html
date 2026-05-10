@@ -1343,7 +1343,6 @@ block content %}
     });
 
     async function loadGeneralSettings() {
-<<<<<<< HEAD
         let s;
         try {
             s = await apiGet("/api/settings/general");
@@ -1363,36 +1362,6 @@ block content %}
         document.getElementById("agent-queue-workers-input").value = s.agent_queue_workers;
         document.getElementById("max-tool-iterations-input").value = s.max_tool_iterations;
         updateThemeButtons(s.theme);
-=======
-        const res = await apiGet("/api/settings/public-history");
-        if (res)
-            document.getElementById("public-history-toggle").checked =
-                res.enabled;
-        const res2 = await apiGet("/api/settings/agent-timeout-retries");
-        if (res2 != null)
-            document.getElementById("agent-timeout-retries-input").value =
-                res2.value;
-        const res4 = await apiGet("/api/settings/llm-max-retries");
-        if (res4 != null)
-            document.getElementById("llm-max-retries-input").value = res4.value;
-        const res5 = await apiGet("/api/settings/max-concurrent-llm-per-agent");
-        if (res5 != null)
-            document.getElementById("max-concurrent-per-agent-input").value =
-                res5.value;
-        const res6 = await apiGet("/api/settings/max-concurrent-llm-per-model");
-        if (res6 != null)
-            document.getElementById("max-concurrent-per-model-input").value =
-                res6.value;
-        const res7 = await apiGet("/api/settings/agent-queue-workers");
-        if (res7 != null)
-            document.getElementById("agent-queue-workers-input").value =
-                res7.value;
-        const res8 = await apiGet("/api/settings/max-tool-iterations");
-        if (res8 != null)
-            document.getElementById("max-tool-iterations-input").value =
-                res8.value;
-        const res3 = await apiGet("/api/settings/theme");
-        if (res3) updateThemeButtons(res3.theme);
         await loadTaskClassifier();
     }
 
@@ -1444,7 +1413,6 @@ block content %}
             statusDiv.textContent = "Error: " + e.message;
             statusDiv.classList.remove("hidden");
         }
->>>>>>> 6c17e3deede6869afb862973c4d77c619bfed87c
     }
 
     async function togglePublicHistory(enabled) {
