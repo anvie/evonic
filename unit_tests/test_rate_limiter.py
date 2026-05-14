@@ -155,6 +155,10 @@ class TestRateLimitDecorator:
         """Clear rate limiter before each test method."""
         get_rate_limiter().clear_all()
     
+    def teardown_method(self, method):
+        """Clear rate limiter after each test method."""
+        get_rate_limiter().clear_all()
+    
     def test_decorator_allows_within_limit(self):
         """Test that decorator allows requests within limit."""
         app = Flask(__name__)
