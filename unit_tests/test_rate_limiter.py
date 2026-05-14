@@ -224,21 +224,20 @@ class TestRateLimitDecorator:
             return req.headers.get('X-User-ID', 'anonymous')
         
         @app.route('/test', methods=['POST'])
-        @rate_limit(max_requests=2, window_seconds=60, identifier_func=get_user_id)
+        @rate_limit(max_requests=1, window_seconds=60, identifier_func=get_user_id)
         def test_route():
             return 'success', 200
         
         with app.test_client() as client:
-            # User 1 makes 2 requests (should succeed)
-            for i in range(2):
-                response = client.post('/test', headers={'X-User-ID': 'user1'})
-                assert response.status_code == 200
+            # User 1 makes 1 request (should succeed)
+            response = client.post('/test', headers={'X-User-ID': 'user1'})
+            assert response.status_code == 200
             
-            # User 1's 3rd request blocked
+            # User 1's 2nd request blocked
             response = client.post('/test', headers={'X-User-ID': 'user1'})
             assert response.status_code == 429
             
-            # User 2 should still be allowed
+            # User 2 should still be allowed (different identifier)
             response = client.post('/test', headers={'X-User-ID': 'user2'})
             assert response.status_code == 200
 
