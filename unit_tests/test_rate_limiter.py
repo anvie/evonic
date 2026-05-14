@@ -153,6 +153,9 @@ class TestRateLimitDecorator:
     
     def test_decorator_allows_within_limit(self):
         """Test that decorator allows requests within limit."""
+        # Clear rate limiter before test
+        get_rate_limiter().clear_all()
+        
         app = Flask(__name__)
         app.config['TESTING'] = True
         
