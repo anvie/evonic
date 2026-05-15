@@ -7,6 +7,24 @@ from typing import Any, Dict, List, Optional, Generator
 
 AGENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'agents')
 
+# Non-human session identifiers (agent-to-agent, scheduler, system notifications).
+_SYSTEM_EXTERNAL_USER_IDS = frozenset({'__scheduler__'})
+_SYSTEM_EXTERNAL_USER_PREFIXES = ('__agent__', '__system__')
+
+
+def is_human_facing_external_user_id(external_user_id: str) -> bool:
+    """Return True when external_user_id denotes a human user session.
+
+    Human sessions include web UI chats and channel users (Telegram, WhatsApp, etc.).
+    Excludes agent-to-agent, scheduler, and system notification sessions.
+    """
+    euid = (external_user_id or '').strip()
+    if not euid:
+        return False
+    if euid in _SYSTEM_EXTERNAL_USER_IDS:
+        return False
+    return not any(euid.startswith(prefix) for prefix in _SYSTEM_EXTERNAL_USER_PREFIXES)
+
 
 def _migrate_session_id(cursor, old_id: str, new_id: str) -> None:
     """Rename a session ID and update all referencing tables."""

@@ -260,16 +260,18 @@ if not _reloader_active or _is_reloader_child:
     # Startup check: scan all active sessions for unreplied user messages
     # ----------------------------------------------------------------
     def _check_unreplied_chats():
-        """Scan all chat sessions on startup. Log any session where the last
-        message is from a user and no agent has replied — these users may have
-        been left hanging after a restart or deployment."""
-        
-        # @TODO(robin): Perlu pastikan bahwa chat session-nya hanya yg user sama agent saja, jangan scan session yg dari agent-to-agent atau system-to-agent. contoh user to agent itu seperti chat di halaman agent detail chat tab, atau chat melalui channel seperti telegram.
+        """Scan human-facing chat sessions on startup. Log any session where the
+        last message is from a user and no agent has replied — these users may
+        have been left hanging after a restart or deployment.
 
+        Only scans sessions between a human and an agent (web UI or channels).
+        Skips agent-to-agent, scheduler, and system notification sessions.
+        """
         import time as _time
         _time.sleep(3.0)  # brief delay for DB + agent_runtime to be ready
 
         from models.chatlog import ChatLog
+        from models.chat import is_human_facing_external_user_id
         _unreplied_types = frozenset({'user', 'final', 'intermediate', 'error'})
 
         try:
@@ -283,6 +285,8 @@ if not _reloader_active or _is_reloader_child:
         _total_sessions = 0
 
         for _agent in _enabled:
+            if _agent.get('is_subagent'):
+                continue
             _agent_id = _agent['id']
             _agent_name = _agent.get('name', _agent_id)
             try:
@@ -291,9 +295,7 @@ if not _reloader_active or _is_reloader_child:
                 continue
 
             for _sess in _sessions:
-                _euid = _sess.get('external_user_id', '')
-                # Skip agent-to-agent and system/scheduler sessions
-                if _euid.startswith('__agent__') or _euid == '__scheduler__':
+                if not is_human_facing_external_user_id(_sess.get('external_user_id', '')):
                     continue
                 _total_sessions += 1
                 _session_id = _sess['id']
@@ -326,16 +328,16 @@ if not _reloader_active or _is_reloader_child:
                     _agent_name, _session_id, _ts_str, _preview
                 )
 
-        #if _unreplied_count:
-        #    _log.warning(
-        #        "Unreplied-chat scan complete: %d/%d session(s) have no agent reply.",
-        #        _unreplied_count, _total_sessions
-        #    )
-        #else:
-        #    _log.info(
-        #        "Unreplied-chat scan complete: all %d session(s) have replies.",
-        #        _total_sessions
-        #    )
+        if _unreplied_count:
+            _log.warning(
+                "Unreplied-chat scan complete: %d/%d human session(s) have no agent reply.",
+                _unreplied_count, _total_sessions,
+            )
+        else:
+            _log.info(
+                "Unreplied-chat scan complete: all %d human session(s) have replies.",
+                _total_sessions,
+            )
 
     import threading as _threading
     _threading.Thread(target=_check_unreplied_chats, daemon=True).start()
