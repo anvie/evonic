@@ -6,6 +6,19 @@ import pytest
 from evaluator.answer_extractor import answer_extractor
 
 
+class TestTwoPassEnabled:
+    """Runtime toggle for Pass 2 extraction."""
+
+    def test_is_enabled_respects_config_default(self, monkeypatch):
+        monkeypatch.setattr('evaluator.answer_extractor.config.TWO_PASS_ENABLED', True)
+        # No DB in unit test — should fall back to config
+        assert answer_extractor.is_enabled() is True
+
+    def test_is_enabled_when_disabled_in_config(self, monkeypatch):
+        monkeypatch.setattr('evaluator.answer_extractor.config.TWO_PASS_ENABLED', False)
+        assert answer_extractor.is_enabled() is False
+
+
 class TestFormatValidation:
     """Test format validation for PASS 2 output"""
     

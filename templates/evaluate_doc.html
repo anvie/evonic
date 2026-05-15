@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="settings-container" style="max-width: 900px; margin: 0 auto; padding: 20px;">
+    {% include "partials/evaluate_subnav.html" %}
+    <div class="settings-header" style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <h2 style="margin: 0;">{{ title }}</h2>
+        <a href="/evaluate/evaluators" class="text-sm text-blue-600 dark:text-blue-400 hover:underline">← Back to evaluators</a>
+    </div>
+    <article class="doc-body bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 shadow-sm">
+        <pre class="whitespace-pre-wrap text-sm leading-relaxed text-gray-800 dark:text-gray-200 font-sans m-0">{{ body }}</pre>
+    </article>
+</div>
+{% endblock %}

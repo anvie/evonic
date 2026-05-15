@@ -187,8 +187,18 @@ class AnswerExtractor:
     
     def __init__(self):
         self.client = llm_client
-        self.enabled = getattr(config, 'TWO_PASS_ENABLED', True)
         self.temperature = getattr(config, 'TWO_PASS_TEMPERATURE', 0.0)
+
+    def is_enabled(self) -> bool:
+        """Whether Pass 2 extraction runs (DB setting overrides env default)."""
+        try:
+            from models.db import db
+            stored = db.get_setting('two_pass_enabled', None)
+            if stored is not None:
+                return stored == '1'
+        except Exception:
+            pass
+        return getattr(config, 'TWO_PASS_ENABLED', True)
     
     def extract(self, domain: str, level: int, response: str, question: str = "") -> Dict[str, Any]:
         """
@@ -217,7 +227,7 @@ class AnswerExtractor:
             }
         """
         # Check if two-pass is enabled
-        if not self.enabled:
+        if not self.is_enabled():
             return {
                 "success": True,
                 "extracted": response,

@@ -476,6 +476,22 @@ def api_sync_tests():
 
 # ---- App settings toggles ----
 
+@settings_bp.route('/api/settings/two-pass-enabled', methods=['GET', 'PUT'])
+def api_two_pass_enabled():
+    """Get or set global two-pass (Pass 2) answer extraction for evaluation."""
+    from models.db import db
+    import config as app_config
+
+    default = '1' if getattr(app_config, 'TWO_PASS_ENABLED', True) else '0'
+    if request.method == 'PUT':
+        data = request.get_json() or {}
+        enabled = '1' if data.get('enabled', False) else '0'
+        db.set_setting('two_pass_enabled', enabled)
+        return jsonify({'success': True, 'enabled': enabled == '1'})
+    val = db.get_setting('two_pass_enabled', default)
+    return jsonify({'enabled': val == '1'})
+
+
 @settings_bp.route('/api/settings/public-history', methods=['GET', 'PUT'])
 def api_public_history():
     """Get or set the public history page toggle."""

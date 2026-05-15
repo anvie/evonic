@@ -1,12 +1,15 @@
 import json
+import os
 import queue
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, abort
 
 from evaluator.engine import evaluation_engine
 from models.db import db
 import config
 
 evaluation_bp = Blueprint('evaluation', __name__)
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @evaluation_bp.route('/evaluate/domains')
@@ -19,6 +22,17 @@ def evaluate_domains():
 def evaluate_evaluators():
     """Evaluators management page"""
     return render_template('evaluate_evaluators.html')
+
+
+@evaluation_bp.route('/evaluate/docs/two-pass')
+def evaluate_two_pass_docs():
+    """Serve two-pass evaluation documentation (markdown source)."""
+    doc_path = os.path.join(_ROOT, 'docs', 'two-pass-evaluation.md')
+    if not os.path.isfile(doc_path):
+        abort(404)
+    with open(doc_path, encoding='utf-8') as f:
+        body = f.read()
+    return render_template('evaluate_doc.html', title='Two-Pass Evaluation', body=body)
 
 
 @evaluation_bp.route('/evaluate')
