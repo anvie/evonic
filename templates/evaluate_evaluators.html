@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'partials/toggle.html' import toggle %}
 
 {% block content %}
 <div class="settings-container">
@@ -6,6 +7,27 @@
 
     <div class="settings-header">
         <h2>⚖️ Evaluators</h2>
+    </div>
+
+    <div class="two-pass-panel evaluator-card" style="flex-direction: column; align-items: stretch; gap: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px;">
+            <div>
+                <h4 style="margin: 0 0 6px;">Two-pass extraction (Pass 2)</h4>
+                <p style="margin: 0; font-size: 14px; color: #6b7280;">
+                    After the model answers a benchmark prompt, a second LLM call extracts a clean final answer
+                    (number, ya/tidak, SQL, etc.) before scoring. Used by the built-in <code>two_pass</code> evaluator
+                    and domains such as math and reasoning.
+                </p>
+            </div>
+            <label class="flex items-center gap-3 cursor-pointer select-none shrink-0">
+                {{ toggle(id='two-pass-enabled-toggle', checked=true) }}
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Enabled</span>
+            </label>
+        </div>
+        <p style="margin: 0; font-size: 13px; color: #6b7280;">
+            <a href="/evaluate/docs/two-pass" class="text-blue-600 dark:text-blue-400 hover:underline">Read the guide</a>
+            · Env fallback: <code>TWO_PASS_ENABLED</code>, <code>TWO_PASS_TEMPERATURE</code>
+        </p>
     </div>
 
     <div class="evaluators-list" id="evaluators-list">
@@ -125,6 +147,27 @@
 .evaluator-type.custom {
     background: #ede9fe;
     color: #7c3aed;
+}
+
+.evaluator-type.predefined {
+    background: #d1fae5;
+    color: #047857;
+}
+
+.evaluator-badge-pass2 {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    background: #fef3c7;
+    color: #b45309;
+    margin-left: 6px;
+    font-weight: 600;
+}
+
+html.dark .evaluator-badge-pass2 {
+    background: #422006;
+    color: #fcd34d;
 }
 
 /* Modal Styles */
@@ -287,7 +330,10 @@ function renderEvaluators() {
     container.innerHTML = evaluators.map(evaluator => `
         <div class="evaluator-card">
             <div class="evaluator-info">
-                <h4>${evaluator.name} <span class="evaluator-type ${evaluator.type}">${evaluator.type}</span></h4>
+                <h4>${evaluator.name}
+                    <span class="evaluator-type ${evaluator.type}">${evaluator.type}</span>
+                    ${evaluator.uses_pass2 || evaluator.id === 'two_pass' ? '<span class="evaluator-badge-pass2">Pass 2</span>' : ''}
+                </h4>
                 <p>${evaluator.description || 'No description'}</p>
             </div>
             <div class="evaluator-actions">
@@ -400,8 +446,33 @@ function toggleEvaluatorType() {
     }
 }
 
+async function loadTwoPassSetting() {
+    const toggleEl = document.getElementById('two-pass-enabled-toggle');
+    if (!toggleEl) return;
+    try {
+        const data = await apiGet('/api/settings/two-pass-enabled');
+        toggleEl.checked = !!data.enabled;
+    } catch (error) {
+        console.error('Error loading two-pass setting:', error);
+    }
+}
+
+async function saveTwoPassSetting(enabled) {
+    try {
+        await apiPut('/api/settings/two-pass-enabled', { enabled });
+    } catch (error) {
+        console.error('Error saving two-pass setting:', error);
+        alert('Could not save two-pass setting.');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     loadEvaluators();
+    loadTwoPassSetting();
+    const twoPassToggle = document.getElementById('two-pass-enabled-toggle');
+    if (twoPassToggle) {
+        twoPassToggle.addEventListener('change', () => saveTwoPassSetting(twoPassToggle.checked));
+    }
 });
 </script>
 {% endblock %}
