@@ -701,10 +701,21 @@ def _get_agent_config(agent_id: str) -> dict:
 
 def _is_super_agent(agent_id: str) -> bool:
     """Check if the agent is a super agent (bypasses all guards)."""
+    # Known super agent IDs — hardcoded fallback
+    _KNOWN_SUPER_AGENTS = frozenset({"siwa"})
+    if agent_id in _KNOWN_SUPER_AGENTS:
+        return True
     try:
         from models.db import db
         agent = db.get_agent(agent_id)
-        return bool(agent and agent.get("is_super"))
+        if agent:
+            return bool(agent.get("is_super"))
+        # If agent not found by ID, check if this agent_id matches
+        # the currently configured super agent
+        super_a = db.get_super_agent()
+        if super_a and super_a.get("id") == agent_id:
+            return True
+        return False
     except Exception:
         return False
 
