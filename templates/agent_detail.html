@@ -749,7 +749,7 @@ html.dark #channel-detail-modal .hover\:bg-indigo-100:hover { background: #312e8
                 <span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-mono" id="tool-detail-id"></span>
                 <span id="tool-detail-skill" class="hidden text-xs bg-indigo-50 text-indigo-500 px-2 py-0.5 rounded"></span>
             </div>
-            <button onclick="document.getElementById('tool-detail-modal').classList.add('hidden')" class="bg-transparent border-none text-gray-400 text-2xl cursor-pointer hover:text-gray-800">&times;</button>
+            <button onclick="document.getElementById('tool-detail-modal').classList.add('hidden')" class="bg-transparent border-none text-gray-400 text-2xl cursor-pointer hover:text-gray-800 dark:hover:text-gray-200">&times;</button>
         </div>
         <div class="p-5 flex-1 overflow-y-auto space-y-4">
             <!-- Description -->
@@ -765,7 +765,7 @@ html.dark #channel-detail-modal .hover\:bg-indigo-100:hover { background: #312e8
                 <!-- Tab bar -->
                 <div class="flex border-b border-gray-200 mt-2">
                     <button id="tool-tab-btn-prod" onclick="switchToolTab('prod')" class="px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600">Prod</button>
-                    <button id="tool-tab-btn-mock" onclick="switchToolTab('mock')" class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">Mock</button>
+                    <button id="tool-tab-btn-mock" onclick="switchToolTab('mock')" class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-200">Mock</button>
                 </div>
                 <!-- Prod tab -->
                 <div id="tool-tab-prod" class="pt-3">
@@ -1699,7 +1699,7 @@ function renderToolsList() {
                 </div>
             </div>
             <button onclick="event.stopPropagation(); removeOrphan('${escapeHtml(id)}')" title="Remove"
-                    class="ml-2 p-1.5 rounded text-amber-400 hover:text-red-500 hover:bg-red-50 transition-colors">
+                    class="ml-2 p-1.5 rounded text-amber-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/></svg>
             </button>
         </div>`).join('');
@@ -1711,7 +1711,7 @@ function renderToolsList() {
         const safeId = escapeHtml(t.id);
         return `
         <div class="tool-row flex items-center justify-between p-3 dark:bg-gray-800 dark:border-gray-600 rounded-md border transition-colors cursor-pointer
-                    ${isAsgn ? 'bg-gray-50 border-gray-200 hover:bg-gray-100' : 'bg-white border-gray-100 hover:bg-gray-50'}"
+                    ${isAsgn ? 'bg-gray-50 border-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700' : 'bg-white border-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700'}"
              data-assigned="${isAsgn && !isBuiltin}"
              data-builtin="${isBuiltin}"
              data-tool-id="${safeId}"
