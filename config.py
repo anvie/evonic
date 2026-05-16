@@ -179,6 +179,7 @@ CONNECTOR_WS_PORT = _get_env_int("CONNECTOR_WS_PORT", 8081, min_val=1024, max_va
 CONNECTOR_PING_INTERVAL = _get_env_int("CONNECTOR_PING_INTERVAL", 30, min_val=5, max_val=300)
 CONNECTOR_PING_TIMEOUT = _get_env_int("CONNECTOR_PING_TIMEOUT", 10, min_val=1, max_val=60)
 CONNECTOR_PAIRING_CODE_TTL = _get_env_int("CONNECTOR_PAIRING_CODE_TTL", 300, min_val=60, max_val=3600)  # seconds
+CONNECTOR_PAIR_MAX_ATTEMPTS = _get_env_int("CONNECTOR_PAIR_MAX_ATTEMPTS", 30, min_val=5, max_val=200)
 
 AGENT_MAX_TOOL_ITERATIONS = _get_env_int("AGENT_MAX_TOOL_ITERATIONS", 100, min_val=1, max_val=1000)
 EVAL_MAX_TOOL_ITERATIONS = _get_env_int("EVAL_MAX_TOOL_ITERATIONS", 30, min_val=1, max_val=500)

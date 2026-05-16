@@ -11,6 +11,7 @@ import threading
 from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context
 
 from models.db import db
+from backend import connector_pair_rate_limit
 
 workplaces_bp = Blueprint('workplaces', __name__)
 
@@ -299,6 +300,12 @@ def api_cancel_pairing_code(workplace_id):
 
 @workplaces_bp.route('/api/connector/pair', methods=['POST'])
 def api_connector_pair():
+    ip = request.remote_addr or '0.0.0.0'
+    if connector_pair_rate_limit.is_rate_limited(ip):
+        return jsonify({'error': 'Too many pairing attempts. Please try again later.'}), 429
+
+    connector_pair_rate_limit.record_attempt(ip)
+
     data = request.get_json() or {}
     pairing_code = (data.get('pairing_code') or '').strip().upper()
     device_name = (data.get('device_name') or 'unknown').strip()
