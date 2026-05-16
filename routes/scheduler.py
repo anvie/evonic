@@ -94,6 +94,12 @@ def api_schedule_logs(schedule_id):
     return jsonify({'logs': logs, 'schedule_id': schedule_id})
 
 
+@scheduler_bp.route('/api/schedules/cleanup', methods=['POST'])
+def api_cleanup_schedules():
+    cleaned = scheduler.cleanup_once_schedules()
+    return jsonify({'success': True, 'cleaned': cleaned})
+
+
 @scheduler_bp.route('/api/schedules/<schedule_id>/logs', methods=['DELETE'])
 def api_clear_schedule_logs(schedule_id):
     from models.db import db

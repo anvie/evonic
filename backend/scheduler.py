@@ -185,6 +185,22 @@ class Scheduler:
         self._execute_action(schedule_id)
         return True
 
+    def cleanup_once_schedules(self) -> int:
+        """Cancel and delete all executed one-shot (date-triggered) schedules.
+
+        Returns the number of schedules cleaned up.
+        """
+        from models.db import db
+        schedules = db.get_schedules()
+        cleaned = 0
+        for s in schedules:
+            if s['trigger_type'] == 'date' and s['run_count'] > 0:
+                self.cancel_schedule(s['id'])
+                cleaned += 1
+        if cleaned:
+            log.info("Cleaned up %d executed once schedules", cleaned)
+        return cleaned
+
     # ------------------------------------------------------------------
     # Internal: Job registration
     # ------------------------------------------------------------------

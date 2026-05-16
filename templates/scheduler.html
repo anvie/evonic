@@ -15,7 +15,7 @@
     </div>
 
     <!-- Filter -->
-    <div class="flex gap-2 mb-4">
+    <div class="flex justify-between items-center gap-2 mb-4">
         <select id="filter-owner" onchange="loadSchedules()" class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-700 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
             <option value="">All owners</option>
             <option value="agent">Agents</option>
@@ -23,6 +23,10 @@
             <option value="user">User/Admin</option>
             <option value="system">System</option>
         </select>
+        <button onclick="cleanupSchedules()" class="px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-red-600 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-red-300 dark:hover:border-red-500 transition-colors flex items-center gap-1.5" title="Remove executed one-shot schedules">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            Clean up
+        </button>
     </div>
 
     <!-- Table -->
@@ -270,6 +274,23 @@ async function cancelSchedule(id, name) {
     if (!ok) return;
     await fetch(`/api/schedules/${id}/cancel`, {method:'POST'});
     loadSchedules();
+}
+
+async function cleanupSchedules() {
+    const ok = await showConfirm({title:'Clean Up Schedules', message:'Remove all executed one-shot schedules? This cannot be undone.', confirmText:'Clean up', danger:true});
+    if (!ok) return;
+    try {
+        const res = await fetch('/api/schedules/cleanup', {method:'POST'});
+        const data = await res.json();
+        if (data.error) {
+            toast.show(data.error, 'error');
+        } else {
+            toast.show(`Cleaned up ${data.cleaned} schedule(s)`, 'success');
+            loadSchedules();
+        }
+    } catch (e) {
+        toast.show('Cleanup failed: ' + e.message, 'error');
+    }
 }
 
 // === Create Modal ===
