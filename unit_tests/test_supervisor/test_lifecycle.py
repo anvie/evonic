@@ -62,8 +62,7 @@ class TestRunUpdateSuccess(unittest.TestCase):
         result = sup.run_update('v1.1.0', self.cfg, None)
 
         self.assertTrue(result)
-        # verify_tag is currently skipped in dev mode (gated by `if False`)
-        mock_verify.assert_not_called()
+        mock_verify.assert_called_once_with(self.tmp, 'v1.1.0')
         mock_worktree.assert_called_once()
         mock_venv.assert_called_once()
         mock_health_temp.assert_called_once()
@@ -156,6 +155,29 @@ class TestRunUpdateRollback(unittest.TestCase):
 
         self.assertFalse(result)
         mock_rollback.assert_called_once()
+
+    @patch.object(sup, '_is_process_alive', return_value=True)
+    @patch.object(sup, 'start_daemon', return_value=(True, 1234))
+    @patch.object(sup, 'stop_daemon', return_value=True)
+    @patch.object(sup, 'health_check', return_value=True)
+    @patch.object(sup, 'health_check_temp_port', return_value=True)
+    @patch.object(sup, 'link_shared_dirs')
+    @patch.object(sup, 'create_venv_and_install', return_value=(True, ''))
+    @patch.object(sup, 'create_worktree', return_value=(True, ''))
+    @patch.object(sup, 'verify_tag', return_value=(True, 'Good signature'))
+    @patch.object(sup, 'get_current_release', return_value='v1.0.0')
+    @patch.object(sup, 'preflight_checks', return_value=(True, []))
+    def test_skip_verify_skips_signature_check(self, mock_preflight, mock_current, mock_verify,
+                                               mock_worktree, mock_venv, mock_link,
+                                               mock_health_temp, mock_health,
+                                               mock_stop, mock_start, mock_alive):
+        release_path = os.path.join(self.tmp, 'releases', 'v1.1.0')
+        os.makedirs(release_path)
+
+        result = sup.run_update('v1.1.0', self.cfg, None, skip_verify=True)
+
+        self.assertTrue(result)
+        mock_verify.assert_not_called()
 
 
 class TestCleanupOldReleases(unittest.TestCase):

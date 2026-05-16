@@ -1070,15 +1070,14 @@ def run_update(tag: str, cfg: dict, notifier: Optional[TelegramNotifier],
             _notify(notifier, step, 'Skipping signature verification (nightly)')
             log.warning('Signature verification SKIPPED (nightly)')
         else:
-            # TODO: Re-enable signature verification for production
-            # Currently disabled for development convenience
-            _notify(notifier, step, 'Skipping signature verification (dev mode)')
-            if False:  # was: if not skip_verify:
+            if not skip_verify:
+                _notify(notifier, step, f'Verifying signature for {tag}')
                 ok, out = verify_tag(app_root, tag)
                 if not ok:
                     raise UpdateError(f'Signature verification failed: {out}')
             else:
-                log.warning('Signature verification SKIPPED (dev mode)')
+                _notify(notifier, step, 'Skipping signature verification (--force)')
+                log.warning('Signature verification SKIPPED (--force)')
 
         # Step 3: Stage (worktree + venv + shared links)
         step = 3
