@@ -555,7 +555,7 @@ html.dark #channel-detail-modal .hover\:bg-indigo-100:hover { background: #312e8
             </div>
 
             <!-- Artifacts Grid -->
-            <div id="artifacts-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <div id="artifacts-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                 <!-- Artifacts loaded dynamically -->
             </div>
 
@@ -3607,22 +3607,22 @@ function renderArtifacts() {
         const ext = f.filename.split('.').pop();
         
         return `
-            <div class="bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-lg p-4 hover:border-indigo-300 dark:hover:border-indigo-500 transition-colors cursor-pointer flex flex-col" onclick="openArtifact('${f.filename}', '${f.category}')">
-                <div class="flex items-center justify-center w-12 h-12 rounded-lg ${icon.bg} mb-3">
-                    <svg class="w-6 h-6 ${icon.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-lg p-2.5 hover:border-indigo-300 dark:hover:border-indigo-500 transition-colors cursor-pointer flex items-center gap-2.5 group" onclick="openArtifact('${f.filename}', '${f.category}')">
+                <div class="flex items-center justify-center w-8 h-8 rounded-md flex-shrink-0 ${icon.bg}">
+                    <svg class="w-4 h-4 ${icon.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         ${icon.path}
                     </svg>
                 </div>
                 <div class="flex-1 min-w-0">
                     <p class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate" title="${f.filename}">${f.filename}</p>
-                    <p class="text-xs text-gray-400 mt-1">${sizeStr} &middot; ${dateStr}</p>
+                    <p class="text-xs text-gray-400">${sizeStr} &middot; ${dateStr}</p>
                 </div>
-                <div class="flex gap-1 mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
-                    <button onclick="event.stopPropagation(); downloadArtifact('${f.filename}')" title="Download" class="flex-1 text-center text-xs text-indigo-500 hover:text-indigo-700 py-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
-                        <svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                <div class="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onclick="event.stopPropagation(); downloadArtifact('${f.filename}')" title="Download" class="p-1.5 text-indigo-500 hover:text-indigo-700 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     </button>
-                    <button onclick="event.stopPropagation(); deleteArtifact('${f.filename}')" title="Delete" class="flex-1 text-center text-xs text-red-400 hover:text-red-600 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-                        <svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    <button onclick="event.stopPropagation(); deleteArtifact('${f.filename}')" title="Delete" class="p-1.5 text-red-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                 </div>
             </div>
