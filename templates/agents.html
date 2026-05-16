@@ -340,7 +340,7 @@ function renderAgents() {
                </span>`;
         const busyBadge = busyAgents[a.id]
             ? `<span class="busy-badge inline-flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded-full">
-                    <span class="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                    <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
                     Busy
                </span>`
             : '';
@@ -393,7 +393,7 @@ function updateAgentBusyBadge(agentId, busy) {
         if (!existing) {
             const span = document.createElement('span');
             span.className = 'busy-badge inline-flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded-full';
-            span.innerHTML = '<span class="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span> Busy';
+            span.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> Busy';
             badges.appendChild(span);
         }
     } else {
