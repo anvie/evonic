@@ -556,7 +556,21 @@ function buildMessageBubble(role, content, opts = {}, cfg = {}) {
         $bubble.append(_buildSysBalloon(sysTag, sysContent, 'text-orange-500', 'text-orange-400', 120));
 
     } else if (isUser) {
-        $bubble = $('<div class="rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words">').addClass(userBubbleClass).text(content);
+        // Check for attachments in metadata
+        var meta = (opts && opts.metadata) || {};
+        var attachments = meta.attachments || meta.file_ids || [];
+        var cleanContent = content.replace(/^\[Attached:.*?\]\n?/, '').trim();
+        $bubble = $('<div class="rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words">').addClass(userBubbleClass);
+        if (attachments.length > 0) {
+            var $attContainer = $('<div class="flex flex-col gap-2 mb-2">').css('max-width', '320px');
+            attachments.forEach(function(fid) {
+                $attContainer.append(_renderFileAttachment(fid, { maxWidth: 280 }));
+            });
+            $bubble.append($attContainer);
+        }
+        if (cleanContent) {
+            $bubble.append(document.createTextNode(cleanContent));
+        }
 
     } else if (isError) {
         const $icon = $('<svg class="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>');
@@ -598,6 +612,71 @@ function buildMessageBubble(role, content, opts = {}, cfg = {}) {
 
     $wrapper.append($inner);
     return $wrapper;
+}
+
+// ─── File attachment rendering ────────────────────────────────────────────────
+
+function _renderFileAttachment(fid, opts) {
+    opts = opts || {};
+    var maxWidth = opts.maxWidth || 200;
+    var mime = fid.mime_type || '';
+    var name = fid.filename || 'file';
+    var url = fid.url || '';
+    var dataUrl = fid.data_url || '';
+    var size = fid.size || 0;
+    var isImage = mime.startsWith('image/');
+
+    if (isImage && dataUrl) {
+        return $('<div class="attachment-image">').css('max-width', maxWidth + 'px').append(
+            $('<img>').attr('src', dataUrl).attr('alt', escape(name)).addClass('rounded-lg cursor-pointer hover:opacity-90 transition-opacity').on('click', function() { window.open(url, '_blank'); }),
+            $('<div class="text-[10px] text-gray-400 mt-1 truncate">').text(name)
+        );
+    }
+
+    if (isImage) {
+        return $('<div class="attachment-image">').css('max-width', maxWidth + 'px').append(
+            $('<a>').attr('href', url).attr('target', '_blank').addClass('inline-block').append(
+                $('<div class="bg-gray-100 dark:bg-gray-700 rounded-lg p-4 flex items-center gap-3 min-w-[150px]">').append(
+                    $('<span class="text-2xl">').text('\U0001F578\U0000FE0F'),
+                    $('<div class="min-w-0">').append(
+                        $('<div class="text-xs font-medium text-gray-700 dark:text-gray-200 truncate">').text(name),
+                        $('<div class="text-[10px] text-gray-400">').text(mime + ' ' + _humanSize(size))
+                    )
+                )
+            )
+        );
+    }
+
+    var icon = _getFileIcon(name);
+    return $('<div class="attachment-file">').css({cursor:'pointer','max-width': maxWidth + 'px'}).append(
+        $('<div class="bg-gray-100 dark:bg-gray-700 rounded-lg p-3 flex items-center gap-3 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">').append(
+            $('<span class="text-xl flex-shrink-0">').text(icon),
+            $('<div class="min-w-0 flex-1">').append(
+                $('<div class="text-xs font-medium text-gray-700 dark:text-gray-200 truncate">').text(name),
+                $('<div class="text-[10px] text-gray-400">').text(escape(mime) + ' ' + _humanSize(size))
+            ),
+            $('<span class="text-gray-400 text-xs flex-shrink-0">').text('\u2193')
+        )
+    );
+}
+
+function _getFileIcon(filename) {
+    var ext = filename.split('.').pop().toLowerCase();
+    var icons = {
+        pdf: '\U0001F4C4', docx: '\U0001F4DD', doc: '\U0001F4DD', txt: '\U0001F4C3', csv: '\U0001F4C6',
+        md: '\U0001F4CB', json: '\U0001F4E6', xml: '\U0001F4E6', html: '\U0001F310',
+        css: '\U0001F3A8', js: '\u26A1', py: '\U0001F40D', sh: '\u2699\U0000FE0F',
+        yaml: '\u2699\U0000FE0F', yml: '\u2699\U0000FE0F', toml: '\u2699\U0000FE0F', log: '\U0001F4C3',
+        sql: '\U0001F5C4', zip: '\U0001F4E6', tar: '\U0001F4E6', gz: '\U0001F4E6',
+    };
+    return icons[ext] || '\U0001F4CE';
+}
+
+function _humanSize(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    var units = ['B', 'KB', 'MB', 'GB'];
+    var i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
 }
 
 // ── Default renderer registry ─────────────────────────────────────────────────
