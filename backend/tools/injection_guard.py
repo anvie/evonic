@@ -347,16 +347,7 @@ _RULES: list[tuple] = [
         "Injecting harmful instructions inside code comments.",
     ),
 
-    # ── 8. Markdown / HTML Injection ───────────────────────────────────
-    (
-        "html_injection",
-        _r(
-            r"<\s*(script|iframe|object|embed|form|input|link|meta|style)\b[^>]*>"
-        ),
-        HIGH,
-        "HTML/Markdown Injection",
-        "Active HTML tag injection (XSS / content injection).",
-    ),
+    # ── 8. Markdown Injection ───────────────────────────────────
     (
         "markdown_link_injection",
         _r(
