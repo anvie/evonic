@@ -64,7 +64,7 @@ def execute(agent: dict, args: dict) -> dict:
     if not safe:
         return {"error": reason}
 
-    result = _api("POST", f"/tabs/{tab_id}/navigate", {"url": url})
+    result = _api("POST", "/navigate", {"tabId": tab_id, "url": url})
     if "error" in result:
         return result
     return {
