@@ -18,12 +18,14 @@ _logger = logging.getLogger(__name__)
 # ───────────────────────────────────────────────────────────────────────
 
 LOW      = "LOW"
+WARNING  = "WARNING"
 MEDIUM   = "MEDIUM"
 HIGH     = "HIGH"
 CRITICAL = "CRITICAL"
 
 _SEVERITY_ORDER = {
     LOW:      0,
+    WARNING:  0.5,
     MEDIUM:   1,
     HIGH:     2,
     CRITICAL: 3,
@@ -31,6 +33,7 @@ _SEVERITY_ORDER = {
 
 _SEVERITY_SCORE = {
     LOW:      0.2,
+    WARNING:  0.3,
     MEDIUM:   0.4,
     HIGH:     0.7,
     CRITICAL: 1.0,
@@ -458,9 +461,9 @@ _RULES: list[tuple] = [
             r".{0,60}"
             r"\b(show|reveal|tell|output|print|give\s+me|share|tampilkan|berikan)\b"
         ),
-        CRITICAL,
+        WARNING,
         "Data Extraction",
-        "Attempt to extract credentials / sensitive data.",
+        "Attempt to extract credentials / sensitive data (warning only).",
     ),
     (
         "token_extraction_attempt",
