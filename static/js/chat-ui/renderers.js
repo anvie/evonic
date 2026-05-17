@@ -11,12 +11,13 @@
 const ALLOWED_TAGS = new Set([
     'a','b','i','em','strong','code','pre','blockquote',
     'ul','ol','li','p','br','hr','h1','h2','h3','h4','h5','h6',
-    'table','thead','tbody','tr','th','td','span','div',
+    'table','thead','tbody','tr','th','td','span','div','img',
 ]);
 const ALLOWED_ATTRS = {
     a:    ['href', 'title', 'target'],
     code: ['class'],
     pre:  ['class'],
+    img:  ['src', 'alt', 'class'],
 };
 
 function _walkSanitize(node) {
@@ -512,7 +513,24 @@ export function buildMessageBubble(role, content, opts = {}, cfg = {}) {
         $bubble.append(_buildSysBalloon(sysTag, sysContent, 'text-orange-500', 'text-orange-400', 120));
 
     } else if (isUser) {
-        $bubble = $('<div class="rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words">').addClass(userBubbleClass).text(content);
+        $bubble = $('<div class="rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words">').addClass(userBubbleClass);
+        // Render image attachment if present
+        const meta = opts.metadata || {};
+        if (meta.image_url) {
+            const $img = $('<img>').attr('src', meta.image_url)
+                .addClass('max-w-[240px] max-h-[240px] rounded-lg mb-1 cursor-pointer')
+                .on('click', function() { window.open(meta.image_url, '_blank'); });
+            $bubble.append($img);
+        }
+        // Render non-image file badge
+        if (meta.attachment_info && !meta.attachment_info.is_image) {
+            const info = meta.attachment_info;
+            const $badge = $('<div class="flex items-center gap-1.5 mb-1 px-2 py-1 bg-white/20 rounded text-xs">')
+                .append($('<svg class="w-3.5 h-3.5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h6.879a1.5 1.5 0 0 1 1.06.44l4.122 4.12A1.5 1.5 0 0 1 17 7.622V16.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 16.5v-13Z"/></svg>'))
+                .append($('<span class="truncate">').text(info.filename));
+            $bubble.append($badge);
+        }
+        if (content) $bubble.append(document.createTextNode(content));
 
     } else if (isError) {
         const $icon = $('<svg class="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>');

@@ -1841,7 +1841,9 @@ class AgentRuntime:
                     _logger.error("send_as_bot channel error: %s", e)
         return True
 
-    def send_as_user(self, session_id: str, text: str) -> bool:
+    def send_as_user(self, session_id: str, text: str,
+                     image_url: str | None = None,
+                     metadata: dict | None = None) -> bool:
         """User perspective: save message as user and trigger agent processing."""
         session = db.get_session_with_details(session_id)
         if not session:
@@ -1894,10 +1896,15 @@ class AgentRuntime:
                 return True
             # Unknown command — fall through to normal LLM processing
 
-        db.add_chat_message(session_id, 'user', text, agent_id=agent_id)
+        meta = {'user_perspective': True}
+        if image_url:
+            meta['image_url'] = image_url
+        if metadata:
+            meta.update(metadata)
+        db.add_chat_message(session_id, 'user', text, agent_id=agent_id, metadata=meta)
         chatlog_manager.get(agent_id, session_id).append(
             {'type': 'user', 'session_id': session_id, 'content': text,
-             'metadata': {'user_perspective': True}})
+             'metadata': meta})
 
         # Invalidate prefetched context — a new message arrived
         self._prefetcher.invalidate(session_id)
@@ -1911,7 +1918,7 @@ class AgentRuntime:
             'external_user_id': external_user_id,
             'channel_id': channel_id,
             'message': text,
-            'image_url': None,
+            'image_url': image_url,
         })
 
         # Enqueue for agent processing (fire-and-forget)
