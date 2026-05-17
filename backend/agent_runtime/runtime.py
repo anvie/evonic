@@ -771,7 +771,8 @@ class AgentRuntime:
                        message: str, channel_id: Optional[str] = None,
                        image_url: Optional[str] = None,
                        metadata: Optional[Dict[str, Any]] = None,
-                       skip_buffer: bool = False) -> Dict[str, Any]:
+                       skip_buffer: bool = False,
+                       attachments: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Process an incoming user message. Always queued for processing.
 
         - With buffer: debounce rapid messages, queue when timer fires.
@@ -783,6 +784,7 @@ class AgentRuntime:
             skip_buffer: If True, bypass message buffering even if the agent has
                 message_buffer_seconds set. Used by API routes that need a synchronous
                 response (e.g. /chat/completions).
+            attachments: Optional list of file reference dicts from upload endpoint.
         """
         # Normalize external_user_id — system-internal messages (e.g. restart
         # greeting) may arrive with None when no external user is associated.
@@ -851,8 +853,12 @@ class AgentRuntime:
                 return {"response": response, "tool_trace": [], "timeline": [], **extra}
             # Unknown command — fall through to normal LLM processing
 
-        # Save user message (store image reference and any extra metadata)
-        meta = {"image_url": image_url} if image_url else {}
+        # Save user message (store image reference, attachments, and extra metadata)
+        meta: Dict[str, Any] = {}
+        if image_url:
+            meta["image_url"] = image_url
+        if attachments:
+            meta["attachments"] = attachments
         if metadata:
             meta.update(metadata)
         # Enrich metadata for agent-originated messages
@@ -862,11 +868,19 @@ class AgentRuntime:
             meta['agent_message'] = True
             meta['from_agent_id'] = sender_id
             meta['from_agent_name'] = sender_agent.get('name', sender_id) if sender_agent else sender_id
-        _db_retry(db.add_chat_message, session_id, 'user', message or "[Image]",
+        # Build message content with attachment info
+        msg_content = message or "[Image]"
+        if attachments and not image_url:
+            names = ', '.join(f['filename'] for f in attachments)
+            if message:
+                msg_content = f"[Attached: {names}]\n{message}"
+            else:
+                msg_content = f"[Attached: {names}]"
+        _db_retry(db.add_chat_message, session_id, 'user', msg_content,
                   agent_id=db_agent_id, metadata=meta if meta else None, label="save user message")
         _cl_user = chatlog_manager.get(db_agent_id, session_id)
         _cl_user_entry = {'type': 'user', 'session_id': session_id,
-                           'content': message or '[Image]', 'sender_id': external_user_id}
+                           'content': msg_content, 'sender_id': external_user_id}
         if meta:
             _cl_user_entry['metadata'] = meta
         _cl_user.append(_cl_user_entry)
@@ -884,6 +898,7 @@ class AgentRuntime:
             'channel_id': channel_id,
             'message': message,
             'image_url': image_url,
+            'attachments': attachments,
         })
 
         # Busy-ack: if the agent-level concurrency gate is saturated, send an
@@ -1841,14 +1856,37 @@ class AgentRuntime:
                     _logger.error("send_as_bot channel error: %s", e)
         return True
 
-    def send_as_user(self, session_id: str, text: str) -> bool:
-        """User perspective: save message as user and trigger agent processing."""
+    def send_as_user(self, session_id: str, text: str, file_ids: Optional[List[Dict[str, Any]]] = None) -> bool:
+        """User perspective: save message as user and trigger agent processing.
+
+        Args:
+            session_id: Target session.
+            text: Message text.
+            file_ids: Optional list of file reference dicts from upload endpoint.
+                     Each dict has: attachment_id, filename, mime_type, url, data_url (for images).
+        """
         session = db.get_session_with_details(session_id)
         if not session:
             return False
         agent_id = session['agent_id']
         external_user_id = session['external_user_id']
         channel_id = session.get('channel_id')
+
+        # Process file_ids: build image_url for first image, build attachment context for text files
+        image_url = None
+        attachment_context = []
+        if file_ids:
+            for fid in file_ids:
+                mime = fid.get('mime_type', '')
+                if mime.startswith('image/') and image_url is None:
+                    image_url = fid.get('data_url')
+                elif mime in ('text/plain', 'text/csv', 'text/markdown', 'text/xml',
+                              'text/html', 'text/css', 'text/javascript',
+                              'text/x-python', 'text/x-shellscript', 'text/x-yaml', 'text/x-toml',
+                              'application/json', 'application/pdf'):
+                    attachment_context.append(fid)
+                else:
+                    attachment_context.append(fid)
 
         # Slash command interception — execute immediately instead of sending to LLM
         parsed = parse_command(text)
@@ -1860,8 +1898,13 @@ class AgentRuntime:
             )
             if response is not None:
                 # Command was recognized — save command echo and response, then return
+                meta = {'slash_command': True}
+                if image_url:
+                    meta['image_url'] = image_url
+                if attachment_context:
+                    meta['attachments'] = attachment_context
                 db.add_chat_message(session_id, 'user', text,
-                                    agent_id=agent_id, metadata={'slash_command': True})
+                                    agent_id=agent_id, metadata=meta)
                 db.add_chat_message(session_id, 'assistant', response,
                                     agent_id=agent_id, metadata={'slash_command': True})
                 _cl = chatlog_manager.get(agent_id, session_id)
@@ -1894,10 +1937,18 @@ class AgentRuntime:
                 return True
             # Unknown command — fall through to normal LLM processing
 
-        db.add_chat_message(session_id, 'user', text, agent_id=agent_id)
+        # Build message content: prepend attachment info
+        msg_text = text
+        if attachment_context and not image_url:
+            names = ', '.join(f['filename'] for f in attachment_context)
+            msg_text = f"[Attached: {names}]\n{text}" if text else f"[Attached: {names}]"
+
+        db.add_chat_message(session_id, 'user', msg_text, agent_id=agent_id,
+                            metadata={'image_url': image_url, 'attachments': attachment_context} if image_url or attachment_context else None)
         chatlog_manager.get(agent_id, session_id).append(
-            {'type': 'user', 'session_id': session_id, 'content': text,
-             'metadata': {'user_perspective': True}})
+            {'type': 'user', 'session_id': session_id, 'content': msg_text,
+             'metadata': {'user_perspective': True, 'image_url': image_url,
+                          'attachments': attachment_context} if image_url or attachment_context else {'user_perspective': True}})
 
         # Invalidate prefetched context — a new message arrived
         self._prefetcher.invalidate(session_id)
@@ -1910,8 +1961,9 @@ class AgentRuntime:
             'session_id': session_id,
             'external_user_id': external_user_id,
             'channel_id': channel_id,
-            'message': text,
-            'image_url': None,
+            'message': msg_text,
+            'image_url': image_url,
+            'attachments': attachment_context,
         })
 
         # Enqueue for agent processing (fire-and-forget)

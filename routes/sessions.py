@@ -1,10 +1,28 @@
+import base64
+import io
+import os
 import threading
+import uuid
 
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, send_file
 
 from models.db import db
 
 sessions_bp = Blueprint('sessions', __name__)
+
+# Allowed file types for web upload
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'docx', 'txt', 'csv', 'md', 'json', 'xml', 'html', 'css', 'js', 'py', 'sh', 'yaml', 'yml', 'toml', 'log', 'sql', 'zip', 'tar', 'gz'}
+ALLOWED_MIME_TYPES = {
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain', 'text/csv', 'text/markdown', 'text/xml', 'text/html', 'text/css', 'text/javascript',
+    'text/x-python', 'text/x-shellscript', 'text/x-yaml', 'text/x-toml',
+    'application/json',
+    'application/zip', 'application/x-tar', 'application/gzip',
+}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per file
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'attachments', 'web')
 
 
 @sessions_bp.route('/sessions')
@@ -45,12 +63,11 @@ def api_session_poll(session_id):
 def api_session_reply(session_id):
     data = request.get_json()
     text = (data.get('text') or '').strip()
-    if not text:
-        return jsonify({'error': 'Text is required'}), 400
+    file_ids = data.get('file_ids')  # list of file refs from upload
     perspective = (data.get('perspective') or 'B').strip()
     from backend.agent_runtime import agent_runtime
     if perspective == 'A':
-        ok = agent_runtime.send_as_user(session_id, text)
+        ok = agent_runtime.send_as_user(session_id, text, file_ids=file_ids)
     else:
         ok = agent_runtime.send_as_bot(session_id, text)
     if not ok:
@@ -129,3 +146,120 @@ def api_clear_all_attachments():
     agents and sessions, without touching chat sessions/messages."""
     deleted, freed = db.delete_all_attachments()
     return jsonify({'success': True, 'deleted': deleted, 'freed_bytes': freed})
+
+
+# ─── File Upload ────────────────────────────────────────────────────────────
+
+def _safe_filename(name):
+    """Sanitize a filename to a safe ASCII slug, max 120 chars."""
+    if not name:
+        return 'file'
+    cleaned = ''.join(c if c.isalnum() or c in '._-' else '_' for c in name)[:120]
+    return cleaned or 'file'
+
+
+@sessions_bp.route('/api/sessions/<session_id>/upload', methods=['POST'])
+def api_session_upload(session_id):
+    """Upload one or more files to a session. Accepts multipart/form-data.
+
+    Returns list of file references with attachment_id, filename, mime_type,
+    url (for download), and for images: a base64 data_url.
+    """
+    session = db.get_session_with_details(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    files = request.files.getlist('files')
+    if not files or all(f.filename == '' for f in files):
+        return jsonify({'error': 'No files provided'}), 400
+
+    agent_id = session['agent_id']
+    results = []
+
+    for f in files:
+        filename = f.filename or 'unnamed'
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+
+        # Validate extension
+        if ext not in ALLOWED_EXTENSIONS:
+            return jsonify({
+                'error': f'File type not allowed: {ext}',
+                'rejected': filename,
+            }), 400
+
+        # Read file data
+        data = f.read()
+        if len(data) > MAX_FILE_SIZE:
+            return jsonify({
+                'error': f'File too large: {filename} ({len(data)} bytes > {MAX_FILE_SIZE})',
+                'rejected': filename,
+            }), 400
+
+        # Validate MIME type
+        mime_type = f.content_type or 'application/octet-stream'
+        if mime_type not in ALLOWED_MIME_TYPES:
+            return jsonify({
+                'error': f'MIME type not allowed: {mime_type}',
+                'rejected': filename,
+            }), 400
+
+        # Save file to disk
+        safe_name = _safe_filename(filename)
+        file_uuid = str(uuid.uuid4())
+        storage_dir = os.path.join(UPLOAD_DIR, agent_id, session_id)
+        os.makedirs(storage_dir, exist_ok=True)
+        file_path = os.path.join(storage_dir, f"{file_uuid}_{safe_name}")
+
+        with open(file_path, 'wb') as fout:
+            fout.write(data)
+
+        # Save to DB
+        attachment_id = db.save_attachment(
+            agent_id=agent_id,
+            session_id=session_id,
+            filename=safe_name,
+            file_path=file_path,
+            external_user_id=session['external_user_id'],
+            channel_id=session.get('channel_id'),
+            channel_type='web',
+            original_filename=filename,
+            mime_type=mime_type,
+            file_type=ext,
+            size_bytes=len(data),
+        )
+
+        # Build reference
+        ref = {
+            'attachment_id': attachment_id,
+            'filename': filename,
+            'mime_type': mime_type,
+            'url': f'/uploads/{session_id}/{safe_name}',
+            'size': len(data),
+        }
+
+        # For images, also include a base64 data URL
+        is_image = mime_type.startswith('image/')
+        if is_image:
+            b64 = base64.b64encode(data).decode()
+            ref['data_url'] = f'data:{mime_type};base64,{b64}'
+
+        results.append(ref)
+
+    return jsonify({'files': results}), 200
+
+
+@sessions_bp.route('/uploads/<session_id>/<path:filename>')
+def serve_upload(session_id, filename):
+    """Serve an uploaded file. Only the session owner can access."""
+    session = db.get_session_with_details(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+
+    agent_id = session['agent_id']
+    safe = os.path.basename(filename)  # prevent path traversal
+    file_path = os.path.join(UPLOAD_DIR, agent_id, session_id, safe)
+
+    if not os.path.isfile(file_path):
+        return jsonify({'error': 'File not found'}), 404
+
+    return send_file(file_path, mimetype=None, as_attachment=False)

@@ -37,6 +37,44 @@ html.dark #mobile-dropdown .border-b { border-color: #374151; }
 .user-id-system { color: #97989F; }
 .user-id-agent  { color: #97989F; }
 .user-id-human  { color: #15803d; }
+
+/* File preview in reply bar */
+.file-preview-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 12px;
+    max-width: 200px;
+}
+html.dark .file-preview-item {
+    background: #1e293b;
+    border-color: #334155;
+}
+.file-preview-item img {
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
+    border-radius: 4px;
+}
+.file-preview-item .file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.file-preview-item .file-remove {
+    cursor: pointer;
+    color: #9ca3af;
+    font-size: 14px;
+    line-height: 1;
+}
+.file-preview-item .file-remove:hover {
+    color: #ef4444;
+}
 </style>
 <div class="sessions-page flex flex-col h-[calc(100vh-3.5rem)]">
 
@@ -164,10 +202,17 @@ html.dark #mobile-dropdown .border-b { border-color: #374151; }
             </div>
 
             <!-- Reply input -->
-            <div id="reply-bar" class="hidden p-3 bg-white border-t border-gray-200 flex-shrink-0 dark:bg-gray-800 dark:border-gray-600">
-                <form onsubmit="sendReply(event)" class="flex gap-2">
-                    <input type="text" id="reply-input" placeholder="Type a reply as the bot..."
-                           class="flex-1 p-2.5 border border-gray-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+            <div             <div id="reply-bar" class="hidden p-3 bg-white border-t border-gray-200 flex-shrink-0 dark:bg-gray-800 dark:border-gray-600">>
+                <div id="file-preview-area" class="hidden mb-2 flex flex-wrap gap-2"></div>
+                <form onsubmit="sendReply(event)" class="flex gap-2 items-end">>
+                    <div class="flex flex-1 gap-2">>
+                        <button type="button" id="attach-btn" class="px-2.5 py-2.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0" title="Attach file">>
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.82 7.82a1.5 1.5 0 002.112 2.13"/></svg>
+                        </button>
+                        <input type="file" id="file-input" class="hidden" multiple></input>
+                        <input type="text" id="reply-input" placeholder="Type a reply as the bot...">
+                               class="flex-1 p-2.5 border border-gray-200 rounded-lg text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">>
+                    </div>
                     <button type="submit" id="reply-btn" class="px-4 py-2.5 bg-indigo-500 text-white rounded-lg text-sm font-medium hover:bg-indigo-600 transition-colors flex-shrink-0">Send</button>
                 </form>
             </div>
@@ -999,46 +1044,134 @@ function startSidebarPolling() {
 
 let _pendingReplyText = null; // text of optimistically-rendered reply; suppressed in poll
 
+// ==================== File Upload ====================
+
+let _pendingFiles = []; // Array of {file, data_url, name}
+
+document.getElementById('attach-btn')?.addEventListener('click', () => {
+    document.getElementById('file-input').click();
+});
+
+document.getElementById('file-input')?.addEventListener('change', (e) => {
+    const files = Array.from(e.target.files);
+    files.forEach(f => {
+        _pendingFiles.push({ file: f, name: f.name });
+        if (f.type.startsWith('image/')) {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const fi = _pendingFiles.findIndex(x => x.file === f);
+                if (fi >= 0) _pendingFiles[fi].data_url = ev.target.result;
+                renderFilePreviews();
+            };
+            reader.readAsDataURL(f);
+        } else {
+            renderFilePreviews();
+        }
+    });
+    e.target.value = '';
+});
+
+function renderFilePreviews() {
+    const area = document.getElementById('file-preview-area');
+    if (!_pendingFiles.length) {
+        area.classList.add('hidden');
+        area.innerHTML = '';
+        return;
+    }
+    area.classList.remove('hidden');
+    area.innerHTML = _pendingFiles.map((item, i) => {
+        let preview = '';
+        if (item.data_url) {
+            preview = '<img src="' + item.data_url + '" alt="preview">';
+        } else {
+            preview = '<span class="text-lg">' + getFileIcon(item.name) + '</span>';
+        }
+        return '<div class="file-preview-item">' + preview + '<span class="file-name">' + esc(item.name) + '</span><span class="file-remove" onclick="removePendingFile(' + i + ')">&times;</span></div>';
+    }).join('');
+}
+
+function removePendingFile(index) {
+    _pendingFiles.splice(index, 1);
+    renderFilePreviews();
+}
+
+function getFileIcon(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
+    const icons = {
+        pdf: '\u{1F4D4}', docx: '\u{1F4C4}', txt: '\u{1F4C4}', csv: '\u{1F4C6}',
+        md: '\u{1F4D6}', json: '\u{1F4C8}', xml: '\u{1F4C8}', html: '\u{1F310}',
+        css: '\u{1F3A8}', js: '\u{1F527}', py: '\u{1F40D}', sh: '\u{1F4A1}',
+        yaml: '\u{1F4C4}', yml: '\u{1F4C4}', toml: '\u{1F4C4}', log: '\u{1F4CB}',
+        sql: '\u{1F5C4}', zip: '\u{1F4E6}', tar: '\u{1F4E6}', gz: '\u{1F4E6}',
+    };
+    return icons[ext] || '\u{1F4C4}';
+}
+
 async function sendReply(e) {
     e.preventDefault();
     if (!currentSessionId) return;
     const $input = $('#reply-input');
     const text = $input.val().trim();
-    if (!text) return;
+    if (!_pendingFiles.length && !text) return;
 
     const $btn = $('#reply-btn');
     $btn.prop('disabled', true).text('Sending...');
 
-    // Optimistically render the outgoing message so it appears before the thinking bubble.
-    // Perspective 'A' = sending as user role; 'B' = sending as assistant role.
+    // Upload files first if any
+    let fileRefs = [];
+    if (_pendingFiles.length) {
+        const formData = new FormData();
+        _pendingFiles.forEach(item => formData.append('files', item.file));
+        try {
+            const res = await fetch('/api/sessions/' + currentSessionId + '/upload', {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            if (data.error) throw new Error(data.error);
+            fileRefs = data.files || [];
+        } catch (err) {
+            $btn.prop('disabled', false).text('Send');
+            alert('Upload failed: ' + err.message);
+            return;
+        }
+    }
+
+    // Optimistically render the outgoing message
     const outRole = _chatPerspective === 'B' ? 'assistant' : 'user';
-    const $msgEl = chatUI.appendMessage(outRole, text);
-    // If the agent is mid-turn, mark message as queued with clock indicator
+    const displayText = fileRefs.length ? '[Attachments] ' + text : text;
+    const $msgEl = chatUI.appendMessage(outRole, displayText || '[File attached]');
     if (_sseThinkingId) chatUI.markLastUserBubbleQueued($msgEl);
     chatUI.scrollToBottom();
     _pendingReplyText = text;
 
     const res = await $.ajax({
-        url: `/api/sessions/${currentSessionId}/reply`,
+        url: '/api/sessions/' + currentSessionId + '/reply',
         method: 'POST',
         contentType: 'application/json',
-        data: JSON.stringify({text, perspective: _chatPerspective}),
+        data: JSON.stringify({
+            text: text,
+            perspective: _chatPerspective,
+            file_ids: fileRefs,
+        }),
     }).catch(err => ({ error: err.responseJSON?.error || 'Request failed' }));
 
     $btn.prop('disabled', false).text('Send');
     if (res.error) {
         _pendingReplyText = null;
-        $msgEl.remove(); // remove optimistically-rendered message on failure
+        $msgEl.remove();
         return alert(res.error);
     }
-    // Defensive: if the response indicates a UI clear (e.g. /clear command), clear the chat
     if (res.clear_ui) {
         chatUI.clearContainer();
         _pendingReplyText = null;
         return;
     }
     $input.val('');
+    _pendingFiles = [];
+    renderFilePreviews();
 }
+
 
 function showStopBtn(show) {
     const btn = document.getElementById('stop-agent-btn');
