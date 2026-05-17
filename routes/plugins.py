@@ -8,6 +8,7 @@ import zipfile
 from flask import Blueprint, render_template, jsonify, request, redirect, send_file
 from backend.plugin_manager import plugin_manager
 from backend.plugin_lifecycle import PLUGINS_DIR
+from backend.plugin_update_manager import plugin_update_manager
 from backend.zip_validator import validate_upload_zip, MAX_UPLOAD_BYTES
 
 plugins_bp = Blueprint('plugins', __name__)
@@ -185,3 +186,19 @@ def api_delete_plugin(plugin_id):
     if 'error' in result:
         return jsonify(result), 400
     return jsonify(result)
+
+
+@plugins_bp.route('/api/plugins/updates/check')
+def api_check_plugin_updates():
+    """Check for available updates for all installed plugins."""
+    updates = plugin_update_manager.check_plugin_updates()
+    return jsonify({'updates': updates, 'count': len(updates)})
+
+
+@plugins_bp.route('/api/plugins/<plugin_id>/updates/status')
+def api_get_plugin_update_status(plugin_id):
+    """Get update status for a specific plugin."""
+    status = plugin_update_manager.get_plugin_update_status(plugin_id)
+    if 'error' in status:
+        return jsonify(status), 404
+    return jsonify(status)

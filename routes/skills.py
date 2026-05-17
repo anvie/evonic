@@ -4,6 +4,7 @@ import os
 import tempfile
 from flask import Blueprint, render_template, jsonify, request, redirect, url_for
 from backend.skills_manager import skills_manager
+from backend.plugin_update_manager import skill_update_manager
 from backend.skillsets import list_skillsets, get_skillset, resolve_skillset, apply_skillset, update_skillset
 from backend.zip_validator import validate_upload_zip, MAX_UPLOAD_BYTES
 
@@ -313,3 +314,19 @@ def edit_skillset_page(skill_id):
 def edit_skillset_page_legacy(skill_id):
     """Legacy redirect for old edit URL."""
     return redirect(f'/skillset/{skill_id}')
+
+
+@skills_bp.route('/api/skills/updates/check')
+def api_check_skill_updates():
+    """Check for available updates for all installed skills."""
+    updates = skill_update_manager.check_skill_updates()
+    return jsonify({'updates': updates, 'count': len(updates)})
+
+
+@skills_bp.route('/api/skills/<skill_id>/updates/status')
+def api_get_skill_update_status(skill_id):
+    """Get update status for a specific skill."""
+    status = skill_update_manager.get_skill_update_status(skill_id)
+    if 'error' in status:
+        return jsonify(status), 404
+    return jsonify(status)
