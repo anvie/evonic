@@ -225,6 +225,58 @@ def search_memories(agent_id: str, query: str, limit: int = 10) -> dict:
         return {"error": f"Memory search failed: {e}"}
 
 
+def forget_memory(agent_id: str, memory_id: int, target_agent_id: str = None,
+                  is_super: bool = False) -> dict:
+    """Soft-delete a specific memory. Used by the `forget_memory` built-in tool.
+
+    Regular agents can only delete their own memories. Super agents can
+    specify a target_agent_id to delete another agent's memory.
+    """
+    try:
+        # Determine whose memory we're operating on
+        effective_agent_id = target_agent_id if target_agent_id else agent_id
+
+        # Authorization: only super agents can delete another agent's memories
+        if target_agent_id and target_agent_id != agent_id and not is_super:
+            return {
+                "error": (
+                    f"Cannot delete memory belonging to agent '{target_agent_id}'. "
+                    "Only super agents can delete another agent's memories."
+                )
+            }
+
+        # Verify the memory exists and belongs to the effective agent
+        memories = db.get_all_memories(effective_agent_id, include_expired=True)
+        target_memory = None
+        for m in memories:
+            if m['id'] == memory_id:
+                target_memory = m
+                break
+
+        if not target_memory:
+            return {
+                "error": (
+                    f"Memory {memory_id} not found for agent '{effective_agent_id}'."
+                )
+            }
+
+        if target_memory.get('expired'):
+            return {
+                "error": f"Memory {memory_id} is already deleted.",
+                "id": memory_id,
+            }
+
+        db.expire_memory(effective_agent_id, memory_id)
+        return {
+            "result": "Memory forgotten.",
+            "id": memory_id,
+            "content": target_memory['content'],
+            "category": target_memory['category'],
+        }
+    except Exception as e:
+        return {"error": f"Failed to forget memory: {e}"}
+
+
 # ---- Helpers ----
 
 def _strip_code_fences(text: str) -> str:

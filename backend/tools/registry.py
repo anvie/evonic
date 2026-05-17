@@ -42,6 +42,7 @@ class ToolRegistry:
         # Long-term memory tools
         self._builtins['builtin:remember'] = _builtin_remember_factory
         self._builtins['builtin:recall'] = _builtin_recall_factory
+        self._builtins['builtin:forget_memory'] = _builtin_forget_memory_factory
         # Session recall tool
         self._builtins['builtin:recall_sessions'] = _builtin_recall_sessions_factory
 
@@ -711,6 +712,53 @@ def _builtin_recall_factory(agent_context: dict):
         from backend.agent_runtime.memory_manager import search_memories
         agent_id = agent_context.get('id', '')
         return search_memories(agent_id, args.get('query', ''))
+
+    return tool_def, executor
+
+
+def _builtin_forget_memory_factory(agent_context: dict):
+    """Factory for the built-in 'forget_memory' tool — soft-deletes a long-term memory."""
+    tool_def = {
+        "type": "function",
+        "function": {
+            "name": "forget_memory",
+            "description": (
+                "Delete a specific memory from your long-term memory by its ID. "
+                "The memory is soft-deleted (marked as expired) so it will no longer "
+                "appear in recall results. Use this when a memory is no longer relevant "
+                "or was stored incorrectly. "
+                "Example: forget_memory(memory_id=42)"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {
+                        "type": "integer",
+                        "description": "The ID of the memory to delete."
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": (
+                            "The agent whose memory to delete. Defaults to yourself. "
+                            "Only super agents can delete another agent's memories."
+                        )
+                    }
+                },
+                "required": ["memory_id"]
+            }
+        }
+    }
+
+    def executor(args: dict) -> dict:
+        from backend.agent_runtime.memory_manager import forget_memory
+        agent_id = agent_context.get('id', '')
+        is_super = bool(agent_context.get('is_super', False))
+        return forget_memory(
+            agent_id=agent_id,
+            memory_id=args.get('memory_id'),
+            target_agent_id=args.get('agent_id'),
+            is_super=is_super,
+        )
 
     return tool_def, executor
 
