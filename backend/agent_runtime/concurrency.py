@@ -23,23 +23,23 @@ class ConcurrencyGate:
         self._name = name
 
     def acquire(self) -> None:
-        _logger.info("[LOCK] acquire(name=%s) - WAITING (active=%d/%d)",
-                      self._name, self._active, self._max)
+        #_logger.info("[LOCK] acquire(name=%s) - WAITING (active=%d/%d)",
+        #              self._name, self._active, self._max)
         with self._condition:
             while self._max > 0 and self._active >= self._max:
                 self._condition.wait()
             self._active += 1
-            _logger.info("[LOCK] acquire(name=%s) - ACQUIRED (active=%d/%d)",
-                         self._name, self._active, self._max)
+            #_logger.info("[LOCK] acquire(name=%s) - ACQUIRED (active=%d/%d)",
+            #             self._name, self._active, self._max)
 
     def release(self) -> None:
-        _logger.info("[LOCK] release(name=%s) - RELEASING (active=%d/%d)",
+        #_logger.info("[LOCK] release(name=%s) - RELEASING (active=%d/%d)",
                       self._name, self._active, self._max)
         with self._condition:
             self._active -= 1
             self._condition.notify()
-        _logger.info("[LOCK] release(name=%s) - RELEASED (active=%d/%d)",
-                     self._name, self._active, self._max)
+        #_logger.info("[LOCK] release(name=%s) - RELEASED (active=%d/%d)",
+        #             self._name, self._active, self._max)
 
     def set_max(self, new_max: int) -> None:
         with self._condition:
