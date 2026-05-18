@@ -1,5 +1,4 @@
 """
-from typing import Optional
 injection_guard.py — Tool-level prompt injection detection using regex patterns.
 
 Self-contained — does NOT import from shared/prompjector.py.
@@ -8,6 +7,7 @@ Patterns are ported from prompjector but implemented independently here.
 Signature matches plugin_hooks.register_tool_guard():
     injection_tool_guard(agent_id: str, tool_name: str, args: dict) -> Optional[dict]
 """
+from typing import Optional
 
 import re
 import logging

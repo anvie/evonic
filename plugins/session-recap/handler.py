@@ -1,5 +1,4 @@
 """
-from typing import Optional
 Session Recap Extractor — parses native session summaries for actionable items.
 
 Hooks into the `summary_updated` event, which fires whenever the built-in
@@ -16,6 +15,7 @@ from the summary and recent messages to enrich notifications.
 
 Then notifies admins via webhook and/or channel message.
 """
+from typing import Optional
 
 import re
 

@@ -1,5 +1,4 @@
 """
-from typing import Optional
 Kanban Board Plugin — Event Handlers
 
 Handles the full kanban workflow:
@@ -10,6 +9,7 @@ Handles the full kanban workflow:
 - Scanner/notifier (periodic scan + agent notification via scheduler)
 - on_tool_executed, on_kanban_task_created, on_kanban_task_updated, on_schedule_fired
 """
+from typing import Optional
 
 import json as _json
 import os
