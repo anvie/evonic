@@ -1297,6 +1297,13 @@ $(document).on('keydown', function (e) {
     if (e.key === 'Escape' && _chatFullscreenActive) toggleChatFullscreenMode();
 });
 
+// Click-outside to close compiled-prompt-modal
+$(document).on('click', '#compiled-prompt-modal', function (e) {
+    if (e.target === e.currentTarget) {
+        $(this).addClass('hidden');
+    }
+});
+
 function showTab(name) {
     $('.tab-content').addClass('hidden');
     $('.tab-btn').removeClass('border-indigo-500 text-indigo-600')
