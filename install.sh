@@ -12,7 +12,7 @@ set -e
 # ── Configuration ────────────────────────────────────────────────────────────
 EVONIC_HOME="${EVONIC_HOME:-$HOME/.evonic}"
 REPO_URL="https://github.com/anvie/evonic.git"
-VENV_DIR="$EVONIC_HOME/venv"
+VENV_DIR="$EVONIC_HOME/.venv"
 BIN_DIR="$EVONIC_HOME/bin"
 WRAPPER="$BIN_DIR/evonic"
 
@@ -178,8 +178,8 @@ create_wrapper() {
 EVONIC_HOME="\${EVONIC_HOME:-$EVONIC_HOME}"
 
 # Activate venv and run
-if [ -f "\$EVONIC_HOME/venv/bin/activate" ]; then
-    . "\$EVONIC_HOME/venv/bin/activate"
+if [ -f "\$EVONIC_HOME/.venv/bin/activate" ]; then
+    . "\$EVONIC_HOME/.venv/bin/activate"
 fi
 
 cd "\$EVONIC_HOME"

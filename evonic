@@ -1,12 +1,40 @@
-#!/usr/bin/env python3
-"""Evonic CLI — wrapper script."""
+#!/usr/bin/env bash
+# Evonic CLI — wrapper script.
+# Checks for .venv or venv in the project root before falling back to system python3.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- detect virtualenv python ---
+PYTHON=""
+for candidate in "$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/venv/bin/python"; do
+    if [ -x "$candidate" ]; then
+        PYTHON="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PYTHON" ]; then
+    # Fallback: let the system find python3 on PATH
+    PYTHON="$(command -v python3 || true)"
+fi
+
+if [ -z "$PYTHON" ]; then
+    echo "evonic: no Python interpreter found (checked .venv, venv, and system PATH)" >&2
+    exit 1
+fi
+
+export EVONIC_SCRIPT_DIR="$SCRIPT_DIR"
+exec "$PYTHON" - "$@" <<'PYEOF'
 import sys
 import os
 
 # Ensure the script's directory is on the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_script_dir = os.environ.get("EVONIC_SCRIPT_DIR", os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _script_dir)
 
 from cli.__main__ import main
 
 if __name__ == "__main__":
     main()
+PYEOF
