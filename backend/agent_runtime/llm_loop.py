@@ -1357,6 +1357,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         _tid = f'skill:{loaded_sid}:{fn}'
                         if _tid not in _assigned:
                             _assigned.append(_tid)
+                # Update available tool names so quality monitor doesn't flag injected tools
+                _available_tool_names.update(injected_fns)
 
             # Persistent skill context: capture system_md for re-injection each iteration
             if fn_name == 'use_skill' and isinstance(tool_result, dict) and tool_result.get('system_md'):
@@ -1372,6 +1374,8 @@ def run_tool_loop(agent: Dict[str, Any],
                     fns_to_remove = set(_loaded_lazy_skills.pop(unload_sid))
                     tools[:] = [t for t in tools if t.get('function', {}).get('name', '') not in fns_to_remove]
                     session_skill_tools.get(session_id, {}).pop(unload_sid, None)
+                    # Remove unloaded tool names from available set
+                    _available_tool_names -= fns_to_remove
                 # Remove unloaded tool IDs from assigned_tool_ids
                 _assigned = agent_context.get('assigned_tool_ids')
                 if _assigned is not None and unload_sid:

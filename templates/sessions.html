@@ -342,8 +342,8 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         if (!_sseThinkingId) {
             _sseThinkingId = chatUI.showThinkingIndicator();
         }
-        chatUI.appendTimelineEntry(_sseThinkingId, {type: 'tool_result', tool: data.tool_name, result: data.result, error: data.error});
-        if (['save_plan', 'set_mode', 'update_tasks', 'state'].includes(data.tool_name)) {
+        chatUI.appendTimelineEntry(_sseThinkingId, {type: 'tool_result', tool: data.tool, result: data.result, error: data.error});
+        if (['save_plan', 'set_mode', 'update_tasks', 'state'].includes(data.tool)) {
             loadAgentState();
             loadSessionSummary();
         }
