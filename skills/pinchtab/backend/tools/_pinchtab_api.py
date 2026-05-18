@@ -20,8 +20,24 @@ PINCHTAB_PORT = os.environ.get("PINCHTAB_PORT", "9867")
 PINCHTAB_BASE_URL = f"http://{PINCHTAB_HOST}:{PINCHTAB_PORT}"
 PINCHTAB_TOKEN = os.environ.get("PINCHTAB_TOKEN", "")
 
+# Lazy health pre-check — cache result for 30 seconds to avoid
+# hammering /health on every tool invocation in a session.
+_HEALTH_OK = False
+_HEALTH_TS = 0.0
 
-def _api(method: str, path: str, body: dict = None, timeout: int = 30) -> dict:
+
+def _check_health():
+    """Re-check PinchTab health if cache is cold or stale (>30s)."""
+    global _HEALTH_OK, _HEALTH_TS
+    if time.time() - _HEALTH_TS < 30:
+        return
+    result = _api("GET", "/health", _skip_health=True)
+    _HEALTH_OK = "error" not in result
+    _HEALTH_TS = time.time()
+
+
+def _api(method: str, path: str, body: dict = None, timeout: int = 30,
+         _skip_health: bool = False) -> dict:
     """Call PinchTab REST API and return the parsed JSON response.
 
     Args:
@@ -33,6 +49,8 @@ def _api(method: str, path: str, body: dict = None, timeout: int = 30) -> dict:
     Returns:
         Parsed JSON response dict. On any error, returns {"error": "..."}.
     """
+    if not _skip_health:
+        _check_health()
     url = f"{PINCHTAB_BASE_URL}{path}"
     data = json.dumps(body).encode("utf-8") if body else None
 
@@ -74,6 +92,10 @@ def _api(method: str, path: str, body: dict = None, timeout: int = 30) -> dict:
             )
         }
     except urllib.error.URLError as e:
+        # Force a fresh health check on the next invocation so we
+        # don't keep returning stale "healthy" cached results.
+        global _HEALTH_TS
+        _HEALTH_TS = 0.0
         return {
             "error": f"PinchTab unreachable at {PINCHTAB_BASE_URL}: {e.reason}",
             "hint": "Is PinchTab running? Start it with: pinchtab serve",
