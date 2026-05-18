@@ -34,7 +34,7 @@ class ConcurrencyGate:
 
     def release(self) -> None:
         #_logger.info("[LOCK] release(name=%s) - RELEASING (active=%d/%d)",
-                      self._name, self._active, self._max)
+        #             self._name, self._active, self._max)
         with self._condition:
             self._active -= 1
             self._condition.notify()
