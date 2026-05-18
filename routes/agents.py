@@ -995,8 +995,9 @@ def api_whatsapp_callback(channel_id):
 def api_compiled_prompt(agent_id):
     if not db.get_agent(agent_id):
         return jsonify({'error': 'Agent not found'}), 404
+    user_id = request.args.get('user_id', 'anonymous')
     from backend.agent_runtime import agent_runtime
-    context = agent_runtime.get_compiled_context(agent_id)
+    context = agent_runtime.get_compiled_context(agent_id, user_id=user_id)
     return jsonify(context)
 
 

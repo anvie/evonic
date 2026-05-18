@@ -10,7 +10,19 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List
 
+import tiktoken
+
 _logger = logging.getLogger(__name__)
+
+_TIKTOKEN_ENCODING = None
+
+
+def _token_count(text: str) -> int:
+    """Count tokens using tiktoken cl100k_base encoding."""
+    global _TIKTOKEN_ENCODING
+    if _TIKTOKEN_ENCODING is None:
+        _TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+    return len(_TIKTOKEN_ENCODING.encode(text))
 
 from models.db import db
 from backend.tools import tool_registry
@@ -528,8 +540,9 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     return tools
 
 
-def get_compiled_context(agent_id: str) -> dict:
-    """Return the compiled system prompt, tool definitions, and token estimates."""
+def get_compiled_context(agent_id: str, user_id: str = None) -> dict:
+    """Return the compiled system prompt, tool definitions, token estimates,
+    and optionally the actual LLM context (memories + prior summary)."""
     agent = db.get_agent(agent_id)
     if not agent:
         return {"system_prompt": "", "tools": [], "tokens": {"system_prompt": 0, "tool_definitions": 0, "total": 0}}
@@ -537,11 +550,11 @@ def get_compiled_context(agent_id: str) -> dict:
     system_prompt = build_system_prompt(agent)
     tools = build_tools(agent)
 
-    # Token estimates using the same len(text)//4 heuristic as llm_loop.py
-    sp_tokens = len(system_prompt) // 4
-    tool_tokens = len(json.dumps(tools)) // 4
+    # Token estimates using tiktoken cl100k_base
+    sp_tokens = _token_count(system_prompt)
+    tool_tokens = _token_count(json.dumps(tools))
 
-    return {
+    result = {
         "system_prompt": system_prompt,
         "tools": tools,
         "tokens": {
@@ -550,6 +563,31 @@ def get_compiled_context(agent_id: str) -> dict:
             "total": sp_tokens + tool_tokens,
         }
     }
+
+    # If user_id provided, also return memories and summary (actual LLM context extras)
+    if user_id:
+        from backend.agent_runtime.memory_manager import get_memories_for_context
+        session_id = db.get_or_create_session(agent_id, user_id)
+        fake_messages = [{"role": "system", "content": system_prompt}]
+        memory_text = get_memories_for_context(agent_id, fake_messages)
+        mem_tokens = 0
+        if memory_text:
+            result["memories"] = memory_text
+            mem_tokens = _token_count(memory_text)
+            result["tokens"]["memories"] = mem_tokens
+
+        summary_record = db.get_summary(session_id, agent_id=agent_id)
+        sum_tokens = 0
+        if summary_record:
+            summary_text = f"## Prior conversation summary\n{summary_record['summary']}"
+            result["summary"] = summary_text
+            sum_tokens = _token_count(summary_text)
+            result["tokens"]["summary"] = sum_tokens
+
+        # Recalculate total to include memories and summary
+        result["tokens"]["total"] = sp_tokens + tool_tokens + mem_tokens + sum_tokens
+
+    return result
 
 
 def build_message_entry(msg: dict, agent: dict) -> dict:

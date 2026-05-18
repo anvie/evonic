@@ -6,3 +6,4 @@ Pillow>=10.0
 rapidfuzz>=3.0
 APScheduler>=3.10
 paramiko>=3.0
+tiktoken>=0.7

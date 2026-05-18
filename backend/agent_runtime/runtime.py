@@ -1685,9 +1685,9 @@ class AgentRuntime:
         )
         self._message_queue.put(task)
 
-    def get_compiled_context(self, agent_id: str) -> dict:
+    def get_compiled_context(self, agent_id: str, user_id: str = None) -> dict:
         """Return the compiled system prompt and tool definitions for an agent."""
-        return _ctx.get_compiled_context(agent_id)
+        return _ctx.get_compiled_context(agent_id, user_id=user_id)
 
     def _build_message_entry(self, msg: dict, agent: dict) -> dict:
         """Convert a DB message row into an LLM message dict."""

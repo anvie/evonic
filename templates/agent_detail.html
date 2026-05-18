@@ -60,6 +60,8 @@ html.dark #compiled-prompt-modal .bg-purple-50 { background: #2e1065 !important;
 html.dark #compiled-prompt-modal .bg-blue-50 { background: #172554 !important; }
 html.dark #compiled-prompt-modal .bg-green-50 { background: #052e16 !important; }
 html.dark #compiled-prompt-modal .bg-amber-50 { background: #451a03 !important; }
+html.dark #compiled-prompt-modal .border-purple-200 { border-color: #5b21b6 !important; }
+html.dark #compiled-prompt-modal .border-amber-200 { border-color: #92400e !important; }
 html.dark #compiled-prompt-modal .border-l-purple-400 { border-color: #a78bfa !important; }
 html.dark #compiled-prompt-modal .border-l-blue-400 { border-color: #60a5fa !important; }
 html.dark #compiled-prompt-modal .border-l-green-400 { border-color: #4ade80 !important; }
@@ -846,12 +848,28 @@ html.dark #channel-detail-modal .hover\:bg-indigo-100:hover { background: #312e8
         <!-- System Prompt Tab -->
         <div id="prompt-tab-prompt" class="p-5 flex-1 overflow-y-auto space-y-4">
             <div>
-                <h4 class="text-sm font-semibold text-gray-700 mb-2 cursor-pointer flex items-center gap-1" onclick="var pre=document.getElementById('compiled-prompt-text'); pre.classList.toggle('hidden'); this.querySelector('.chevron').classList.toggle('rotated')">
+                <h4 class="text-sm font-semibold text-gray-700 mb-2 cursor-pointer flex items-center gap-1" onclick="document.getElementById('compiled-prompt-text').classList.toggle('hidden'); this.querySelector('.chevron').classList.toggle('rotated')">
                     System Prompt
                     <span class="chevron rotated text-gray-400 text-[10px]">&#9656;</span>
                     <span id="compiled-sp-tokens" class="text-xs font-normal text-gray-400 ml-1"></span>
                 </h4>
                 <pre id="compiled-prompt-text" class="bg-gray-50 border border-gray-200 rounded-md p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap overflow-x-auto"></pre>
+            </div>
+            <div id="compiled-memories-section" class="hidden">
+                <h4 class="text-sm font-semibold text-gray-700 mb-2 cursor-pointer flex items-center gap-1" onclick="document.getElementById('compiled-memories-text').classList.toggle('hidden'); this.querySelector('.chevron').classList.toggle('rotated')">
+                    Long-term Memory
+                    <span class="chevron text-gray-400 text-[10px]">&#9656;</span>
+                    <span id="compiled-mem-tokens" class="text-xs font-normal text-gray-400 ml-1"></span>
+                </h4>
+                <pre id="compiled-memories-text" class="hidden bg-purple-50 border border-purple-200 rounded-md p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap overflow-x-auto"></pre>
+            </div>
+            <div id="compiled-summary-section" class="hidden">
+                <h4 class="text-sm font-semibold text-gray-700 mb-2 cursor-pointer flex items-center gap-1" onclick="document.getElementById('compiled-summary-text').classList.toggle('hidden'); this.querySelector('.chevron').classList.toggle('rotated')">
+                    Prior Conversation Summary
+                    <span class="chevron text-gray-400 text-[10px]">&#9656;</span>
+                    <span id="compiled-sum-tokens" class="text-xs font-normal text-gray-400 ml-1"></span>
+                </h4>
+                <pre id="compiled-summary-text" class="hidden bg-amber-50 border border-amber-200 rounded-md p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap overflow-x-auto"></pre>
             </div>
             <div>
                 <h4 class="text-sm font-semibold text-gray-700 mb-2 cursor-pointer flex items-center gap-1" onclick="document.getElementById('compiled-tools-json').classList.toggle('hidden'); this.querySelector('.chevron').classList.toggle('rotated')">
@@ -3236,12 +3254,36 @@ async function showCompiledPrompt() {
     const tokens = data.tokens || {};
     const spTokens = tokens.system_prompt || 0;
     const toolTokens = tokens.tool_definitions || 0;
-    const totalTokens = tokens.total || 0;
+    const memTokens = tokens.memories || 0;
+    const sumTokens = tokens.summary || 0;
+    const totalTokens = tokens.total || (spTokens + toolTokens + memTokens + sumTokens);
     document.getElementById('compiled-sp-tokens').textContent = `\u2014 ~${spTokens.toLocaleString()} tokens`;
     document.getElementById('compiled-tool-tokens').textContent = `\u2014 ~${toolTokens.toLocaleString()} tokens`;
+    document.getElementById('compiled-mem-tokens').textContent = `\u2014 ~${memTokens.toLocaleString()} tokens`;
+    document.getElementById('compiled-sum-tokens').textContent = `\u2014 ~${sumTokens.toLocaleString()} tokens`;
     const tokenBadge = document.getElementById('compiled-token-badge');
     tokenBadge.textContent = `~${totalTokens.toLocaleString()} tokens`;
     tokenBadge.classList.remove('hidden');
+
+    // Long-term Memory section
+    const memSection = document.getElementById('compiled-memories-section');
+    const memText = document.getElementById('compiled-memories-text');
+    if (data.memories) {
+        memSection.classList.remove('hidden');
+        memText.textContent = data.memories;
+    } else {
+        memSection.classList.add('hidden');
+    }
+
+    // Prior Conversation Summary section
+    const sumSection = document.getElementById('compiled-summary-section');
+    const sumText = document.getElementById('compiled-summary-text');
+    if (data.summary) {
+        sumSection.classList.remove('hidden');
+        sumText.textContent = data.summary;
+    } else {
+        sumSection.classList.add('hidden');
+    }
 
     // LLM Request tab
     const badge = document.getElementById('llm-preview-badge');
@@ -3278,7 +3320,7 @@ async function showCompiledPrompt() {
         }).join('');
     }
 
-    // Hide spinner and switch to prompt tab
+    // Hide spinner and switch to System Prompt tab by default
     spinner.classList.add('hidden');
     switchPromptTab('prompt');
 }
