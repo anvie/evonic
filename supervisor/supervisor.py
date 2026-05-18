@@ -457,13 +457,13 @@ def get_latest_tag(app_root: str) -> Optional[str]:
 
 
 def get_latest_release(app_root: str) -> Optional[str]:
-    """Return the tag name of the latest published GitHub release.
+    """Return the tag name of the latest published GitHub release, or None.
 
-    Queries the GitHub Releases API so-only published releases are
-    considered — dangling local tags or pre-release tags that aren't
-    published on GitHub are ignored.
+    Queries the GitHub Releases API so only published releases are
+    considered — dangling local tags, pre-release tags, or tags that
+    aren't published on GitHub are ignored.
 
-    Falls back to ``get_latest_tag()`` on any network / API error.
+    Returns None on any network / API error — no fallback to local tags.
     """
     import urllib.request
     import json as _json
@@ -482,11 +482,11 @@ def get_latest_release(app_root: str) -> Optional[str]:
                 return tag
             log.warning('GitHub release response missing tag_name: %s', data)
     except urllib.error.HTTPError as e:
-        log.warning('GitHub API HTTP %d: %s — falling back to local tags', e.code, e.reason)
+        log.warning('GitHub API HTTP %d: %s — skipping update check', e.code, e.reason)
     except (urllib.error.URLError, OSError, _json.JSONDecodeError) as e:
-        log.warning('GitHub API request failed: %s — falling back to local tags', e)
+        log.warning('GitHub API request failed: %s — skipping update check', e)
 
-    return get_latest_tag(app_root)
+    return None
 
 
 def get_tag_sha(app_root: str, tag: str) -> Optional[str]:
