@@ -25,6 +25,7 @@ Usage:
     ms.serialize()                        # JSON string for DB persistence
     AgentState.deserialize(json_str)     # restore from DB
 """
+from __future__ import annotations
 
 from typing import Optional, Union
 

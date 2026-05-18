@@ -8,6 +8,7 @@ so the :class:`SafetyPipeline` can merge them with system (heuristic) results.
 Rules are cached in memory with a short TTL to avoid hitting the DB on every
 tool call while still picking up changes quickly.
 """
+from __future__ import annotations
 
 import logging
 import re

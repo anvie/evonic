@@ -5,6 +5,7 @@ Owns: message queue, worker threads, session locks, skill caches, handle_message
 session lifecycle, agent state management. Delegates heavy lifting to context,
 llm_loop, and summarizer.
 """
+from __future__ import annotations
 
 import logging
 import os
