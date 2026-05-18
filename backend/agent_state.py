@@ -1,5 +1,4 @@
 """
-from typing import Optional, Union
 Agent State — deterministic agent mode and task tracking.
 
 Tracks the agent's current working mode ("plan" or "execute") and a task list.
@@ -26,6 +25,8 @@ Usage:
     ms.serialize()                        # JSON string for DB persistence
     AgentState.deserialize(json_str)     # restore from DB
 """
+
+from typing import Optional, Union
 
 import json
 import os

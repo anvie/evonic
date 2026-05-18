@@ -1,7 +1,7 @@
 """
-from typing import Optional
 _workspace.py — shared workspace path resolution for file tools.
 """
+from typing import Optional
 
 import os
 

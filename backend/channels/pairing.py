@@ -1,9 +1,9 @@
 """Pairing code generation and validation.
 
-from typing import Optional
 Generates 6-character alphanumeric codes using an unambiguous character set
 (excludes 0/O, 1/I/L to avoid visual confusion). Displayed as XXXXXX (no hyphen).
 """
+from typing import Optional
 
 import random
 import re

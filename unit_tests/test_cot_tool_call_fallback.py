@@ -1,5 +1,4 @@
 """
-from typing import Optional
 Unit tests for the CoT/thinking tool call fallback in agent_runtime.py.
 
 Covers the scenario where a model emits <tool_call> XML inside thinking content
@@ -12,6 +11,7 @@ instead of in the main response body:
 The fallback logic (after thinking extraction) should recover tool calls in both
 cases and populate tool_calls so the agent loop executes them.
 """
+from typing import Optional
 
 import json
 import pytest
