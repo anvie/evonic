@@ -1353,6 +1353,89 @@ block content %}
             statusDiv.classList.remove("hidden");
         }
     }
+
+    async function loadTaskClassifier() {
+        const select = document.getElementById("task-classifier-model-select");
+        const toggle = document.getElementById("task-classifier-toggle");
+        if (!select) return;
+
+        try {
+            // Load available models
+            const response = await fetch("/api/models");
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const data = await response.json();
+            const models = data.models || [];
+
+            // Load current classifier settings
+            let currentModelId = null;
+            let enabled = true;
+            try {
+                const classifierResponse = await fetch("/api/settings/task-classifier");
+                if (classifierResponse.ok) {
+                    const classifierData = await classifierResponse.json();
+                    currentModelId = classifierData.model_id;
+                    enabled = classifierData.enabled;
+                }
+            } catch (e) {
+                console.warn("Could not fetch task classifier settings:", e);
+            }
+
+            // Set toggle state
+            if (toggle) toggle.checked = enabled;
+
+            // Populate model dropdown
+            if (models.length === 0) {
+                select.innerHTML = '<option value="">No models configured — go to Models tab to add one</option>';
+                return;
+            }
+
+            select.innerHTML =
+                '<option value="">Use default model</option>' +
+                models
+                    .map(
+                        (m) =>
+                            `<option value="${m.id}" ${currentModelId && currentModelId === m.id ? "selected" : ""}>${m.name} (${m.model_name})</option>`,
+                    )
+                    .join("");
+        } catch (error) {
+            console.error("Failed to load task classifier:", error);
+            select.innerHTML = '<option value="">Error: ' + error.message + "</option>";
+        }
+    }
+
+    async function saveTaskClassifier() {
+        const select = document.getElementById("task-classifier-model-select");
+        const toggle = document.getElementById("task-classifier-toggle");
+        const statusDiv = document.getElementById("task-classifier-status");
+
+        const enabled = toggle ? toggle.checked : true;
+        const modelId = select ? select.value : "";
+
+        try {
+            const response = await fetch("/api/settings/task-classifier", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled, model_id: modelId }),
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                statusDiv.className = "mt-2 text-sm text-green-600";
+                statusDiv.textContent = "Task classifier settings saved!";
+                statusDiv.classList.remove("hidden");
+                setTimeout(() => statusDiv.classList.add("hidden"), 3000);
+            } else {
+                statusDiv.className = "mt-2 text-sm text-red-600";
+                statusDiv.textContent = "Error: " + (result.error || "Failed to save");
+                statusDiv.classList.remove("hidden");
+            }
+        } catch (error) {
+            console.error("Failed to save task classifier:", error);
+            statusDiv.className = "mt-2 text-sm text-red-600";
+            statusDiv.textContent = "Error: " + error.message;
+            statusDiv.classList.remove("hidden");
+        }
+    }
     // Tab Management
     function showTab(tabName) {
         document

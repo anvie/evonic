@@ -511,18 +511,20 @@ def _on_final_answer(data: dict) -> None:
         # query that finds the first agent-request message in the session.
         _logger.debug(
             "Auto-forward: report_to_id not found in recent %d messages for '%s' "
-            "in session '%s' — falling back to first-message lookup.",
+            "in session '%s' — falling back to latest-agent-request lookup.",
             len(messages), sender_id, session_id,
         )
         try:
-            first_meta = db.get_first_agent_request_metadata(session_id, agent_id=_db_agent_id)
+            latest_meta = db.get_latest_agent_request_metadata(
+                session_id, agent_id=_db_agent_id, sender_agent_id=sender_id,
+            )
         except Exception as e:
-            _logger.warning("Auto-forward: first-message fallback failed for '%s': %s", session_id, e)
-            first_meta = None
-        if first_meta and first_meta.get('from_agent_id') == sender_id:
-            report_to_id = first_meta.get('report_to_id')
-            report_to_channel_id = first_meta.get('report_to_channel_id') or None
-            original_depth = first_meta.get('agent_message_depth', 0)
+            _logger.warning("Auto-forward: latest-agent-request fallback failed for '%s': %s", session_id, e)
+            latest_meta = None
+        if latest_meta and latest_meta.get('from_agent_id') == sender_id:
+            report_to_id = latest_meta.get('report_to_id')
+            report_to_channel_id = latest_meta.get('report_to_channel_id') or None
+            original_depth = latest_meta.get('agent_message_depth', 0)
 
     if not report_to_id:
         _logger.warning(

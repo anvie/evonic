@@ -274,20 +274,33 @@ class AgentChatDB:
                         r['metadata'] = None
             return rows
 
-    def get_first_agent_request_metadata(self, session_id: str) -> dict | None:
-        """Return metadata of the first user message with agent_message=true in the session.
+    def get_latest_agent_request_metadata(self, session_id: str, sender_agent_id: str = None) -> dict | None:
+        """Return metadata of the most recent user message with agent_message=true in the session.
 
         Used by auto-forward to locate report_to_id even when the originating
         message falls outside the recent-message window.
+
+        Args:
+            sender_agent_id: If provided, only match messages where
+                metadata->from_agent_id equals this value.
         """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT metadata FROM chat_messages
-                WHERE session_id = ? AND role = 'user' AND metadata LIKE '%"agent_message"%'
-                ORDER BY created_at ASC LIMIT 1
-            """, (session_id,))
+            if sender_agent_id:
+                cursor.execute("""
+                    SELECT metadata FROM chat_messages
+                    WHERE session_id = ? AND role = 'user'
+                      AND metadata LIKE '%"agent_message"%'
+                      AND metadata LIKE ?
+                    ORDER BY created_at DESC LIMIT 1
+                """, (session_id, f'%"from_agent_id": "{sender_agent_id}"%'))
+            else:
+                cursor.execute("""
+                    SELECT metadata FROM chat_messages
+                    WHERE session_id = ? AND role = 'user' AND metadata LIKE '%"agent_message"%'
+                    ORDER BY created_at DESC LIMIT 1
+                """, (session_id,))
             row = cursor.fetchone()
             if not row or not row['metadata']:
                 return None

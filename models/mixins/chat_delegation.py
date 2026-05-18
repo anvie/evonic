@@ -180,11 +180,11 @@ class ChatDelegationMixin:
                 )
         return result
 
-    def get_first_agent_request_metadata(self, session_id: str, agent_id: str = None) -> dict | None:
+    def get_latest_agent_request_metadata(self, session_id: str, agent_id: str = None, sender_agent_id: str = None) -> dict | None:
         agent_id = agent_id or self._find_agent_for_session(session_id)
         if not agent_id:
             return None
-        return self._chat_db(agent_id).get_first_agent_request_metadata(session_id)
+        return self._chat_db(agent_id).get_latest_agent_request_metadata(session_id, sender_agent_id)
 
     def get_session_messages_full(self, session_id: str, agent_id: str = None) -> List[Dict[str, Any]]:
         agent_id = agent_id or self._find_agent_for_session(session_id)
