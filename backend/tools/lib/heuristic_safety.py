@@ -47,7 +47,7 @@ def _compile(patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # A. Destructive Commands (requires_approval, score 8-14)
 DESTRUCTIVE_PATTERNS: list[dict[str, Any]] = [
     # File destruction
-    {"pattern": r"\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*|-[rf][a-zA-Z]*)\s+(?!/tmp/)", "weight": 10, "category": "file_destruction", "description": "Destructive file removal command (rm -rf, except /tmp)"},
+    {"pattern": r"\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*|-[rf][a-zA-Z]*)\s+(?!/tmp/|__pycache__|\.cache|\.DS_Store|\.tox|\.mypy_cache|\.pytest_cache|\.eggs|build/|\.next|\.nuxt)", "weight": 10, "category": "file_destruction", "description": "Destructive file removal command (rm -rf, except safe cleanup targets)"},
     {"pattern": r"\brmdir\s+(-[a-zA-Z]*)?\b", "weight": 8, "category": "directory_destruction", "description": "Directory removal command"},
     {"pattern": r"\bshred\b", "weight": 12, "category": "secure_deletion", "description": "Secure file deletion (shred)"},
     {"pattern": r"\bgit\s+add\s+\.", "weight": 8, "category": "git_staging", "description": "Git add all files (git add .)"},
@@ -151,7 +151,7 @@ SENSITIVE_FILE_PATTERNS: list[dict[str, Any]] = [
 
 # E. Bash-specific dangerous patterns
 BASH_DANGEROUS_PATTERNS: list[dict[str, Any]] = [
-    {"pattern": r"\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*|-[rf][a-zA-Z]*)\s+(?!/tmp/)", "weight": 10, "category": "file_destruction", "description": "Destructive file removal command (rm -rf, except /tmp)"},
+    {"pattern": r"\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*|-[rf][a-zA-Z]*)\s+(?!/tmp/|__pycache__|\.cache|\.DS_Store|\.tox|\.mypy_cache|\.pytest_cache|\.eggs|build/|\.next|\.nuxt)", "weight": 10, "category": "file_destruction", "description": "Destructive file removal command (rm -rf, except safe cleanup targets)"},
     {"pattern": r"\bdocker\s+", "weight": 4, "category": "sandbox_escape", "description": "Docker reference (not blocked, sandbox is already isolated)"},
     {"pattern": r"(?:^|\s)nc\s+", "weight": 12, "category": "network_exploit", "description": "Netcat command (network exploit)"},
     {"pattern": r"\bnetcat\b", "weight": 12, "category": "network_exploit", "description": "Netcat command (network exploit)"},

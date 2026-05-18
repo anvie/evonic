@@ -287,6 +287,33 @@ def test_rm_rf_detected():
     print("✅ test_rm_rf_detected passed")
 
 
+def test_rm_rf_safe_targets_are_safe():
+    """Test that rm -rf on safe cleanup targets is NOT flagged (no false positives)."""
+    safe_targets = [
+        "rm -rf __pycache__",
+        "rm -rf .cache",
+        "rm -rf .DS_Store",
+        "rm -rf .tox",
+        "rm -rf .mypy_cache",
+        "rm -rf .pytest_cache",
+        "rm -rf .eggs",
+        "rm -rf build/",
+        "rm -rf .next",
+        "rm -rf .nuxt",
+    ]
+
+    for cmd in safe_targets:
+        result = check_safety(cmd, tool_type='bash')
+        assert result['level'] == 'safe', f"Expected 'safe' for '{cmd}', got '{result['level']}' (score={result['score']})"
+        assert result['score'] == 0, f"Expected score 0 for '{cmd}', got {result['score']}"
+
+    # Regression: dangerous rm -rf on real data path must STILL be detected
+    dangerous = check_safety("rm -rf /var/data", tool_type='bash')
+    assert dangerous['level'] in ('requires_approval', 'dangerous'), f"Dangerous rm -rf must still be detected, got '{dangerous['level']}' (score={dangerous['score']})"
+
+    print("✅ test_rm_rf_safe_targets_are_safe passed")
+
+
 def test_git_add_dot_detected():
     """Test that 'git add .' is detected."""
     result = check_safety("git add .", tool_type='bash')
