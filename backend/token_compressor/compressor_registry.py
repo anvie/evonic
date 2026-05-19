@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import functools
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
 from config import TOOL_COMPRESSION_ENABLED, TOOL_COMPRESSION_VERBOSE
-from .filter_schema import CompiledFilter, load_filters, load_filter
+from .filter_schema import CompiledFilter, load_filters, load_filter, merge_filters
 from .filter_pipeline import compress as run_pipeline
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,93 @@ _DEFAULT_CACHE_SIZE = 128
 
 # Built-in filters directory (relative to this package)
 _BUILTIN_DIR = Path(__file__).resolve().parent / "filters" / "builtin"
+
+# -----------------------------------------------------------------------
+# Token counting (approximate, via tiktoken cl100k_base)
+# -----------------------------------------------------------------------
+
+_tiktoken_encoding: object | None = None  # tiktoken.Encoding, lazy-loaded
+
+
+def _get_token_encoding() -> object:
+    """Return a shared tiktoken encoding for cl100k_base.
+
+    Lazy-loaded on first call — avoids import cost when compression
+    is disabled or tiktoken is not installed.
+    """
+    global _tiktoken_encoding
+    if _tiktoken_encoding is None:
+        import tiktoken
+        _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
+    return _tiktoken_encoding
+
+
+def _count_tokens(text: str) -> int:
+    """Count tokens in *text* using tiktoken cl100k_base.
+
+    Returns 0 if tiktoken is not available (fail-safe).
+    Token counts are approximate — tiktoken estimates, not exact.
+    """
+    try:
+        enc = _get_token_encoding()
+        return len(enc.encode(text))
+    except Exception:
+        return 0
+
+
+# Thread-safe lock for cumulative counters
+_counter_lock = threading.Lock()
+
+# Cumulative stats (updated under _counter_lock)
+_compression_count: int = 0
+_total_pre_tokens: int = 0
+_total_post_tokens: int = 0
+
+
+def _record_compression(pre_tokens: int, post_tokens: int) -> None:
+    """Record one compression event in the cumulative counters (thread-safe)."""
+    global _compression_count, _total_pre_tokens, _total_post_tokens
+    with _counter_lock:
+        _compression_count += 1
+        _total_pre_tokens += pre_tokens
+        _total_post_tokens += post_tokens
+
+
+def get_gain_stats() -> dict:
+    """Return cumulative token savings statistics.
+
+    Returns:
+        dict with keys: pre_tokens, post_tokens, savings_pct, compressions.
+        savings_pct is 0.0 when no tokens have been counted.
+    """
+    with _counter_lock:
+        pre = _total_pre_tokens
+        post = _total_post_tokens
+        count = _compression_count
+
+    if pre > 0:
+        pct = round((1 - post / pre) * 100, 1)
+    else:
+        pct = 0.0
+
+    return {
+        "pre_tokens": pre,
+        "post_tokens": post,
+        "savings_pct": pct,
+        "compressions": count,
+    }
+
+
+def reset_gain_counters() -> None:
+    """Reset all cumulative token counters to zero.
+
+    Called on new session to start fresh tracking.
+    """
+    global _compression_count, _total_pre_tokens, _total_post_tokens
+    with _counter_lock:
+        _compression_count = 0
+        _total_pre_tokens = 0
+        _total_post_tokens = 0
 
 
 class CompressorRegistry:
@@ -58,11 +146,39 @@ class CompressorRegistry:
         # LRU lookup cache: command_str -> CompiledFilter | None (None = no match)
         self._lookup_cache: functools._lru_cache_wrapper | None = None
 
-        # Total saved token counters (for gain tracking)
-        self._total_tokens_before: int = 0
-        self._total_tokens_after: int = 0
-
         self._loaded = False
+
+    # ------------------------------------------------------------------
+    # Initialization
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Scan helpers
+    # ------------------------------------------------------------------
+
+    def _scan_agent_filters(self, agent_id: str) -> dict[str, CompiledFilter]:
+        """Scan agent-specific filter overrides from KB directory.
+
+        Looks for TOML files in ``agents/<agent_id>/kb/filters/``.
+        Returns a dict keyed by ``command_re.pattern``.  Use
+        :func:`merge_filters` to apply these over a built-in filter.
+        """
+        agent_dir = Path(f"agents/{agent_id}/kb/filters")
+        if not agent_dir.is_dir():
+            return {}
+        return load_filters(agent_dir=str(agent_dir))
+
+    def _scan_project_filters(self, project_root: Path) -> dict[str, CompiledFilter]:
+        """Scan project-specific filter overrides from ``.evonic/filters/``.
+
+        Looks for TOML files in ``<project_root>/.evonic/filters/``.
+        Returns a dict keyed by ``command_re.pattern``.  Use
+        :func:`merge_filters` to apply these over an agent or built-in filter.
+        """
+        project_dir = project_root / ".evonic" / "filters"
+        if not project_dir.is_dir():
+            return {}
+        return load_filters(project_dir=str(project_dir))
 
     # ------------------------------------------------------------------
     # Initialization
@@ -73,6 +189,15 @@ class CompressorRegistry:
 
         Idempotent — subsequent calls are no-ops.  Call reload() to force
         re-scan.
+
+        Merge priority (highest wins):
+            1. Project-level  (``.evonic/filters/*.toml``)
+            2. Agent-level    (``agents/<id>/kb/filters/*.toml``)
+            3. Built-in       (``filters/builtin/*.toml``)
+
+        Filters with the same ``command_re.pattern`` are merged field-by-field:
+        a higher-priority filter only overrides the fields it explicitly
+        specifies.
         """
         if self._loaded:
             return
@@ -82,17 +207,21 @@ class CompressorRegistry:
 
         # --- Agent-specific filters (medium priority) ---
         if self._agent_id:
-            agent_dir = Path(f"agents/{self._agent_id}/kb/filters")
-            if agent_dir.is_dir():
-                agent_filters = load_filters(agent_dir=str(agent_dir))
-                self._filters.update(agent_filters)
+            agent_filters = self._scan_agent_filters(self._agent_id)
+            for key, agent_filt in agent_filters.items():
+                if key in self._filters:
+                    self._filters[key] = merge_filters(self._filters[key], agent_filt)
+                else:
+                    self._filters[key] = agent_filt
 
         # --- Project-specific filters (highest priority) ---
         if self._project_root:
-            project_dir = self._project_root / ".evonic" / "filters"
-            if project_dir.is_dir():
-                project_filters = load_filters(project_dir=str(project_dir))
-                self._filters.update(project_filters)
+            project_filters = self._scan_project_filters(self._project_root)
+            for key, proj_filt in project_filters.items():
+                if key in self._filters:
+                    self._filters[key] = merge_filters(self._filters[key], proj_filt)
+                else:
+                    self._filters[key] = proj_filt
 
         # --- Build LRU cache ---
         self._build_cache()
@@ -166,20 +295,25 @@ class CompressorRegistry:
                     logger.debug("RTK: no filter for command %r", command_str)
                 return output
 
-            if verbose:
-                before = len(output)
-                after_est = before  # approximate
+            # --- Token counting (approximate, via tiktoken) ---
+            pre_tokens = _count_tokens(output)
 
             result = run_pipeline(output, filt, exit_code)
 
+            post_tokens = _count_tokens(result)
+
+            # --- Record cumulative savings (thread-safe) ---
+            if pre_tokens > 0 or post_tokens > 0:
+                _record_compression(pre_tokens, post_tokens)
+
             if verbose:
-                after = len(result)
+                savings = (1 - post_tokens / pre_tokens) * 100 if pre_tokens else 0
                 logger.debug(
-                    "RTK: %r compressed %d → %d chars (%.0f%%) using %s",
+                    "RTK: %r compressed %d → %d tokens (%.0f%%) using %s",
                     command_str,
-                    before,
-                    after,
-                    (1 - after / before) * 100 if before else 0,
+                    pre_tokens,
+                    post_tokens,
+                    savings,
                     filt.description or filt.command_re.pattern,
                 )
 
