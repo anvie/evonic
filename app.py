@@ -45,6 +45,21 @@ from flask_sock import Sock
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 app = Flask(__name__)
+
+# Add plugin template directories to Jinja loader
+from jinja2 import ChoiceLoader, FileSystemLoader
+from backend.plugin_lifecycle import PLUGINS_DIR
+from pathlib import Path
+_plugin_template_dirs = []
+if Path(PLUGINS_DIR).exists():
+    for plugin_dir in Path(PLUGINS_DIR).iterdir():
+        tpl_dir = plugin_dir / 'templates'
+        if tpl_dir.exists():
+            _plugin_template_dirs.append(str(tpl_dir))
+app.jinja_loader = ChoiceLoader([
+    app.jinja_loader,
+    FileSystemLoader(_plugin_template_dirs)
+])
 sock = Sock(app)
 app.secret_key = config.SECRET_KEY
 

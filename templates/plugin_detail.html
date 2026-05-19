@@ -76,248 +76,6 @@
             </div>
         </div>
 
-        <!-- Token Management (agentapi only) -->
-        <div id="agentapi-tokens-section" class="hidden mt-6">
-            <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
-                <div class="flex items-center justify-between gap-2 mb-4">
-                    <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">API Token Management</h3>
-                    <button onclick="openTokenModal()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition">
-                        + Create Token
-                    </button>
-                </div>
-
-                <!-- Stats bar -->
-                <div id="token-stats-bar" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4"></div>
-
-                <!-- Tokens table -->
-                <div class="overflow-x-auto border border-gray-200 dark:border-gray-700 rounded-lg">
-                    <table class="w-full text-sm text-left">
-                        <thead class="bg-gray-50 dark:bg-gray-700/50 text-gray-500 dark:text-gray-400">
-                            <tr>
-                                <th class="px-4 py-3 font-semibold uppercase text-[11px] tracking-wider">Name</th>
-                                <th class="px-4 py-3 font-semibold uppercase text-[11px] tracking-wider">Token</th>
-                                <th class="px-4 py-3 font-semibold uppercase text-[11px] tracking-wider">Quota</th>
-                                <th class="px-4 py-3 font-semibold uppercase text-[11px] tracking-wider">Models</th>
-                                <th class="px-4 py-3 font-semibold uppercase text-[11px] tracking-wider">Status</th>
-                                <th class="px-4 py-3 font-semibold uppercase text-[11px] tracking-wider">Expires</th>
-                                <th class="px-4 py-3 font-semibold uppercase text-[11px] tracking-wider">Last Used</th>
-                                <th class="px-4 py-3 w-24 font-semibold uppercase text-[11px] tracking-wider">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="token-tbody" class="divide-y divide-gray-100 dark:divide-gray-700"></tbody>
-                    </table>
-                    <div id="token-empty-state" class="hidden p-8 text-center text-gray-400 text-sm">No tokens yet. Click "+ Create Token" to get started.</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Tab: About -->
-    <div id="tab-about" class="tab-content hidden">
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
-            <div id="about-content">
-                <p class="text-sm text-gray-400">Loading...</p>
-            </div>
-            <div id="about-empty" class="hidden">
-                <div class="text-center py-16 text-gray-400">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-                        <path d="M12 7v14"/>
-                        <path d="M16 12h2"/>
-                        <path d="M16 8h2"/>
-                        <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
-                        <path d="M6 12h2"/>
-                        <path d="M6 8h2"/>
-                    </svg>
-                    <p class="text-lg font-medium">No README.md</p>
-                    <p class="text-sm mt-1">This plugin does not include a README.md file with documentation.</p>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Tab: Logs -->
-    <div id="tab-logs" class="tab-content hidden">
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600">
-            <!-- Logs toolbar -->
-            <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-gray-200 dark:border-gray-600">
-                <div class="flex items-center gap-2">
-                    <select id="log-level-filter" onchange="applyLogFilter()" class="text-sm border border-gray-300 dark:border-gray-500 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md px-2.5 py-1.5 focus:border-indigo-500 focus:outline-none">
-                        <option value="all">All levels</option>
-                        <option value="info">Info</option>
-                        <option value="warn">Warning</option>
-                        <option value="error">Error</option>
-                    </select>
-                    <label class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-                        <input type="checkbox" id="log-auto-scroll" checked class="rounded border-gray-300 dark:border-gray-500 dark:bg-gray-600 text-indigo-500 focus:ring-indigo-500">
-                        Auto-scroll
-                    </label>
-                </div>
-                <div class="flex items-center gap-2">
-                    <span id="log-count" class="text-xs text-gray-400 dark:text-gray-500"></span>
-                    <button onclick="clearLogs()" class="px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-md transition-colors">Clear</button>
-                </div>
-            </div>
-            <!-- Log entries -->
-            <div id="log-container" class="h-[500px] md:h-[400px] overflow-y-auto font-mono text-xs">
-                <div id="log-entries" class="p-4 space-y-1"></div>
-                <div id="log-empty" class="text-center py-16 text-gray-400 dark:text-gray-500">
-                    <svg class="w-10 h-10 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                    <p class="text-sm">No logs yet</p>
-                    <p class="text-xs mt-1">Logs will appear here when the plugin processes events</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Text Editor Modal -->
-<div id="text-editor-modal" class="hidden fixed inset-0 z-50" role="dialog">
-    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeTextEditor()"></div>
-    <div class="relative flex flex-col h-full items-center justify-center p-4">
-        <div class="relative w-full max-w-3xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-600 flex flex-col max-h-[85vh]">
-            <!-- Modal Header -->
-            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-                <h3 id="modal-editor-title" class="text-base font-semibold text-gray-800 dark:text-gray-100">Edit</h3>
-                <button onclick="closeTextEditor()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                </button>
-            </div>
-            <!-- Modal Body -->
-            <div class="flex-1 overflow-y-auto px-6 py-4">
-                <textarea id="modal-editor-textarea"
-                          class="w-full h-[500px] p-4 border border-gray-300 dark:border-gray-500 rounded-lg text-sm font-mono bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-y"></textarea>
-            </div>
-            <!-- Modal Footer -->
-            <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-600">
-                <button onclick="closeTextEditor()" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors">Cancel</button>
-                <button onclick="saveModalEditor()" class="px-4 py-2 text-sm bg-indigo-500 hover:bg-indigo-600 text-white rounded-md font-medium transition-colors">Save</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ====== Token Create/Edit Modal (agentapi only) ====== -->
-<div id="token-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-            <h2 id="token-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Create Token</h2>
-            <button onclick="closeTokenModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none">&times;</button>
-        </div>
-        <div class="px-6 py-4 space-y-4">
-            <input type="hidden" id="token-edit-id" value="">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name *</label>
-                <input type="text" id="token-name" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400" placeholder="e.g. My App Token">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quota Limit <span class="text-gray-400 font-normal">(daily requests, blank = unlimited)</span></label>
-                <input type="number" id="token-quota" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" placeholder="e.g. 1000" min="1">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Expires At <span class="text-gray-400 font-normal">(ISO 8601, blank = never)</span></label>
-                <input type="text" id="token-expires" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" placeholder="e.g. 2026-12-31T23:59:59Z">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Allowed Models</label>
-                <div id="token-model-checkboxes" class="space-y-1 max-h-40 overflow-y-auto border border-gray-200 dark:border-gray-600 rounded-lg p-2"></div>
-                <p class="text-xs text-gray-400 mt-1">If none selected, all models are allowed.</p>
-            </div>
-            <div id="token-status-field" class="hidden">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
-                <select id="token-status" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
-                    <option value="active">Active</option>
-                    <option value="suspended">Suspended</option>
-                </select>
-            </div>
-            <div id="token-created-box" class="hidden p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                <p class="text-sm font-medium text-green-800 dark:text-green-300 mb-2">Token created! Copy it now &mdash; it won't be shown again.</p>
-                <div class="flex gap-2">
-                    <input type="text" id="token-created-value" readonly class="flex-1 px-3 py-2 bg-white dark:bg-gray-700 border border-green-300 dark:border-green-600 rounded-lg text-sm font-mono text-gray-900 dark:text-gray-100">
-                    <button onclick="copyCreatedToken()" class="px-3 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition">Copy</button>
-                </div>
-            </div>
-        </div>
-        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
-            <button onclick="closeTokenModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">Cancel</button>
-            <button id="token-save-btn" onclick="saveToken()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition">Create</button>
-        </div>
-    </div>
-</div>
-
-<!-- ====== Token Delete Confirm Modal (agentapi only) ====== -->
-<div id="token-delete-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">Delete Token?</h3>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">This action is permanent. API clients using this token will lose access.</p>
-        <div class="flex justify-end gap-2">
-            <button onclick="closeTokenDeleteModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">Cancel</button>
-            <button id="token-delete-confirm-btn" class="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition">Delete</button>
-        </div>
-    </div>
-</div>
-
-<!-- ====== Token Detail Modal (agentapi only) ====== -->
-<div id="token-detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-            <h2 id="token-detail-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Token Details</h2>
-            <button onclick="closeTokenDetailModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none">&times;</button>
-        </div>
-        <div class="px-6 py-4 space-y-4">
-            <!-- Name -->
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Name</label>
-                <p id="token-detail-name" class="text-sm font-medium text-gray-900 dark:text-gray-100"></p>
-            </div>
-            <!-- Token -->
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Token</label>
-                <div class="flex items-center gap-2">
-                    <p id="token-detail-prefix" class="text-sm font-mono text-gray-500 dark:text-gray-400"></p>
-                    <button id="token-detail-reveal-btn" onclick="toggleRevealToken()" class="hidden px-2 py-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded transition">Show</button>
-                </div>
-                <!-- Full token (only shown when newly created) -->
-                <div id="token-detail-plaintext-box" class="hidden mt-2 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                    <p class="text-xs font-medium text-green-800 dark:text-green-300 mb-1">Copy your token now — it won't be shown again.</p>
-                    <div class="flex gap-2">
-                        <input type="text" id="token-detail-plaintext" readonly class="flex-1 px-3 py-2 bg-white dark:bg-gray-700 border border-green-300 dark:border-green-600 rounded-lg text-sm font-mono text-gray-900 dark:text-gray-100">
-                        <button onclick="copyTokenDetailPlaintext()" class="px-3 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition">Copy</button>
-                    </div>
-                </div>
-            </div>
-            <!-- Quota -->
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Quota (used / limit)</label>
-                <p id="token-detail-quota" class="text-sm text-gray-900 dark:text-gray-100"></p>
-            </div>
-            <!-- Models -->
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Allowed Models</label>
-                <p id="token-detail-models" class="text-sm text-gray-900 dark:text-gray-100"></p>
-            </div>
-            <!-- Status -->
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Status</label>
-                <p id="token-detail-status" class="text-sm"></p>
-            </div>
-            <!-- Expires -->
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Expires</label>
-                <p id="token-detail-expires" class="text-sm text-gray-900 dark:text-gray-100"></p>
-            </div>
-            <!-- Last Used -->
-            <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Last Used</label>
-                <p id="token-detail-lastused" class="text-sm text-gray-900 dark:text-gray-100"></p>
-            </div>
-        </div>
-        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
-            <button onclick="closeTokenDetailModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">Close</button>
-            <button id="token-detail-edit-btn" onclick="" class="px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition">Edit</button>
-        </div>
-    </div>
-</div>
-
 <script>
 const PLUGIN_ID = '{{ plugin_id }}';
 let pluginData = null;
@@ -381,8 +139,8 @@ async function loadPlugin() {
     renderReadme(pluginData.readme);
 
     // Show token management section for agentapi plugin
-    if (PLUGIN_ID === 'agentapi') {
-        $('#agentapi-tokens-section').removeClass('hidden');
+    if (PLUGIN_ID === 'agentapi' || PLUGIN_ID === 'model-router') {
+        $('#plugin-tokens-section').removeClass('hidden');
     }
 
     // Show export button for all plugins
@@ -779,350 +537,223 @@ document.addEventListener('keydown', e => {
     }
 });
 
-// ==================== Token Management (agentapi, jQuery) ====================
 
-var agentapiTokens = [];
-var agentapiModelMap = {};
-var agentapiDeleteId = null;
-var detailTokenId = null;
-var tokenRevealed = false;
-var tokenDetailPrefixText = '';
-
-function isAgentAPIPlugin() {
-    return PLUGIN_ID === 'agentapi';
-}
-
-function loadTokenModelMap() {
-    if (!isAgentAPIPlugin()) return Promise.resolve();
-    return $.get('/api/agentapi/admin/model-agent-map').done(function(data) {
-        agentapiModelMap = data.map || {};
-    });
-}
-
-function loadTokens() {
-    if (!isAgentAPIPlugin()) return;
-    $.get('/api/agentapi/admin/tokens').done(function(data) {
-        agentapiTokens = data.tokens || [];
-        renderTokens();
-        renderTokenStats();
-    });
-}
-
-function renderTokenStats() {
-    var active = agentapiTokens.filter(function(t) { return t.status === 'active'; }).length;
-    var suspended = agentapiTokens.filter(function(t) { return t.status === 'suspended'; }).length;
-    var total = agentapiTokens.length;
-    var unlimited = agentapiTokens.filter(function(t) { return t.quota_limit === null; }).length;
-    $('#token-stats-bar').html(
-        '<div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-center">' +
-            '<div class="text-2xl font-bold text-gray-900 dark:text-gray-100">' + total + '</div>' +
-            '<div class="text-xs text-gray-500">Total Tokens</div></div>' +
-        '<div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-center">' +
-            '<div class="text-2xl font-bold text-green-600">' + active + '</div>' +
-            '<div class="text-xs text-gray-500">Active</div></div>' +
-        '<div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-center">' +
-            '<div class="text-2xl font-bold text-amber-600">' + suspended + '</div>' +
-            '<div class="text-xs text-gray-500">Suspended</div></div>' +
-        '<div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-center">' +
-            '<div class="text-2xl font-bold text-gray-900 dark:text-gray-100">' + unlimited + '</div>' +
-            '<div class="text-xs text-gray-500">Unlimited</div></div>'
-    );
-}
-
-function renderTokens() {
-    var tbody = $('#token-tbody');
-    var empty = $('#token-empty-state');
-    if (agentapiTokens.length === 0) {
-        tbody.empty();
-        empty.removeClass('hidden');
-        return;
-    }
-    empty.addClass('hidden');
-    tbody.html(agentapiTokens.map(function(t) {
-        var statusClass = t.status === 'active' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
-        var quotaText = t.quota_limit ? t.quota_used + '/' + t.quota_limit : t.quota_used + '/\u221e';
-        var modelsText = formatTokenModels(t.allowed_models);
-        var expiresText = t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never';
-        var isExpired = t.expires_at && new Date(t.expires_at) < new Date();
-        var lastUsed = t.last_used_at ? timeAgo(t.last_used_at) : 'Never';
-        var statusLabel = isExpired ? 'expired' : t.status;
-        var statusBadgeClass = isExpired ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' : statusClass;
-        return '<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">' +
-            '<td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100"><a href="#" onclick="openTokenDetail(' + t.id + ');return false;" class="text-indigo-600 dark:text-indigo-400 hover:underline">' + esc(t.name) + '</a></td>' +
-            '<td class="px-4 py-3 font-mono text-xs text-gray-500">' + esc(t.token_prefix) + '&hellip;</td>' +
-            '<td class="px-4 py-3 text-gray-600 dark:text-gray-300">' + quotaText + '</td>' +
-            '<td class="px-4 py-3 text-xs text-gray-500">' + esc(modelsText) + '</td>' +
-            '<td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ' + statusBadgeClass + '">' + statusLabel + '</span></td>' +
-            '<td class="px-4 py-3 text-xs text-gray-500">' + expiresText + '</td>' +
-            '<td class="px-4 py-3 text-xs text-gray-500">' + lastUsed + '</td>' +
-            '<td class="px-4 py-3">' +
-                '<div class="flex gap-1">' +
-                  '<button onclick="openTokenDetail(' + t.id + ')" class="px-2 py-1 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition">View</button>' +
-                  '<button onclick="openEditToken(' + t.id + ')" class="px-2 py-1 text-xs text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded transition">Edit</button>' +
-                  '<button onclick="askDeleteToken(' + t.id + ')" class="px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition">Del</button>' +
-                '</div>' +
-            '</td></tr>';
-    }).join(''));
-}
-
-function formatTokenModels(allowed) {
-    if (!allowed || allowed.length === 0 || (allowed.length === 1 && allowed[0] === '*')) return 'All';
-    return allowed.join(', ');
-}
-
-function renderTokenModelCheckboxes(selectedModels) {
-    var container = $('#token-model-checkboxes');
-    var models = Object.keys(agentapiModelMap).sort();
-    if (models.length === 0) {
-        container.html('<p class="text-xs text-gray-400 p-2">No models configured. Add mappings in MODEL_AGENT_MAP plugin variable.</p>');
-        return;
-    }
-    var sel = selectedModels && selectedModels.length > 0 && selectedModels[0] !== '*' ? selectedModels : [];
-    container.html(models.map(function(m) {
-        var checked = sel.length === 0 || sel.indexOf(m) !== -1 ? 'checked' : '';
-        return '<label class="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded cursor-pointer text-sm text-gray-700 dark:text-gray-300">' +
-            '<input type="checkbox" value="' + esc(m) + '" class="rounded border-gray-300 dark:border-gray-500 text-indigo-500 focus:ring-indigo-500 token-model-cb" ' + checked + '>' +
-            esc(m) + ' <span class="text-xs text-gray-400 ml-auto">\u2192 ' + esc(agentapiModelMap[m]) + '</span></label>';
-    }).join(''));
-}
-
-function getTokenCheckedModels() {
-    var checked = [];
-    $('.token-model-cb:checked').each(function() { checked.push($(this).val()); });
-    var allModels = Object.keys(agentapiModelMap);
-    return checked.length === allModels.length ? '*' : checked;
-}
-
-function openTokenModal() {
-    $('#token-modal-title').text('Create Token');
-    $('#token-edit-id').val('');
-    $('#token-name').val('');
-    $('#token-quota').val('');
-    $('#token-expires').val('');
-    $('#token-status-field').addClass('hidden');
-    $('#token-created-box').addClass('hidden');
-    $('#token-save-btn').text('Create');
-    renderTokenModelCheckboxes(null);
-    $('#token-modal').removeClass('hidden');
-}
-
-function openEditToken(id) {
-    var t = agentapiTokens.find(function(tok) { return tok.id === id; });
-    if (!t) return;
-    $('#token-modal-title').text('Edit Token');
-    $('#token-edit-id').val(t.id);
-    $('#token-name').val(t.name);
-    $('#token-quota').val(t.quota_limit || '');
-    $('#token-expires').val(t.expires_at || '');
-    $('#token-status').val(t.status);
-    $('#token-status-field').removeClass('hidden');
-    $('#token-created-box').addClass('hidden');
-    $('#token-save-btn').text('Save');
-    renderTokenModelCheckboxes(t.allowed_models);
-    $('#token-modal').removeClass('hidden');
-}
-
-function closeTokenModal() {
-    $('#token-modal').addClass('hidden');
-}
-
-function openTokenDetail(id, plaintext, tokenData) {
-    detailTokenId = id;
-    var t = tokenData || agentapiTokens.find(function(tok) { return tok.id === id; });
-    if (!t) return;
-
-    $('#token-detail-title').text('Token: ' + esc(t.name));
-    $('#token-detail-name').text(esc(t.name));
-    tokenDetailPrefixText = esc(t.token_prefix) + '...';
-    $('#token-detail-prefix').text(tokenDetailPrefixText);
-    tokenRevealed = false;
-    $('#token-detail-reveal-btn').text('Show').removeClass('hidden');
-
-    // Quota
-    var quotaText = t.quota_limit ? t.quota_used + ' / ' + t.quota_limit : t.quota_used + ' / \u221e';
-    $('#token-detail-quota').text(quotaText);
-
-    // Models
-    var modelsText = formatTokenModels(t.allowed_models);
-    $('#token-detail-models').text(esc(modelsText));
-
-    // Status
-    var isExpired = t.expires_at && new Date(t.expires_at) < new Date();
-    var statusLabel = isExpired ? 'expired' : t.status;
-    var statusClass = t.status === 'active' && !isExpired
-        ? 'inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-        : 'inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300';
-    $('#token-detail-status').html('<span class="' + statusClass + '">' + statusLabel + '</span>');
-
-    // Expires
-    var expiresText = t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never';
-    $('#token-detail-expires').text(expiresText);
-
-    // Last Used
-    var lastUsed = t.last_used_at ? timeAgo(t.last_used_at) : 'Never';
-    $('#token-detail-lastused').text(lastUsed);
-
-    // Plaintext (only when newly created)
-    if (plaintext) {
-        $('#token-detail-plaintext').val(plaintext);
-        $('#token-detail-plaintext-box').removeClass('hidden');
-    } else {
-        $('#token-detail-plaintext').val('');
-        $('#token-detail-plaintext-box').addClass('hidden');
-    }
-
-    // Wire edit button
-    $('#token-detail-edit-btn').attr('onclick', 'closeTokenDetailModal(); openEditToken(' + id + ');');
-
-    $('#token-detail-modal').removeClass('hidden');
-}
-
-function closeTokenDetailModal() {
-    detailTokenId = null;
-    tokenRevealed = false;
-    $('#token-detail-reveal-btn').addClass('hidden');
-    $('#token-detail-modal').addClass('hidden');
-}
-
-function copyTokenDetailPlaintext() {
-    var input = document.getElementById('token-detail-plaintext');
-    input.select();
-    input.setSelectionRange(0, 99999);
-    navigator.clipboard.writeText(input.value).catch(function() {});
-}
-
-function toggleRevealToken() {
-    var btn = $('#token-detail-reveal-btn');
-    if (tokenRevealed) {
-        // Hide: restore prefix
-        $('#token-detail-prefix').text(tokenDetailPrefixText);
-        btn.text('Show');
-        tokenRevealed = false;
-    } else {
-        // Show: fetch plaintext from /reveal endpoint
-        $.get('/api/agentapi/admin/tokens/' + detailTokenId + '/reveal').done(function(resp) {
-            if (resp.plaintext) {
-                $('#token-detail-prefix').text(resp.plaintext);
-                btn.text('Hide');
-                tokenRevealed = true;
-            }
-        }).fail(function() {
-            alert('Plaintext token is no longer available. It was only stored temporarily after creation.');
-        });
-    }
-}
-
-function saveToken() {
-    var id = $('#token-edit-id').val();
-    var name = $('#token-name').val().trim();
-    if (!name) { alert('Name is required'); return; }
-
-    var data = {
-        name: name,
-        quota_limit: $('#token-quota').val() ? parseInt($('#token-quota').val(), 10) : null,
-        expires_at: $('#token-expires').val().trim() || null,
-        allowed_models: getTokenCheckedModels()
-    };
-
-    var btn = $('#token-save-btn');
-    btn.prop('disabled', true).text('Saving...');
-
-    if (id) {
-        // Edit
-        $.ajax({
-            url: '/api/agentapi/admin/tokens/' + id,
-            method: 'PUT',
-            contentType: 'application/json',
-            data: JSON.stringify(data)
-        }).done(function(resp) {
-            closeTokenModal();
-            loadTokens();
-        }).fail(function(xhr) {
-            var err = xhr.responseJSON ? (xhr.responseJSON.error || 'Failed to update token') : 'Failed to update token';
-            alert(err);
-        }).always(function() {
-            btn.prop('disabled', false).text('Save');
-        });
-    } else {
-        // Create
-        $.ajax({
-            url: '/api/agentapi/admin/tokens',
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify(data)
-        }).done(function(resp) {
-            closeTokenModal();
-            if (resp.plaintext && resp.token) {
-                openTokenDetail(resp.token.id, resp.plaintext, resp.token);
-            }
-            loadTokens();
-        }).fail(function(xhr) {
-            var err = xhr.responseJSON ? (xhr.responseJSON.error || 'Failed to create token') : 'Failed to create token';
-            alert(err);
-            btn.prop('disabled', false).text('Create');
-        });
-    }
-}
-
-function copyCreatedToken() {
-    var input = document.getElementById('token-created-value');
-    input.select();
-    input.setSelectionRange(0, 99999);
-    navigator.clipboard.writeText(input.value).catch(function() {});
-}
-
-function askDeleteToken(id) {
-    agentapiDeleteId = id;
-    $('#token-delete-modal').removeClass('hidden');
-}
-
-function closeTokenDeleteModal() {
-    agentapiDeleteId = null;
-    $('#token-delete-modal').addClass('hidden');
-}
-
-function deleteToken() {
-    if (!agentapiDeleteId) return;
-    var btn = $('#token-delete-confirm-btn');
-    btn.prop('disabled', true).text('Deleting...');
-    $.ajax({
-        url: '/api/agentapi/admin/tokens/' + agentapiDeleteId,
-        method: 'DELETE'
-    }).done(function() {
-        closeTokenDeleteModal();
-        loadTokens();
-    }).fail(function(xhr) {
-        var err = xhr.responseJSON ? (xhr.responseJSON.error || 'Failed to delete token') : 'Failed to delete token';
-        alert(err);
-        btn.prop('disabled', false).text('Delete');
-    }).always(function() {
-        btn.prop('disabled', false).text('Delete');
-    });
-}
-
-// Wire delete confirm button
-$('#token-delete-confirm-btn').on('click', deleteToken);
-
-// Add timeAgo helper for last used
-function timeAgo(isoStr) {
-    if (!isoStr) return 'Never';
-    var diff = Date.now() - new Date(isoStr).getTime();
-    var mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return mins + 'm ago';
-    var hrs = Math.floor(mins / 60);
-    if (hrs < 24) return hrs + 'h ago';
-    var days = Math.floor(hrs / 24);
-    if (days < 30) return days + 'd ago';
-    return new Date(isoStr).toLocaleDateString();
-}
-
-// Init: show token section if agentapi, load tokens
+// Init
 loadPlugin().then(function() {
-    showTab('settings');
-    if (isAgentAPIPlugin()) {
-        loadTokenModelMap().then(function() { loadTokens(); });
-    }
+    showTab(’settings’);
 });
 </script>
+        <!-- Plugin Widgets (auto-loaded from *_widget.html) -->
+        {% for widget in widgets %}
+        {% include widget %}
+        {% endfor %}
+    </div>
+
+    <!-- Tab: About -->
+    <div id="tab-about" class="tab-content hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+            <div id="about-content">
+                <p class="text-sm text-gray-400">Loading...</p>
+            </div>
+            <div id="about-empty" class="hidden">
+                <div class="text-center py-16 text-gray-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                        <path d="M12 7v14"/>
+                        <path d="M16 12h2"/>
+                        <path d="M16 8h2"/>
+                        <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
+                        <path d="M6 12h2"/>
+                        <path d="M6 8h2"/>
+                    </svg>
+                    <p class="text-lg font-medium">No README.md</p>
+                    <p class="text-sm mt-1">This plugin does not include a README.md file with documentation.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab: Logs -->
+    <div id="tab-logs" class="tab-content hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600">
+            <!-- Logs toolbar -->
+            <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-gray-200 dark:border-gray-600">
+                <div class="flex items-center gap-2">
+                    <select id="log-level-filter" onchange="applyLogFilter()" class="text-sm border border-gray-300 dark:border-gray-500 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md px-2.5 py-1.5 focus:border-indigo-500 focus:outline-none">
+                        <option value="all">All levels</option>
+                        <option value="info">Info</option>
+                        <option value="warn">Warning</option>
+                        <option value="error">Error</option>
+                    </select>
+                    <label class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+                        <input type="checkbox" id="log-auto-scroll" checked class="rounded border-gray-300 dark:border-gray-500 dark:bg-gray-600 text-indigo-500 focus:ring-indigo-500">
+                        Auto-scroll
+                    </label>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="log-count" class="text-xs text-gray-400 dark:text-gray-500"></span>
+                    <button onclick="clearLogs()" class="px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-md transition-colors">Clear</button>
+                </div>
+            </div>
+            <!-- Log entries -->
+            <div id="log-container" class="h-[500px] md:h-[400px] overflow-y-auto font-mono text-xs">
+                <div id="log-entries" class="p-4 space-y-1"></div>
+                <div id="log-empty" class="text-center py-16 text-gray-400 dark:text-gray-500">
+                    <svg class="w-10 h-10 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                    <p class="text-sm">No logs yet</p>
+                    <p class="text-xs mt-1">Logs will appear here when the plugin processes events</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Text Editor Modal -->
+<div id="text-editor-modal" class="hidden fixed inset-0 z-50" role="dialog">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeTextEditor()"></div>
+    <div class="relative flex flex-col h-full items-center justify-center p-4">
+        <div class="relative w-full max-w-3xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-600 flex flex-col max-h-[85vh]">
+            <!-- Modal Header -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+                <h3 id="modal-editor-title" class="text-base font-semibold text-gray-800 dark:text-gray-100">Edit</h3>
+                <button onclick="closeTextEditor()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <!-- Modal Body -->
+            <div class="flex-1 overflow-y-auto px-6 py-4">
+                <textarea id="modal-editor-textarea"
+                          class="w-full h-[500px] p-4 border border-gray-300 dark:border-gray-500 rounded-lg text-sm font-mono bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-y"></textarea>
+            </div>
+            <!-- Modal Footer -->
+            <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-600">
+                <button onclick="closeTextEditor()" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors">Cancel</button>
+                <button onclick="saveModalEditor()" class="px-4 py-2 text-sm bg-indigo-500 hover:bg-indigo-600 text-white rounded-md font-medium transition-colors">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ====== Token Create/Edit Modal ====== -->
+<div id="token-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+            <h2 id="token-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Create Token</h2>
+            <button onclick="closeTokenModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none">&times;</button>
+        </div>
+        <div class="px-6 py-4 space-y-4">
+            <input type="hidden" id="token-edit-id" value="">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name *</label>
+                <input type="text" id="token-name" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400" placeholder="e.g. My App Token">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quota Limit <span class="text-gray-400 font-normal">(daily requests, blank = unlimited)</span></label>
+                <input type="number" id="token-quota" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" placeholder="e.g. 1000" min="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Expires At <span class="text-gray-400 font-normal">(ISO 8601, blank = never)</span></label>
+                <input type="text" id="token-expires" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" placeholder="e.g. 2026-12-31T23:59:59Z">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Allowed Models</label>
+                <div id="token-model-checkboxes" class="space-y-1 max-h-40 overflow-y-auto border border-gray-200 dark:border-gray-600 rounded-lg p-2"></div>
+                <p class="text-xs text-gray-400 mt-1">If none selected, all models are allowed.</p>
+            </div>
+            <div id="token-status-field" class="hidden">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
+                <select id="token-status" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                </select>
+            </div>
+            <div id="token-created-box" class="hidden p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                <p class="text-sm font-medium text-green-800 dark:text-green-300 mb-2">Token created! Copy it now &mdash; it won't be shown again.</p>
+                <div class="flex gap-2">
+                    <input type="text" id="token-created-value" readonly class="flex-1 px-3 py-2 bg-white dark:bg-gray-700 border border-green-300 dark:border-green-600 rounded-lg text-sm font-mono text-gray-900 dark:text-gray-100">
+                    <button onclick="copyCreatedToken()" class="px-3 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition">Copy</button>
+                </div>
+            </div>
+        </div>
+        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+            <button onclick="closeTokenModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">Cancel</button>
+            <button id="token-save-btn" onclick="saveToken()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- ====== Token Delete Confirm Modal (agentapi only) ====== -->
+<div id="token-delete-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">Delete Token?</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">This action is permanent. API clients using this token will lose access.</p>
+        <div class="flex justify-end gap-2">
+            <button onclick="closeTokenDeleteModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">Cancel</button>
+            <button id="token-delete-confirm-btn" class="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition">Delete</button>
+        </div>
+    </div>
+</div>
+
+<!-- ====== Token Detail Modal (agentapi only) ====== -->
+<div id="token-detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+            <h2 id="token-detail-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Token Details</h2>
+            <button onclick="closeTokenDetailModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none">&times;</button>
+        </div>
+        <div class="px-6 py-4 space-y-4">
+            <!-- Name -->
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Name</label>
+                <p id="token-detail-name" class="text-sm font-medium text-gray-900 dark:text-gray-100"></p>
+            </div>
+            <!-- Token -->
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Token</label>
+                <div class="flex items-center gap-2">
+                    <p id="token-detail-prefix" class="text-sm font-mono text-gray-500 dark:text-gray-400"></p>
+                    <button id="token-detail-reveal-btn" onclick="toggleRevealToken()" class="hidden px-2 py-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded transition">Show</button>
+                </div>
+                <!-- Full token (only shown when newly created) -->
+                <div id="token-detail-plaintext-box" class="hidden mt-2 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                    <p class="text-xs font-medium text-green-800 dark:text-green-300 mb-1">Copy your token now — it won't be shown again.</p>
+                    <div class="flex gap-2">
+                        <input type="text" id="token-detail-plaintext" readonly class="flex-1 px-3 py-2 bg-white dark:bg-gray-700 border border-green-300 dark:border-green-600 rounded-lg text-sm font-mono text-gray-900 dark:text-gray-100">
+                        <button onclick="copyTokenDetailPlaintext()" class="px-3 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition">Copy</button>
+                    </div>
+                </div>
+            </div>
+            <!-- Quota -->
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Quota (used / limit)</label>
+                <p id="token-detail-quota" class="text-sm text-gray-900 dark:text-gray-100"></p>
+            </div>
+            <!-- Models -->
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Allowed Models</label>
+                <p id="token-detail-models" class="text-sm text-gray-900 dark:text-gray-100"></p>
+            </div>
+            <!-- Status -->
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Status</label>
+                <p id="token-detail-status" class="text-sm"></p>
+            </div>
+            <!-- Expires -->
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Expires</label>
+                <p id="token-detail-expires" class="text-sm text-gray-900 dark:text-gray-100"></p>
+            </div>
+            <!-- Last Used -->
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Last Used</label>
+                <p id="token-detail-lastused" class="text-sm text-gray-900 dark:text-gray-100"></p>
+            </div>
+        </div>
+        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+            <button onclick="closeTokenDetailModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">Close</button>
+            <button id="token-detail-edit-btn" onclick="" class="px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition">Edit</button>
+        </div>
+    </div>
+</div>
+
+
 {% endblock %}

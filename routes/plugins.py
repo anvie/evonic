@@ -1,3 +1,5 @@
+from pathlib import Path
+
 """Plugin management routes — list, upload, toggle, configure, delete plugins."""
 
 import io
@@ -34,7 +36,9 @@ def plugin_detail_page(plugin_id):
     plugin = plugin_manager.get_plugin(plugin_id)
     if not plugin:
         return redirect('/plugins')
-    return render_template('plugin_detail.html', plugin_id=plugin_id)
+    plugin_template_dir = Path(PLUGINS_DIR) / plugin_id / 'templates'
+    widget_files = sorted([f.name for f in plugin_template_dir.glob('*_widget.html')]) if plugin_template_dir.exists() else []
+    return render_template('plugin_detail.html', plugin_id=plugin_id, widgets=widget_files)
 
 
 @plugins_bp.route('/api/plugins/<plugin_id>')
