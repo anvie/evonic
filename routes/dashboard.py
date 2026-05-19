@@ -13,7 +13,7 @@ from backend.plugin_manager import plugin_manager
 from backend.skills_manager import skills_manager
 from backend.skillsets import list_skillsets
 from backend.setup import (run_setup, test_connection, PROVIDER_DEFAULTS,
-                            TONE_PRESETS, LANGUAGE_PRESETS, check_docker_available)
+                            LANGUAGE_PRESETS, check_docker_available)
 import config
 
 # `resource` is a POSIX-only stdlib module — absent on Windows.
@@ -37,7 +37,6 @@ def setup_page():
         return redirect('/')
     return render_template('setup.html',
                            providers=PROVIDER_DEFAULTS,
-                           tones=TONE_PRESETS,
                            languages=LANGUAGE_PRESETS)
 
 
@@ -61,8 +60,6 @@ def api_setup():
             api_key=(data.get('api_key') or '').strip(),
             agent_name=data.get('agent_name', '').strip(),
             agent_id=data.get('agent_id', '').strip() or None,
-            tone=data.get('tone', 'professional'),
-            custom_tone_text=data.get('custom_tone_text', ''),
             description=data.get('description', ''),
             language=data.get('language', 'english'),
             sandbox_enabled=sandbox_enabled,

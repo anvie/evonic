@@ -1543,7 +1543,6 @@ def setup_wizard():
 
     from backend.setup import (
         PROVIDER_DEFAULTS,
-        TONE_PRESETS,
         build_sandbox_image,
         check_docker_available,
         run_setup,
@@ -1664,44 +1663,7 @@ def setup_wizard():
         )
         sys.exit(1)
 
-    # ── Step 7: Communication style ──
-    tones = list(TONE_PRESETS.items())
-    print()
-    print("  Communication style:")
-    print()
-    for i, (tid, t) in enumerate(tones, 1):
-        print(f"    [{i}] {t['label']:<14} {t['description']}")
-    print()
-    try:
-        tone_choice = input("  Choice [1]: ").strip() or "1"
-    except (EOFError, KeyboardInterrupt):
-        print("\n  Aborted.")
-        sys.exit(1)
-    try:
-        tidx = int(tone_choice) - 1
-        if tidx < 0 or tidx >= len(tones):
-            raise ValueError
-    except ValueError:
-        print("  Invalid choice.")
-        sys.exit(1)
-
-    tone_id, tone_cfg = tones[tidx]
-    custom_tone_text = ""
-    if tone_id == "custom":
-        print()
-        print("  Enter your custom style instructions (press Enter twice to finish):")
-        lines = []
-        try:
-            while True:
-                line = input("  > ")
-                if line == "" and lines and lines[-1] == "":
-                    break
-                lines.append(line)
-        except (EOFError, KeyboardInterrupt):
-            pass
-        custom_tone_text = "\n".join(lines).strip()
-
-    # ── Step 8: Docker Sandbox Detection ──
+    # ── Step 6: Docker Sandbox Detection ──
     sandbox_enabled = False
     print()
     docker_status = check_docker_available()
@@ -1738,7 +1700,7 @@ def setup_wizard():
         print(f"  Docker not available — {docker_status['message']}")
         print("  Sandbox execution will be disabled.")
 
-    # ── Step 9: Confirm ──
+    # ── Step 7: Confirm ──
     print()
     print("  Setup Summary")
     print("  " + "─" * 30)
@@ -1746,7 +1708,6 @@ def setup_wizard():
     print(f"  Base URL       : {base_url}")
     print(f"  Model          : {model_name}")
     print(f"  Agent          : {agent_name} ({agent_id})")
-    print(f"  Style          : {tone_cfg['label']}")
     print(f"  Sandbox        : {'Enabled' if sandbox_enabled else 'Disabled'}")
     print()
     try:
@@ -1768,8 +1729,6 @@ def setup_wizard():
         api_key=api_key,
         agent_name=agent_name,
         agent_id=agent_id,
-        tone=tone_id,
-        custom_tone_text=custom_tone_text,
         sandbox_enabled=sandbox_enabled,
     )
     if outcome.get("error"):
@@ -1780,7 +1739,7 @@ def setup_wizard():
     print()
     print(f"  Super agent '{agent_name}' created successfully.")
 
-    # ── Step 10: Telegram Binding ──
+    # ── Step 8: Telegram Binding ──
     bot_token = ""
     print()
     print("  Telegram Integration")
@@ -1819,7 +1778,7 @@ def setup_wizard():
     else:
         print("  Skipped. You can add Telegram later from the web dashboard.")
 
-    # ── Step 11: Password Setup ──
+    # ── Step 10: Password Setup ──
     from werkzeug.security import generate_password_hash
 
     print()
@@ -2162,7 +2121,6 @@ def reconfigure_wizard(supervisor=False):
     from backend.setup import (
         LANGUAGE_PRESETS,
         PROVIDER_DEFAULTS,
-        TONE_PRESETS,
         build_sandbox_image,
         check_docker_available,
         run_reconfigure,
@@ -2173,7 +2131,6 @@ def reconfigure_wizard(supervisor=False):
     super_agent = db.get_super_agent()
     agent_id = super_agent["id"]
 
-    current_tone = db.get_setting("super_agent_tone", "professional")
     current_language = db.get_setting("agent_language", "english")
     current_sandbox = db.get_setting("sandbox_default_enabled", "0") == "1"
 
@@ -2300,50 +2257,7 @@ def reconfigure_wizard(supervisor=False):
             print("  Aborted.")
             sys.exit(1)
 
-    # ── Step 6: Communication style ──
-    tones = list(TONE_PRESETS.items())
-    print()
-    print("  Communication style:")
-    print()
-    current_tone_idx = 1
-    for i, (tid, t) in enumerate(tones, 1):
-        mark = " (current)" if tid == current_tone else ""
-        print(f"    [{i}] {t['label']:<14} {t['description']}{mark}")
-        if tid == current_tone:
-            current_tone_idx = i
-    print()
-    try:
-        tone_choice = input(f"  Choice [{current_tone_idx}]: ").strip() or str(
-            current_tone_idx
-        )
-    except (EOFError, KeyboardInterrupt):
-        print("\n  Aborted.")
-        sys.exit(1)
-    try:
-        tidx = int(tone_choice) - 1
-        if tidx < 0 or tidx >= len(tones):
-            raise ValueError
-    except ValueError:
-        print("  Invalid choice.")
-        sys.exit(1)
-
-    tone_id, tone_cfg = tones[tidx]
-    custom_tone_text = ""
-    if tone_id == "custom":
-        print()
-        print("  Enter your custom style instructions (press Enter twice to finish):")
-        lines = []
-        try:
-            while True:
-                line = input("  > ")
-                if line == "" and lines and lines[-1] == "":
-                    break
-                lines.append(line)
-        except (EOFError, KeyboardInterrupt):
-            pass
-        custom_tone_text = "\n".join(lines).strip()
-
-    # ── Step 7: Language ──
+    # ── Step 6: Language ──
     languages = list(LANGUAGE_PRESETS.items())
     print()
     print("  Response language:")
@@ -2372,7 +2286,7 @@ def reconfigure_wizard(supervisor=False):
 
     language_id, _ = languages[lidx]
 
-    # ── Step 8: Docker Sandbox ──
+    # ── Step 6: Docker Sandbox ──
     sandbox_enabled = current_sandbox
     print()
     docker_status = check_docker_available()
@@ -2407,14 +2321,13 @@ def reconfigure_wizard(supervisor=False):
         print("  Sandbox execution will be disabled.")
         sandbox_enabled = False
 
-    # ── Step 9: Confirm ──
+    # ── Step 7: Confirm ──
     print()
     print("  Reconfigure Summary")
     print("  " + "─" * 30)
     print(f"  Provider       : {provider_cfg['label']}")
     print(f"  Base URL       : {base_url}")
     print(f"  Model          : {model_name}")
-    print(f"  Style          : {tone_cfg['label']}")
     print(f"  Language       : {LANGUAGE_PRESETS[language_id]['label']}")
     print(f"  Sandbox        : {'Enabled' if sandbox_enabled else 'Disabled'}")
     print()
@@ -2435,8 +2348,6 @@ def reconfigure_wizard(supervisor=False):
         model_name=model_name,
         base_url=base_url,
         api_key=api_key,
-        tone=tone_id,
-        custom_tone_text=custom_tone_text,
         language=language_id,
         sandbox_enabled=sandbox_enabled,
     )
@@ -2449,7 +2360,7 @@ def reconfigure_wizard(supervisor=False):
     print("  Platform reconfigured successfully.")
     print()
 
-    # ── Step 10: Optional password change ──
+    # ── Step 8: Optional password change ──
     try:
         import config
 

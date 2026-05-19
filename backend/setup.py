@@ -123,49 +123,7 @@ LANGUAGE_PRESETS = {
     },
 }
 
-TONE_PRESETS = {
-    "professional": {
-        "label": "Professional",
-        "description": "Clear, formal, business-appropriate communication",
-        "prompt_prefix": (
-            "## Communication Style\n\n"
-            "Communicate in a professional, clear, and formal tone. "
-            "Be direct and precise. Avoid slang, humor, and casual language.\n\n"
-        ),
-    },
-    "friendly": {
-        "label": "Friendly",
-        "description": "Warm, approachable, conversational",
-        "prompt_prefix": (
-            "## Communication Style\n\n"
-            "Communicate in a warm, friendly, and approachable tone. "
-            "Be conversational and encouraging. Use natural, human language.\n\n"
-        ),
-    },
-    "concise": {
-        "label": "Concise",
-        "description": "Minimal, to-the-point, no fluff",
-        "prompt_prefix": (
-            "## Communication Style\n\n"
-            "Be extremely concise. Give the shortest correct answer possible. "
-            "Skip pleasantries and filler text. Prefer bullet points over paragraphs.\n\n"
-        ),
-    },
-    "technical": {
-        "label": "Technical",
-        "description": "Detailed, precise, assumes technical audience",
-        "prompt_prefix": (
-            "## Communication Style\n\n"
-            "Communicate with technical precision. Assume the user has strong technical background. "
-            "Include relevant technical details, code references, and specific terminology.\n\n"
-        ),
-    },
-    "custom": {
-        "label": "Custom",
-        "description": "Define your own tone and style",
-        "prompt_prefix": "",  # user-provided text is used instead
-    },
-}
+
 
 # ---------------------------------------------------------------------------
 # Notes.md template
@@ -332,10 +290,13 @@ def test_connection(base_url: str, api_key: str = None) -> dict:
         return {"success": False, "message": str(e)}
 
 
-def build_system_prompt(tone_id: str, custom_tone_text: str = None) -> str:
+def build_system_prompt(tone_text: str = "") -> str:
     """
-    Build the super agent system prompt by prepending the tone block to the
-    default prompt in defaults/super_agent_system_prompt.md.
+    Build the super agent system prompt from the default template.
+
+    Reads defaults/super_agent_system_prompt.md and replaces the
+    {communication_style} placeholder with the given tone_text.
+    If the placeholder is absent, the template is returned as-is.
     """
     default_path = os.path.join(
         config.BASE_DIR, "defaults", "super_agent_system_prompt.md"
@@ -345,15 +306,9 @@ def build_system_prompt(tone_id: str, custom_tone_text: str = None) -> str:
         with open(default_path, "r", encoding="utf-8") as f:
             base_prompt = f.read()
 
-    preset = TONE_PRESETS.get(tone_id, TONE_PRESETS["professional"])
-    if tone_id == "custom" and custom_tone_text:
-        tone_block = "## Communication Style\n\n" + custom_tone_text.strip() + "\n\n"
-    elif preset["prompt_prefix"]:
-        tone_block = preset["prompt_prefix"]
-    else:
-        tone_block = ""
-
-    return tone_block + base_prompt
+    if "{communication_style}" in base_prompt:
+        return base_prompt.replace("{communication_style}", tone_text.strip())
+    return base_prompt
 
 
 def _derive_agent_id(name: str) -> str:
@@ -375,8 +330,6 @@ def run_setup(
     api_key: str,
     agent_name: str,
     agent_id: str = None,
-    tone: str = "professional",
-    custom_tone_text: str = None,
     description: str = "",
     language: str = "english",
     sandbox_enabled: bool = False,
@@ -385,7 +338,7 @@ def run_setup(
     """
     Execute first-time setup:
     1. Create LLM model entry in DB and set as default
-    2. Build system prompt with tone
+    2. Build system prompt
     3. Create super agent with is_super=True
     4. Write SYSTEM.md
     5. Assign default tools
@@ -458,7 +411,7 @@ def run_setup(
         )
 
         # 2. Build system prompt
-        system_prompt = build_system_prompt(tone, custom_tone_text)
+        system_prompt = build_system_prompt()
 
         # 3. Create super agent
         _ensure_kb_dir(agent_id)
@@ -499,7 +452,6 @@ def run_setup(
 
         # 6. Store settings
         db.set_setting("super_agent_id", agent_id)
-        db.set_setting("super_agent_tone", tone)
         db.set_setting("agent_language", language)
         db.set_setting("sandbox_default_enabled", "1" if sandbox_enabled else "0")
 
@@ -564,8 +516,6 @@ def run_reconfigure(
     model_name: str,
     base_url: str,
     api_key: str,
-    tone: str = "professional",
-    custom_tone_text: str = None,
     language: str = "english",
     sandbox_enabled: bool = False,
     password: str = "",
@@ -573,10 +523,10 @@ def run_reconfigure(
     """
     Reconfigure an existing Evonic setup:
     1. Update or create LLM model entry in DB and set as default
-    2. Build new system prompt with tone and language
+    2. Build new system prompt with language
     3. Update super agent's system prompt
     4. Update agent sandbox setting
-    5. Store settings (tone, language, sandbox)
+    5. Store settings (language, sandbox)
     6. Update admin password if provided
 
     Returns {'success': True, 'agent_id': str} or {'error': str}.
@@ -631,10 +581,10 @@ def run_reconfigure(
             model_data["thinking"] = 1 if provider_cfg.get("default_thinking") else 0
             db.create_model(model_data)
 
-        # 2. Build new system prompt (tone + language)
-        tone_prompt = build_system_prompt(tone, custom_tone_text)
+        # 2. Build new system prompt (with language)
+        base_prompt = build_system_prompt()
         lang_cfg = LANGUAGE_PRESETS.get(language, LANGUAGE_PRESETS["english"])
-        full_prompt = tone_prompt + "\n" + lang_cfg["instruction"] + "\n"
+        full_prompt = base_prompt + "\n" + lang_cfg["instruction"] + "\n"
 
         # 3. Get super agent and update
         super_agent = db.get_super_agent()
@@ -655,7 +605,6 @@ def run_reconfigure(
         db.update_agent(agent_id, {"sandbox_enabled": 1 if sandbox_enabled else 0})
 
         # 5. Store settings
-        db.set_setting("super_agent_tone", tone)
         db.set_setting("agent_language", language)
         db.set_setting("sandbox_default_enabled", "1" if sandbox_enabled else "0")
 
