@@ -99,12 +99,15 @@ def check_long_running(script: str) -> dict | None:
     ts = str(int(time.time()))
     session_name = f"evonic_build_{ts}"
     log_file = f"/tmp/evonic_build_{ts}.log"
+    pid_file = f"/tmp/evonic_build_{ts}.pid"
 
-    run_script = _build_wrapper_script(script, session_name, log_file)
+    run_script = _build_wrapper_script(script, session_name, log_file, pid_file)
     monitor_script = f"tail -f {log_file}"
+    # Check all three backends: tmux session, screen session, or PID file from nohup
     check_status_script = (
         f'tmux has-session -t {session_name} 2>/dev/null && echo "RUNNING" || '
-        f'(screen -list | grep -q {session_name} && echo "RUNNING" || echo "DONE")'
+        f'(screen -list | grep -q {session_name} && echo "RUNNING" || '
+        f'([ -f {pid_file} ] && kill -0 $(cat {pid_file}) 2>/dev/null && echo "RUNNING" || echo "DONE"))'
     )
     check_exit_code_script = f"tail -1 {log_file} | grep -oP '(?<=EXIT_CODE=)\\d+'"
 
@@ -136,6 +139,7 @@ def _detect_long_running(script: str) -> dict | None:
 
 def _build_wrapper_script(
     original_script: str, session_name: str, log_file: str,
+    pid_file: str,
 ) -> str:
     """
     Generate a bash script that wraps the original command in tmux (preferred),
@@ -147,6 +151,7 @@ def _build_wrapper_script(
     return f"""\
 {BYPASS_MARKER}
 LOG_FILE="{log_file}"
+PID_FILE="{pid_file}"
 SESS="{session_name}"
 SCRIPT_CMD='{{ {escaped}; }}; EC=$?; echo ""; echo "EXIT_CODE=$EC"'
 
@@ -164,10 +169,12 @@ elif command -v screen &>/dev/null; then
   echo "Status:   screen -list | grep -q $SESS && echo RUNNING || echo DONE"
 else
   nohup bash -c "$SCRIPT_CMD" > "$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
   echo "Started as background process (PID: $!)"
   echo "Log file: $LOG_FILE"
+  echo "PID file: $PID_FILE"
   echo "Monitor:  tail -f $LOG_FILE"
-  echo "Status:   kill -0 $! 2>/dev/null && echo RUNNING || echo DONE"
+  echo "Status:   [ -f $PID_FILE ] && kill -0 \\$(cat $PID_FILE) 2>/dev/null && echo RUNNING || echo DONE"
 fi"""
 
 
@@ -297,6 +304,20 @@ def _self_test():
     assert "run_script" in r["suggestion"], "Suggestion should reference run_script"
     passed += 1
     print(f"Test 18 PASSED: suggestion contains actionable instructions")
+
+    # Test 19: nohup fallback saves PID to file
+    r = check_long_running("make all")
+    assert "PID_FILE=" in r["run_script"], "Wrapper should define PID_FILE"
+    assert 'echo $! > "$PID_FILE"' in r["run_script"], "nohup branch should save PID to file"
+    passed += 1
+    print(f"Test 19 PASSED: nohup saves PID to file")
+
+    # Test 20: check_status_script covers nohup PID file fallback
+    r = check_long_running("make all")
+    assert ".pid" in r["check_status_script"], "check_status should check PID file"
+    assert "kill -0" in r["check_status_script"], "check_status should use kill -0 on PID"
+    passed += 1
+    print(f"Test 20 PASSED: check_status_script covers nohup PID file")
 
     print(f"\nAll {passed} tests passed!")
 
