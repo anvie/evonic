@@ -64,7 +64,7 @@ strip_lines = [
     "^\\d+ files? (left unchanged|already clean)$",
     "^All checks passed!",
     "^Found \\d+ errors?",   # ruff summary (keep the actual diagnostics)
-    "^\\d+ errors? (found )?in ",
+    "^\\d+ errors? found",            # ruff/flake8 summary line
     "^\\d+ fixable with",
     "^\\d+ potentially fixable",
 
