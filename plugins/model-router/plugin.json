@@ -1,0 +1,20 @@
+{
+  "id": "model-router",
+  "name": "Model Router API",
+  "version": "1.0.0",
+  "description": "Expose Evonic LLM models via an OpenAI-compatible REST API. Bearer-token-authenticated model completions with quota, rate-limit, and usage logging.",
+  "author": "Evonic",
+  "enabled": true,
+  "events": [
+    "turn_complete"
+  ],
+  "variables": [
+    {
+      "name": "MODEL_MODEL_MAP",
+      "label": "Model \u2192 Model Mapping",
+      "type": "textarea",
+      "default": "{}",
+      "description": "JSON mapping public model aliases (keys) to internal model_name values (values). Used by /v1/models and /v1/chat/completions.\n\nExample: {\n  \"my-llm\": \"deepseek-v4-flash\"\n}"
+    }
+  ]
+}
