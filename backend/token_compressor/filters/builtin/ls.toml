@@ -3,7 +3,7 @@ command = "^(ls|dir)\\b"
 description = "Compact ls — filename + size only"
 strip_ansi = true
 replace = [
-    { pattern = "^[dlrwx-]{10}\\s+\\d+\\s+\\w+\\s+\\w+\\s+(\\d+)\\s+\\w+\\s+\\d+\\s+\\d+:\\d+\\s+(.+)$", replacement = "$1\t$2" },
+    { pattern = "^[dlrwx-]{10}\\s+\\d+\\s+\\w+\\s+\\w+\\s+(\\d+)\\s+\\w+\\s+\\d+\\s+\\d+:\\d+\\s+(.+)$", replacement = "\\1\t\\2" },
 ]
 max_lines = 50
 on_empty = "ls: empty directory"
