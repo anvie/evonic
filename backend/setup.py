@@ -432,12 +432,19 @@ def run_setup(
         # 4. Write SYSTEM.md on disk
         _write_system_prompt(agent_id, system_prompt)
 
-        # 4.5 Copy default knowledge base file
+        # 4.5 Copy default knowledge base files
         _default_kb = os.path.join(config.BASE_DIR, 'defaults', 'super_agent_kb_evonic.md')
         if os.path.isfile(_default_kb):
             _kb_dir = os.path.join(config.BASE_DIR, "agents", agent_id, "kb")
             os.makedirs(_kb_dir, exist_ok=True)
             shutil.copy2(_default_kb, os.path.join(_kb_dir, "evonic.md"))
+
+        # 4.5.1 Copy howto-create-schedule.md (scheduler/reminder guide)
+        _scheduler_kb = os.path.join(config.BASE_DIR, 'defaults', 'howto-create-schedule.md')
+        if os.path.isfile(_scheduler_kb):
+            _kb_dir = os.path.join(config.BASE_DIR, "agents", agent_id, "kb")
+            os.makedirs(_kb_dir, exist_ok=True)
+            shutil.copy2(_scheduler_kb, os.path.join(_kb_dir, "howto-create-schedule.md"))
 
         # 4.6 Create notes.md template for user preferences
         _notes_md_path = os.path.join(config.BASE_DIR, "agents", agent_id, "kb", "notes.md")

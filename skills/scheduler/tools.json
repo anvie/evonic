@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "create_schedule",
-      "description": "Create a new scheduled job. Supports one-shot (date), recurring (interval), and cron triggers. Actions can send a message to an agent or emit a system event.",
+      "description": "Create a new scheduled job. Supports one-shot (date), recurring (interval), and cron triggers. Actions can send a static message, trigger a full LLM session (session_prompt), or emit a system event.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -13,7 +13,11 @@
           },
           "trigger_type": {
             "type": "string",
-            "enum": ["date", "interval", "cron"],
+            "enum": [
+              "date",
+              "interval",
+              "cron"
+            ],
             "description": "Type of trigger. 'date' = one-shot at specific time. 'interval' = recurring every N seconds/minutes/hours. 'cron' = cron-like pattern."
           },
           "trigger_config": {
@@ -22,19 +26,29 @@
           },
           "action_type": {
             "type": "string",
-            "enum": ["agent_message", "emit_event"],
-            "description": "What to do when the schedule fires. 'agent_message' sends a message to an agent. 'emit_event' emits a system event."
+            "enum": [
+              "static_message",
+              "session_prompt",
+              "emit_event"
+            ],
+            "description": "What to do when the schedule fires. 'static_message' delivers a pre-composed message to the user (simple reminder/nudge). 'session_prompt' sends a prompt through the user's real session, triggering full LLM processing with tool access. 'emit_event' emits a system event."
           },
           "action_config": {
             "type": "object",
-            "description": "Action parameters. For 'agent_message': {\"agent_id\": \"...\", \"message\": \"...\"}. For 'emit_event': {\"event_name\": \"...\", \"payload\": {...}}. If agent_id is omitted in agent_message, defaults to the calling agent."
+            "description": "Action parameters. For 'static_message': {\"agent_id\": \"...\", \"message\": \"...\"}. For 'session_prompt': {\"agent_id\": \"...\", \"message\": \"...\"}. For 'emit_event': {\"event_name\": \"...\", \"payload\": {...}}. If agent_id is omitted in static_message/session_prompt, defaults to the calling agent."
           },
           "max_runs": {
             "type": "integer",
             "description": "Maximum number of times this schedule should fire. Omit or null for unlimited. Automatically set to 1 for 'date' triggers."
           }
         },
-        "required": ["name", "trigger_type", "trigger_config", "action_type", "action_config"]
+        "required": [
+          "name",
+          "trigger_type",
+          "trigger_config",
+          "action_type",
+          "action_config"
+        ]
       }
     }
   },
@@ -51,7 +65,9 @@
             "description": "The UUID of the schedule to cancel."
           }
         },
-        "required": ["schedule_id"]
+        "required": [
+          "schedule_id"
+        ]
       }
     }
   },
