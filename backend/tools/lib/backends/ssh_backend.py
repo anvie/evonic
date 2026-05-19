@@ -358,6 +358,54 @@ class SSHBackend(ExecutionBackend):
             return {'error': r.get('stderr', '') or r.get('error', 'mkdir failed')}
         return {'ok': True}
 
+    def sftp_upload(self, local_path: str, remote_path: str, progress_cb=None) -> dict:
+        """Upload a local file to the remote host via SFTP (binary-safe, no size limit)."""
+        try:
+            remote_dir = remote_path.rsplit('/', 1)[0] if '/' in remote_path else ''
+            if remote_dir:
+                self._exec(f'mkdir -p {shlex.quote(remote_dir)}', '', 10)
+            sftp = self._client.open_sftp()
+            try:
+                sftp.put(local_path, remote_path, callback=progress_cb)
+                return {'ok': True}
+            finally:
+                sftp.close()
+        except Exception as e:
+            # Retry once on connection loss
+            try:
+                self._connect()
+                sftp = self._client.open_sftp()
+                try:
+                    sftp.put(local_path, remote_path, callback=progress_cb)
+                    return {'ok': True}
+                finally:
+                    sftp.close()
+            except Exception as e2:
+                return {'error': f'SFTP upload failed: {e2}'}
+
+    def sftp_download(self, remote_path: str, local_path: str, progress_cb=None) -> dict:
+        """Download a file from the remote host to local filesystem via SFTP (binary-safe)."""
+        try:
+            os.makedirs(os.path.dirname(local_path) or '.', exist_ok=True)
+            sftp = self._client.open_sftp()
+            try:
+                sftp.get(remote_path, local_path, callback=progress_cb)
+                return {'ok': True}
+            finally:
+                sftp.close()
+        except Exception as e:
+            # Retry once on connection loss
+            try:
+                self._connect()
+                sftp = self._client.open_sftp()
+                try:
+                    sftp.get(remote_path, local_path, callback=progress_cb)
+                    return {'ok': True}
+                finally:
+                    sftp.close()
+            except Exception as e2:
+                return {'error': f'SFTP download failed: {e2}'}
+
     def destroy(self) -> dict:
         try:
             self._client.close()

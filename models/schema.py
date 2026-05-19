@@ -745,6 +745,29 @@ class SchemaMixin:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_portals_agent ON portals(agent_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_portals_backend_type ON portals(backend_type)")
 
+            # ==================== Transfer Jobs Table ====================
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS transfer_jobs (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    source_path TEXT NOT NULL,
+                    dest_path TEXT NOT NULL,
+                    source_backend_type TEXT NOT NULL,
+                    dest_backend_type TEXT NOT NULL,
+                    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed','cancelled')),
+                    total_bytes INTEGER DEFAULT 0,
+                    bytes_transferred INTEGER DEFAULT 0,
+                    error_msg TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+                )
+            """)
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfer_jobs_agent ON transfer_jobs(agent_id)")
+
             # ==================== HMADS Safety Rules Table ====================
 
             cursor.execute("""

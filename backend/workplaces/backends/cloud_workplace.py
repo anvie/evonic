@@ -149,6 +149,24 @@ class CloudWorkplaceBackend(ExecutionBackend):
             return {'error': r.get('stderr', '') or r.get('error', 'write failed')}
         return {'ok': True}
 
+    def read_file_b64(self, path: str, offset: int = 0, size: int = 0) -> dict:
+        """Read a chunk of a file as base64 from the remote via RPC."""
+        r = self._call('read_file_b64', {'path': path, 'offset': offset, 'size': size}, timeout=60)
+        if 'error' in r or ('exit_code' in r and r['exit_code'] < 0):
+            return {'error': r.get('stderr', '') or r.get('error', 'read_file_b64 failed')}
+        return r
+
+    def write_file_b64(self, path: str, data_b64: str, offset: int = 0, is_last: bool = True) -> dict:
+        """Write a base64-encoded chunk to a file on the remote via RPC."""
+        mode = "create" if offset == 0 else "append"
+        r = self._call('write_file_b64', {
+            'path': path, 'data': data_b64, 'offset': offset,
+            'is_last': is_last, 'mode': mode,
+        }, timeout=60)
+        if 'error' in r or ('exit_code' in r and r['exit_code'] < 0):
+            return {'error': r.get('stderr', '') or r.get('error', 'write_file_b64 failed')}
+        return {'ok': True}
+
     def make_dirs(self, path: str) -> dict:
         r = self.run_bash(f'mkdir -p {shlex.quote(path)}', 10, {})
         if r.get('exit_code', 1) != 0:

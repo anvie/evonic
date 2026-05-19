@@ -1,0 +1,19 @@
+{
+  "id": "copy_status",
+  "name": "Copy Status",
+  "description": "Check the status of a background file copy job.",
+  "function": {
+    "name": "copy_status",
+    "description": "Check the progress of a background portal_copy transfer. Returns status (pending/running/completed/failed), progress percentage, and bytes transferred.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "description": "The job ID returned by portal_copy for large file transfers."
+        }
+      },
+      "required": ["job_id"]
+    }
+  }
+}

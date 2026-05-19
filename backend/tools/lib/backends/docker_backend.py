@@ -695,6 +695,31 @@ class DockerBackend(ExecutionBackend):
         except Exception:
             return {'error': 'Failed to parse response from container'}
 
+    def docker_cp_out(self, container_path: str, host_path: str) -> dict:
+        """Copy a file from the container to the host filesystem."""
+        container_id, err = _get_or_create_container(
+            self._session_id, agent_id=self._agent_id, workspace=self._workspace,
+        )
+        if err:
+            return {'error': err}
+        os.makedirs(os.path.dirname(host_path) or '.', exist_ok=True)
+        result = _docker('cp', f'{container_id}:{container_path}', host_path)
+        if result.returncode != 0:
+            return {'error': result.stderr.strip() or 'docker cp out failed'}
+        return {'ok': True}
+
+    def docker_cp_in(self, host_path: str, container_path: str) -> dict:
+        """Copy a file from the host filesystem into the container."""
+        container_id, err = _get_or_create_container(
+            self._session_id, agent_id=self._agent_id, workspace=self._workspace,
+        )
+        if err:
+            return {'error': err}
+        result = _docker('cp', host_path, f'{container_id}:{container_path}')
+        if result.returncode != 0:
+            return {'error': result.stderr.strip() or 'docker cp in failed'}
+        return {'ok': True}
+
     def destroy(self) -> dict:
         return _destroy_container(self._session_id)
 

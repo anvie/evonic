@@ -61,6 +61,10 @@ func (e *Executor) Handle(req Request) Response {
 		resp = e.handleReadFile(req)
 	case "write_file":
 		resp = e.handleWriteFile(req)
+	case "read_file_b64":
+		resp = e.handleReadFileB64(req)
+	case "write_file_b64":
+		resp = e.handleWriteFileB64(req)
 	default:
 		resp = Response{ID: req.ID, OK: false, Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
@@ -89,6 +93,14 @@ func (e *Executor) logRequest(req Request) {
 		var p writeFileParams
 		json.Unmarshal(req.Params, &p) //nolint
 		log.Printf("[evonet] → write_file: %s (%s, %d bytes)", p.Path, p.Mode, len(p.Content))
+	case "read_file_b64":
+		var p readFileB64Params
+		json.Unmarshal(req.Params, &p) //nolint
+		log.Printf("[evonet] → read_file_b64: %s (offset=%d, size=%d)", p.Path, p.Offset, p.Size)
+	case "write_file_b64":
+		var p writeFileB64Params
+		json.Unmarshal(req.Params, &p) //nolint
+		log.Printf("[evonet] → write_file_b64: %s (offset=%d, is_last=%v, %d b64 bytes)", p.Path, p.Offset, p.IsLast, len(p.Data))
 	default:
 		log.Printf("[evonet] → %s", req.Method)
 	}

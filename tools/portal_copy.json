@@ -1,0 +1,23 @@
+{
+  "id": "portal_copy",
+  "name": "Portal Copy",
+  "description": "Copy files between workspace and portal paths, or between portals. Supports large binary files.",
+  "function": {
+    "name": "portal_copy",
+    "description": "Copy a file from source to destination. Paths can be workspace paths (relative or absolute within your working directory) or portal paths (/_portal/...). Supports binary files of any size. For files larger than 10MB, the transfer runs in the background and a job_id is returned — poll with copy_status(job_id) to check progress.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Source file path. Use /_portal/<name>/... for portal files, or a workspace-relative path for files in your working directory."
+        },
+        "destination": {
+          "type": "string",
+          "description": "Destination file path. Use /_portal/<name>/... for portal files, or a workspace-relative path for files in your working directory."
+        }
+      },
+      "required": ["source", "destination"]
+    }
+  }
+}

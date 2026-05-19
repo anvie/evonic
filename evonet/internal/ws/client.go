@@ -125,6 +125,7 @@ func (c *Client) connect() error {
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", url, err)
 	}
+	conn.SetReadLimit(512 * 1024) // 512KB for base64 chunks + JSON wrapper
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
