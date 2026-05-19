@@ -439,12 +439,12 @@ def run_setup(
             os.makedirs(_kb_dir, exist_ok=True)
             shutil.copy2(_default_kb, os.path.join(_kb_dir, "evonic.md"))
 
-        # 4.5.1 Copy howto-create-schedule.md (scheduler/reminder guide)
-        _scheduler_kb = os.path.join(config.BASE_DIR, 'defaults', 'howto-create-schedule.md')
+        # 4.5.1 Copy reminder-and-schedule-creation-rules.md (scheduler/reminder guide)
+        _scheduler_kb = os.path.join(config.BASE_DIR, 'defaults', 'reminder-and-schedule-creation-rules.md')
         if os.path.isfile(_scheduler_kb):
             _kb_dir = os.path.join(config.BASE_DIR, "agents", agent_id, "kb")
             os.makedirs(_kb_dir, exist_ok=True)
-            shutil.copy2(_scheduler_kb, os.path.join(_kb_dir, "howto-create-schedule.md"))
+            shutil.copy2(_scheduler_kb, os.path.join(_kb_dir, "reminder-and-schedule-creation-rules.md"))
 
         # 4.6 Create notes.md template for user preferences
         _notes_md_path = os.path.join(config.BASE_DIR, "agents", agent_id, "kb", "notes.md")
