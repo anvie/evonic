@@ -111,7 +111,7 @@ var twRevealed = false;
 
 // ---- API Helpers ----
 function tw_api(path) {
-    return '/api/' + PLUGIN_ID + '/admin' + path;
+    return '/api/' + '{{ plugin_id }}' + '/admin' + path;
 }
 
 function tw_loadModelMap() {
