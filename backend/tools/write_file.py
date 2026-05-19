@@ -219,6 +219,10 @@ def execute(agent, args: dict) -> dict:
     if isinstance(create_dirs, str):
         create_dirs = create_dirs.lower() not in ('false', '0', 'no')
 
+    # Normalise smart quotes in code content before writing
+    from backend.normalizer import normalize_code_quotes
+    content = normalize_code_quotes(content)
+
     if file_path is None:
         return {'error': "Missing required argument: 'file_path'"}
     if content is None:

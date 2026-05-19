@@ -46,6 +46,9 @@ def execute(agent: dict, args: dict) -> dict:
             with open(filepath, 'wb') as f:
                 f.write(decoded)
         else:
+            # Normalise smart quotes in text mode artifacts
+            from backend.normalizer import normalize_code_quotes
+            content = normalize_code_quotes(content)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
         stat = os.stat(filepath)

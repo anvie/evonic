@@ -18,3 +18,34 @@ _QUOTE_TABLE = str.maketrans({
 def normalize_llm_text(text: str) -> str:
     """Replace JSON-unsafe quote characters with safe typographic equivalents."""
     return text.translate(_QUOTE_TABLE) if text else text
+
+
+# ---------------------------------------------------------------------------
+# Smart-quote normalization for code written by agents
+# ---------------------------------------------------------------------------
+# Small LLM models sometimes generate smart/curly quotes (U+2018, U+2019,
+# U+201C, U+201D) when writing code.  This causes SyntaxError in the
+# browser/JavaScript runtime because smart quotes are not valid characters
+# for string delimiters in most programming languages.
+#
+# The functions below normalise those typographic quotes back to their
+# plain-ASCII equivalents before the content is written to disk.
+
+_CODE_QUOTE_TABLE = str.maketrans({
+    "\u2018": "'",   # \u2018 left single quotation mark  -> ' straight apostrophe
+    "\u2019": "'",   # \u2019 right single quotation mark -> ' straight apostrophe
+    "\u201c": '"',   # \u201c left double quotation mark  -> " straight double quote
+    "\u201d": '"',   # \u201d right double quotation mark -> " straight double quote
+})
+
+
+def normalize_code_quotes(text: str) -> str:
+    """Replace typographic/smart quotes with plain-ASCII equivalents.
+
+    Converts:
+      U+2018/U+2019 (curly single quotes)  ->  U+0027 (straight apostrophe)
+      U+201C/U+201D (curly double quotes)  ->  U+0022 (straight double quote)
+    """
+    if not text:
+        return text
+    return text.translate(_CODE_QUOTE_TABLE)

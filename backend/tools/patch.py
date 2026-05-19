@@ -523,6 +523,10 @@ def execute(agent, args: dict) -> dict:
                 },
             }
 
+    # Normalise smart quotes in patch content before applying
+    from backend.normalizer import normalize_code_quotes
+    patch_text = normalize_code_quotes(patch_text)
+
     # /_self/ path: always route to the agent's local directory on the evonic server.
     from backend.tools._workspace import is_self_path, resolve_self_path
     agent_id = (agent or {}).get('id')

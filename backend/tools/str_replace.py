@@ -148,6 +148,10 @@ def execute(agent, args: dict) -> dict:
     if not old_str:
         return {'error': "'old_str' must not be empty"}
 
+    # Normalise smart quotes in replacement content before applying
+    from backend.normalizer import normalize_code_quotes
+    new_str = normalize_code_quotes(new_str)
+
     # /_self/ path: always route to the agent's local directory on the evonic server.
     from backend.tools._workspace import is_self_path, resolve_self_path
     agent_id = (agent or {}).get('id')
