@@ -47,11 +47,23 @@ class TestShouldNudgeContinuation:
             "- **Nama:** Cek total tasks\n"
             "- **Aksi:** Saya akan mengecek semua task di kolom TODO"
         ),
+        # Second false positive: session 25ac767d (ERPNext test report)
+        # "Saya akan update" matched CONTINUATION_RE but "Berikut hasil" and
+        # "Catatan:" were not in PLANNING_RE, causing the full report to be
+        # nudged and the agent to reply [DONE] instead of showing the report.
+        (
+            "Skill ERPNext berfungsi dengan baik. Berikut hasil test:\n\n"
+            "**Koneksi**: OK\n\n"
+            "| No | Name | Type |\n|----|------|------|\n| 1 | Agung | Individual |\n\n"
+            "**Catatan**: Saya akan update best practices di SYSTEM.md."
+        ),
         # Completion + continuation in same text
         "Task sudah selesai. Saya akan mengirimkan laporannya nanti.",
         "Deployment sudah berhasil. Saya akan monitor hasilnya.",
         "Reminder sudah dijadwalkan. Saya akan kirimkan pukul 10.",
         "Pesan sudah dikirim. Saya akan follow up nanti.",
+        # Report with "Catatan:" marker
+        "Setup selesai. Catatan: saya perlu check lagi besok.",
     ])
     def test_final_on_planning_negation(self, text):
         """Text with both CONTINUATION_RE and PLANNING_RE → 'final' (not nudged)."""
@@ -122,6 +134,11 @@ class TestPlanningRE:
         "sudah dijadwalkan",
         "sudah dikirim",
         "Ringkasan hasil kerja",
+        "Berikut hasil test yang sudah dijalankan.",
+        "Berikut laporan lengkapnya.",
+        "Berikut data customer yang ditemukan.",
+        "Berikut status deploy terkini.",
+        "Catatan: perlu di-review lagi.",
     ])
     def test_matches(self, text):
         assert PLANNING_RE.search(text), f"PLANNING_RE should match: {text!r}"

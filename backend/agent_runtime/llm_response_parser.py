@@ -84,6 +84,8 @@ _PLANNING_PATTERNS = [
     r"(apakah .*?setuju|sudah oke)",
     r"sudah (dibuat|selesai|berhasil|dikerjakan|dikirim|dijadwalkan)",
     r"\bringkasan\b",
+    r"berikut (hasil|laporan|report|data|daftar|detail|informasi|status)",
+    r"\bcatatan\s*:",
 ]
 PLANNING_RE = re.compile("|".join(_PLANNING_PATTERNS), re.IGNORECASE)
 
