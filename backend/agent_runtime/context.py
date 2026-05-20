@@ -522,21 +522,38 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "function": tool_def['function']
                 })
 
-    # ── Patch /workspace references for non-sandbox (workplace) agents ──
-    # Tool JSON definitions contain /workspace paths in function descriptions
-    # and parameter descriptions. Workplace agents are misled into trying to
-    # use paths that don't exist on their system.
+    # ── Patch /workspace and Docker/container references for non-sandbox agents ──
+    # Tool JSON definitions contain /workspace paths and Docker/container
+    # language in function/parameter descriptions. Non-sandbox agents
+    # (workplace/remote) aren't running in Docker, so sanitize these.
     if not agent.get('sandbox_enabled'):
+        # Ordered replacements — most specific first to avoid partial matches
+        replacements = [
+            ('in an isolated Docker container', 'in an isolated execution environment'),
+            ('in a sandboxed Docker container', 'in a sandboxed execution environment'),
+            ('The container is shared', 'The environment is shared'),
+            ('The container persists', 'The environment persists'),
+            ('tears down the container', 'tears down the environment'),
+            ('tear down the container', 'tear down the environment'),
+            ('destroys the shared runpy container', 'destroys the shared runpy environment'),
+            ('local/Docker execution', 'local execution'),
+            ('/workspace', 'the agents working directory'),
+        ]
         for tool in tools:
             func = tool.get('function', {})
             # Patch function-level description
-            if 'description' in func and '/workspace' in func['description']:
-                func['description'] = func['description'].replace('/workspace', 'the agents working directory')
+            if 'description' in func:
+                desc = func['description']
+                for old, new in replacements:
+                    desc = desc.replace(old, new)
+                func['description'] = desc
             # Patch parameter descriptions
-            for param_name, param_def in func.get('parameters', {}).get('properties', {}).items():
+            for param_def in func.get('parameters', {}).get('properties', {}).values():
                 if isinstance(param_def, dict) and 'description' in param_def:
-                    if '/workspace' in param_def['description']:
-                        param_def['description'] = param_def['description'].replace('/workspace', 'the agents working directory')
+                    desc = param_def['description']
+                    for old, new in replacements:
+                        desc = desc.replace(old, new)
+                    param_def['description'] = desc
     return tools
 
 
