@@ -54,8 +54,43 @@ class SSHBackend(ExecutionBackend):
         self._evonic_installed = False
 
         self._client = paramiko.SSHClient()
-        self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self._load_host_keys()
+        self._client.set_missing_host_key_policy(paramiko.WarningPolicy())
         self._connect()
+
+    def _load_host_keys(self):
+        """Load known_hosts from standard locations for host key verification.
+
+        Tries the user's ~/.ssh/known_hosts first, then falls back to the
+        system-wide known_hosts. If neither exists, the client will still
+        connect (via WarningPolicy) but will log a warning for unknown hosts.
+        """
+        import paramiko
+
+        candidates = [
+            os.path.expanduser('~/.ssh/known_hosts'),
+        ]
+        # System-wide known_hosts (platform-dependent)
+        if os.name == 'posix':
+            candidates.extend([
+                '/etc/ssh/ssh_known_hosts',
+                '/etc/ssh/known_hosts',
+            ])
+
+        for path in candidates:
+            if os.path.isfile(path):
+                try:
+                    self._client.load_host_keys(path)
+                    logger.debug("[ssh] Loaded host keys from %s", path)
+                    return
+                except Exception:
+                    logger.debug("[ssh] Failed to load host keys from %s", path)
+
+        logger.warning(
+            "[ssh] No known_hosts file found; unknown hosts will be accepted "
+            "with a warning (MITM risk). Add host keys via: ssh-keyscan -H %s >> ~/.ssh/known_hosts",
+            self._host,
+        )
 
     def _connect(self):
         import paramiko
