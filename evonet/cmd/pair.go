@@ -52,7 +52,7 @@ func RunPair(args []string) error {
 		"pairing_code": strings.ToUpper(*code),
 		"device_name":  hostname,
 		"platform":     runtime.GOOS,
-		"version":      "1.0.0",
+		"version":      "1.1.0",
 	}
 	body, _ := json.Marshal(payload)
 
