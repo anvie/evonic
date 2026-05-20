@@ -24,6 +24,19 @@ from backend.tools.lib.safety_base import SafetyCheckerBase, CheckResult
 logger = logging.getLogger(__name__)
 
 
+def should_skip_safety(agent: dict | None) -> bool:
+    """Return True only when the agent dict explicitly carries ``_skip_safety is True``.
+
+    This helper prevents prompt-injection attacks where an LLM might try to set
+    ``_skip_safety`` to a truthy string, integer, or dict.  The flag must be the
+    exact boolean ``True``, which can only be set by trusted server-side code
+    (e.g. after human approval).
+    """
+    if agent is None:
+        return False
+    return agent.get("_skip_safety") is True
+
+
 def _generate_approval_info(blocked_patterns: list[str], matched_count: int) -> dict:
     """Generate approval information for requires_approval cases."""
     categories = set(blocked_patterns)

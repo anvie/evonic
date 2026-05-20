@@ -8,6 +8,7 @@ except ImportError:
     _WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from backend.tools._workspace import resolve_workspace_path
+from backend.tools.lib.safety_pipeline import should_skip_safety
 
 
 def str_replace(file_path: str, old_str: str, new_str: str, count: int = 1) -> dict:
@@ -95,14 +96,14 @@ def execute(agent, args: dict) -> dict:
     count = args.get('count', 1)
 
     # Heuristic safety check: block access to .ssh directory
-    if not (agent or {}).get('_skip_safety') and (agent is None or agent.get("safety_checker_enabled", 1)):
+    if not should_skip_safety(agent) and (agent is None or agent.get("safety_checker_enabled", 1)):
         from backend.tools.safety_checker import check_ssh_path
         ssh_check = check_ssh_path(file_path, agent)
         if ssh_check["blocked"]:
             return {"error": ssh_check["error"]}
 
     # Heuristic safety check: require approval for sensitive system paths
-    if not (agent or {}).get('_skip_safety') and not (agent or {}).get('is_super') and (agent is None or agent.get("safety_checker_enabled", 1)):
+    if not should_skip_safety(agent) and not (agent or {}).get('is_super') and (agent is None or agent.get("safety_checker_enabled", 1)):
         from backend.tools.safety_checker import check_sensitive_path
         path_check = check_sensitive_path(file_path, agent)
         if path_check["blocked"]:
@@ -118,7 +119,7 @@ def execute(agent, args: dict) -> dict:
             }
 
     # Heuristic safety check: require approval for .env files
-    if not (agent or {}).get('_skip_safety') and not (agent or {}).get('is_super') and (agent is None or agent.get("safety_checker_enabled", 1)):
+    if not should_skip_safety(agent) and not (agent or {}).get('is_super') and (agent is None or agent.get("safety_checker_enabled", 1)):
         from backend.tools.safety_checker import check_env_path
         env_check = check_env_path(file_path, agent)
         if env_check["blocked"]:
