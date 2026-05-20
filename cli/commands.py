@@ -3729,12 +3729,17 @@ def backup_command(output=None, fmt="gz", quiet=False, exclude=None, encrypt=Fal
     version = _get_evonic_version()
     
     # Generate default output filename
+    timestamp = _datetime.now().strftime("%Y%m%d-%H%M")
+    ext_map = {"gz": ".tar.gz", "bz2": ".tar.bz2", "zip": ".zip"}
+    ext = ext_map.get(fmt, ".tar.gz")
+    default_name = f"evonic-backup-{timestamp}{ext}"
+
     if output is None:
-        timestamp = _datetime.now().strftime("%Y%m%d-%H%M")
-        ext_map = {"gz": ".tar.gz", "bz2": ".tar.bz2", "zip": ".zip"}
-        ext = ext_map.get(fmt, ".tar.gz")
-        output = f"evonic-backup-{timestamp}{ext}"
-    
+        output = default_name
+    elif os.path.isdir(output):
+        # -o points to a directory — place backup inside with default filename
+        output = os.path.join(output, default_name)
+
     output = os.path.abspath(output)
     
     if not quiet:
