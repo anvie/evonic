@@ -748,17 +748,62 @@ class EvaluationEngine:
         return "\n".join(lines)
 
     def _execute_python_mock(self, py_code: str, args: dict):
-        """Execute Python mock response via exec()"""
-        import math, ast as _ast
+        """Execute Python mock response via exec() with AST-based sandboxing.
+
+        Before execution, the code is parsed and validated against a denylist
+        of dangerous AST node patterns (dunder attribute access, imports, class
+        definitions, etc.) that could escape the restricted namespace.
+        """
+        import math
+        import ast
+
+        # --- AST-based sandbox validation ---
+        _DUNDER_DENIES = frozenset({
+            '__class__', '__bases__', '__subclasses__', '__mro__',
+            '__globals__', '__builtins__', '__import__', '__getattr__',
+            '__getattribute__', '__setattr__', '__delattr__',
+            '__reduce__', '__reduce_ex__', '__getstate__',
+            '__code__', '__func__', '__self__',
+        })
+
+        try:
+            tree = ast.parse(py_code, mode='exec')
+        except SyntaxError as e:
+            self._log(f'[PY-MOCK] Syntax error: {e}')
+            return {"error": f"Python mock syntax error: {e}"}
+
+        for node in ast.walk(tree):
+            # Block import statements
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                return {"error": "Python mock: import statements are not allowed"}
+            # Block class/function definitions
+            if isinstance(node, (ast.ClassDef, ast.AsyncFunctionDef)):
+                return {"error": "Python mock: class/async def not allowed"}
+            # Block dunder attribute access (e.g. x.__class__.__bases__)
+            if isinstance(node, ast.Attribute) and node.attr in _DUNDER_DENIES:
+                return {"error": f"Python mock: access to '{node.attr}' is not allowed"}
+            # Block exec()/eval()/compile() calls
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id in ('exec', 'eval', 'compile', '__import__'):
+                    return {"error": f"Python mock: {node.func.id}() is not allowed"}
+
         namespace = {
             'args': args,
             'math': math,
             'json': json,
             're': __import__('re'),
             'result': None,
+            # Safe builtins that mock code commonly needs
+            'sum': sum, 'len': len, 'int': int, 'str': str,
+            'list': list, 'dict': dict, 'tuple': tuple, 'set': set,
+            'bool': bool, 'float': float, 'min': min, 'max': max,
+            'abs': abs, 'round': round, 'range': range,
+            'enumerate': enumerate, 'zip': zip, 'map': map,
+            'filter': filter, 'sorted': sorted, 'any': any, 'all': all,
+            'isinstance': isinstance, 'True': True, 'False': False, 'None': None,
         }
         try:
-            exec(py_code, namespace)
+            exec(py_code, {'__builtins__': {}}, namespace)
             result = namespace.get('result')
             if result is None:
                 return {"error": "mock did not set result"}
