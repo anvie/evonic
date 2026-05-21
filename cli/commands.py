@@ -510,6 +510,81 @@ def plugin_disable(plugin_id):
     print(f"Plugin disabled: {plugin_id}")
 
 
+def plugin_reload(plugin_id):
+    """Reload a plugin by its ID (useful during development)."""
+    if not plugin_id:
+        print("Error: plugin_id is required")
+        return
+    
+    pm = _get_plugin_manager()
+    try:
+        pm.reload_plugin(plugin_id)
+        print(f"Plugin reloaded: {plugin_id}")
+    except Exception as e:
+        print(f"Error reloading plugin: {e}")
+
+
+def plugin_hotreload_enable(plugin_id=None):
+    """Enable hot reload for a plugin or globally."""
+    from backend.plugin_hot_reload import hot_reload_manager
+    
+    if plugin_id:
+        # Enable for specific plugin
+        success = hot_reload_manager.enable_for_plugin(plugin_id)
+        if success:
+            print(f"Hot reload enabled for plugin: {plugin_id}")
+            print("Plugin will automatically reload when files change")
+        else:
+            print(f"Error: Could not enable hot reload for plugin: {plugin_id}")
+    else:
+        # Enable globally
+        hot_reload_manager.enable_globally()
+        print("Hot reload enabled globally")
+        print("Use 'plugin hotreload-enable <plugin_id>' to watch specific plugins")
+
+
+def plugin_hotreload_disable(plugin_id=None):
+    """Disable hot reload for a plugin or globally."""
+    from backend.plugin_hot_reload import hot_reload_manager
+    
+    if plugin_id:
+        # Disable for specific plugin
+        success = hot_reload_manager.disable_for_plugin(plugin_id)
+        if success:
+            print(f"Hot reload disabled for plugin: {plugin_id}")
+        else:
+            print(f"Hot reload was not enabled for plugin: {plugin_id}")
+    else:
+        # Disable globally
+        hot_reload_manager.disable_globally()
+        print("Hot reload disabled globally")
+
+
+def plugin_hotreload_status():
+    """Show hot reload status."""
+    from backend.plugin_hot_reload import hot_reload_manager
+    
+    status = hot_reload_manager.get_status()
+    
+    print("\n=== Plugin Hot Reload Status ===")
+    print(f"Globally enabled: {status['enabled']}")
+    print(f"Active watchers: {status['active_watchers']}")
+    
+    if status['watched_plugins']:
+        print(f"\nWatched plugins ({len(status['watched_plugins'])}):")
+        for plugin_id in sorted(status['watched_plugins']):
+            print(f"  - {plugin_id}")
+    else:
+        print("\nNo plugins being watched")
+    
+    if status['pending_reloads']:
+        print(f"\nPending reloads ({len(status['pending_reloads'])}):")
+        for plugin_id in status['pending_reloads']:
+            print(f"  - {plugin_id}")
+    
+    print()
+
+
 def plugin_new():
     """Interactive wizard to scaffold a new plugin project."""
     import re
