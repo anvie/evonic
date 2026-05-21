@@ -1,11 +1,15 @@
 """
 Shared zip upload validation — enforces size limits, zip bomb protection,
-path traversal checks, and allowed file types for plugin/skill uploads.
+path traversal checks, allowed file types, and optional signature verification
+for plugin/skill uploads.
 """
 
 import os
 import zipfile
 from typing import Dict, Optional, Tuple
+import logging
+
+_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -28,12 +32,35 @@ ALLOWED_EXTENSIONS = {
 }
 
 
-def validate_upload_zip(file_path: str, expected_filename: Optional[str] = None) -> Tuple[bool, str]:
+def validate_upload_zip(file_path: str, expected_filename: Optional[str] = None, verify_signature: bool = False) -> Tuple[bool, str]:
     """
     Validate a zip file before extraction for plugin/skill uploads.
-
+    
+    Args:
+        file_path: Path to the zip file to validate
+        expected_filename: Optional expected filename (unused, for future use)
+        verify_signature: If True, verify GPG signature for plugins
+    
     Returns (ok, error_message).  ok=True means the zip is safe to extract.
     """
+    # --- 0. Signature verification (if requested) ---------------------------
+    if verify_signature:
+        try:
+            from backend.plugin_signer import verify_plugin_signature, is_signature_verification_enabled
+            
+            if is_signature_verification_enabled():
+                sig_ok, sig_msg = verify_plugin_signature(file_path)
+                if not sig_ok:
+                    _logger.error("Signature verification failed for %s: %s", file_path, sig_msg)
+                    return False, f"Signature verification failed: {sig_msg}"
+                else:
+                    _logger.info("Signature verified for %s: %s", file_path, sig_msg)
+        except ImportError:
+            _logger.warning("plugin_signer module not available, skipping signature verification")
+        except Exception as e:
+            _logger.error("Signature verification error for %s: %s", file_path, e, exc_info=True)
+            return False, f"Signature verification error: {e}"
+    
     # --- 1. File exists + size check ----------------------------------------
     try:
         stat = os.stat(file_path)

@@ -437,6 +437,13 @@ class PluginManager:
         """Install a plugin from a zip file."""
         if not zipfile.is_zipfile(zip_path):
             return {'error': 'Not a valid zip file'}
+        
+        # Validate zip file including signature verification
+        from backend.zip_validator import validate_upload_zip
+        ok, error_msg = validate_upload_zip(zip_path, verify_signature=True)
+        if not ok:
+            _logger.error("Plugin zip validation failed: %s", error_msg)
+            return {'error': error_msg}
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             with zipfile.ZipFile(zip_path, 'r') as zf:
