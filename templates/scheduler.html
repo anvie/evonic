@@ -82,7 +82,8 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Action Type</label>
                         <select id="f-action-type" onchange="onActionTypeChange()" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none">
-                            <option value="agent_message">Agent Message</option>
+                            <option value="static_message">Static Message</option>
+                            <option value="agent_message">Agent Message (deprecated)</option>
                             <option value="session_prompt">Session Prompt</option>
                             <option value="emit_event">Emit Event</option>
                             <option value="webhook">Webhook</option>
@@ -194,7 +195,7 @@ function triggerLabel(s) {
 }
 
 function actionLabel(s) {
-    if (s.action_type === 'agent_message') return `Msg -> ${esc(s.action_config.agent_id || '?')}`;
+    if (s.action_type === 'agent_message' || s.action_type === 'static_message') return `Msg -> ${esc(s.action_config.agent_id || '?')}`;
     if (s.action_type === 'session_prompt') return `Session -> ${esc(s.action_config.agent_id || '?')}`;
     if (s.action_type === 'emit_event') return `Event: ${esc(s.action_config.event_name || '?')}`;
     if (s.action_type === 'webhook') return `${s.action_config.method||'POST'} ${esc((s.action_config.url||'').substring(0,30))}`;
@@ -320,7 +321,7 @@ function onTriggerTypeChange() {
 
 function onActionTypeChange() {
     const a = document.getElementById('f-action-type').value;
-    document.getElementById('action-agent-fields').classList.toggle('hidden', a !== 'agent_message');
+    document.getElementById('action-agent-fields').classList.toggle('hidden', a !== 'agent_message' && a !== 'static_message');
     document.getElementById('action-session-prompt-fields').classList.toggle('hidden', a !== 'session_prompt');
     document.getElementById('action-event-fields').classList.toggle('hidden', a !== 'emit_event');
     document.getElementById('action-webhook-fields').classList.toggle('hidden', a !== 'webhook');
@@ -363,7 +364,7 @@ async function createSchedule() {
 
     const actionType = document.getElementById('f-action-type').value;
     let actionConfig = {};
-    if (actionType === 'agent_message') {
+    if (actionType === 'agent_message' || actionType === 'static_message') {
         actionConfig = {
             agent_id: document.getElementById('f-agent-id').value,
             message: document.getElementById('f-agent-msg').value.trim(),
@@ -506,14 +507,16 @@ function renderScheduleDetail(s) {
 
     // Action config human-readable
     let actionInfo = '';
-    if (s.action_type === 'agent_message') {
+    if (s.action_type === 'agent_message' || s.action_type === 'static_message') {
+        const badgeLabel = s.action_type === 'static_message' ? 'Static Message' : 'Agent Message';
         actionInfo = `
             <div class="flex items-center gap-2 mb-2">
-                <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Agent Message</span>
+                <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">${badgeLabel}</span>
             </div>
             <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
                 <div><span class="text-gray-400 dark:text-gray-500 w-12 inline-block">Agent:</span> <span class="text-gray-700 dark:text-gray-300">${esc(s.action_config.agent_id || '?')}</span></div>
-                <div><span class="text-gray-400 dark:text-gray-500 w-12 inline-block">Msg:</span> <span class="text-gray-700 dark:text-gray-300 italic">${esc(s.action_config.message || '-')}</span></div>
+                <div class="mt-2"><span class="text-gray-400 dark:text-gray-500 font-medium">Message text:</span></div>
+                <pre class="text-xs bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words mt-1 max-h-48 overflow-y-auto">${esc(s.action_config.message || '-')}</pre>
             </div>`;
     } else if (s.action_type === 'session_prompt') {
         actionInfo = `
