@@ -36,6 +36,7 @@ def _load_global_config() -> Dict[str, Any]:
 class SkillsManager:
     def __init__(self):
         os.makedirs(SKILLS_DIR, exist_ok=True)
+        self._skill_name_cache: Dict[str, str] = {}
 
     def is_skill_enabled(self, skill_id: str) -> bool:
         """Check if a skill is enabled. DB is authoritative; absent = disabled."""
@@ -82,6 +83,25 @@ class SkillsManager:
         manifest['variables'] = manifest.get('variables', [])
         manifest['config'] = self.get_skill_config(skill_id)
         return manifest
+
+    def get_skill_name(self, skill_id: str) -> str:
+        """Read only the manifest name from skill.json — no tool defs, no DB queries."""
+        cached = self._skill_name_cache.get(skill_id)
+        if cached is not None:
+            return cached
+        manifest_path = os.path.join(SKILLS_DIR, skill_id, 'skill.json')
+        if not os.path.isfile(manifest_path):
+            self._skill_name_cache[skill_id] = skill_id
+            return skill_id  # fallback to ID
+        try:
+            with open(manifest_path, encoding='utf-8') as f:
+                manifest = json.load(f)
+            name = manifest.get('name', skill_id)
+            self._skill_name_cache[skill_id] = name
+            return name
+        except (json.JSONDecodeError, IOError):
+            self._skill_name_cache[skill_id] = skill_id
+            return skill_id
 
     def get_skill_tool_defs(self, skill_id: str) -> List[Dict[str, Any]]:
         """Load tool definitions for a specific skill."""

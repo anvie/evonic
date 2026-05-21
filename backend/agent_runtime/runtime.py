@@ -1870,6 +1870,12 @@ class AgentRuntime:
         self._session_skill_mds.pop(session_id, None)
         self._session_skill_tools.pop(session_id, None)
 
+    def get_session_skills(self, session_id: str) -> list[dict]:
+        """Return loaded skills for a session. Thread-safe: copies the dict before iterating."""
+        skills_data = dict(self._session_skill_tools.get(session_id, {}))
+        return [{"skill_id": sk_id, "tool_count": len(tool_defs)}
+                for sk_id, tool_defs in skills_data.items()]
+
     def send_as_bot(self, session_id: str, text: str) -> bool:
         """Admin takeover: save message as assistant and send via channel."""
         session = db.get_session_with_details(session_id)
