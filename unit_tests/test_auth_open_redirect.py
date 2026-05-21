@@ -42,6 +42,10 @@ class TestOpenRedirectPrevention(unittest.TestCase):
         self.app.secret_key = "test-redirect-secret"
         self.app.register_blueprint(auth_bp)
         self.client = self.app.test_client()
+        
+        # Clear rate limiter before each test to avoid rate limit issues
+        from backend.rate_limiter import get_rate_limiter
+        get_rate_limiter().clear_all()
 
     def _login(self, next_url):
         """Helper: POST to /login with given next_url and correct password."""
