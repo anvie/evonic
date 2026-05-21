@@ -11,9 +11,22 @@ Features:
 - Per-plugin enable/disable
 - Thread-safe reload coordination
 - Graceful error handling
+- Automatic __pycache__ cleanup on reload
+
+Thread Safety:
+- The hot reload manager's internal state (_enabled_plugins, _watchers, etc.)
+  is protected by self._lock
+- PluginManager.reload_plugin() is NOT thread-safe and does not use locks
+- Under CPython's GIL, concurrent reloads won't segfault but may cause
+  inconsistent handler registrations
+- For production use, consider adding a lock to PluginManager or ensuring
+  only one plugin reloads at a time
 
 Usage:
     from backend.plugin_hot_reload import hot_reload_manager
+    
+    # Enable globally first
+    hot_reload_manager.enable_globally()
     
     # Enable hot reload for a plugin
     hot_reload_manager.enable_for_plugin('my_plugin')
@@ -29,12 +42,14 @@ import os
 import time
 import logging
 import threading
-from typing import Dict, Set, Optional, Callable
+from typing import Dict, Set, Optional
 from pathlib import Path
 from collections import defaultdict
 
 _logger = logging.getLogger(__name__)
 
+# BASE_DIR calculation assumes this file stays at backend/plugin_hot_reload.py
+# If the file is moved, this path calculation will need to be updated
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGINS_DIR = os.path.join(BASE_DIR, 'plugins')
 
@@ -89,12 +104,30 @@ class PluginHotReloadManager:
     
     def disable_globally(self):
         """Disable hot reload system globally and stop all watchers."""
+        watchers_to_join = []
+        
         with self._lock:
             self._global_enabled = False
-            # Stop all watchers
+            
+            # Signal all watchers to stop and collect references
             for plugin_id in list(self._enabled_plugins):
-                self._stop_watcher(plugin_id)
-            _logger.info("Plugin hot reload disabled globally")
+                if plugin_id in self._stop_flags:
+                    self._stop_flags[plugin_id].set()
+                
+                if plugin_id in self._watchers:
+                    watchers_to_join.append(self._watchers.pop(plugin_id))
+                
+                self._stop_flags.pop(plugin_id, None)
+                self._file_mtimes.pop(plugin_id, None)
+                self._pending_reloads.pop(plugin_id, None)
+            
+            self._enabled_plugins.clear()
+        
+        # Join all watchers outside the lock
+        for watcher in watchers_to_join:
+            watcher.join(timeout=2.0)
+        
+        _logger.info("Plugin hot reload disabled globally")
     
     def enable_for_plugin(self, plugin_id: str) -> bool:
         """
@@ -106,6 +139,16 @@ class PluginHotReloadManager:
         Returns:
             bool: True if successfully enabled, False otherwise
         """
+        # Check global flag first
+        if not self._global_enabled:
+            _logger.warning("Hot reload is globally disabled. Enable it first with enable_globally()")
+            return False
+        
+        # Path traversal validation (defense in depth)
+        if '..' in plugin_id or '/' in plugin_id or '\\' in plugin_id:
+            _logger.error("Invalid plugin_id (path traversal attempt): %s", plugin_id)
+            return False
+        
         plugin_dir = os.path.join(PLUGINS_DIR, plugin_id)
         
         if not os.path.isdir(plugin_dir):
@@ -132,15 +175,32 @@ class PluginHotReloadManager:
         Returns:
             bool: True if successfully disabled, False otherwise
         """
+        watcher_to_join = None
+        
         with self._lock:
             if plugin_id not in self._enabled_plugins:
                 _logger.debug("Hot reload not enabled for plugin: %s", plugin_id)
                 return False
             
             self._enabled_plugins.discard(plugin_id)
-            self._stop_watcher(plugin_id)
-            _logger.info("Hot reload disabled for plugin: %s", plugin_id)
-            return True
+            
+            # Signal stop and get watcher reference
+            if plugin_id in self._stop_flags:
+                self._stop_flags[plugin_id].set()
+            
+            if plugin_id in self._watchers:
+                watcher_to_join = self._watchers.pop(plugin_id)
+            
+            self._stop_flags.pop(plugin_id, None)
+            self._file_mtimes.pop(plugin_id, None)
+            self._pending_reloads.pop(plugin_id, None)
+        
+        # Join outside the lock to avoid blocking other operations
+        if watcher_to_join:
+            watcher_to_join.join(timeout=2.0)
+        
+        _logger.info("Hot reload disabled for plugin: %s", plugin_id)
+        return True
     
     def _start_watcher(self, plugin_id: str, plugin_dir: str):
         """Start file watcher thread for a plugin."""
@@ -158,20 +218,6 @@ class PluginHotReloadManager:
         )
         watcher_thread.start()
         self._watchers[plugin_id] = watcher_thread
-    
-    def _stop_watcher(self, plugin_id: str):
-        """Stop file watcher thread for a plugin."""
-        if plugin_id in self._stop_flags:
-            self._stop_flags[plugin_id].set()
-        
-        if plugin_id in self._watchers:
-            watcher = self._watchers.pop(plugin_id)
-            # Give thread time to stop gracefully
-            watcher.join(timeout=2.0)
-        
-        self._stop_flags.pop(plugin_id, None)
-        self._file_mtimes.pop(plugin_id, None)
-        self._pending_reloads.pop(plugin_id, None)
     
     def _watch_plugin(self, plugin_id: str, plugin_dir: str, stop_flag: threading.Event):
         """
@@ -304,6 +350,10 @@ class PluginHotReloadManager:
         """
         Reload a plugin.
         
+        Note: If the plugin is disabled in the database, this will only unload it
+        without reloading. The watcher will continue running but reloads will be no-ops
+        until the plugin is re-enabled.
+        
         Args:
             plugin_id: Plugin identifier
         """
@@ -311,13 +361,24 @@ class PluginHotReloadManager:
             _logger.info("Hot reloading plugin: %s", plugin_id)
             pm = self._get_plugin_manager()
             pm.reload_plugin(plugin_id)
-            pm.add_log(plugin_id, 'info', 'Plugin hot reloaded')
+            
+            # Try to log success, but don't fail if logging fails
+            try:
+                pm.add_log(plugin_id, 'info', 'Plugin hot reloaded')
+            except Exception as log_err:
+                _logger.warning("Failed to add log entry for %s: %s", plugin_id, log_err)
+            
             _logger.info("Successfully reloaded plugin: %s", plugin_id)
         
         except Exception as e:
             _logger.error("Failed to reload plugin %s: %s", plugin_id, e, exc_info=True)
-            pm = self._get_plugin_manager()
-            pm.add_log(plugin_id, 'error', f'Hot reload failed: {e}')
+            
+            # Try to log error, but don't fail if logging fails
+            try:
+                pm = self._get_plugin_manager()
+                pm.add_log(plugin_id, 'error', f'Hot reload failed: {e}')
+            except Exception as log_err:
+                _logger.warning("Failed to add error log entry for %s: %s", plugin_id, log_err)
     
     def get_status(self) -> Dict:
         """

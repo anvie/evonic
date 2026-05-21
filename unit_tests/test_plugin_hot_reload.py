@@ -42,6 +42,7 @@ class TestPluginHotReloadManager:
     def test_enable_for_plugin(self):
         """Test enabling hot reload for a plugin."""
         manager = PluginHotReloadManager()
+        manager.enable_globally()  # Enable globally first
         
         # Create temporary plugin directory
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -68,6 +69,7 @@ class TestPluginHotReloadManager:
     def test_disable_for_plugin(self):
         """Test disabling hot reload for a plugin."""
         manager = PluginHotReloadManager()
+        manager.enable_globally()  # Enable globally first
         
         with tempfile.TemporaryDirectory() as temp_dir:
             plugin_id = 'test_plugin'
@@ -95,6 +97,7 @@ class TestPluginHotReloadManager:
     def test_enable_same_plugin_twice(self):
         """Test enabling hot reload twice for same plugin."""
         manager = PluginHotReloadManager()
+        manager.enable_globally()  # Enable globally first
         
         with tempfile.TemporaryDirectory() as temp_dir:
             plugin_id = 'test_plugin'
@@ -120,6 +123,7 @@ class TestPluginHotReloadManager:
     def test_file_change_detection(self):
         """Test that file changes are detected."""
         manager = PluginHotReloadManager()
+        manager.enable_globally()  # Enable globally first
         mock_pm = Mock()
         manager._plugin_manager = mock_pm
         
@@ -155,6 +159,7 @@ class TestPluginHotReloadManager:
     def test_new_file_detection(self):
         """Test that new files are detected."""
         manager = PluginHotReloadManager()
+        manager.enable_globally()  # Enable globally first
         mock_pm = Mock()
         manager._plugin_manager = mock_pm
         
@@ -187,6 +192,7 @@ class TestPluginHotReloadManager:
     def test_deleted_file_detection(self):
         """Test that deleted files are detected."""
         manager = PluginHotReloadManager()
+        manager.enable_globally()  # Enable globally first
         mock_pm = Mock()
         manager._plugin_manager = mock_pm
         
@@ -255,6 +261,7 @@ class TestPluginHotReloadManager:
     def test_only_watches_specific_extensions(self):
         """Test that only specific file extensions are watched."""
         manager = PluginHotReloadManager()
+        manager.enable_globally()  # Enable globally first
         
         with tempfile.TemporaryDirectory() as temp_dir:
             plugin_id = 'test_plugin'

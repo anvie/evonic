@@ -73,7 +73,7 @@ class PluginManager:
             if self._is_plugin_enabled(plugin['id']):
                 self._load_plugin(plugin['id'])
 
-    def _load_plugin(self, plugin_id: str):
+    def _load_plugin(self, plugin_id: str, manifest: dict = None):
         """Load a plugin's handler.py and register its event handlers."""
         plugin_dir = os.path.join(PLUGINS_DIR, plugin_id)
         handler_path = os.path.join(plugin_dir, 'handler.py')
@@ -86,18 +86,18 @@ class PluginManager:
         pkg.__file__ = os.path.join(plugin_dir, '__init__.py')
         sys.modules[pkg_name] = pkg
 
-        # Read manifest to know which events and slash commands this plugin subscribes to
-        manifest_path = os.path.join(plugin_dir, 'plugin.json')
-        if os.path.isfile(manifest_path):
-            with open(manifest_path, encoding='utf-8') as f:
-                manifest = json.load(f)
-            events = manifest.get('events', [])
-            slash_commands = manifest.get('slash_commands', [])
-            dashboard_cards = manifest.get('dashboard_cards', [])
-        else:
-            events = []
-            slash_commands = []
-            dashboard_cards = []
+        # Read manifest if not provided
+        if manifest is None:
+            manifest_path = os.path.join(plugin_dir, 'plugin.json')
+            if os.path.isfile(manifest_path):
+                with open(manifest_path, encoding='utf-8') as f:
+                    manifest = json.load(f)
+            else:
+                manifest = {}
+        
+        events = manifest.get('events', [])
+        slash_commands = manifest.get('slash_commands', [])
+        dashboard_cards = manifest.get('dashboard_cards', [])
 
         module = None
 
@@ -250,11 +250,30 @@ class PluginManager:
         return cards
 
     def reload_plugin(self, plugin_id: str):
-        """Reload a plugin (unload then load if enabled)."""
+        """Reload a plugin (unload then load if enabled).
+        
+        Note: This clears Python bytecode cache (__pycache__) to ensure
+        fresh code is loaded, avoiding stale .pyc files from previous runs.
+        """
         self._unload_plugin(plugin_id)
+        
+        # Clear __pycache__ to avoid stale bytecode
+        plugin_dir = os.path.join(PLUGINS_DIR, plugin_id)
+        pycache_dir = os.path.join(plugin_dir, '__pycache__')
+        if os.path.isdir(pycache_dir):
+            import shutil
+            try:
+                shutil.rmtree(pycache_dir)
+            except Exception as e:
+                # Log but don't fail - stale cache is better than no reload
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Failed to clear __pycache__ for %s: %s", plugin_id, e
+                )
+        
         manifest = self._read_manifest(plugin_id)
-        if manifest and self._is_plugin_enabled(plugin_id):
-            self._load_plugin(plugin_id)
+        if manifest and manifest.get('enabled', False):
+            self._load_plugin(plugin_id, manifest=manifest)
 
     # ── Logging ──
 

@@ -51,6 +51,7 @@ EVONIC_BANNER = _DAY_COLORS[datetime.now().weekday()] + r"""
 from cli.commands import (
     start_server, stop_server, status_server, restart_server,
     plugin_list, plugin_install, plugin_uninstall, plugin_enable, plugin_disable, plugin_new,
+    plugin_reload, plugin_hotreload_enable, plugin_hotreload_disable, plugin_hotreload_status,
     skill_list, skill_add, skill_get, skill_rm,
     skillset_list, skillset_get, skillset_apply,
     agent_list, agent_get, agent_add, agent_enable, agent_disable, agent_remove,
@@ -219,6 +220,50 @@ def main():
         "new",
         help="Scaffold a new plugin project",
         description="Interactive wizard to create a new plugin scaffold in plugins/ directory. Prompts for name, description, and author.",
+    )
+
+    # plugin reload
+    reload_parser = plugin_subparsers.add_parser(
+        "reload",
+        help="Manually reload a plugin",
+        description="Reload a plugin by unloading and loading it again. Useful during development.",
+    )
+    reload_parser.add_argument(
+        "plugin_id",
+        help="Plugin ID to reload",
+    )
+
+    # plugin hotreload-enable
+    hotreload_enable_parser = plugin_subparsers.add_parser(
+        "hotreload-enable",
+        help="Enable hot reload for a plugin",
+        description="Enable automatic reloading when plugin files change. Watches .py, .json, .yaml, and .md files.",
+    )
+    hotreload_enable_parser.add_argument(
+        "plugin_id",
+        nargs="?",
+        default=None,
+        help="Plugin ID to watch (omit to enable globally)",
+    )
+
+    # plugin hotreload-disable
+    hotreload_disable_parser = plugin_subparsers.add_parser(
+        "hotreload-disable",
+        help="Disable hot reload for a plugin",
+        description="Stop watching a plugin for file changes.",
+    )
+    hotreload_disable_parser.add_argument(
+        "plugin_id",
+        nargs="?",
+        default=None,
+        help="Plugin ID to stop watching (omit to disable globally)",
+    )
+
+    # plugin hotreload-status
+    plugin_subparsers.add_parser(
+        "hotreload-status",
+        help="Show hot reload status",
+        description="Display which plugins are being watched and pending reloads.",
     )
 
     # --- skill ---
@@ -599,6 +644,14 @@ def main():
             plugin_disable(args.plugin_id)
         elif args.plugin_command == "new":
             plugin_new()
+        elif args.plugin_command == "reload":
+            plugin_reload(args.plugin_id)
+        elif args.plugin_command == "hotreload-enable":
+            plugin_hotreload_enable(args.plugin_id)
+        elif args.plugin_command == "hotreload-disable":
+            plugin_hotreload_disable(args.plugin_id)
+        elif args.plugin_command == "hotreload-status":
+            plugin_hotreload_status()
     elif args.command == "skill":
         if args.skill_command is None:
             skill_parser.print_help()
