@@ -292,9 +292,13 @@ class WhatsAppChannel(BaseChannel):
                         db.update_pending_user_id(pending['id'], sender)
                     approved_user = db.approve_pending_with_name_needed(pending['id'])
                     if approved_user:
-                        self._do_send(sender,
-                            "✅ You're now approved! Welcome aboard.\n\n"
-                            "Before we chat, please tell me your name (e.g. 'My name is Budi').")
+                        if db.needs_name(self.channel_id, sender):
+                            self._do_send(sender,
+                                "✅ You're now approved! Welcome aboard.\n\n"
+                                "Before we chat, please tell me your name (e.g. 'My name is Budi').")
+                        else:
+                            self._do_send(sender,
+                                "✅ You're now approved! Welcome aboard. How can I help you today?")
                     return
                 else:
                     self._do_send(sender,

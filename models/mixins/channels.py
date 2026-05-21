@@ -174,7 +174,10 @@ class ChannelMixin:
             return cursor.rowcount > 0
 
     def approve_pending(self, pending_id: str) -> bool:
-        """Approve a pending request: add user to allowed_users in channel config, delete pending."""
+        """Approve a pending request: add user to allowed_users in channel config, delete pending.
+
+        Auto-populates user_names from the pending approval's user_name when available
+        (e.g. Telegram @username)."""
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -189,11 +192,19 @@ class ChannelMixin:
             if not channel:
                 return False
             # Parse config
+            external_user_id = pending["external_user_id"]
             config = json.loads(channel["config"]) if channel["config"] else {}
             allowed = config.get("allowed_users", [])
-            if pending["external_user_id"] not in allowed:
-                allowed.append(pending["external_user_id"])
+            if external_user_id not in allowed:
+                allowed.append(external_user_id)
             config["allowed_users"] = allowed
+            # Auto-populate display name from the pending approval's user_name (e.g. Telegram @username)
+            pending_user_name = (pending["user_name"] or "").strip()
+            if pending_user_name:
+                user_names = config.get("user_names", {})
+                if external_user_id not in user_names:
+                    user_names[external_user_id] = pending_user_name
+                    config["user_names"] = user_names
             # Update channel config
             cursor.execute(
                 "UPDATE channels SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -303,6 +314,8 @@ class ChannelMixin:
         """Approve a pending request AND mark the user as needing to provide their name.
 
         Returns the external_user_id of the approved user, or None on failure.
+        If the pending approval has a user_name (e.g. Telegram @username), it is used
+        as the display name and the user is NOT marked as needing a name.
         """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -313,6 +326,7 @@ class ChannelMixin:
                 return None
             channel_id = pending["channel_id"]
             external_user_id = pending["external_user_id"]
+            pending_user_name = (pending["user_name"] or "").strip()
             cursor.execute("SELECT * FROM channels WHERE id = ?", (channel_id,))
             channel = cursor.fetchone()
             if not channel:
@@ -322,10 +336,18 @@ class ChannelMixin:
             if external_user_id not in allowed:
                 allowed.append(external_user_id)
             config["allowed_users"] = allowed
-            names_needed = config.get("names_needed", [])
-            if external_user_id not in names_needed:
-                names_needed.append(external_user_id)
-            config["names_needed"] = names_needed
+            # Auto-populate display name from pending approval if available
+            if pending_user_name:
+                user_names = config.get("user_names", {})
+                if external_user_id not in user_names:
+                    user_names[external_user_id] = pending_user_name
+                    config["user_names"] = user_names
+            else:
+                # No name available — mark as needing one
+                names_needed = config.get("names_needed", [])
+                if external_user_id not in names_needed:
+                    names_needed.append(external_user_id)
+                config["names_needed"] = names_needed
             cursor.execute(
                 "UPDATE channels SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (json.dumps(config), channel_id)

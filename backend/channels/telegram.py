@@ -423,8 +423,10 @@ class TelegramChannel(BaseChannel):
                 from_user = update.message.from_user
                 user_name = None
                 if from_user:
-                    parts = [p for p in [from_user.first_name, from_user.last_name] if p]
-                    user_name = ' '.join(parts) if parts else from_user.username
+                    # Prefer Telegram @username as the identifier; fall back to display name
+                    user_name = from_user.username or ' '.join(
+                        p for p in [from_user.first_name, from_user.last_name] if p
+                    ) or None
                 from models.db import db
 
                 # Step 1: Fully approved user? (in allowlist AND has name set)
@@ -457,10 +459,15 @@ class TelegramChannel(BaseChannel):
                                 db.update_pending_user_id(pending['id'], user_id)
                             approved_user = db.approve_pending_with_name_needed(pending['id'])
                             if approved_user:
-                                await update.message.reply_text(
-                                    "✅ You're now approved! Welcome aboard.\n\n"
-                                    "Before we chat, please tell me your name (e.g. 'My name is Budi')."
-                                )
+                                if db.needs_name(self.channel_id, user_id):
+                                    await update.message.reply_text(
+                                        "✅ You're now approved! Welcome aboard.\n\n"
+                                        "Before we chat, please tell me your name (e.g. 'My name is Budi')."
+                                    )
+                                else:
+                                    await update.message.reply_text(
+                                        "✅ You're now approved! Welcome aboard. How can I help you today?"
+                                    )
                             return
                         else:
                             await update.message.reply_text(
