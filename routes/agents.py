@@ -714,8 +714,12 @@ def api_get_avatar(agent_id):
         if mime is None:
             mime = 'application/octet-stream'
         from flask import send_file
-        return send_file(avatar_path, mimetype=mime)
-    # Return default SVG avatar
+        # Force download for all stored avatar files to prevent any stored SVG
+        # from being rendered as an active document in the browser (XSS defence).
+        return send_file(avatar_path, mimetype=mime, as_attachment=True,
+                         download_name=os.path.basename(avatar_path))
+    # Return the default avatar as an inline SVG served from a static string.
+    # This SVG is fully controlled server-side and contains no user content.
     default_svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
   <rect width="40" height="40" rx="20" fill="#e0e7ff"/>
   <path d="M20 8a5 5 0 100 10 5 5 0 000-10zm-8 18.5a8 8 0 0116 0" fill="#4f46e5"/>
@@ -727,19 +731,25 @@ def api_get_avatar(agent_id):
 
 @agents_bp.route('/api/agents/<agent_id>/avatar', methods=['POST'])
 def api_upload_avatar(agent_id):
-    agent = db.get_agent(agent_id)
-    if not agent:
-        return jsonify({'error': 'Agent not found'}), 404
+    # --- Validate extension first (fail-fast, before any DB or disk access) ---
+    # SVG is intentionally excluded: SVG files can embed <script> tags and event
+    # handlers that execute when the browser renders the file inline, enabling
+    # stored XSS.  Only raster formats that cannot carry active content are
+    # allowed.  (SEC-1)
+    allowed_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
     f = request.files['file']
     if not f.filename:
         return jsonify({'error': 'No file selected'}), 400
-    # Validate image type
-    allowed_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in allowed_exts:
         return jsonify({'error': f'Invalid image type. Allowed: {", ".join(sorted(allowed_exts))}'}), 400
+
+    agent = db.get_agent(agent_id)
+    if not agent:
+        return jsonify({'error': 'Agent not found'}), 404
+
     avatar_dir = _avatar_dir(agent_id)
     # Remove old avatar file if exists
     old_path = agent.get('avatar_path', '')
