@@ -433,7 +433,7 @@ def _notify_agent(agent_id: str, task: dict, channel_type: str, sdk=None, force:
             active = kanban_db.get_active_task_for_agent(agent_id)
             if active:
                 # Self-heal: restore _active_tasks so subsequent checks are fast
-                _active_tasks[agent_id] = active['id']
+                _active_tasks[agent_id] = str(active["id"])
                 _task_state_since.setdefault(agent_id, time.time())
                 _log(
                     f'Agent {agent_id} has in-progress task {active["id"]} in DB, '
@@ -524,7 +524,7 @@ def _notify_agent(agent_id: str, task: dict, channel_type: str, sdk=None, force:
         dedup=True,
     )
     if result['success']:
-        _pending_tasks[agent_id] = task_id
+        _pending_tasks[agent_id] = str(task_id)
         _task_state_since[agent_id] = time.time()
         _log(f'Notified agent {agent_id} about task "{task["title"]}"', 'info', sdk)
         return {'success': True}
@@ -646,7 +646,7 @@ def _notify_agent_followup(agent_id: str, task: dict, merged_content: str,
         dedup=True,
     )
     if result['success']:
-        _pending_tasks[agent_id] = task_id
+        _pending_tasks[agent_id] = str(task_id)
         _task_state_since[agent_id] = time.time()
         _log(f'Notified agent {agent_id} about follow-up on task "{task["title"]}"', 'info', sdk)
         return True
@@ -726,7 +726,7 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
         pass
 
     # Mark as active directly — task is already in-progress, skip pick/approve
-    _active_tasks[agent_id] = task_id
+    _active_tasks[agent_id] = str(task_id)
     _task_state_since[agent_id] = time.time()
     _pending_tasks.pop(agent_id, None)
     _paused_tasks.pop(agent_id, None)
@@ -1135,7 +1135,7 @@ command_registry.register(
 def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data):
     """Handle kanban workflow state transitions via the state() built-in tool."""
 
-    task_id = data.get('task_id') if isinstance(data, dict) else data
+    task_id = str(data.get('task_id')) if isinstance(data, dict) else str(data)
 
     # ── kanban:pick ───────────────────────────────────────────────────────────
     if label == 'kanban:pick':
@@ -1170,7 +1170,7 @@ def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data
                 }
         except Exception:
             pass
-        _pending_tasks[agent_id] = task_id
+        _pending_tasks[agent_id] = str(task_id)
         _task_state_since[agent_id] = time.time()
         _awaiting_approval.discard(agent_id)
         autopilot = _is_autopilot(agent_id)
@@ -1229,7 +1229,7 @@ def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data
             pass
         # Gate: autopilot=OFF requires explicit user approval before activation
         autopilot = _is_autopilot(agent_id)
-        if not autopilot and _approval_granted.get(agent_id) != task_id:
+        if not autopilot and str(_approval_granted.get(agent_id)) != task_id:
             # Inline fallback: if approval wasn't pre-set (e.g. model called activate
             # without waiting for the SYSTEM REMINDER), check the DB conversation now.
             try:
@@ -1251,10 +1251,10 @@ def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data
                         break
                 if last_user_msg and last_agent_msg:
                     if _classify_approval(last_agent_msg, last_user_msg):
-                        _approval_granted[agent_id] = task_id
+                        _approval_granted[agent_id] = task_id  # task_id is already string
             except Exception:
                 pass
-        if not autopilot and _approval_granted.get(agent_id) != task_id:
+        if not autopilot and str(_approval_granted.get(agent_id)) != task_id:
             return {
                 'result': 'error',
                 'message': (
@@ -1293,7 +1293,7 @@ def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data
         except Exception:
             pass  # DB unavailable — allow activation
         _pending_tasks.pop(agent_id, None)
-        _active_tasks[agent_id] = task_id
+        _active_tasks[agent_id] = str(task_id)
         _task_state_since[agent_id] = time.time()
         _progress_reminder_armed[agent_id] = False
         # Set focus mode so other sessions are rejected while this task is active
@@ -1473,7 +1473,7 @@ def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data
             }
         # Resume the task: move from paused to active, set status back to 'in-progress'
         _paused_tasks.pop(agent_id, None)
-        _active_tasks[agent_id] = task_id
+        _active_tasks[agent_id] = str(task_id)
         _task_state_since[agent_id] = time.time()
         _progress_reminder_armed[agent_id] = False
         try:
@@ -1677,7 +1677,7 @@ def _message_interceptor(agent_id: str, content: str, messages: list):
         print(f'[kanban/interceptor] pending agent={agent_id} task={task_id} '
               f'autopilot={autopilot} granted={_approval_granted.get(agent_id)!r} '
               f'awaiting={agent_id in _awaiting_approval}')
-        if not autopilot and _approval_granted.get(agent_id) != task_id:
+        if not autopilot and str(_approval_granted.get(agent_id)) != task_id:
             # Find last real user message and last agent text (for classifier context)
             last_user_msg = None
             last_agent_msg = None
@@ -1703,7 +1703,7 @@ def _message_interceptor(agent_id: str, content: str, messages: list):
                     _log(f'Approval granted for agent {agent_id} on task {task_id} '
                          f'(user: {last_user_msg!r:.60})')
 
-        if not autopilot and _approval_granted.get(agent_id) != task_id:
+        if not autopilot and str(_approval_granted.get(agent_id)) != task_id:
             if agent_id not in _awaiting_approval:
                 # First time in this pending state — tell agent to present the task
                 _awaiting_approval.add(agent_id)
@@ -1887,7 +1887,7 @@ def on_tool_executed(event, sdk):
             task_id = task.get('id', '')
             _pending_tasks.pop(agent_id, None)
             if task_id:
-                _active_tasks[agent_id] = task_id
+                _active_tasks[agent_id] = str(task_id)
                 _task_state_since[agent_id] = time.time()
             _progress_reminder_armed[agent_id] = False
             _log(f'Guard cleared for agent {agent_id} — task activated', 'info', sdk)
