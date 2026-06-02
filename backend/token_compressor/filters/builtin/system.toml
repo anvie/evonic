@@ -81,30 +81,6 @@ tail_lines = 50
 on_empty = "No results"
 
 # ---------------------------------------------------------------------------
-# read / read_file — strip comments, blanks, trailing whitespace
+# read / read_file — DISABLED per user preference: these tools are excluded
+# from compression entirely. Block removed 2026-06-03.
 # ---------------------------------------------------------------------------
-[[filter]]
-command = "^(read|read_file) "
-description = "read / read_file output — language-aware comment stripping"
-strip_ansi = true
-strip_lines = [
-    '^\d+:\s*$',
-    '^\d+:\s*#[^!]',
-    '^\d+:\s*#$',
-    '^\d+:\s*//',
-    '^\d+:\s*/\*',
-    '^\d+:\s*\*\s',
-    '^\d+:\s*\*@',
-    '^\d+:\s*\*$',
-    '^\d+:\s*\*/',
-    '^\d+:\s*<!--',
-    '^\d+:\s*-->',
-]
-replace = [
-    { pattern = '\s+$', replacement = '' },
-]
-truncate_lines_at = 200
-max_lines = 300
-head_lines = 200
-tail_lines = 100
-on_empty = "Empty file"
