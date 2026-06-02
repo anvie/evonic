@@ -206,8 +206,8 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
             parts.append("- **Save**: Use `write_file` with path `/_self/kb/filename` to store a new KB file.")
             parts.append("- **Read**: Use the `read` tool with the bare filename (no path) to read a KB file.")
             parts.append("- **KB vs Remember**: Use `read` for reference documents, guides, and long-form content. Use `remember` for short, searchable facts you want to recall across conversations.")
-            parts.append("- **Frontmatter**: KB files may include YAML frontmatter (delimited by `---` lines) with a `description` field. This description appears as a snippet in the \"Available Knowledge Files\" listing, helping agents decide whether to read the full file.")
-            parts.append("- **Best practices**: Store structured reference material in KB (specs, API docs, conventions). Keep each file focused on one topic. Update KB files when information changes.")
+            parts.append("- **Frontmatter**: KB files MUST include YAML frontmatter (delimited by `---` lines) with a `description` field. This description appears as a snippet in the \"Available Knowledge Files\" listing, helping agents decide whether to read the full file.")
+            parts.append("- **Best practices**: Store structured reference material in KB (specs, API docs, conventions). Keep each file focused on one topic. Update KB files when information changes. Always include frontmatter with a `description` when creating a new KB file.")
 
             # Inject notes.md instructions only if notes.md exists in KB
             if 'notes.md' in files:
