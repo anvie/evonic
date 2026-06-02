@@ -10,7 +10,7 @@ Used for: math, reasoning domains
 from typing import Any, Dict
 from .base import BaseEvaluator, EvaluationResult
 from evaluator.answer_extractor import answer_extractor
-from tests import get_test_class
+from evaluator.test_classes import get_test_class
 
 
 class TwoPassEvaluator(BaseEvaluator):

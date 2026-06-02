@@ -181,21 +181,21 @@ class TestMathScoring:
     
     def test_math_correct(self):
         """Correct math answer should score 1.0"""
-        from tests.math import MathTest
+        from evaluator.test_classes.math import MathTest
         test = MathTest(2)  # 15% of 240 = 36
         result = test.score_response("36", 36.0)
         assert result["score"] == 1.0
     
     def test_math_wrong(self):
         """Wrong math answer should score 0.0"""
-        from tests.math import MathTest
+        from evaluator.test_classes.math import MathTest
         test = MathTest(2)
         result = test.score_response("35", 36.0)
         assert result["score"] == 0.0
     
     def test_math_with_explanation_fallback(self):
         """Math with explanation should still extract"""
-        from tests.math import MathTest
+        from evaluator.test_classes.math import MathTest
         test = MathTest(2)
         result = test.score_response("36", 36.0)  # Clean from PASS 2
         assert result["score"] == 1.0
@@ -206,42 +206,42 @@ class TestReasoningScoring:
     
     def test_reasoning_l1_correct(self):
         """Correct boolean answer should score 1.0"""
-        from tests.reasoning import ReasoningTest
+        from evaluator.test_classes.reasoning import ReasoningTest
         test = ReasoningTest(1)
         result = test.score_response("ya", "ya")
         assert result["score"] == 1.0
     
     def test_reasoning_l2_correct(self):
         """Correct sequence should score 1.0"""
-        from tests.reasoning import ReasoningTest
+        from evaluator.test_classes.reasoning import ReasoningTest
         test = ReasoningTest(2)
         result = test.score_response("3, 7, 15, 18, 22", [3, 7, 15, 18, 22])
         assert result["score"] == 1.0
     
     def test_reasoning_l2_wrong(self):
         """Wrong sequence should score 0.0"""
-        from tests.reasoning import ReasoningTest
+        from evaluator.test_classes.reasoning import ReasoningTest
         test = ReasoningTest(2)
         result = test.score_response("1, 2, 3, 4, 5", [3, 7, 15, 18, 22])
         assert result["score"] == 0.0
     
     def test_reasoning_l3_correct(self):
         """Correct team count should score 1.0"""
-        from tests.reasoning import ReasoningTest
+        from evaluator.test_classes.reasoning import ReasoningTest
         test = ReasoningTest(3)
         result = test.score_response("17", 17)
         assert result["score"] == 1.0
     
     def test_reasoning_l4_correct(self):
         """Correct statements should score 1.0"""
-        from tests.reasoning import ReasoningTest
+        from evaluator.test_classes.reasoning import ReasoningTest
         test = ReasoningTest(4)
         result = test.score_response("2, 4", [2, 4])
         assert result["score"] == 1.0
     
     def test_reasoning_l5_correct(self):
         """Correct currency should score 1.0"""
-        from tests.reasoning import ReasoningTest
+        from evaluator.test_classes.reasoning import ReasoningTest
         test = ReasoningTest(5)
         result = test.score_response("820800", 820800.0)
         assert result["score"] == 1.0

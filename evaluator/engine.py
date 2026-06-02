@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional
 import queue
 from threading import Thread, Lock
 
-from tests import get_test_class
+from evaluator.test_classes import get_test_class
 from evaluator.llm_client import llm_client
 from evaluator.scoring import scoring_engine
 from evaluator.domain_evaluators import get_evaluator

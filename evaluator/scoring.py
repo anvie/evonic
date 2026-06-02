@@ -1,6 +1,6 @@
 from typing import Dict, Any, Optional
 import json
-from tests import get_test_class
+from evaluator.test_classes import get_test_class
 
 class ScoringEngine:
     def __init__(self):
