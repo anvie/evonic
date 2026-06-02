@@ -39,6 +39,17 @@ def execute(agent: dict, args: dict) -> dict:
         "selector": selector,
     })
     if "error" in result:
+        err = result["error"]
+        if "occluded" in err:
+            result["hint"] = (
+                "The element is behind a modal/overlay. Take a fresh snapshot "
+                "and look for the same element inside a 'dialog' role node."
+            )
+        elif "detached" in err or "not found" in err:
+            result["hint"] = (
+                "The element no longer exists in the DOM. Take a fresh snapshot "
+                "to get updated refs before retrying."
+            )
         return result
     return {
         "message": f"Clicked element '{selector}'.",
