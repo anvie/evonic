@@ -316,6 +316,8 @@ function subscribeBusySSE() {
         es.addEventListener('agent_turn_complete', function (e) {
             try {
                 var payload = JSON.parse(e.data);
+                // Don't show bubble if user is already viewing this agent's page
+                if (window.location.pathname === '/agents/' + payload.agent_id) return;
                 showBubblePopup(payload.agent_id, payload.agent_name, payload.response);
             } catch (_) {}
         });
