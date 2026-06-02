@@ -103,7 +103,7 @@
     "type": "function",
     "function": {
       "name": "pinchtab_click",
-      "description": "Click on an element in a browser tab. The element can be identified by CSS selector or by its accessibility node ID (obtained from pinchtab_snapshot). Use this to interact with buttons, links, checkboxes, and other clickable elements.",
+      "description": "Click on an element in a browser tab. The element can be identified by its `ref` from pinchtab_snapshot (e.g. 'e5', 'e21') or by a CSS selector (e.g. '#submit-btn'). Do NOT use the `nodeId` field as a selector. Use this to interact with buttons, links, checkboxes, and other clickable elements.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -113,7 +113,7 @@
           },
           "selector": {
             "type": "string",
-            "description": "CSS selector (e.g. '#submit-btn', '.nav-link') or accessibility node ID identifying the element to click. Get node IDs from pinchtab_snapshot results."
+            "description": "The `ref` value from pinchtab_snapshot (e.g. 'e5', 'e21') or a CSS selector (e.g. '#submit-btn', '.nav-link'). IMPORTANT: use the `ref` field, NOT the `nodeId` field from snapshot results."
           }
         },
         "required": ["tab_id", "selector"]
@@ -124,7 +124,7 @@
     "type": "function",
     "function": {
       "name": "pinchtab_type",
-      "description": "Type text into an input element in a browser tab. Use this to fill form fields, search boxes, and text areas. The target element is identified by CSS selector or accessibility node ID.",
+      "description": "Type text into an input element in a browser tab. Use this to fill form fields, search boxes, and text areas. The target element is identified by its `ref` from pinchtab_snapshot (e.g. 'e21') or by a CSS selector.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -134,7 +134,7 @@
           },
           "selector": {
             "type": "string",
-            "description": "CSS selector or accessibility node ID identifying the input element."
+            "description": "The `ref` value from pinchtab_snapshot (e.g. 'e21') or a CSS selector. IMPORTANT: use the `ref` field, NOT the `nodeId` field from snapshot results."
           },
           "text": {
             "type": "string",

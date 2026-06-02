@@ -47,13 +47,22 @@ PinchTab manages Chrome browser instances with tabs. The typical workflow:
 ### Interaction
 | Tool | Description |
 |------|-------------|
-| `pinchtab_click` | Click an element by CSS selector or node ID |
+| `pinchtab_click` | Click an element by CSS selector or snapshot `ref` |
 | `pinchtab_type` | Type text into an input element |
 
 ### Visual Capture
 | Tool | Description |
 |------|-------------|
 | `pinchtab_screenshot` | Take a screenshot (base64-encoded image) |
+
+## Selectors for Click & Type
+
+When using `pinchtab_click` or `pinchtab_type`, the `selector` parameter accepts:
+
+- **Snapshot `ref`** (recommended): Use the `ref` field from `pinchtab_snapshot` results, e.g. `"e21"`, `"e5"`. This is the most reliable way to target elements.
+- **CSS selectors**: Standard CSS selectors like `"input"`, `"#submit-btn"`, `".nav-link"`, `"button[type=submit]"`.
+
+**WARNING:** Do NOT use the `nodeId` field from snapshot results as a selector. `nodeId` is Chrome's internal DOM identifier and is not a valid selector. For example, if a snapshot node shows `"ref": "e21", "nodeId": 361`, use `"e21"` — never `"node361"` or `"361"`.
 
 ## Token Efficiency
 
