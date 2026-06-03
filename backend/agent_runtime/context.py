@@ -5,6 +5,7 @@ Pure data preparation — no LLM calls, no threading.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -63,6 +64,32 @@ def _get_mtime(path: str) -> float:
         return os.stat(path).st_mtime
     except OSError:
         return 0.0
+
+
+def _get_skills_mtime_hash() -> str:
+    """Compute a hash over all skill directories' SYSTEM.md and skill.json mtimes.
+
+    Returns a SHA-256 hex digest that changes whenever any skill is added,
+    removed, or modified. Uses only stat() calls — no JSON parsing or tool
+    def loading, unlike SkillsManager().list_skills().
+    """
+    skills_dir = os.path.join(_BASE_DIR, 'skills')
+    if not os.path.isdir(skills_dir):
+        return hashlib.sha256(b'').hexdigest()
+
+    entries = []
+    for name in sorted(os.listdir(skills_dir)):
+        skill_dir = os.path.join(skills_dir, name)
+        if not os.path.isdir(skill_dir):
+            continue
+        skill_json = os.path.join(skill_dir, 'skill.json')
+        if not os.path.isfile(skill_json):
+            continue
+        system_md = os.path.join(skill_dir, 'SYSTEM.md')
+        max_mtime = max(_get_mtime(system_md), _get_mtime(skill_json))
+        entries.append(f"{name}:{max_mtime}")
+
+    return hashlib.sha256(','.join(entries).encode()).hexdigest()
 
 
 def _build_portal_info(agent_id: str) -> list:
@@ -362,17 +389,9 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
     if _get_mtime(kb_dir) != cache_entry['kb_mtime']:
         return False
 
-    # Check skills mtimes (SYSTEM.md and skill.json)
-    cached_skills_mtimes = cache_entry.get('skills_mtimes', {})
-    skills_mgr = SkillsManager()
-    for skill in skills_mgr.list_skills():
-        sid = skill.get('id', '')
-        skill_dir = skill.get('_dir', os.path.join(_BASE_DIR, 'skills', sid))
-        system_md_mtime = _get_mtime(os.path.join(skill_dir, 'SYSTEM.md'))
-        skill_json_mtime = _get_mtime(os.path.join(skill_dir, 'skill.json'))
-        current_mtime = max(system_md_mtime, skill_json_mtime)
-        if current_mtime != cached_skills_mtimes.get(sid, 0.0):
-            return False
+    # Check skills hash (covers SYSTEM.md and skill.json for all skill dirs)
+    if _get_skills_mtime_hash() != cache_entry.get('skills_hash', ''):
+        return False
 
     # Check tools hash (assigned tool IDs)
     assigned_ids = frozenset(db.get_agent_tools(eid))
@@ -411,14 +430,7 @@ def build_system_prompt(agent: Dict[str, Any]) -> str:
         # Build mtime snapshot for cache validation
         sp_path = _system_prompt_path(eid)
         kb_dir = os.path.join(_AGENTS_DIR, eid, 'kb')
-        skills_mtimes = {}
-        skills_mgr = SkillsManager()
-        for skill in skills_mgr.list_skills():
-            sid = skill.get('id', '')
-            skill_dir = skill.get('_dir', os.path.join(_BASE_DIR, 'skills', sid))
-            system_md_mtime = _get_mtime(os.path.join(skill_dir, 'SYSTEM.md'))
-            skill_json_mtime = _get_mtime(os.path.join(skill_dir, 'skill.json'))
-            skills_mtimes[sid] = max(system_md_mtime, skill_json_mtime)
+        skills_hash = _get_skills_mtime_hash()
 
         assigned_ids = frozenset(db.get_agent_tools(eid))
 
@@ -426,7 +438,7 @@ def build_system_prompt(agent: Dict[str, Any]) -> str:
             'static_prompt': static_prompt,
             'sp_mtime': _get_mtime(sp_path),
             'kb_mtime': _get_mtime(kb_dir),
-            'skills_mtimes': skills_mtimes,
+            'skills_hash': skills_hash,
             'tools_hash': str(sorted(assigned_ids)),
             'ctx_mtime': _get_mtime(__file__),
             'sandbox_enabled': agent.get('sandbox_enabled', 0),
