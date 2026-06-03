@@ -691,6 +691,7 @@ class SchemaMixin:
                 cursor.execute("UPDATE workplaces SET type = 'tunnel' WHERE type = 'cloud'")
             except (sqlite3.OperationalError, sqlite3.IntegrityError):
                 try:
+                    cursor.execute("DROP TABLE IF EXISTS workplaces_old")
                     cursor.execute("ALTER TABLE workplaces RENAME TO workplaces_old")
                     cursor.execute("""
                         CREATE TABLE workplaces (
