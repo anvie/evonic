@@ -62,6 +62,12 @@ def normalize_code_quotes(text: str) -> str:
 # This function reverses JSON's Unicode decoding: non-ASCII characters are
 # converted back to the literal \uXXXX form so they can match file content.
 
+# Precomputed lookup: list indexed by code point for O(1) array lookup
+# instead of dict hashing.  ~65K entries, ~1 MB memory — acceptable.
+_REENCODE_TABLE = [None] * 0x10000
+for _cp in range(128, 0x10000):
+    _REENCODE_TABLE[_cp] = f'\\u{_cp:04x}'
+
 
 def reencode_unicode_escapes(text: str) -> str:
     """Re-encode non-ASCII characters as literal \\uXXXX escape sequences.
@@ -71,17 +77,24 @@ def reencode_unicode_escapes(text: str) -> str:
     """
     if not text:
         return text
+    # Fast path: pure ASCII is a no-op — the output is identical.
+    if text.isascii():
+        return text
     parts = []
     for ch in text:
         cp = ord(ch)
-        if cp > 127:
-            if cp <= 0xFFFF:
-                parts.append(f'\\u{cp:04x}')
-            else:
-                cp -= 0x10000
-                high = 0xD800 + (cp >> 10)
-                low = 0xDC00 + (cp & 0x3FF)
-                parts.append(f'\\u{high:04x}\\u{low:04x}')
+        if cp < 0x10000:
+            esc = _REENCODE_TABLE[cp]
+            if esc is not None:
+                parts.append(esc)
+                continue
+            parts.append(ch)
+        elif cp > 0xFFFF:
+            # Supplementary plane: encode as UTF-16 surrogate pair
+            cp -= 0x10000
+            high = 0xD800 + (cp >> 10)
+            low = 0xDC00 + (cp & 0x3FF)
+            parts.append(f'\\u{high:04x}\\u{low:04x}')
         else:
             parts.append(ch)
     return ''.join(parts)
