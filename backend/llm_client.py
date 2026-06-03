@@ -205,6 +205,24 @@ class LLMClient:
                 self.temperature = None
                 self.api_format = "openai"
         self._cached_model_name = None
+        # Cache for global LLM settings (avoids repeated DB reads in hot path).
+        # TTL-based, simple dict — intentionally lock-free (worst case: 1 extra DB read).
+        self._settings_cache = {}
+        self._settings_cache_time = 0
+
+    def _get_cached_setting(self, cache_key: str, db_func, *args) -> Any:
+        """Return a cached setting value with a 30-second TTL.
+
+        On cache miss or TTL expiry, calls ``db_func(*args)`` and stores the
+        result (including None) so absent settings don't trigger repeated DB reads.
+        """
+        now = time.time()
+        if now - self._settings_cache_time > 30:
+            self._settings_cache = {}
+            self._settings_cache_time = now
+        if cache_key not in self._settings_cache:
+            self._settings_cache[cache_key] = db_func(*args)
+        return self._settings_cache[cache_key]
 
     def get_actual_model_name(self, force_refresh: bool = False) -> str:
         """Get the actual model name from the remote endpoint.
@@ -330,8 +348,8 @@ class LLMClient:
         try:
             from models.db import db as _db
 
-            _ctx_len = int(_db.get_setting("llm_context_length", 0) or 0)
-            _prompt_buf = int(_db.get_setting("llm_prompt_buffer", 2048) or 2048)
+            _ctx_len = int(self._get_cached_setting("llm_context_length", _db.get_setting, "llm_context_length", 0) or 0)
+            _prompt_buf = int(self._get_cached_setting("llm_prompt_buffer", _db.get_setting, "llm_prompt_buffer", 2048) or 2048)
             if _ctx_len > 0:
                 max_tokens = min(max_tokens, _ctx_len - _prompt_buf)
         except Exception:
@@ -448,7 +466,7 @@ class LLMClient:
         try:
             from models.db import db as _db
 
-            _val = _db.get_setting("llm_max_retries", None)
+            _val = self._get_cached_setting("llm_max_retries", _db.get_setting, "llm_max_retries", None)
             max_retries = int(_val) if _val is not None else 5
         except Exception:
             max_retries = 5
