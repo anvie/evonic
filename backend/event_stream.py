@@ -17,6 +17,7 @@ Handlers are called asynchronously in a thread pool and must not block.
 Events are logged to logs/events.log (configurable via EVENT_LOG_FILE in .env).
 """
 
+import bisect
 import collections
 import itertools
 import logging
@@ -98,7 +99,13 @@ class EventStream:
         """Return buffered events for session_id where after_seq < seq <= up_to_seq."""
         with self._buffer_lock:
             buf = self._session_buffers.get(session_id, collections.deque())
-            return [e for e in buf if after_seq < e['seq'] <= up_to_seq]
+            if not buf:
+                return []
+            events = list(buf)
+            seqs = [e['seq'] for e in events]
+            lo = bisect.bisect_right(seqs, after_seq)
+            hi = bisect.bisect_right(seqs, up_to_seq)
+            return events[lo:hi]
 
     def get_session_events(self, session_id: str, after_seq: int = 0) -> list:
         """Return all buffered events for session_id with seq > after_seq."""
