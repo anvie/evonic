@@ -28,7 +28,7 @@ def _token_count(text: str) -> int:
 
 from models.db import db
 from backend.tools import tool_registry
-from backend.skills_manager import SkillsManager
+from backend.skills_manager import SkillsManager, skills_manager
 from config import AGENT_MAX_TOOL_RESULT_CHARS as MAX_TOOL_RESULT_CHARS
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -280,7 +280,7 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
     )
 
     # List available skills with SYSTEM.md so the agent knows what it can load
-    skills_mgr = SkillsManager()
+    skills_mgr = skills_manager
     _allowed_skills = None if agent.get('is_super') else set(db.get_agent_skills(eid))
     skills_with_system_md = []
     skill_briefs = []
@@ -628,6 +628,36 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "type": "function",
                     "function": tool_def['function']
                 })
+
+    # Auto-inject eagerly loaded skill tools for assigned skills
+    # This ensures that when an agent has a skill assigned in agent_skills and that skill
+    # is eagerly loaded (no lazy_tools=true), the tools are available without manual
+    # tool assignment in agent_tools.
+    if not agent.get('is_super'):
+        assigned_skill_ids = set(db.get_agent_skills(eid))
+        if assigned_skill_ids:
+            for skill in skills_manager.list_skills():
+                skill_id = skill.get('id', '')
+                if skill_id not in assigned_skill_ids:
+                    continue
+                # Skip lazy-loaded skills — their tools are injected via use_skill
+                if skill.get('lazy_tools', False):
+                    continue
+                # Skip super_only skills for non-super agents
+                if skill.get('super_only', False):
+                    continue
+                defs = skills_manager.get_skill_tool_defs(skill_id)
+                for tool_def in defs:
+                    fn_name = tool_def.get('function', {}).get('name', '')
+                    if not fn_name:
+                        continue
+                    # Avoid duplicates
+                    if any(t['function']['name'] == fn_name for t in tools):
+                        continue
+                    tools.append({
+                        "type": "function",
+                        "function": tool_def['function']
+                    })
 
     # ── Patch /workspace and Docker/container references for non-sandbox agents ──
     # Tool JSON definitions contain /workspace paths and Docker/container
