@@ -11,6 +11,26 @@ from .base import BaseEvaluator, EvaluationResult
 from evaluator.answer_extractor import answer_extractor
 from evaluator.sql_executor import sql_executor
 
+# Compiled regex patterns for _normalize_sql — compiled once at import time
+_RE_DATE_TRUNC_MONTH = re.compile(
+    r"DATE_TRUNC\s*\(\s*'month'\s*,\s*([^)]+)\)", re.IGNORECASE
+)
+_RE_DATE_TRUNC_YEAR = re.compile(
+    r"DATE_TRUNC\s*\(\s*'year'\s*,\s*([^)]+)\)", re.IGNORECASE
+)
+_RE_DATE_TRUNC_DAY = re.compile(
+    r"DATE_TRUNC\s*\(\s*'day'\s*,\s*([^)]+)\)", re.IGNORECASE
+)
+_RE_DATE_FORMAT = re.compile(
+    r"DATE_FORMAT\s*\(\s*([^,]+),\s*'([^']+)'\s*\)", re.IGNORECASE
+)
+_RE_NOW_FUNC = re.compile(
+    r"\bNOW\s*\(\s*\)", re.IGNORECASE
+)
+_RE_ILIKE = re.compile(
+    r"\bILIKE\b", re.IGNORECASE
+)
+
 
 class SQLExecutorEvaluator(BaseEvaluator):
     """
@@ -128,33 +148,17 @@ class SQLExecutorEvaluator(BaseEvaluator):
     def _normalize_sql(self, sql: str) -> str:
         """Translate common PostgreSQL/MySQL functions to SQLite equivalents."""
         # DATE_TRUNC('month', col) → strftime('%Y-%m', col)
-        sql = re.sub(
-            r"DATE_TRUNC\s*\(\s*'month'\s*,\s*([^)]+)\)",
-            r"strftime('%Y-%m', \1)",
-            sql, flags=re.IGNORECASE
-        )
+        sql = _RE_DATE_TRUNC_MONTH.sub(r"strftime('%Y-%m', \1)", sql)
         # DATE_TRUNC('year', col) → strftime('%Y', col)
-        sql = re.sub(
-            r"DATE_TRUNC\s*\(\s*'year'\s*,\s*([^)]+)\)",
-            r"strftime('%Y', \1)",
-            sql, flags=re.IGNORECASE
-        )
+        sql = _RE_DATE_TRUNC_YEAR.sub(r"strftime('%Y', \1)", sql)
         # DATE_TRUNC('day', col) → date(col)
-        sql = re.sub(
-            r"DATE_TRUNC\s*\(\s*'day'\s*,\s*([^)]+)\)",
-            r"date(\1)",
-            sql, flags=re.IGNORECASE
-        )
+        sql = _RE_DATE_TRUNC_DAY.sub(r"date(\1)", sql)
         # DATE_FORMAT(col, '%Y-%m') → strftime('%Y-%m', col)
-        sql = re.sub(
-            r"DATE_FORMAT\s*\(\s*([^,]+),\s*'([^']+)'\s*\)",
-            r"strftime('\2', \1)",
-            sql, flags=re.IGNORECASE
-        )
+        sql = _RE_DATE_FORMAT.sub(r"strftime('\2', \1)", sql)
         # NOW() → datetime('now')
-        sql = re.sub(r"\bNOW\s*\(\s*\)", "datetime('now')", sql, flags=re.IGNORECASE)
+        sql = _RE_NOW_FUNC.sub("datetime('now')", sql)
         # ILIKE → LIKE (SQLite LIKE is case-insensitive for ASCII)
-        sql = re.sub(r"\bILIKE\b", "LIKE", sql, flags=re.IGNORECASE)
+        sql = _RE_ILIKE.sub("LIKE", sql)
         return sql
 
     def _score_results(self, sql_query: str, actual_result: list, columns: list,
