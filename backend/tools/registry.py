@@ -9,7 +9,9 @@ Skills extend the registry with additional tool definitions and backends.
 
 import os
 import sys
+import glob
 import json
+import threading
 import importlib
 import importlib.util
 from typing import Dict, Any, Optional, Callable, List
@@ -24,6 +26,10 @@ class ToolRegistry:
     def __init__(self):
         # Cache: tool_name -> { module, mtime, path }
         self._module_cache: Dict[str, dict] = {}
+        # Tool definition JSON cache with mtime-based invalidation
+        self._json_cache: Optional[List[Dict[str, Any]]] = None
+        self._json_mtimes: Optional[tuple] = None
+        self._cache_lock = threading.Lock()
         # Built-in tool factories: builtin_id -> callable(agent_context) -> tool_def_and_executor
         # IDs use 'builtin:' namespace prefix (e.g. 'builtin:read')
         self._builtins: Dict[str, Callable] = {}
@@ -48,21 +54,66 @@ class ToolRegistry:
         # Tool to clear active fallback flag from agent_state (agent calls this)
         self._builtins['builtin:reset_active_model'] = _builtin_reset_active_model_factory
 
-    def get_tool_defs_from_json(self) -> List[Dict[str, Any]]:
-        """Load tool definitions from tools/*.json (for eval & agent config UI)."""
-        tools = []
+    def _compute_json_mtimes(self) -> Optional[tuple]:
+        """Return a tuple of (path, mtime) for every tools/*.json file.
+
+        Sorted for stable comparison.  Returns None if the tools dir doesn't
+        exist, which forces a cache miss on the next get_tool_defs_from_json
+        call (which will return [] when the dir is missing anyway).
+        """
         defs_dir = os.path.normpath(TOOL_DEFS_DIR)
         if not os.path.isdir(defs_dir):
+            return None
+        files = sorted(glob.glob(os.path.join(defs_dir, "*.json")))
+        return tuple((f, os.path.getmtime(f)) for f in files)
+
+    def invalidate_tool_defs_cache(self) -> None:
+        """Force the next get_tool_defs_from_json call to re-read from disk.
+
+        Call this after plugin install / update / remove so the cache picks
+        up new or changed JSON definitions immediately.
+        """
+        with self._cache_lock:
+            self._json_cache = None
+            self._json_mtimes = None
+
+    def get_tool_defs_from_json(self) -> List[Dict[str, Any]]:
+        """Load tool definitions from tools/*.json (for eval & agent config UI).
+
+        Results are cached with mtime-based invalidation.  A cache hit costs
+        one os.path.isdir + one glob + N stat calls (for mtimes).
+        """
+        current_mtimes = self._compute_json_mtimes()
+
+        # Fast path: cache hit, no lock needed for read
+        if self._json_cache is not None and current_mtimes is not None:
+            if current_mtimes == self._json_mtimes:
+                return self._json_cache
+
+        # Cache miss: rebuild under lock
+        with self._cache_lock:
+            # Double-check: another thread may have rebuilt while we waited
+            if self._json_cache is not None and current_mtimes is not None:
+                if current_mtimes == self._json_mtimes:
+                    return self._json_cache
+
+            tools: List[Dict[str, Any]] = []
+            defs_dir = os.path.normpath(TOOL_DEFS_DIR)
+            if os.path.isdir(defs_dir):
+                for fname in sorted(os.listdir(defs_dir)):
+                    if not fname.endswith('.json'):
+                        continue
+                    with open(os.path.join(defs_dir, fname)) as f:
+                        try:
+                            tools.append(json.load(f))
+                        except json.JSONDecodeError:
+                            pass
+
+            # Recompute mtimes after loading (files may have changed while I/O was in flight;
+            # using the post-load mtimes means the next call with unchanged files hits cache)
+            self._json_mtimes = self._compute_json_mtimes()
+            self._json_cache = tools
             return tools
-        for fname in sorted(os.listdir(defs_dir)):
-            if not fname.endswith('.json'):
-                continue
-            with open(os.path.join(defs_dir, fname)) as f:
-                try:
-                    tools.append(json.load(f))
-                except json.JSONDecodeError:
-                    pass
-        return tools
 
     def get_all_tool_defs(self) -> List[Dict[str, Any]]:
         """Load tool definitions from both tools/ and enabled skills."""
