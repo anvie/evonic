@@ -13,6 +13,7 @@ import shutil
 from typing import Dict, Any, List, Optional
 import queue
 from threading import Thread, Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from evaluator.test_classes import get_test_class
 from evaluator.llm_client import llm_client
@@ -279,8 +280,7 @@ class EvaluationEngine:
                     duration_ms=test_result["duration_ms"]
                 )
                 
-                # Small delay between tests
-                time.sleep(0.5)
+                # (Sleep removed — was time.sleep(0.5); no longer needed)
     
     def _run_configurable_evaluation(self, run_id: int, model_name: str, selected_domains: list = None, run_llm_client=None):
         """Run evaluation using configurable test definitions
@@ -298,102 +298,26 @@ class EvaluationEngine:
         test_manager.sync_to_db()
         
         # Load all domains
-        domains = test_manager.list_domains()
+        all_domains = test_manager.list_domains()
         
-        for domain_data in domains:
+        # Filter domains based on selection
+        domains = []
+        for domain_data in all_domains:
             domain_id = domain_data['id']
-            
-            # Skip disabled domains
             if not domain_data.get('enabled', True):
                 continue
-            
-            # Skip domains not in selection (if selection provided)
             if selected_domains and domain_id not in selected_domains:
                 continue
+            domains.append(domain_data)
+        
+        # Iterate levels first, then run all domains at each level in parallel
+        for level in range(1, 6):
+            if not self.is_running:
+                break
             
-            # Run tests for each level
-            for level in range(1, 6):
-                if not self.is_running:
-                    break
-                
-                # Load tests for this domain/level
-                tests = test_manager.list_tests(domain_id, level)
-                
-                if not tests:
-                    self._log(f'[SKIP] No tests for {domain_id} Level {level}')
-                    continue
-                
-                # Set status to "running" for this cell before starting
-                db.update_test_result(
-                    run_id, domain_id, level,
-                    status="running",
-                    model_name=model_name
-                )
-                
-                self._log(f'[TEST] Running {len(tests)} test(s) for {domain_id} Level {level}')
-                
-                # Run all tests for this level
-                test_results = []
-                first_prompt = None
-                first_response = None
-                first_expected = None
-                
-                for test in tests:
-                    if not self.is_running:
-                        break
-                    
-                    if not test.get('enabled', True):
-                        continue
-                    
-                    result = self._run_single_configurable_test(
-                        test, domain_id, level, model_name, run_id, run_llm_client=run_llm_client
-                    )
-                    test_results.append(result)
-                    
-                    # Store first test's prompt/response for display
-                    if first_prompt is None:
-                        first_prompt = test.get('prompt', '')
-                        first_expected = test.get('expected', {})
-                
-                # Calculate average score for this level
-                # Only save if still running (not interrupted mid-level)
-                if self.is_running and test_results:
-                    level_score = ScoreAggregator.calculate_level_score(test_results)
-                    
-                    # Calculate total duration for this level
-                    level_duration_ms = sum(
-                        r.details.get('duration_ms', 0) if r.details else 0 
-                        for r in test_results
-                    )
-                    
-                    # Store level score
-                    db.save_level_score(
-                        run_id, domain_id, level,
-                        level_score.average_score,
-                        level_score.total_tests,
-                        level_score.passed_tests
-                    )
-                    
-                    # Also update the legacy test_results table for compatibility
-                    avg_score = level_score.average_score
-                    status = 'passed' if avg_score >= 0.7 else 'failed'
-                    
-                    # Get details from first test result (includes thinking, response, etc.)
-                    first_details = test_results[0].details if test_results[0].details else {}
-                    
-                    db.update_test_result(
-                        run_id, domain_id, level,
-                        prompt=first_prompt,
-                        response=first_details.get('response'),
-                        expected=json.dumps(first_expected) if first_expected else None,
-                        score=avg_score,
-                        status=status,
-                        details=json.dumps(first_details) if first_details else None,
-                        model_name=model_name,
-                        duration_ms=level_duration_ms
-                    )
-                
-                time.sleep(0.5)
+            self._run_all_domains_at_level(
+                run_id, model_name, domains, level, run_llm_client
+            )
     
     def _run_single_legacy_test(self, domain: str, level: int, run_llm_client=None) -> Dict[str, Any]:
         """Run a single legacy test using domain-specific evaluator"""
@@ -1625,6 +1549,132 @@ class EvaluationEngine:
             "conversation_log": conversation_log,
             "messages": messages
         }
+    
+    def _run_single_domain_level(self, run_id: int, model_name: str, domain_id: str,
+                                  level: int, run_llm_client=None) -> Dict[str, Any]:
+        """Run all tests for a single domain at a given level.
+        
+        Tests within a domain run sequentially (ordered by level).
+        Returns a dict with domain and result info, or an error dict on exception.
+        """
+        try:
+            # Load tests for this domain/level
+            tests = test_manager.list_tests(domain_id, level)
+            
+            if not tests:
+                self._log(f'[SKIP] No tests for {domain_id} Level {level}')
+                return {"domain": domain_id, "level": level, "skipped": True}
+            
+            # Set status to "running" for this cell before starting
+            db.update_test_result(
+                run_id, domain_id, level,
+                status="running",
+                model_name=model_name
+            )
+            
+            self._log(f'[TEST] Running {len(tests)} test(s) for {domain_id} Level {level}')
+            
+            # Run all tests for this level (sequential within domain)
+            test_results = []
+            first_prompt = None
+            first_expected = None
+            
+            for test in tests:
+                if not self.is_running:
+                    break
+                
+                if not test.get('enabled', True):
+                    continue
+                
+                result = self._run_single_configurable_test(
+                    test, domain_id, level, model_name, run_id, run_llm_client=run_llm_client
+                )
+                test_results.append(result)
+                
+                # Store first test's prompt/response for display
+                if first_prompt is None:
+                    first_prompt = test.get('prompt', '')
+                    first_expected = test.get('expected', {})
+            
+            # Calculate average score for this level
+            # Only save if still running (not interrupted mid-level)
+            if self.is_running and test_results:
+                level_score = ScoreAggregator.calculate_level_score(test_results)
+                
+                # Calculate total duration for this level
+                level_duration_ms = sum(
+                    r.details.get('duration_ms', 0) if r.details else 0 
+                    for r in test_results
+                )
+                
+                # Store level score
+                db.save_level_score(
+                    run_id, domain_id, level,
+                    level_score.average_score,
+                    level_score.total_tests,
+                    level_score.passed_tests
+                )
+                
+                # Also update the legacy test_results table for compatibility
+                avg_score = level_score.average_score
+                status = 'passed' if avg_score >= 0.7 else 'failed'
+                
+                # Get details from first test result (includes thinking, response, etc.)
+                first_details = test_results[0].details if test_results[0].details else {}
+                
+                db.update_test_result(
+                    run_id, domain_id, level,
+                    prompt=first_prompt,
+                    response=first_details.get('response'),
+                    expected=json.dumps(first_expected) if first_expected else None,
+                    score=avg_score,
+                    status=status,
+                    details=json.dumps(first_details) if first_details else None,
+                    model_name=model_name,
+                    duration_ms=level_duration_ms
+                )
+            
+            return {"domain": domain_id, "level": level, "skipped": False, "test_count": len(test_results)}
+            
+        except Exception as e:
+            import traceback
+            self._log(f'[ERROR] Domain {domain_id} Level {level}: {e}')
+            self._log(f'[ERROR] Traceback: {traceback.format_exc()[-300:]}')
+            return {"domain": domain_id, "level": level, "error": str(e)}
+    
+    def _run_all_domains_at_level(self, run_id: int, model_name: str,
+                                   domains: list, level: int, run_llm_client=None) -> list:
+        """Run all domains at a given level in parallel using ThreadPoolExecutor.
+        
+        Max workers is configurable via EVALUATOR_WORKERS env var (default 4).
+        Results are collected in the same format as the sequential loop.
+        An exception in one domain does not crash other domains.
+        """
+        max_workers = int(os.environ.get('EVALUATOR_WORKERS', '4'))
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {}
+            for domain_data in domains:
+                domain_id = domain_data['id']
+                if not self.is_running:
+                    break
+                future = executor.submit(
+                    self._run_single_domain_level,
+                    run_id, model_name, domain_id, level, run_llm_client
+                )
+                futures[future] = domain_id
+            
+            for future in as_completed(futures):
+                domain = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    self._log(f'[ERROR] Domain {domain} Level {level}: {e}')
+                    results.append({"domain": domain, "level": level, "error": str(e)})
+        
+        return results
     
     def get_test_matrix(self, run_id: Optional[int] = None) -> Dict[str, Any]:
         """Get test matrix for UI display"""
