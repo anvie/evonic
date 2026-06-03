@@ -685,35 +685,33 @@ class SchemaMixin:
 
 
             # Migration: rename type cloud to tunnel for existing workplaces
-            # If the old CHECK constraint (type IN 'cloud') is still on the table,
-            # the UPDATE will fail with IntegrityError. Recreate the table with the new schema.
+            # The old CHECK constraint (type IN 'cloud') must be replaced with 'tunnel'.
+            # Rebuild the table unconditionally — relying on UPDATE failure to trigger
+            # the rebuild fails when there are no 'cloud' rows (no-op success skips it).
             try:
-                cursor.execute("UPDATE workplaces SET type = 'tunnel' WHERE type = 'cloud'")
-            except (sqlite3.OperationalError, sqlite3.IntegrityError):
-                try:
-                    cursor.execute("DROP TABLE IF EXISTS workplaces_old")
-                    cursor.execute("ALTER TABLE workplaces RENAME TO workplaces_old")
-                    cursor.execute("""
-                        CREATE TABLE workplaces (
-                            id TEXT PRIMARY KEY,
-                            name TEXT NOT NULL,
-                            type TEXT NOT NULL CHECK(type IN ('local', 'remote', 'tunnel')),
-                            config TEXT NOT NULL DEFAULT '{}',
-                            status TEXT DEFAULT 'disconnected',
-                            error_msg TEXT,
-                            last_connected_at TEXT,
-                            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                        )
-                    """)
-                    cursor.execute("""
-                        INSERT INTO workplaces (id, name, type, config, status, error_msg, last_connected_at, created_at, updated_at)
-                        SELECT id, name, CASE WHEN type = 'cloud' THEN 'tunnel' ELSE type END, config, status, error_msg, last_connected_at, created_at, updated_at
-                        FROM workplaces_old
-                    """)
-                    cursor.execute("DROP TABLE workplaces_old")
-                except sqlite3.OperationalError:
-                    pass
+                cursor.execute("DROP TABLE IF EXISTS workplaces_old")
+                cursor.execute("ALTER TABLE workplaces RENAME TO workplaces_old")
+                cursor.execute("""
+                    CREATE TABLE workplaces (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        type TEXT NOT NULL CHECK(type IN ('local', 'remote', 'tunnel')),
+                        config TEXT NOT NULL DEFAULT '{}',
+                        status TEXT DEFAULT 'disconnected',
+                        error_msg TEXT,
+                        last_connected_at TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("""
+                    INSERT INTO workplaces (id, name, type, config, status, error_msg, last_connected_at, created_at, updated_at)
+                    SELECT id, name, CASE WHEN type = 'cloud' THEN 'tunnel' ELSE type END, config, status, error_msg, last_connected_at, created_at, updated_at
+                    FROM workplaces_old
+                """)
+                cursor.execute("DROP TABLE workplaces_old")
+            except sqlite3.OperationalError:
+                pass
 
             # Migration: rename cloud_connectors to tunnel_connectors for existing databases
             try:
