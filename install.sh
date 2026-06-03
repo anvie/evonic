@@ -84,6 +84,22 @@ check_prereqs() {
     ok "Python version $(python3 --version 2>&1) meets minimum requirement (3.9+)"
 }
 
+# --- Fix remote fetch config so branches and tags are tracked ---
+# Shallow clones (--depth 1 --branch TAG) lock the remote to a single
+# tag refspec (fetch = +refs/tags/X:refs/tags/X).  This permanently
+# breaks `git fetch`, `git pull`, and the supervisor auto-updater.
+# Reconfigure to fetch all branches + tags so the repo stays alive.
+fix_remote_fetch() {
+    local rc
+    rc=$(git -C "$EVONIC_HOME" config remote.origin.fetch 2>/dev/null)
+    case "$rc" in
+        *refs/tags/*:refs/tags/*)  # locked to a single tag -- fix it
+            git -C "$EVONIC_HOME" config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+            git -C "$EVONIC_HOME" config --add remote.origin.fetch "+refs/tags/*:refs/tags/*"
+            git -C "$EVONIC_HOME" fetch origin 2>/dev/null || true ;;
+    esac
+}
+
 # ── Step 2: Clone or update repository ──────────────────────────────────────
 clone_repo() {
     step "Step 2/6: Getting Evonic source code"
@@ -105,6 +121,7 @@ clone_repo() {
 
     if [ -d "$EVONIC_HOME/.git" ]; then
         info "Repository exists — updating to $LATEST_TAG..."
+        fix_remote_fetch
         git -C "$EVONIC_HOME" fetch --tags origin 2>/dev/null
         if [ "$LATEST_TAG" != "main" ]; then
             git -C "$EVONIC_HOME" checkout "tags/$LATEST_TAG" 2>/dev/null || \
@@ -133,6 +150,7 @@ clone_repo() {
         fi
         ok "Repository cloned"
     fi
+    fix_remote_fetch
 
     # Ensure we're on the main branch so users can git pull manually
     git -C "$EVONIC_HOME" checkout main 2>/dev/null || \
