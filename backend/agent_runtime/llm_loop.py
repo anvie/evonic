@@ -813,6 +813,7 @@ def run_tool_loop(agent: Dict[str, Any],
             # After all retries to the primary model fail, attempt the
             # agent's configured fallback model (if any) before giving up.
             _fallback_succeeded = False
+            _fallback_vision_stripped = False
             _fallback_model = db.get_agent_fallback_model(agent_id)
             if _fallback_model:
                 _logger.warning(
@@ -828,6 +829,43 @@ def run_tool_loop(agent: Dict[str, Any],
                 try:
                     _fallback_config = _build_model_config(_fallback_model)
                     _fallback_llm = LLMClient(model_config=_fallback_config)
+                    # If the fallback model doesn't support vision, strip image
+                    # content from messages — mirroring the primary model check
+                    # at loop start (lines 400-418).  Without this, a non-vision
+                    # fallback rejects multimodal image_url blocks.
+                    _fb_vision_supported = bool(_fallback_config.get('vision_supported', False))
+                    if not _fb_vision_supported:
+                        _fb_patched = []
+                        _fb_stripped = False
+                        for _fb_msg in messages:
+                            _fb_content = _fb_msg.get('content')
+                            if _fb_msg.get('role') == 'user' and isinstance(_fb_content, list):
+                                _has_img = any(
+                                    isinstance(p, dict) and p.get('type') == 'image_url'
+                                    for p in _fb_content
+                                )
+                                if _has_img:
+                                    _text_parts = [
+                                        p['text']
+                                        for p in _fb_content
+                                        if isinstance(p, dict) and p.get('type') == 'text'
+                                    ]
+                                    _user_text = _text_parts[0] if _text_parts else ''
+                                    _note = (
+                                        f"[System note: The user sent an image{' with the message: ' + _user_text if _user_text else ''}, "
+                                        "but the fallback model does not support image processing. "
+                                        "Please inform the user politely that you cannot process images with the current model, "
+                                        "and respond in the same language the user is using.]"
+                                    )
+                                    _fb_msg = {**_fb_msg, 'content': _note}
+                                    _fb_stripped = True
+                            _fb_patched.append(_fb_msg)
+                        if _fb_stripped:
+                            messages = _fb_patched
+                            _fallback_vision_stripped = True
+                            _logger.warning(
+                                "Stripped image content for fallback model %s (%s) — fallback does not support vision",
+                                _fallback_model.get('name'), _fallback_model.get('model_name'))
                     with llm_lock:
                         _fallback_result = _fallback_llm.chat_completion(
                             messages=messages,
@@ -879,7 +917,23 @@ def run_tool_loop(agent: Dict[str, Any],
                         "Fallback model exception for agent %s: %s", agent_id, _fe)
 
             if not _fallback_succeeded:
-                error_msg = _humanize_llm_error(error_detail)
+                # If we had to strip image content for a non-vision fallback,
+                # the user's image was the root cause — give actionable info
+                # rather than a cryptic LLM error.
+                if _fallback_vision_stripped:
+                    _logger.warning(
+                        "Both primary and fallback failed for agent %s — "
+                        "images were stripped for non-vision fallback. "
+                        "Primary error [%s]: %s.  Fallback also failed.",
+                        agent_id, error_type, error_detail)
+                    error_msg = (
+                        "Sorry, I couldn't process that image. The image "
+                        "model is currently unavailable and my fallback "
+                        "model doesn't support images. Please try again "
+                        "later or describe the image in text."
+                    )
+                else:
+                    error_msg = _humanize_llm_error(error_detail)
                 _err_dur = round(time.time() - _loop_start_time, 1)
                 db.add_chat_message(session_id, 'assistant', error_msg, agent_id=db_agent_id,
                                     metadata={"error": True, "timeline": timeline, "thinking_duration": _err_dur})
