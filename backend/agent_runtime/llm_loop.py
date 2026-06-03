@@ -418,6 +418,7 @@ def run_tool_loop(agent: Dict[str, Any],
         messages = _patched
 
     timeout_retries = 0
+    MIN_IMAGE_RETRIES = 3
     max_timeout_retries = int(db.get_setting('agent_timeout_retries', str(MAX_TIMEOUT_RETRIES)))
     max_tool_iterations = int(db.get_setting('max_tool_iterations', str(MAX_TOOL_ITERATIONS)))
     _compaction_attempted = False
@@ -452,6 +453,18 @@ def run_tool_loop(agent: Dict[str, Any],
             if isinstance(m, dict) and m.get("role") == "user":
                 return m
         return None
+
+    def _messages_have_images(msgs: list) -> bool:
+        """Return True if any user message contains multimodal image_url blocks."""
+        for _m in msgs:
+            _c = _m.get('content')
+            if _m.get('role') == 'user' and isinstance(_c, list):
+                if any(
+                    isinstance(p, dict) and p.get('type') == 'image_url'
+                    for p in _c
+                ):
+                    return True
+        return False
 
     def _get_agent_config_ig(agt_id: str) -> dict:
         """Thin wrapper that extends _get_agent_config with message/result scan config."""
@@ -746,6 +759,49 @@ def run_tool_loop(agent: Dict[str, Any],
                 })
                 time.sleep(2)
                 continue
+
+            # ── Image-processing retry guard ──────────────────────────
+            # Image/vision requests are slower and more prone to
+            # transient failures (timeouts, server overload).  Give the
+            # primary model at least MIN_IMAGE_RETRIES attempts before
+            # falling back — falling back to a non-vision model is a
+            # dead-end for image requests.
+            _img_transient_types = (
+                'request_timeout', 'generation_timeout',
+                'provider_error', 'connection_error',
+                'llm_error', 'unknown_error',
+            )
+            if error_type in _img_transient_types:
+                # Don't retry context-exceeded errors — those need compaction
+                _img_err_lower = (result.get('error_detail') or '').lower()
+                _img_is_ctx = (
+                    'context length' in _img_err_lower
+                    or 'context size' in _img_err_lower
+                    or 'exceed_context' in _img_err_lower
+                    or 'exceeds the available context' in _img_err_lower
+                )
+                if (not _img_is_ctx
+                        and _messages_have_images(messages)
+                        and timeout_retries < MIN_IMAGE_RETRIES):
+                    _img_wait = min(2 ** (timeout_retries + 1), 30)  # 2s, 4s, 8s
+                    _img_attempt = timeout_retries + 1
+                    _logger.warning(
+                        "[image_retry] Attempt %d/%d failed for session %s: %s — retrying in %ds",
+                        _img_attempt, MIN_IMAGE_RETRIES, session_id,
+                        error_type, _img_wait)
+                    event_stream.emit('llm_retry', {
+                        'agent_id': agent_id, 'session_id': session_id,
+                        'external_user_id': external_user_id, 'channel_id': channel_id,
+                        'retry_count': _img_attempt, 'max_retries': MIN_IMAGE_RETRIES,
+                        'error_type': error_type,
+                        'user_message': (
+                            f"Processing image... "
+                            f"(retry {_img_attempt}/{MIN_IMAGE_RETRIES})"
+                        ),
+                    })
+                    time.sleep(_img_wait)
+                    timeout_retries += 1
+                    continue
 
             _resp_val = result.get('response', 'Unknown error')
             if isinstance(_resp_val, dict):
