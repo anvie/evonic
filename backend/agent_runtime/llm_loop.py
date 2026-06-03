@@ -479,6 +479,10 @@ def run_tool_loop(agent: Dict[str, Any],
                 "injection_guard_result_mode": "warn",
             }
 
+    # Cache agent injection guard config once per run_tool_loop call
+    # to avoid redundant DB reads in the loop iterations and tool result scans.
+    _agent_ig_config = _get_agent_config_ig(agent_id)
+
     while _iteration < max_tool_iterations:
         _llm_call_count += 1
         # Hard cap on total LLM API calls (safety net for non-tool loops like
@@ -554,7 +558,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 messages.insert(insert_at, sk_msg)
 
         # ── Layer A: Incoming Message Guard (pre-LLM injection scan) ──
-        _inj_cfg_a = _get_agent_config_ig(agent_id)
+        _inj_cfg_a = _agent_ig_config
         if _inj_cfg_a.get("injection_guard_check_messages"):
             _last_user = _get_last_user_message(messages)
             if _last_user is not None:
@@ -1547,7 +1551,7 @@ def run_tool_loop(agent: Dict[str, Any],
             _SCAN_RESULT_TOOLS = frozenset({'read_file', 'bash', 'runpy'})
             _already_blocked = isinstance(tool_result, dict) and 'blocked_by' in tool_result
             if fn_name in _SCAN_RESULT_TOOLS and not _already_blocked:
-                _inj_cfg_b = _get_agent_config_ig(agent_id)
+                _inj_cfg_b = _agent_ig_config
                 if _inj_cfg_b.get('injection_guard_enabled', True):
                     # Extract result text for scanning
                     _result_text = ""
