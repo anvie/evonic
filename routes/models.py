@@ -63,7 +63,7 @@ def api_create_model():
         return jsonify({"success": False, "error": "type must be remote or local"}), 400
 
     # Validate provider
-    valid_providers = ("openrouter", "togetherai", "ollama", "ollama_cloud", "opencode_zen", "opencode_go", "deepseek", "llama.cpp", "custom")
+    valid_providers = ("openrouter", "togetherai", "ollama", "ollama_cloud", "opencode_zen", "opencode_go", "kimi_coding", "deepseek", "llama.cpp", "custom")
     if data["provider"] not in valid_providers:
         return jsonify(
             {"success": False, "error": f"provider must be one of {valid_providers}"}

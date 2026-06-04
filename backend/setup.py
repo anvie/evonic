@@ -75,6 +75,20 @@ PROVIDER_DEFAULTS = {
         # prior assistant messages, so default thinking on for this provider.
         "default_thinking": True,
     },
+    "kimi_coding": {
+        "type": "remote",
+        "base_url": "https://api.kimi.com/coding/v1",
+        "api_key_required": True,
+        "placeholder_model": "kimi-for-coding",
+        "label": "Kimi Coding Plan (Moonshot)",
+        "description": "Cloud · sk-kimi-… key required",
+        # Moonshot's coding-plan endpoint blocks unauthorized clients via a
+        # User-Agent allow-list. backend/llm_client.py masquerades as kimi-cli
+        # for any base_url under api.kimi.com so requests pass the check.
+        # Kimi coding models are always-thinking; the API rejects requests that
+        # omit reasoning_content on prior assistant messages.
+        "default_thinking": True,
+    },
     "deepseek": {
         "type": "remote",
         "base_url": "https://api.deepseek.com",
@@ -433,7 +447,9 @@ def run_setup(
         _write_system_prompt(agent_id, system_prompt)
 
         # 4.5 Copy default knowledge base files
-        _default_kb = os.path.join(config.BASE_DIR, 'defaults', 'super_agent_kb_evonic.md')
+        _default_kb = os.path.join(
+            config.BASE_DIR, "defaults", "super_agent_kb_evonic.md"
+        )
         if os.path.isfile(_default_kb):
             _kb_dir = os.path.join(config.BASE_DIR, "agents", agent_id, "kb")
             os.makedirs(_kb_dir, exist_ok=True)

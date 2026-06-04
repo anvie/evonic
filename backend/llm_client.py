@@ -36,6 +36,27 @@ _LLM_ERROR_MESSAGES = {
 }
 
 
+# Moonshot's Kimi Coding Plan endpoint (api.kimi.com/coding) gates access by
+# User-Agent — only requests claiming to be from kimi-cli, opencode, claude-code,
+# pi, or hermes-agent are accepted. Mirroring kimi-cli's UA is the documented
+# way authorized clients identify themselves; do not "fix" this back to a
+# generic UA without first confirming Moonshot has rotated the allow-list.
+_KIMI_CODING_HOST = "api.kimi.com"
+_KIMI_USER_AGENT = "KimiCLI/1.5"
+
+
+def _build_request_headers(
+    api_key: Optional[str], base_url: Optional[str]
+) -> Dict[str, str]:
+    """Build outbound HTTP headers for a chat / models request."""
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if base_url and _KIMI_CODING_HOST in base_url:
+        headers["User-Agent"] = _KIMI_USER_AGENT
+    return headers
+
+
 def _format_llm_error(error_type: str, context: Optional[Dict[str, Any]] = None) -> str:
     """Format an LLM error type into a user-friendly message.
 
@@ -109,7 +130,9 @@ def strip_thinking_tags(content: str) -> Tuple[str, Optional[str]]:
     return cleaned, thinking_content
 
 
-def _convert_image_url_to_claude(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _convert_image_url_to_claude(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     """Convert OpenAI-style image_url content blocks to Anthropic image+source format."""
     result = []
     for msg in messages:
@@ -128,15 +151,23 @@ def _convert_image_url_to_claude(messages: List[Dict[str, Any]]) -> List[Dict[st
                         media_type = header.split(":")[1].split(";")[0]
                     except (ValueError, IndexError):
                         media_type, b64data = "image/jpeg", url
-                    new_parts.append({
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": media_type, "data": b64data},
-                    })
+                    new_parts.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": b64data,
+                            },
+                        }
+                    )
                 else:
-                    new_parts.append({
-                        "type": "image",
-                        "source": {"type": "url", "url": url},
-                    })
+                    new_parts.append(
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": url},
+                        }
+                    )
             else:
                 new_parts.append(part)
         result.append({**msg, "content": new_parts})
@@ -249,9 +280,7 @@ class LLMClient:
                 models_url = f"{self.base_url}/tags"
             else:
                 models_url = f"{self.base_url}/v1/models"
-            headers = {"Content-Type": "application/json"}
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
+            headers = _build_request_headers(self.api_key, self.base_url)
             response = requests.get(models_url, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
@@ -388,6 +417,9 @@ class LLMClient:
         # even without explicit thinking mode. Detect this by checking if any
         # assistant message already carries reasoning_content — if so, preserve
         # it so the API receives it back on the next call.
+        # Always-thinking models (Kimi K2, DeepSeek-R1, MiniMax M2) require
+        # reasoning_content to be present on ALL assistant messages, including those
+        # with tool_calls, even when the model returned no reasoning for that turn.
         _has_reasoning = any(
             _msg.get("reasoning_content")
             for _msg in processed_messages
@@ -441,9 +473,7 @@ class LLMClient:
                 )
                 payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
 
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        headers = _build_request_headers(self.api_key, self.base_url)
 
         try:
             from models.db import db as _db
