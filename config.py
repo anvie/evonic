@@ -154,6 +154,11 @@ if not _SECRET_KEY_ENV:
 
     os.environ["SECRET_KEY"] = _SECRET_KEY_ENV
     _logger.info("Generated new SECRET_KEY and saved to .env")
+    _logger.warning(
+        "SECRET_KEY was written to .env. Ensure this file is NOT world-readable "
+        "(e.g. chmod 600 .env on Linux) — if leaked, session signing keys and "
+        "all encrypted cookies can be forged."
+    )
 
 SECRET_KEY = _SECRET_KEY_ENV
 HOST = os.getenv("HOST", "0.0.0.0")
