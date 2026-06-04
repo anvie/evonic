@@ -304,6 +304,12 @@ def api_delete_session(session_id):
 def api_clear_all_sessions():
     """Delete all chat sessions, messages, summaries, and attachments
     across all agents."""
+    data = request.get_json(silent=True) or {}
+    if data.get('confirm') is not True:
+        return jsonify({
+            'error': 'Confirmation required. Set "confirm": true to proceed.',
+            'hint': 'This will permanently delete ALL chat sessions, messages, summaries, and attachments.'
+        }), 400
     db.clear_all_sessions()
     return jsonify({'success': True})
 
@@ -312,6 +318,12 @@ def api_clear_all_sessions():
 def api_clear_all_attachments():
     """Delete every stored attachment (DB rows + on-disk files) across all
     agents and sessions, without touching chat sessions/messages."""
+    data = request.get_json(silent=True) or {}
+    if data.get('confirm') is not True:
+        return jsonify({
+            'error': 'Confirmation required. Set "confirm": true to proceed.',
+            'hint': 'This will permanently delete ALL stored attachments across all agents and sessions.'
+        }), 400
     deleted, freed = db.delete_all_attachments()
     return jsonify({'success': True, 'deleted': deleted, 'freed_bytes': freed})
 
