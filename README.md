@@ -73,32 +73,75 @@ When suspicious activity is detected, the system escalates to a human operator r
 
 ### Prerequisites
 
-- **Python 3.8+**
-- **LLM endpoint** — any OpenAI-compatible API (local or cloud)
+| | Linux / macOS | Windows |
+|---|---|---|
+| **Python** | 3.8+ | 3.8+ ([python.org](https://www.python.org/downloads/)) |
+| **Git** | system package | [git-scm.com](https://git-scm.com/download/win) |
+| **LLM endpoint** | any OpenAI-compatible API (local or cloud) | same |
 
 ### Installation
 
-One-liner install:
+#### Linux / macOS
 
 ```bash
 curl -fsSL https://evonic.dev/install.sh | bash
 ```
 
-This clones the repository, sets up a virtual environment, installs dependencies, generates configuration, and guides you through adding `evonic` to your PATH.
+#### Windows (PowerShell)
 
-**Manual installation:**
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+irm https://evonic.dev/install.ps1 | iex
+```
+
+Both installers copy the source to `~/.evonic` (Linux/macOS) or `%USERPROFILE%\.evonic` (Windows), create a virtual environment, install dependencies, and add `evonic` to your PATH.
+
+> **Windows tip:** Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first — the installer detects it automatically and uses it for significantly faster dependency installation.
+
+See **[docs/windows-installation.md](docs/windows-installation.md)** for the full Windows guide including local dev setup and troubleshooting.
+
+#### Manual (Linux / macOS)
 
 ```bash
-git clone https://github.com/anvie/evonic
-cd evonic
+git clone https://github.com/anvie/evonic ~/.evonic
+cd ~/.evonic
 pip install -r requirements.txt
 chmod +x ./evonic
+./evonic setup
+./evonic start
+```
+
+#### Manual (Windows)
+
+```powershell
+git clone https://github.com/anvie/evonic "$env:USERPROFILE\.evonic"
+cd "$env:USERPROFILE\.evonic"
+
+# with uv (recommended)
+uv venv venv --python python --seed
+uv pip install -r requirements.txt --python venv
+
+# or standard pip
+# python -m venv venv
+# .\venv\Scripts\pip install -r requirements.txt
+
+.\evonic.bat setup
+.\evonic.bat start
 ```
 
 ### Start
 
 ```bash
+# Linux / macOS
 ./evonic start
+```
+
+```powershell
+# Windows (from repo directory)
+.\evonic.bat start
+
+# Windows (from anywhere, after installer sets PATH)
+evonic start
 ```
 
 Open `http://localhost:8080` in your browser.
@@ -131,10 +174,17 @@ Each agent is designed from the ground up with six configurable dimensions:
 Create and manage agents via the web UI (`/agents`) or CLI:
 
 ```bash
+# Linux / macOS
 ./evonic agent add my_bot --name "My Bot"
 ./evonic agent add dev_bot --name "Dev Bot" --skillset coder
 ./evonic agent enable my_bot
 ./evonic agent remove my_bot
+```
+
+```powershell
+# Windows
+.\evonic.bat agent add my_bot --name "My Bot"
+.\evonic.bat agent add dev_bot --name "Dev Bot" --skillset coder
 ```
 
 ---
