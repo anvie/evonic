@@ -34,6 +34,13 @@ class AgentMixin:
             return dict(row) if row else None
 
     def create_agent(self, agent: Dict[str, Any]) -> str:
+        # Validate workspace path if provided
+        if 'workspace' in agent:
+            from backend.workspace_validator import validate_workspace_path
+            is_valid, error = validate_workspace_path(agent.get('workspace'))
+            if not is_valid:
+                raise ValueError(f"Invalid workspace path: {error}")
+        
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -79,6 +86,14 @@ class AgentMixin:
         updates = {k: v for k, v in data.items() if k in allowed}
         if not updates:
             return False
+        
+        # Validate workspace path if being updated
+        if 'workspace' in updates:
+            from backend.workspace_validator import validate_workspace_path
+            is_valid, error = validate_workspace_path(updates['workspace'])
+            if not is_valid:
+                raise ValueError(f"Invalid workspace path: {error}")
+        
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [agent_id]
         with self._connect() as conn:

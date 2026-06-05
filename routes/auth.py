@@ -122,6 +122,11 @@ def login_submit():
                                error='Invalid password.')
 
     _clear_attempts(ip)
+    
+    # Regenerate session to prevent session fixation attacks
+    # Store the next_url before clearing (it's from form data, not pre-login session)
+    session.clear()
+    
     session['authenticated'] = True
     session.permanent = True  # Persist cookie for 7 days (configured in app.py)
     if not _is_safe_redirect_url(next_url):
