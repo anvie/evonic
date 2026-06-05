@@ -1135,7 +1135,8 @@ command_registry.register(
 def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data):
     """Handle kanban workflow state transitions via the state() built-in tool."""
 
-    task_id = str(data.get('task_id')) if isinstance(data, dict) else str(data)
+    raw = data.get('task_id') if isinstance(data, dict) else data
+    task_id = str(raw) if raw is not None else None
 
     # ── kanban:pick ───────────────────────────────────────────────────────────
     if label == 'kanban:pick':
