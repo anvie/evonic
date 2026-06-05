@@ -60,9 +60,12 @@ def is_dangerous_path(path: str) -> bool:
         
         # Also check against the original (non-normalized) dangerous path
         # This handles cases where Unix paths like /etc don't normalize on Windows
-        if normalized == dangerous or normalized.startswith(dangerous + '/'):
+        if normalized == dangerous:
             return True
-        if dangerous.startswith(normalized + '/'):
+        # Use both forward and backward slashes for cross-platform compatibility
+        if normalized.startswith(dangerous + '/') or normalized.startswith(dangerous + '\\'):
+            return True
+        if dangerous.startswith(normalized + '/') or dangerous.startswith(normalized + '\\'):
             return True
     
     return False
