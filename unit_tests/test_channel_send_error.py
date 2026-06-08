@@ -81,6 +81,7 @@ class TestBaseSendMessageError(unittest.TestCase):
                 self._outbound_buffer_seconds = 1.5
                 self._send_errors = {}
                 self._send_errors_lock = __import__('threading').Lock()
+                self._send_error_ttl = 3600
 
             def _do_send(self, external_user_id, text):
                 raise ConnectionError("Network down")
@@ -132,6 +133,7 @@ class TestFlushBufferError(unittest.TestCase):
                 self._outbound_buffer_seconds = 1.5
                 self._send_errors = {}
                 self._send_errors_lock = __import__('threading').Lock()
+                self._send_error_ttl = 3600
 
             def _do_send(self, external_user_id, text):
                 raise RuntimeError("Buffer send failed")
