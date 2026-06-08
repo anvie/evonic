@@ -682,6 +682,14 @@ class AgentRuntime:
                     if instance and instance.is_running:
                         try:
                             instance.send_message(task.ctx.external_user_id, result['response'])
+                            # Check for async send errors (channel records failures internally)
+                            if hasattr(instance, 'get_send_error'):
+                                send_err = instance.get_send_error(task.ctx.external_user_id)
+                                if send_err:
+                                    _logger.warning(
+                                        "Channel send error for session %s user %s: %s",
+                                        task.ctx.session_id, task.ctx.external_user_id, send_err,
+                                    )
                         except Exception as e:
                             _logger.error("Channel send error for session %s: %s", task.ctx.session_id, e)
             except Exception as e:
@@ -1016,6 +1024,12 @@ class AgentRuntime:
                     instance = channel_manager._active.get(channel_id)
                     if instance and instance.is_running:
                         instance.send_message(external_user_id, _ack_text)
+                        if hasattr(instance, 'has_send_error') and instance.has_send_error(external_user_id):
+                            err = instance.get_send_error(external_user_id)
+                            _logger.warning(
+                                "Channel send error for busy ack (session %s): %s",
+                                session_id, err,
+                            )
                 except Exception:
                     pass
             # Do NOT return — fall through so the message is queued for processing
@@ -1261,6 +1275,13 @@ class AgentRuntime:
                 instance = channel_manager._active.get(ctx.channel_id)
                 if instance and instance.is_running:
                     instance.send_message(ctx.external_user_id, reply)
+                    if hasattr(instance, 'get_send_error'):
+                        send_err = instance.get_send_error(ctx.external_user_id)
+                        if send_err:
+                            _logger.warning(
+                                "Channel send error for evonet offline reply (session %s): %s",
+                                ctx.session_id, send_err,
+                            )
             except Exception:
                 pass
 
@@ -1965,6 +1986,12 @@ class AgentRuntime:
                 instance = channel_manager._active.get(channel_id)
                 if instance and instance.is_running:
                     instance.send_message(external_user_id, reply)
+                    if hasattr(instance, 'has_send_error') and instance.has_send_error(external_user_id):
+                        err = instance.get_send_error(external_user_id)
+                        _logger.warning(
+                            "Channel send error for busy rejection (session %s): %s",
+                            session_id, err,
+                        )
             except Exception:
                 pass
         return reply

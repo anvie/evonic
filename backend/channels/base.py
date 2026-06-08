@@ -37,6 +37,8 @@ class BaseChannel(ABC):
         self._buf_timers: Dict[str, Timer] = {}
         self._buf_lock = threading.Lock()
         self._last_sent: Dict[str, float] = {}
+        self._send_errors: Dict[str, str] = {}
+        self._send_errors_lock = threading.Lock()
 
     @abstractmethod
     def start(self):
@@ -82,7 +84,11 @@ class BaseChannel(ABC):
         wait = self._outbound_buffer_seconds - (now - last)
         if wait > 0:
             time.sleep(wait)
-        self._do_send(external_user_id, text)
+        try:
+            self._do_send(external_user_id, text)
+        except Exception as e:
+            with self._send_errors_lock:
+                self._send_errors[external_user_id] = str(e)
         self._last_sent[external_user_id] = time.time()
 
     def send_message(self, external_user_id: str, text: str):
@@ -98,7 +104,12 @@ class BaseChannel(ABC):
                 old.cancel()
         if pending:
             text = pending + "\n\n" + text
-        self._do_send(external_user_id, text)
+        try:
+            self._do_send(external_user_id, text)
+        except Exception as e:
+            import logging
+            with self._send_errors_lock:
+                self._send_errors[external_user_id] = str(e)
         self._last_sent[external_user_id] = time.time()
 
     @abstractmethod
@@ -117,6 +128,18 @@ class BaseChannel(ABC):
                       mime_type: Optional[str] = None) -> bool:
         """Actual file delivery — override in subclass. Returns False by default."""
         return False
+
+    def get_send_error(self, external_user_id: str) -> Optional[str]:
+        """Return the last send error for a user, then clear it.
+
+        Returns None if the last send was successful or no send has occurred.
+        """
+        with self._send_errors_lock:
+            return self._send_errors.pop(external_user_id, None)
+
+    def has_send_error(self, external_user_id: str) -> bool:
+        with self._send_errors_lock:
+            return external_user_id in self._send_errors
 
     def send_typing(self, external_user_id: str):
         """Send a typing indicator to a user. Optional — no-op by default."""
