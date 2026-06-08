@@ -86,10 +86,10 @@ class BaseChannel(ABC):
             time.sleep(wait)
         try:
             self._do_send(external_user_id, text)
+            self._last_sent[external_user_id] = time.time()
         except Exception as e:
             with self._send_errors_lock:
                 self._send_errors[external_user_id] = str(e)
-        self._last_sent[external_user_id] = time.time()
 
     def send_message(self, external_user_id: str, text: str):
         """Immediate path: cancel any pending buffer for this chat, merge + send now.
@@ -106,11 +106,10 @@ class BaseChannel(ABC):
             text = pending + "\n\n" + text
         try:
             self._do_send(external_user_id, text)
+            self._last_sent[external_user_id] = time.time()
         except Exception as e:
-            import logging
             with self._send_errors_lock:
                 self._send_errors[external_user_id] = str(e)
-        self._last_sent[external_user_id] = time.time()
 
     @abstractmethod
     def _do_send(self, external_user_id: str, text: str):
@@ -121,7 +120,16 @@ class BaseChannel(ABC):
                   caption: Optional[str] = None,
                   mime_type: Optional[str] = None) -> bool:
         """Send a file to a user. Returns True on success, False on failure."""
-        return self._do_send_file(external_user_id, file_path, caption, mime_type)
+        try:
+            result = self._do_send_file(external_user_id, file_path, caption, mime_type)
+            if not result:
+                with self._send_errors_lock:
+                    self._send_errors[external_user_id] = "send_file returned False"
+            return result
+        except Exception as e:
+            with self._send_errors_lock:
+                self._send_errors[external_user_id] = str(e)
+            return False
 
     def _do_send_file(self, external_user_id: str, file_path: str,
                       caption: Optional[str] = None,

@@ -34,6 +34,7 @@ from backend.agent_runtime.concurrency import ConcurrencyManager
 from backend.agent_state import AgentState
 from backend.agent_runtime.memory_manager import get_memories_for_context
 from backend.channels.registry import channel_manager
+from backend.channels.base import BaseChannel
 from backend.event_stream import event_stream
 from backend.plugin_manager import get_busy_message
 from backend.slash_commands import parse_command, execute_command
@@ -683,7 +684,7 @@ class AgentRuntime:
                         try:
                             instance.send_message(task.ctx.external_user_id, result['response'])
                             # Check for async send errors (channel records failures internally)
-                            if hasattr(instance, 'get_send_error'):
+                            if isinstance(instance, BaseChannel) and instance.has_send_error(task.ctx.external_user_id):
                                 send_err = instance.get_send_error(task.ctx.external_user_id)
                                 if send_err:
                                     _logger.warning(
@@ -1024,7 +1025,7 @@ class AgentRuntime:
                     instance = channel_manager._active.get(channel_id)
                     if instance and instance.is_running:
                         instance.send_message(external_user_id, _ack_text)
-                        if hasattr(instance, 'has_send_error') and instance.has_send_error(external_user_id):
+                        if isinstance(instance, BaseChannel) and instance.has_send_error(external_user_id):
                             err = instance.get_send_error(external_user_id)
                             _logger.warning(
                                 "Channel send error for busy ack (session %s): %s",
@@ -1275,7 +1276,7 @@ class AgentRuntime:
                 instance = channel_manager._active.get(ctx.channel_id)
                 if instance and instance.is_running:
                     instance.send_message(ctx.external_user_id, reply)
-                    if hasattr(instance, 'get_send_error'):
+                    if isinstance(instance, BaseChannel) and instance.has_send_error(ctx.external_user_id):
                         send_err = instance.get_send_error(ctx.external_user_id)
                         if send_err:
                             _logger.warning(
@@ -1986,7 +1987,7 @@ class AgentRuntime:
                 instance = channel_manager._active.get(channel_id)
                 if instance and instance.is_running:
                     instance.send_message(external_user_id, reply)
-                    if hasattr(instance, 'has_send_error') and instance.has_send_error(external_user_id):
+                    if isinstance(instance, BaseChannel) and instance.has_send_error(external_user_id):
                         err = instance.get_send_error(external_user_id)
                         _logger.warning(
                             "Channel send error for busy rejection (session %s): %s",
