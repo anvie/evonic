@@ -8,9 +8,14 @@ These tests validate:
 4. Runtime checks get_send_error after send and logs a warning
 """
 
+import asyncio
+import queue
+import sys
+import threading
 import unittest
-from unittest.mock import MagicMock, AsyncMock
-
+from backend.channels import telegram as tg_mod
+from unittest.mock import AsyncMock, MagicMock, patch
+from backend.channels.base import BaseChannel
 
 # ---------------------------------------------------------------------------
 # 1. Test _do_send error propagation in TelegramChannel (unchanged)
@@ -21,8 +26,6 @@ class TestDoSendErrorPropagation(unittest.TestCase):
     """Confirm _do_send still raises - caught at higher level (send_message)."""
 
     def _make_channel(self, run_async_should_fail=False):
-        from backend.channels import telegram as tg_mod
-
         channel = tg_mod.TelegramChannel.__new__(tg_mod.TelegramChannel)
         channel._app = MagicMock()
         channel._app.bot = MagicMock()
@@ -36,7 +39,6 @@ class TestDoSendErrorPropagation(unittest.TestCase):
             channel._run_async = _failing_run_async
         else:
             def _fake_run_async(coro):
-                import asyncio
                 loop = asyncio.new_event_loop()
                 try:
                     return loop.run_until_complete(coro)
@@ -65,7 +67,6 @@ class TestBaseSendMessageError(unittest.TestCase):
 
     def test_send_message_catches_error_and_stores_it(self):
         """FIX: send_message no longer raises; stores error for later retrieval."""
-        from backend.channels.base import BaseChannel
 
         class FailingChannel(BaseChannel):
             @staticmethod
@@ -76,11 +77,11 @@ class TestBaseSendMessageError(unittest.TestCase):
                 self.channel_id = "ch_test"
                 self._buf = {}
                 self._buf_timers = {}
-                self._buf_lock = __import__('threading').Lock()
+                self._buf_lock = threading.Lock()
                 self._last_sent = {}
                 self._outbound_buffer_seconds = 1.5
                 self._send_errors = {}
-                self._send_errors_lock = __import__('threading').Lock()
+                self._send_errors_lock = threading.Lock()
                 self._send_error_ttl = 3600
 
             def _do_send(self, external_user_id, text):
@@ -116,9 +117,7 @@ class TestFlushBufferError(unittest.TestCase):
     """Confirm _flush_buffer catches _do_send errors and stores them."""
 
     def test_flush_buffer_catches_error_and_stores_it(self):
-        """FIX: _flush_buffer no longer raises; stores error for later retrieval."""
-        from backend.channels.base import BaseChannel
-
+        """FIX: _flush_buffer no longer raises; stores error."""
         class FailingBufferChannel(BaseChannel):
             @staticmethod
             def get_channel_type():
@@ -128,11 +127,11 @@ class TestFlushBufferError(unittest.TestCase):
                 self.channel_id = "ch_buf"
                 self._buf = {}
                 self._buf_timers = {}
-                self._buf_lock = __import__('threading').Lock()
+                self._buf_lock = threading.Lock()
                 self._last_sent = {}
                 self._outbound_buffer_seconds = 1.5
                 self._send_errors = {}
-                self._send_errors_lock = __import__('threading').Lock()
+                self._send_errors_lock = threading.Lock()
                 self._send_error_ttl = 3600
 
             def _do_send(self, external_user_id, text):
@@ -167,9 +166,6 @@ class TestSendFileError(unittest.TestCase):
     """Confirm BaseChannel.send_file catches _do_send_file errors and stores them."""
 
     def _make_channel(self, _do_send_file_impl):
-        from backend.channels.base import BaseChannel
-        import threading
-
         class FileChannel(BaseChannel):
             @staticmethod
             def get_channel_type():
@@ -253,14 +249,10 @@ class TestRuntimeSendErrorMetadata(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import sys
         sys.modules.pop('backend.channels.registry', None)
 
     def test_worker_detects_send_error_via_get_send_error(self):
         """FIX: runtime checks has_send_error after send and logs warning."""
-        import threading
-        from unittest.mock import MagicMock, patch
-
         # Build a mock channel that stores errors via get_send_error
         mock_channel = MagicMock()
         mock_channel.is_running = True
@@ -288,7 +280,7 @@ class TestRuntimeSendErrorMetadata(unittest.TestCase):
             from backend.agent_runtime.runtime import AgentRuntime, _QueueTask, SessionContext
 
             rt = AgentRuntime.__new__(AgentRuntime)
-            rt._message_queue = __import__('queue').Queue()
+            rt._message_queue = queue.Queue()
             rt._session_store = MagicMock()
             rt._session_store._locks = {}
             rt._session_store._locks_guard = threading.Lock()
