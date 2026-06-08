@@ -160,6 +160,91 @@ class TestFlushBufferError(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# 5. Test send_file error paths
+# ---------------------------------------------------------------------------
+
+class TestSendFileError(unittest.TestCase):
+    """Confirm BaseChannel.send_file catches _do_send_file errors and stores them."""
+
+    def _make_channel(self, _do_send_file_impl):
+        from backend.channels.base import BaseChannel
+        import threading
+
+        class FileChannel(BaseChannel):
+            @staticmethod
+            def get_channel_type():
+                return "test"
+
+            def __init__(self):
+                self.channel_id = "ch_file"
+                self._buf = {}
+                self._buf_timers = {}
+                self._buf_lock = threading.Lock()
+                self._last_sent = {}
+                self._outbound_buffer_seconds = 1.5
+                self._send_errors = {}
+                self._send_errors_lock = threading.Lock()
+                self._send_error_ttl = 3600
+
+            def _do_send(self, external_user_id, text):
+                pass
+
+            def _do_send_file(self, external_user_id, file_path, caption, mime_type):
+                return _do_send_file_impl(external_user_id, file_path, caption, mime_type)
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        return FileChannel()
+
+    def test_send_file_catches_exception_and_stores_error(self):
+        """send_file stores error and returns False when _do_send_file raises."""
+        def _raises(user_id, path, caption, mime):
+            raise OSError("File not found")
+
+        ch = self._make_channel(_raises)
+        ch._running = True
+
+        result = ch.send_file("456", "/tmp/test.pdf")
+        self.assertFalse(result)
+        self.assertTrue(ch.has_send_error("456"))
+        err = ch.get_send_error("456")
+        self.assertIn("File not found", err)
+        self.assertIsNone(ch.get_send_error("456"))
+
+    def test_send_file_stores_error_when_do_send_returns_false(self):
+        """send_file stores error when _do_send_file returns False."""
+        def _returns_false(user_id, path, caption, mime):
+            return False
+
+        ch = self._make_channel(_returns_false)
+        ch._running = True
+
+        result = ch.send_file("789", "/tmp/test.pdf")
+        self.assertFalse(result)
+        self.assertTrue(ch.has_send_error("789"))
+        err = ch.get_send_error("789")
+        self.assertIn("send_file returned False", err)
+        self.assertIsNone(ch.get_send_error("789"))
+
+    def test_send_file_returns_true_no_error_on_success(self):
+        """send_file returns True and stores no error on success."""
+        def _returns_true(user_id, path, caption, mime):
+            return True
+
+        ch = self._make_channel(_returns_true)
+        ch._running = True
+
+        result = ch.send_file("999", "/tmp/test.pdf")
+        self.assertTrue(result)
+        self.assertFalse(ch.has_send_error("999"))
+        self.assertIsNone(ch.get_send_error("999"))
+
+
+# ---------------------------------------------------------------------------
 # 4. Test runtime checks get_send_error after send
 # ---------------------------------------------------------------------------
 
