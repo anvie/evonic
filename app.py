@@ -70,9 +70,19 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 # Global upload size limit (defense-in-depth for all endpoints)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
 
-# Trust proxy headers from Cloudflare / nginx / any reverse proxy
+# Trust proxy headers based on deployment topology.
+# PROXY_TRUST_COUNT=0 for direct deployments (no reverse proxy) to prevent
+# IP spoofing via X-Forwarded-For. Set to 1 for single-proxy (default), or
+# higher for multi-proxy setups (CDN → reverse proxy → app).
+# See config.py for full documentation.
 from werkzeug.middleware.proxy_fix import ProxyFix
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.wsgi_app = ProxyFix(
+    app.wsgi_app,
+    x_for=config.PROXY_TRUST_COUNT,
+    x_proto=1,
+    x_host=1,
+    x_prefix=1,
+)
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(agents_bp)

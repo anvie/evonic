@@ -161,6 +161,22 @@ if not _SECRET_KEY_ENV:
     )
 
 SECRET_KEY = _SECRET_KEY_ENV
+# Reverse proxy trust count — how many proxies sit between the client and Evonic.
+#
+# ProxyFix uses this to decide which X-Forwarded-For entry is the real client IP.
+#   0 = no reverse proxy (direct deployment). X-Forwarded-For is IGNORED.
+#       Use this when Evonic is exposed directly to the internet. Without this,
+#       any client can spoof their IP via X-Forwarded-For, defeating login rate
+#       limiting and making security audit logs unreliable.
+#   1 = one proxy in front (nginx, Caddy, Cloudflare, etc.) — DEFAULT.
+#       The rightmost X-Forwarded-For entry is the real client IP.
+#   2 = two proxies (e.g. Cloudflare CDN → nginx → Evonic).
+#       The second-from-right X-Forwarded-For entry is the real client IP.
+#
+# Choose the value that matches your deployment topology. Setting it higher than
+# the actual number of proxies lets attackers spoof their IP.
+PROXY_TRUST_COUNT = _get_env_int("PROXY_TRUST_COUNT", 1, min_val=0, max_val=10)
+
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = _get_env_int("PORT", 8080, min_val=1, max_val=65535)
 DEBUG = os.getenv("DEBUG", "0") == "1"
