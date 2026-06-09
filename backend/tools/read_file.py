@@ -117,6 +117,16 @@ def execute(agent, args: dict) -> dict:
         from backend.tools.safety_checker import check_ssh_path
         ssh_check = check_ssh_path(file_path, agent)
         if ssh_check["blocked"]:
+            # Log to security audit
+            from backend.security_audit import log_tool_block
+            log_tool_block(
+                agent_id=(agent or {}).get('id'),
+                tool_name='read_file',
+                blocked_path=file_path,
+                blocked_reason=ssh_check["reason"] or "SSH directory access denied",
+                session_id=(agent or {}).get('session_id'),
+                details={"offset": offset},
+            )
             return ssh_check["error"]
 
     # Heuristic safety check: require approval for SQLite database access
@@ -124,6 +134,17 @@ def execute(agent, args: dict) -> dict:
         from backend.tools.safety_checker import check_sqlite_path
         db_check = check_sqlite_path(file_path, agent)
         if db_check["blocked"]:
+            # Log to security audit
+            from backend.security_audit import log_tool_block
+            log_tool_block(
+                agent_id=(agent or {}).get('id'),
+                tool_name='read_file',
+                blocked_path=file_path,
+                blocked_reason=db_check["reason"] or "SQLite database access requires approval",
+                session_id=(agent or {}).get('session_id'),
+                outcome="requires_approval",
+                details={"offset": offset, "requires_approval": True},
+            )
             return {
                 "error": db_check["error"],
                 "level": "requires_approval",
@@ -140,6 +161,17 @@ def execute(agent, args: dict) -> dict:
         from backend.tools.safety_checker import check_sensitive_path
         path_check = check_sensitive_path(file_path, agent)
         if path_check["blocked"]:
+            # Log to security audit
+            from backend.security_audit import log_tool_block
+            log_tool_block(
+                agent_id=(agent or {}).get('id'),
+                tool_name='read_file',
+                blocked_path=file_path,
+                blocked_reason=path_check["reason"] or "Sensitive system path requires approval",
+                session_id=(agent or {}).get('session_id'),
+                outcome="requires_approval",
+                details={"offset": offset, "requires_approval": True},
+            )
             return {
                 "error": path_check["error"],
                 "level": "requires_approval",
@@ -156,6 +188,17 @@ def execute(agent, args: dict) -> dict:
         from backend.tools.safety_checker import check_env_path
         env_check = check_env_path(file_path, agent)
         if env_check["blocked"]:
+            # Log to security audit
+            from backend.security_audit import log_tool_block
+            log_tool_block(
+                agent_id=(agent or {}).get('id'),
+                tool_name='read_file',
+                blocked_path=file_path,
+                blocked_reason=env_check["reason"] or "Environment file access requires approval",
+                session_id=(agent or {}).get('session_id'),
+                outcome="requires_approval",
+                details={"offset": offset, "requires_approval": True},
+            )
             return {
                 "error": env_check["error"],
                 "level": "requires_approval",

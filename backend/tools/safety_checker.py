@@ -21,6 +21,9 @@ Usage:
 import os
 import re
 
+# Security audit logging
+from backend.security_audit import log_tool_block
+
 # Patterns that indicate a path targets the .ssh directory
 _SSH_PATH_PATTERNS = [
     # Direct .ssh/ component anywhere in the path

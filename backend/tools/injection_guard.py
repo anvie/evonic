@@ -12,6 +12,9 @@ from typing import Optional
 import re
 import logging
 
+# Security audit logging
+from backend.security_audit import log_injection_attempt
+
 _logger = logging.getLogger(__name__)
 
 # ───────────────────────────────────────────────────────────────────────
@@ -841,12 +844,36 @@ def injection_tool_guard(agent_id: str, tool_name: str, args: dict) -> Optional[
                 "INJECTION_LOG agent=%s tool=%s severity=%s score=%d rule=%s",
                 agent_id, tool_name, severity, score_pct, rule_name,
             )
+            # Log to security audit
+            log_injection_attempt(
+                agent_id=agent_id,
+                tool_name=tool_name,
+                rule_name=rule_name,
+                severity=severity,
+                risk_score=risk_score,
+                matched_text=text[:200] if len(text) > 200 else text,
+                raw_input=text[:500] if len(text) > 500 else text,
+                outcome="logged",
+                details={"mode": "log", "score_pct": score_pct},
+            )
             return None  # log only, don't block
 
         if mode == "warn":
             _logger.warning(
                 "INJECTION_WARN agent=%s tool=%s severity=%s score=%d rule=%s",
                 agent_id, tool_name, severity, score_pct, rule_name,
+            )
+            # Log to security audit
+            log_injection_attempt(
+                agent_id=agent_id,
+                tool_name=tool_name,
+                rule_name=rule_name,
+                severity=severity,
+                risk_score=risk_score,
+                matched_text=text[:200] if len(text) > 200 else text,
+                raw_input=text[:500] if len(text) > 500 else text,
+                outcome="warned",
+                details={"mode": "warn", "score_pct": score_pct},
             )
             # Warn mode: log and block with a softer message
             return {
@@ -863,6 +890,18 @@ def injection_tool_guard(agent_id: str, tool_name: str, args: dict) -> Optional[
         _logger.warning(
             "INJECTION_BLOCK agent=%s tool=%s severity=%s score=%d rule=%s",
             agent_id, tool_name, severity, score_pct, rule_name,
+        )
+        # Log to security audit
+        log_injection_attempt(
+            agent_id=agent_id,
+            tool_name=tool_name,
+            rule_name=rule_name,
+            severity=severity,
+            risk_score=risk_score,
+            matched_text=text[:200] if len(text) > 200 else text,
+            raw_input=text[:500] if len(text) > 500 else text,
+            outcome="blocked",
+            details={"mode": "block", "score_pct": score_pct},
         )
         return {"block": True, "error": error_msg}
 
