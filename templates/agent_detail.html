@@ -620,7 +620,7 @@ html.dark #channel-detail-modal .hover\:bg-indigo-100:hover { background: #312e8
                 </div>
                 <div class="flex items-center gap-2">
                     <button id="artifacts-prev-btn" onclick="goArtifactPage('prev')"
-                        class="px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                        class="px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
                         <span class="flex items-center gap-1">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
                             Previous
@@ -630,7 +630,7 @@ html.dark #channel-detail-modal .hover\:bg-indigo-100:hover { background: #312e8
                         <!-- Page buttons rendered dynamically -->
                     </div>
                     <button id="artifacts-next-btn" onclick="goArtifactPage('next')"
-                        class="px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                        class="px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
                         <span class="flex items-center gap-1">
                             Next
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
@@ -4284,7 +4284,7 @@ function renderArtifactPagination() {
         const active = p === _artifactsPage
             ? 'bg-indigo-600 text-white border-indigo-600'
             : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600';
-        pageHtml += `<button onclick="goArtifactPage(${p})" class="w-8 h-8 text-sm font-medium rounded-md border ${active} transition-colors">${p}</button>`;
+        pageHtml += `<button onclick="goArtifactPage(${p})" class="w-8 h-8 text-sm font-medium rounded-md border ${active} cursor-pointer transition-colors">${p}</button>`;
     }
     pageButtons.innerHTML = pageHtml;
 }
