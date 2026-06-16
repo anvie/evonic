@@ -143,10 +143,11 @@ class AgentMixin:
         # Copy tools, skills, and variables
         with self._connect() as conn:
             cursor = conn.cursor()
-            for tid in self.get_agent_tools(source_id):
+            assignments = self.get_agent_tool_assignments(source_id)
+            for a in assignments:
                 cursor.execute(
-                    "INSERT INTO agent_tools (agent_id, tool_id) VALUES (?, ?)",
-                    (new_id, tid))
+                    "INSERT INTO agent_tools (agent_id, tool_id, alias) VALUES (?, ?, ?)",
+                    (new_id, a['id'], a.get('alias') or None))
             for sid in self.get_agent_skills(source_id):
                 cursor.execute(
                     "INSERT INTO agent_skills (agent_id, skill_id) VALUES (?, ?)",
@@ -182,14 +183,35 @@ class AgentMixin:
             cursor.execute("SELECT tool_id FROM agent_tools WHERE agent_id = ?", (agent_id,))
             return [row[0] for row in cursor.fetchall()]
 
-    def set_agent_tools(self, agent_id: str, tool_ids: List[str]):
+    def get_agent_tool_aliases(self, agent_id: str) -> Dict[str, str]:
+        """Return {alias: canonical} for tools with non-empty aliases."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT tool_id, alias FROM agent_tools WHERE agent_id = ? AND alias IS NOT NULL AND alias != ''",
+                (agent_id,)
+            )
+            return {row[1]: row[0] for row in cursor.fetchall()}
+
+    def get_agent_tool_assignments(self, agent_id: str) -> List[Dict[str, Any]]:
+        """Return full assignment data for API responses."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT tool_id, alias FROM agent_tools WHERE agent_id = ?",
+                (agent_id,)
+            )
+            return [{"id": row[0], "alias": row[1] or ""} for row in cursor.fetchall()]
+
+    def set_agent_tools(self, agent_id: str, tool_ids: List[str], aliases: Dict[str, str] = None):
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM agent_tools WHERE agent_id = ?", (agent_id,))
             for tid in tool_ids:
+                alias = (aliases or {}).get(tid, None)
                 cursor.execute(
-                    "INSERT INTO agent_tools (agent_id, tool_id) VALUES (?, ?)",
-                    (agent_id, tid)
+                    "INSERT INTO agent_tools (agent_id, tool_id, alias) VALUES (?, ?, ?)",
+                    (agent_id, tid, alias)
                 )
             conn.commit()
 

@@ -1796,6 +1796,9 @@ class AgentRuntime:
             else:
                 _workspace = agent.get('workspace') or None
 
+            # Inject tool aliases into agent context for alias resolution in registry.py
+            _tool_aliases = _ctx._tool_alias_cache.get(db_agent_id, {})
+
             agent_context = {
                 'id': agent_id,
                 'name': agent.get('name', ''),
@@ -1805,6 +1808,7 @@ class AgentRuntime:
                 'channel_id': ctx.channel_id,
                 'session_id': ctx.session_id,
                 'assigned_tool_ids': assigned_tool_ids,
+                'tool_aliases': _tool_aliases,
                 'workspace': _workspace,
                 'workplace_id': _workplace_id,
                 'is_super': bool(agent.get('is_super')),

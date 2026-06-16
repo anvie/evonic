@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List
 
@@ -45,6 +46,11 @@ _AGENTS_DIR = os.path.join(_BASE_DIR, 'agents')
 #                           "skills_mtimes": dict, "tools_hash": str, "ctx_mtime": float,
 #                           "sandbox_enabled": int } }
 _system_prompt_cache: Dict[str, Dict[str, Any]] = {}
+
+# Module-level tool alias cache: { agent_eid: { alias: canonical_name } }
+# Populated by build_tools() and consumed by _build_static_prompt(),
+# _cache_key_valid(), and runtime.py context injection.
+_tool_alias_cache: Dict[str, Dict[str, str]] = {}
 
 
 def _effective_id(agent: Dict[str, Any]) -> str:
@@ -499,6 +505,14 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
     assigned_ids = set(db.get_agent_tools(eid))
 
     if assigned_ids:
+        # Load tool aliases for heading rename — check cache first, fall back to DB
+        _aliases = _tool_alias_cache.get(eid)
+        if _aliases is None:
+            _aliases = db.get_agent_tool_aliases(eid)
+            _tool_alias_cache[eid] = _aliases
+        # Build reverse map: canonical_name -> alias
+        _canonical_to_alias = {v: k for k, v in _aliases.items()}
+
         seen_fn_names = set()
         for tool_def in tool_registry.get_all_tool_defs():
             tool_id = tool_def.get('id', '')
@@ -512,6 +526,15 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
                     if not agent.get('sandbox_enabled'):
                         tool_prompt = tool_prompt.replace('/workspace/shared/agents/', '')
                         tool_prompt = tool_prompt.replace('/workspace', 'the agents working directory')
+                    # Rename headings for aliased tools (e.g. "## read — Usage Rules" -> "## baca_berkas — Usage Rules")
+                    if fn_name in _canonical_to_alias:
+                        alias_name = _canonical_to_alias[fn_name]
+                        tool_prompt = re.sub(
+                            rf'^## {re.escape(fn_name)} ',
+                            f'## {alias_name} ',
+                            tool_prompt,
+                            flags=re.MULTILINE,
+                        )
                     parts.append(tool_prompt)
 
     # List available KB files with graph-aware metadata (links, tags, staleness)
@@ -715,6 +738,12 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
     if str(sorted(assigned_ids)) != cache_entry['tools_hash']:
         return False
 
+    # Check tool aliases hash (alias changes must invalidate cache)
+    tool_aliases = _tool_alias_cache.get(eid, db.get_agent_tool_aliases(eid))
+    aliases_key = json.dumps(tool_aliases, sort_keys=True)
+    if hashlib.sha256(aliases_key.encode()).hexdigest() != cache_entry.get('tools_alias_hash', ''):
+        return False
+
     # Check context.py mtime (for injected sections like slash commands)
     if _get_mtime(__file__) != cache_entry.get('ctx_mtime', 0.0):
         return False
@@ -766,6 +795,12 @@ def build_system_prompt(agent: Dict[str, Any]) -> str:
         vars_key = str(sorted((v['key'], v.get('is_secret', False)) for v in current_vars))
         vars_hash = hashlib.sha256(vars_key.encode()).hexdigest()
 
+        # Compute tool aliases hash for cache invalidation
+        _tool_aliases = _tool_alias_cache.get(eid, db.get_agent_tool_aliases(eid))
+        _tool_alias_cache[eid] = _tool_aliases
+        _aliases_key = json.dumps(_tool_aliases, sort_keys=True)
+        _tools_alias_hash = hashlib.sha256(_aliases_key.encode()).hexdigest()
+
         _system_prompt_cache[aid] = {
             'static_prompt': static_prompt,
             'sp_mtime': _get_mtime(sp_path),
@@ -773,6 +808,7 @@ def build_system_prompt(agent: Dict[str, Any]) -> str:
             'evomem_mtime': get_evomem_db_mtime(eid),
             'skills_hash': skills_hash,
             'tools_hash': str(sorted(assigned_ids)),
+            'tools_alias_hash': _tools_alias_hash,
             'ctx_mtime': _get_mtime(__file__),
             'sandbox_enabled': agent.get('sandbox_enabled', 0),
             'vars_hash': vars_hash,
@@ -1053,6 +1089,19 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         for param_def in func.get('parameters', {}).get('properties', {}).values():
             if isinstance(param_def, dict) and isinstance(param_def.get('description'), str) and param_def['description'] == '':
                 del param_def['description']
+
+    # --- Tool name aliasing: inject aliases from DB into tool schemas ---
+    eid = _effective_id(agent)
+    aliases = db.get_agent_tool_aliases(eid)
+    _tool_alias_cache[eid] = aliases
+
+    if aliases:
+        # Build reverse map: canonical_name -> alias
+        canonical_to_alias = {v: k for k, v in aliases.items()}
+        for tool in tools:
+            fn_name = tool.get('function', {}).get('name', '')
+            if fn_name in canonical_to_alias:
+                tool['function']['name'] = canonical_to_alias[fn_name]
 
     return tools
 

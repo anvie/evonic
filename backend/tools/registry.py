@@ -173,12 +173,19 @@ class ToolRegistry:
                     fn_to_skill[parts[2]] = parts[1]
 
         def real_executor(function_name: str, arguments: dict) -> dict:
-            # Authorization guard: tool must be in assigned_tool_ids
+            # --- Alias resolution: resolve alias to canonical name ---
+            tool_aliases = ctx.get('tool_aliases', {})
+            if function_name in tool_aliases:
+                canonical_name = tool_aliases[function_name]
+            else:
+                canonical_name = function_name
+
+            # Authorization guard: tool must be in assigned_tool_ids (using canonical name)
             _assigned = set(ctx.get('assigned_tool_ids', []))
-            if function_name not in _assigned:
+            if canonical_name not in _assigned:
                 # Also check namespaced IDs like skill:skill_id:fn_name
                 _namespaced_match = any(
-                    tid.endswith(f':{function_name}')
+                    tid.endswith(f':{canonical_name}')
                     for tid in _assigned
                 )
                 if not _namespaced_match:
@@ -216,12 +223,12 @@ class ToolRegistry:
                         "error": blocked,
                         "blocked_by": "state",
                     }
-            skill_id = fn_to_skill.get(function_name)
-            module = self._load_tool_module(function_name, skill_id=skill_id)
+            skill_id = fn_to_skill.get(canonical_name)
+            module = self._load_tool_module(canonical_name, skill_id=skill_id)
             if module is None:
                 return {"error": f"No backend implementation for tool: {function_name}"}
             if not hasattr(module, 'execute'):
-                return {"error": f"Tool backend '{function_name}' missing execute() function"}
+                return {"error": f"Tool backend '{canonical_name}' missing execute() function"}
             # Propagate live flags from agent_context (e.g. _skip_safety set after approval)
             ctx['_skip_safety'] = agent_context.get('_skip_safety', False)
             try:

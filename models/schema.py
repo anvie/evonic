@@ -551,6 +551,12 @@ class SchemaMixin:
                 )
             """)
 
+            # Migration: add alias column to agent_tools for tool name aliasing
+            try:
+                cursor.execute("ALTER TABLE agent_tools ADD COLUMN alias TEXT DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
+
             # Agent-Skill allowlist (controls which skills an agent can lazy-load via use_skill)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS agent_skills (

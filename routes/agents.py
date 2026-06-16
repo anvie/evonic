@@ -401,16 +401,66 @@ def api_clone_agent(agent_id):
 
 @agents_bp.route('/api/agents/<agent_id>/tools', methods=['GET'])
 def api_get_agent_tools(agent_id):
+    fmt = request.args.get('format', '')
+    if fmt == 'detailed':
+        assignments = db.get_agent_tool_assignments(agent_id)
+        return jsonify({'tools': assignments})
+    # Default: return flat list of tool IDs (legacy backward compat)
     tool_ids = db.get_agent_tools(agent_id)
     return jsonify({'tools': tool_ids})
 
 
 @agents_bp.route('/api/agents/<agent_id>/tools', methods=['PUT'])
 def api_set_agent_tools(agent_id):
-    data = request.get_json()
-    tool_ids = data.get('tools', [])
-    # Enforce artifacts_enabled lock: artifact tools are managed exclusively
-    # by the agent's artifacts_enabled setting, not via manual toggle.
+    body = request.get_json()
+    tool_ids = []
+    aliases = {}
+
+    # --- Dual format auto-detect ---
+    if isinstance(body, list):
+        # Bare list: legacy ["tool_a", ...] or new [{"id": "tool_a", "alias": "Read"}, ...]
+        if body and isinstance(body[0], dict):
+            # New object format
+            tool_ids = [item['id'] for item in body if 'id' in item]
+            aliases = {item['id']: item['alias'] for item in body if item.get('alias')}
+        else:
+            # Legacy flat string list
+            tool_ids = body
+    elif isinstance(body, dict) and 'tools' in body:
+        # Legacy wrapped format: {"tools": ["tool_a", ...]}
+        tools_list = body['tools']
+        if tools_list and isinstance(tools_list[0], dict):
+            tool_ids = [item['id'] for item in tools_list if 'id' in item]
+            aliases = {item['id']: item['alias'] for item in tools_list if item.get('alias')}
+        else:
+            tool_ids = tools_list
+    else:
+        return jsonify({'error': 'Invalid request body — expected a list of tools or {"tools": [...]}'}), 400
+
+    # --- Alias validation (only for new format) ---
+    if aliases:
+        # 1. Collect all canonical tool names (JSON defs, skill defs, builtins, artifacts)
+        canonical_names: set = set()
+        for td in tool_registry.get_all_tool_defs():
+            name = td.get('function', {}).get('name') or td.get('id', '')
+            if name:
+                canonical_names.add(name)
+        for btd in tool_registry.get_builtin_tool_defs():
+            name = btd.get('name', '')
+            if name:
+                canonical_names.add(name)
+        canonical_names.update(ARTIFACT_TOOLS)
+
+        for alias in aliases.values():
+            if alias in canonical_names:
+                return jsonify({'error': f"Alias '{alias}' conflicts with an existing canonical tool name"}), 400
+
+        # 2. No duplicate aliases within the same request
+        alias_values = list(aliases.values())
+        if len(set(alias_values)) != len(alias_values):
+            return jsonify({'error': 'Duplicate aliases are not allowed in the same request'}), 400
+
+    # --- Enforce artifacts_enabled lock ---
     agent = db.get_agent(agent_id)
     if agent:
         artifacts_enabled = agent.get('artifacts_enabled', True)
@@ -422,7 +472,11 @@ def api_set_agent_tools(agent_id):
         else:
             # Ensure no artifact tools are present — silently strip if added
             tool_ids = [tid for tid in tool_ids if tid not in ARTIFACT_TOOLS]
-    db.set_agent_tools(agent_id, tool_ids)
+
+    # Ensure we don't pass an empty dict (convert to None for backward compat)
+    db.set_agent_tools(agent_id, tool_ids, aliases=aliases if aliases else None)
+
+    # Return legacy flat-list format for backward compatibility
     return jsonify({'success': True, 'tools': tool_ids})
 
 

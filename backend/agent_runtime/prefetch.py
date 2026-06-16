@@ -103,6 +103,9 @@ class TurnPrefetcher:
                 if 'fetch_artifact' not in assigned_tool_ids:
                     assigned_tool_ids.append('fetch_artifact')
 
+            # Read tool aliases from the module-level cache (populated by _ctx.build_tools() above)
+            tool_aliases = _ctx._tool_alias_cache.get(db_agent_id, {})
+
             fresh_agent_context = {
                 'id': agent_id,
                 'name': agent.get('name', ''),
@@ -112,6 +115,7 @@ class TurnPrefetcher:
                 'channel_id': ctx.channel_id,
                 'session_id': session_id,
                 'assigned_tool_ids': assigned_tool_ids,
+                'tool_aliases': tool_aliases,
                 'workspace': agent.get('workspace') or None,
                 'is_super': bool(agent.get('is_super')),
                 'is_subagent': bool(agent.get('is_subagent')),
