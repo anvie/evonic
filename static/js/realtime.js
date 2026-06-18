@@ -204,7 +204,8 @@ var RealtimeClient = (function () {
         try {
             var xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/realtime/' + cmd, true);
-            xhr.send();
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.send(JSON.stringify({ session_id: this._session_id }));
         } catch (_) {}
     };
 
