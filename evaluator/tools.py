@@ -176,7 +176,32 @@ class ToolFramework:
                     }
                 }
             },
-
+            {
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "description": "Write content to a file on the filesystem",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "Name or path of the file to write"
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Content to write to the file"
+                            },
+                            "mode": {
+                                "type": "string",
+                                "enum": ["write", "append"],
+                                "description": "Write mode: 'write' (overwrite) or 'append'"
+                            }
+                        },
+                        "required": ["filename", "content"]
+                    }
+                }
+            },
         ]
     
     def execute_tool(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
@@ -201,6 +226,8 @@ class ToolFramework:
                 result = self._get_order(arguments)
             elif function_name == "send_notification":
                 result = self._send_notification(arguments)
+            elif function_name == "write_file":
+                result = self._write_file(arguments)
             else:
                 result = {"error": f"Unknown tool: {function_name}"}
             
@@ -362,6 +389,20 @@ class ToolFramework:
         
         # Mock: just return success
         return {"email": email, "message_preview": message[:50], "status": "sent", "notification_id": "NOTIF-12345"}
+
+    def _write_file(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Mock file write — simulates success without touching the real filesystem"""
+        import datetime
+        filename = args.get("filename", "output.txt")
+        content = args.get("content", "")
+        mode = args.get("mode", "write")
+        timestamp = datetime.datetime.now().isoformat()
+        return {
+            "status": "created" if mode == "write" else "appended",
+            "filename": filename,
+            "bytes_written": len(content.encode()),
+            "timestamp": timestamp,
+        }
 
 # Global tool framework instance
 tool_framework = ToolFramework()

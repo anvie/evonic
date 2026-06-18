@@ -212,9 +212,13 @@ Seorang member loyal membeli produk seharga Rp 1.200.000. Berapa harga yang haru
         # Clean response for numeric comparison
         clean = response.strip()
         clean = clean.replace(',', '').replace('Rp', '').replace('rp', '').strip()
-        # Handle Indonesian decimal format (dots as thousands separator)
-        if '.' in clean and clean.count('.') > 1:
-            clean = clean.replace('.', '')
+        # Handle Indonesian thousands separator (dot): multiple dots OR single dot
+        # with exactly 3 trailing digits (e.g. "820.800" → "820800")
+        if '.' in clean:
+            if clean.count('.') > 1:
+                clean = clean.replace('.', '')
+            elif re.match(r'^\d+\.\d{3}$', clean):
+                clean = clean.replace('.', '')
         
         try:
             actual = float(clean)

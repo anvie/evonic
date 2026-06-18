@@ -102,6 +102,8 @@ class ToolCallEvaluator(BaseEvaluator):
         if isinstance(expected, dict):
             if "tool" in expected:
                 expected_tools = [expected["tool"]]
+            elif "tools_used" in expected:
+                expected_tools = expected.get("tools_used", [])
             elif "tools" in expected:
                 expected_tools = expected.get("tools", [])
             elif "chain" in expected:

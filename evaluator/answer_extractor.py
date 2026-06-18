@@ -49,20 +49,21 @@ Your answer (ya/tidak only):""",
         },
         
         2: {
-            "template": """You are given a question and an AI's response. Extract ONLY the final answer: "ya" or "tidak".
+            "template": """You are given a question asking to sort numbers, and an AI's response. Extract ONLY the sorted numbers as a comma-separated list.
 
 ---BEGIN RESPONSE---
 {response}
 ---END RESPONSE---
 
 Rules:
-1. Return ONLY "ya" or "tidak" (one word, lowercase)
-2. No explanation, no reasoning, no other text
+1. Return ONLY the numbers separated by commas (e.g. "3, 7, 15, 18, 22")
+2. No explanation, no other text
+3. Numbers only, in the order given
 
-Your answer (ya/tidak only):""",
-            "expected_format": "boolean"
+Your answer (numbers only):""",
+            "expected_format": "sequence"
         },
-        
+
         3: {
             "template": """You are given a question and an AI's response. Extract ONLY the final answer (a word, phrase, or short sentence).
 
@@ -81,19 +82,18 @@ Your answer:""",
         },
         
         4: {
-            "template": """You are given a question about causality and an AI's response. Evaluate if the response correctly considers alternative explanations.
+            "template": """You are given a multiple-choice question and an AI's response. Extract ONLY the number(s) of the correct statement(s).
 
 ---BEGIN RESPONSE---
 {response}
 ---END RESPONSE---
 
 Rules:
-1. Return "ya" if the response considers multiple factors/alternatives
-2. Return "tidak" if the response only considers one factor
-3. Just one word, lowercase
+1. Return ONLY the number(s) of the correct statement(s), comma-separated (e.g. "2, 4")
+2. No explanation, no other text
 
-Your answer (ya/tidak only):""",
-            "expected_format": "boolean"
+Your answer (statement numbers only):""",
+            "expected_format": "statements"
         },
         
         5: {
