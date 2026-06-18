@@ -1002,7 +1002,7 @@ def _start_producer(channel: str, producer_fn, ring: BoundedRing,
 @realtime_bp.route('/api/realtime/pause', methods=['POST'])
 def api_realtime_pause():
     """Pause chat+workplace event delivery for this session."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     session_id = data.get('session_id', '').strip()
     if not session_id:
         return Response(json.dumps({'error': 'session_id required'}), status=400,
@@ -1018,7 +1018,7 @@ def api_realtime_pause():
 @realtime_bp.route('/api/realtime/resume', methods=['POST'])
 def api_realtime_resume():
     """Resume chat+workplace event delivery and flush paused buffer."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     session_id = data.get('session_id', '').strip()
     if not session_id:
         return Response(json.dumps({'error': 'session_id required'}), status=400,

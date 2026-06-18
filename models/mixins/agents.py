@@ -80,7 +80,7 @@ class AgentMixin:
                    'avatar_path', 'disable_parallel_tool_execution', 'disable_turn_prefetch',
                    'agent_messaging_enabled', 'workplace_id',
                    'attachments_enabled', 'attachment_max_size_mb', 'artifacts_enabled',
-                   'fallback_model_id', 'audio_enabled', 'video_enabled',
+                    'model_id', 'fallback_model_id', 'audio_enabled', 'video_enabled',
                    'run_as_user', 'bash_exec_enabled'}
         updates = {k: v for k, v in data.items() if k in allowed}
         if not updates:
@@ -120,7 +120,7 @@ class AgentMixin:
             raise ValueError(f"Agent ID '{new_id}' already exists")
 
         # Build new agent dict: copy all fields, override id/name/desc, skip auto fields
-        auto_fields = {'id', 'created_at', 'updated_at', 'last_active_at', 'model',
+        auto_fields = {'id', 'created_at', 'updated_at', 'last_active_at',
                        'session_count', 'primary_channel_id', 'avatar_path'}
         clone = {}
         for k, v in source.items():
