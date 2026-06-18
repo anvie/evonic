@@ -705,6 +705,58 @@ def api_create_artifact(agent_id):
         return jsonify({'error': str(e)}), 500
 
 
+# ==================== Docker Sandbox Metrics API ====================
+
+@agents_bp.route('/api/agents/<agent_id>/sandbox/stats', methods=['GET'])
+def api_get_sandbox_stats(agent_id):
+    """Get Docker sandbox resource usage statistics for an agent's active sessions."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        return jsonify({'error': 'Agent not found'}), 404
+    
+    # Check if sandbox is enabled for this agent
+    if not agent.get('sandbox_enabled', 1):
+        return jsonify({'error': 'Sandbox is disabled for this agent'}), 400
+    
+    # Get all sessions for this agent
+    try:
+        sessions = db._chat_db(agent_id).get_sessions_with_preview()
+    except Exception as e:
+        return jsonify({'error': f'Failed to get sessions: {str(e)}'}), 500
+    
+    # Collect stats for each active session that might have a container
+    from backend.tools.lib.backends.docker_backend import get_container_stats
+    
+    stats_list = []
+    for sess in sessions:
+        session_id = sess['id']
+        stats = get_container_stats(session_id)
+        if 'error' not in stats:
+            stats['session_id'] = session_id
+            stats['external_user_id'] = sess.get('external_user_id', '')
+            stats_list.append(stats)
+    
+    return jsonify({
+        'agent_id': agent_id,
+        'agent_name': agent.get('name', agent_id),
+        'sandbox_enabled': True,
+        'active_containers': len(stats_list),
+        'containers': stats_list,
+    })
+
+
+@agents_bp.route('/api/sandbox/stats', methods=['GET'])
+def api_get_all_sandbox_stats():
+    """Get Docker sandbox resource usage statistics for all active containers."""
+    from backend.tools.lib.backends.docker_backend import get_all_container_stats
+    
+    try:
+        stats = get_all_container_stats()
+        return jsonify(stats)
+    except Exception as e:
+        return jsonify({'error': f'Failed to get sandbox stats: {str(e)}'}), 500
+
+
 # ==================== Agent Avatar API ====================
 
 AVATAR_DIR = os.path.join(BASE_DIR, 'shared', 'avatars')

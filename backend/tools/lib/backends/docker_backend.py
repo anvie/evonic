@@ -142,6 +142,103 @@ def get_pool_status() -> dict:
         }
 
 
+def get_container_stats(session_id: str) -> dict:
+    """Get resource usage statistics for a specific container.
+    
+    Returns CPU percentage, memory usage, memory limit, and network I/O.
+    Returns error dict if container doesn't exist or Docker stats fails.
+    """
+    with _pool_lock:
+        info = _containers.get(session_id)
+        if not info:
+            return {'error': 'No active container for this session'}
+        container_id = info['container_id']
+    
+    # Use docker stats --no-stream to get a single snapshot
+    result = _docker('stats', '--no-stream', '--format',
+                     '{{json .}}', container_id)
+    
+    if result.returncode != 0:
+        return {'error': f'Failed to get container stats: {result.stderr.strip()}'}
+    
+    try:
+        import json
+        stats = json.loads(result.stdout.strip())
+        
+        # Parse memory usage (format: "123.4MiB / 512MiB")
+        mem_usage = stats.get('MemUsage', '0B / 0B')
+        mem_parts = mem_usage.split(' / ')
+        mem_used_str = mem_parts[0].strip() if len(mem_parts) > 0 else '0B'
+        mem_limit_str = mem_parts[1].strip() if len(mem_parts) > 1 else '0B'
+        
+        # Parse CPU percentage (format: "12.34%")
+        cpu_percent_str = stats.get('CPUPerc', '0%').rstrip('%')
+        
+        # Parse network I/O (format: "1.2MB / 3.4MB")
+        net_io = stats.get('NetIO', '0B / 0B')
+        net_parts = net_io.split(' / ')
+        net_input_str = net_parts[0].strip() if len(net_parts) > 0 else '0B'
+        net_output_str = net_parts[1].strip() if len(net_parts) > 1 else '0B'
+        
+        # Parse block I/O (format: "5.6MB / 7.8MB")
+        block_io = stats.get('BlockIO', '0B / 0B')
+        block_parts = block_io.split(' / ')
+        block_input_str = block_parts[0].strip() if len(block_parts) > 0 else '0B'
+        block_output_str = block_parts[1].strip() if len(block_parts) > 1 else '0B'
+        
+        return {
+            'container_id': container_id[:12],
+            'container_name': stats.get('Name', ''),
+            'cpu_percent': float(cpu_percent_str) if cpu_percent_str else 0.0,
+            'memory': {
+                'used': mem_used_str,
+                'limit': mem_limit_str,
+                'percent': stats.get('MemPerc', '0%').rstrip('%'),
+            },
+            'network': {
+                'input': net_input_str,
+                'output': net_output_str,
+            },
+            'block_io': {
+                'read': block_input_str,
+                'write': block_output_str,
+            },
+            'pids': stats.get('PIDs', '0'),
+        }
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        return {'error': f'Failed to parse container stats: {str(e)}'}
+
+
+def get_all_container_stats() -> dict:
+    """Get resource usage statistics for all active containers in the pool.
+    
+    Returns a dict with pool summary and per-container stats.
+    """
+    with _pool_lock:
+        session_ids = list(_containers.keys())
+    
+    stats_list = []
+    for sid in session_ids:
+        stats = get_container_stats(sid)
+        if 'error' not in stats:
+            stats['session_id'] = sid[:12]
+            stats['agent_id'] = _containers.get(sid, {}).get('agent_id', '')
+            stats_list.append(stats)
+    
+    # Calculate aggregate metrics
+    total_cpu = sum(s.get('cpu_percent', 0) for s in stats_list)
+    
+    return {
+        'pool_size': len(session_ids),
+        'max_containers': SANDBOX_MAX_CONTAINERS,
+        'containers': stats_list,
+        'aggregate': {
+            'total_cpu_percent': round(total_cpu, 2),
+            'active_containers': len(stats_list),
+        }
+    }
+
+
 def _startup_sweep() -> None:
     """Destroy evonic containers left over from previous (crashed) processes."""
     result = _docker('ps', '--filter', 'label=evonic.managed=1', '--format', '{{.Names}}')
