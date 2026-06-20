@@ -2436,6 +2436,17 @@ def _info(msg):
     print(f"  {_INFO}  {msg}")
 
 
+def evomem_install(force=False):
+    """Download and install the evomem memory-engine binary (latest release)."""
+    from backend.evomem_provision import ensure_evomem
+    result = ensure_evomem(force=force)
+    if result["ok"]:
+        _ok(result["msg"]) if result["installed"] else _info(result["msg"])
+    else:
+        _warn(result["msg"])
+    return 0 if result["ok"] else 1
+
+
 def doctor_command(quick=False, fix=False, with_llm_provider=False):
     """Run comprehensive system health diagnostics."""
     import importlib
@@ -3111,11 +3122,24 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False):
         binary_ok = os.path.isfile(binary_full) and os.access(binary_full, os.X_OK)
 
         # Check custom EVOMEM_BINARY path
-        if "EVOMEM_BINARY" in os.environ and not binary_ok:
+        custom_binary = "EVOMEM_BINARY" in os.environ
+        if custom_binary and not binary_ok:
             results.append(_warn(
                 f"EVOMEM_BINARY is set to '{binary_path}' but binary not found "
                 f"or not executable at {binary_full}"
             ))
+
+        # Fix: auto-download and install the binary before judging the result, so a
+        # single `doctor --fix` run reports the post-install state. Skipped when the
+        # user points EVOMEM_BINARY at a path they manage themselves.
+        if fix and not binary_ok and engine != "fts5" and not custom_binary:
+            from backend.evomem_provision import ensure_evomem
+            result = ensure_evomem()
+            if result["ok"] and result["installed"]:
+                fixes_applied.append(f"Installed evomem {result['version']} to {binary_full}")
+            elif not result["ok"]:
+                _info(f"  {result['msg']}")
+            binary_ok = os.path.isfile(binary_full) and os.access(binary_full, os.X_OK)
 
         if engine == "fts5":
             _info("  Memory engine is FTS5 (evomem not used)")
@@ -3124,26 +3148,16 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False):
         elif engine_explicit:
             results.append(_fail(
                 f"EVONIC_MEMORY_ENGINE=evomem is set but binary not found at "
-                f"{binary_full}. Set EVONIC_MEMORY_ENGINE=fts5 to use fallback, "
-                f"or install the evomem binary."
+                f"{binary_full}. Run 'evonic evomem install' or 'evonic doctor --fix' "
+                f"to install it, or set EVONIC_MEMORY_ENGINE=fts5 to use the fallback."
             ))
         else:
             results.append(_warn(
                 f"Evomem is the default memory engine but binary not found at "
-                f"{binary_full}. Evomem features (think, graph_query) will "
+                f"{binary_full}. Run 'evonic evomem install' (or 'evonic doctor --fix') "
+                f"to install it; until then evomem features (think, graph_query) "
                 f"silently fall back to FTS5."
             ))
-
-        # Fix: provide actionable message + create directory if needed
-        if not binary_ok and engine != "fts5" and fix:
-            _info(
-                "  To install evomem: place the static binary at "
-                "shared/bin/evomem and make it executable (chmod +x)."
-            )
-            bin_dir = os.path.dirname(binary_full)
-            if not os.path.isdir(bin_dir):
-                os.makedirs(bin_dir, exist_ok=True)
-                fixes_applied.append(f"Created directory {bin_dir} for evomem binary")
 
     except Exception as e:
         results.append(_fail(f"Evomem check failed: {e}"))
