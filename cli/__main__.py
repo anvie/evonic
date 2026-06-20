@@ -32,6 +32,7 @@ from cli.commands import (
     clear_sandbox,
     update_server, pass_setup,
     doctor_command,
+    evomem_install,
     backup_command, restore_command, verify_command, list_command,
 )
 
@@ -126,6 +127,26 @@ def main():
     doctor_parser.add_argument(
         "--with-llm-provider", action="store_true", default=False,
         help="Include LLM provider connectivity check (slow, network-dependent)",
+    )
+
+    # --- evomem ---
+    evomem_parser = subparsers.add_parser(
+        "evomem",
+        help="Manage the evomem memory-engine binary",
+        description="Provision the evomem memory-engine binary. Available subcommands: install.",
+    )
+    evomem_subparsers = evomem_parser.add_subparsers(
+        dest="evomem_command", help="Evomem management commands"
+    )
+    evomem_install_parser = evomem_subparsers.add_parser(
+        "install",
+        help="Download and install the evomem binary (latest release)",
+        description="Download, verify, and install the evomem binary from the latest "
+                    "GitHub release. Set EVOMEM_VERSION to pin a specific tag.",
+    )
+    evomem_install_parser.add_argument(
+        "--force", action="store_true", default=False,
+        help="Reinstall even if a binary is already present",
     )
 
     # --- plugin ---
@@ -832,6 +853,12 @@ def main():
         restart_server()
     elif args.command == "doctor":
         doctor_command(quick=args.quick, fix=args.fix, with_llm_provider=args.with_llm_provider)
+    elif args.command == "evomem":
+        if args.evomem_command is None:
+            evomem_parser.print_help()
+            sys.exit(0)
+        elif args.evomem_command == "install":
+            sys.exit(evomem_install(force=args.force))
     elif args.command == "plugin":
         if args.plugin_command is None:
             plugin_parser.print_help()

@@ -204,6 +204,14 @@ install_deps() {
     "$py" -m pip install --upgrade pip --quiet
     "$py" -m pip install -r "$EVONIC_HOME/requirements.txt"
     ok "Dependencies installed"
+
+    # Provision the evomem memory-engine binary (best-effort: unsupported
+    # platforms or network issues fall back to FTS5, so never fail the install).
+    if (cd "$EVONIC_HOME" && "$py" -m backend.evomem_provision) >/dev/null 2>&1; then
+        ok "Evomem memory engine installed"
+    else
+        warn "Evomem binary not installed (unsupported platform or network issue); using FTS5 fallback"
+    fi
 }
 
 # ── Step 5: Create CLI wrapper script ────────────────────────────────────────

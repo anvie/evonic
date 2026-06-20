@@ -503,6 +503,20 @@ def run_setup(
             env_path = os.path.join(config.BASE_DIR, ".env")
             _update_env_var(env_path, "ADMIN_PASSWORD_HASH", pw_hash)
 
+        # Memory-engine awareness: surface whether evomem is ready or FTS5 is used.
+        try:
+            import logging
+            from backend.evomem_provision import default_binary_path
+            binary = default_binary_path()
+            ready = os.path.isfile(binary) and os.access(binary, os.X_OK)
+            logging.getLogger(__name__).info(
+                "Setup complete. Memory engine: %s",
+                "evomem (binary ready)" if ready else
+                "FTS5 fallback — evomem binary not installed; run 'evonic evomem install'",
+            )
+        except Exception:
+            pass
+
         return {"success": True, "agent_id": agent_id}
 
     except Exception as e:
