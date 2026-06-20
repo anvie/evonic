@@ -7,6 +7,7 @@ All external dependencies (db, notifier, approval_registry, event_stream)
 are mocked via unittest.mock.
 """
 import time
+import types
 import unittest
 import unittest.mock as mock
 import sys
@@ -69,25 +70,45 @@ def setup_module(module):
     # collection with the real Database instance attached.
     sys.modules.pop('backend.tools.agent_messaging', None)
 
-    sys.modules['models.db'] = mock.MagicMock(db=_mock_db)
-    # Stub the top-level `models` package but keep a real __path__ so genuine
-    # submodule imports (e.g. `from models.chatlog import ...` triggered when
-    # the autouse conftest fixture imports the full app) still resolve to the
-    # real files.  Without __path__ the bare MagicMock is "not a package" and
-    # any models.* submodule import raises ModuleNotFoundError.
-    _models_stub = mock.MagicMock()
-    _models_stub.__path__ = [os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models')]
+    # Stubs are real types.ModuleType objects, not bare MagicMocks: a MagicMock
+    # raises AttributeError for unset dunders, and Python 3.14's import machinery
+    # reads parent.__spec__ when resolving `from models.X import ...`. ModuleType
+    # carries __spec__=None, so submodule resolution works; the behavioural mocks
+    # are attached as attributes so existing assertions are unchanged.
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    _models_db_stub = types.ModuleType('models.db')
+    _models_db_stub.db = _mock_db
+    sys.modules['models.db'] = _models_db_stub
+
+    # Real __path__ so genuine submodule imports (e.g. `from models.chatlog
+    # import ...`, triggered when the autouse conftest fixture imports the full
+    # app) still resolve to the real files.
+    _models_stub = types.ModuleType('models')
+    _models_stub.__path__ = [os.path.join(_repo_root, 'models')]
+    # Submodules that conftest's isolate_agent_dirs fixture monkeypatches by
+    # name (models.chat / models.chatlog) must be present as attributes.
+    _models_stub.chat = mock.MagicMock()
+    _models_stub.chatlog = mock.MagicMock()
     sys.modules['models'] = _models_stub
-    sys.modules['backend.agent_runtime.notifier'] = _mock_notifier
-    sys.modules['backend.agent_runtime'] = mock.MagicMock()
-    sys.modules['backend.agent_runtime.approval'] = _mock_approval
+
+    _notifier_stub = types.ModuleType('backend.agent_runtime.notifier')
+    _notifier_stub.notify_agent = _mock_notifier.notify_agent
+    sys.modules['backend.agent_runtime.notifier'] = _notifier_stub
+
+    _approval_stub = types.ModuleType('backend.agent_runtime.approval')
+    _approval_stub.approval_registry = _mock_approval.approval_registry
+    sys.modules['backend.agent_runtime.approval'] = _approval_stub
+
+    _ar_stub = types.ModuleType('backend.agent_runtime')
+    _ar_stub.agent_runtime = mock.MagicMock()
+    _ar_stub.notifier = _notifier_stub
+    _ar_stub.approval = _approval_stub
+    sys.modules['backend.agent_runtime'] = _ar_stub
 
     # mock.patch traverses the real `backend` module via getattr, so we need
     # to expose the mocked submodules as attributes on the real package object.
-    _backend_pkg.agent_runtime = sys.modules['backend.agent_runtime']
-    _backend_pkg.agent_runtime.notifier = _mock_notifier
-    _backend_pkg.agent_runtime.approval = _mock_approval
+    _backend_pkg.agent_runtime = _ar_stub
 
 
 def teardown_module(module):
