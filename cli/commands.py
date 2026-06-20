@@ -211,6 +211,12 @@ def start_server(port=None, host=None, debug=None, daemon=False):
         app_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "..", "app.py"
         )
+        # Release the lock BEFORE spawning — the child process (app.py) will
+        # acquire its own via its single-instance guard. Holding the lock here
+        # causes a race: the child's fcntl.flock(LOCK_NB) fails because this
+        # process still owns the lock, killing the child immediately.
+        os.close(pid_lock_fd)
+
         proc = subprocess.Popen(
             [sys.executable, app_path],
             env=env,
@@ -223,8 +229,6 @@ def start_server(port=None, host=None, debug=None, daemon=False):
 
         if _is_running(proc.pid):
             _write_pid(proc.pid)
-            # Release the lock — the child process (app.py) will acquire its own
-            os.close(pid_lock_fd)
             print(f"Server started in background (PID: {proc.pid})")
             print(f"Host: {host}")
             print(f"Port: {port}")
