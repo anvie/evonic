@@ -21,6 +21,10 @@ function loadDashboard() {
     });
 }
 
+function emptyState(message) {
+    return '<div class="p-6 text-center text-sm text-gray-400 dark:text-gray-500">' + message + '</div>';
+}
+
 function renderStats(stats) {
     $('#stat-agent-count').text(stats.agent_count);
     $('#stat-active-channel-count').text(stats.active_channel_count);
@@ -89,7 +93,7 @@ function renderAgents(agents) {
 
     if (!agents || agents.length === 0) {
         $container.hide();
-        $empty.show();
+        $empty.html(emptyState('No agents yet')).show();
         return;
     }
 
@@ -105,7 +109,7 @@ function renderAgents(agents) {
         if (desc.length > 50) {
             desc = desc.substring(0, 50) + '...';
         }
-        var modelBadge = a.model ? '<span class="text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded font-mono hidden sm:inline">' + a.model.substring(0, 20) + '</span>' : '';
+        var modelBadge = a.model_id ? '<span class="text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded font-mono hidden sm:inline">' + a.model_id.substring(0, 20) + '</span>' : '';
 
         html += '<a href="/agents/' + a.id + '" class="flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors no-underline text-inherit">\n';
         html += '    <div class="flex items-center gap-3 min-w-0">\n';
@@ -137,7 +141,7 @@ function renderLeaderboard(leaderboard) {
 
     if (!leaderboard || leaderboard.length === 0) {
         $container.hide();
-        $empty.show();
+        $empty.html(emptyState('No model scores yet')).show();
         return;
     }
 
@@ -182,7 +186,7 @@ function renderRecentRuns(runs) {
 
     if (!runs || runs.length === 0) {
         $container.hide();
-        $empty.show();
+        $empty.html(emptyState('No evaluation runs yet')).show();
         return;
     }
 
@@ -226,7 +230,7 @@ function renderModelUsage(modelUsage) {
 
     if (!modelUsage || modelUsage.length === 0) {
         $container.hide();
-        $empty.show();
+        $empty.html(emptyState('No model usage data yet')).show();
         return;
     }
 

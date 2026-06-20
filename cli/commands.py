@@ -3179,6 +3179,37 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False):
         results.append(_fail(f"Asset build check failed: {e}"))
 
 
+    # ── 13. Database Schema / Query Health Check ──────────────
+    _section("13. Database Schema / Query Health Check")
+    try:
+        import sqlite3 as _sqlite3
+        from models.db import db as _schema_db
+
+        dashboard_queries = [
+            ("dashboard stats", _schema_db.get_dashboard_stats),
+            ("model usage", _schema_db.get_model_usage),
+            ("model leaderboard", _schema_db.get_model_leaderboard),
+            ("recent agents", _schema_db.get_recent_agents),
+            ("recent runs", _schema_db.get_recent_runs),
+        ]
+        schema_ok = True
+        for q_name, q_fn in dashboard_queries:
+            try:
+                q_fn()
+            except _sqlite3.OperationalError as qe:
+                schema_ok = False
+                results.append(_fail(f"{q_name} query failed — schema mismatch: {qe}"))
+            except Exception as qe:
+                results.append(_warn(f"{q_name} query raised {type(qe).__name__}: {qe}"))
+        if schema_ok:
+            results.append(_ok("Dashboard queries match the current database schema"))
+        else:
+            _info("  A column referenced by a query is missing from the schema "
+                  "(commonly a rename/drop that left a query un-updated).")
+    except Exception as e:
+        results.append(_fail(f"Database schema check failed: {e}"))
+
+
     _section("Summary")
 
     # Filter out "skip" entries

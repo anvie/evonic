@@ -60,7 +60,7 @@ check_prereqs() {
     step "Step 1/6: Checking prerequisites"
 
     missing=""
-    for cmd in git python3 pip3; do
+    for cmd in git python3; do
         if command -v "$cmd" >/dev/null 2>&1; then
             ok "$cmd found"
         else
@@ -82,6 +82,12 @@ check_prereqs() {
         die "Python 3.9+ is required. Found: $(python3 --version 2>&1)"
     fi
     ok "Python version $(python3 --version 2>&1) meets minimum requirement (3.9+)"
+
+    # The installer needs the venv module (with ensurepip), not a system pip3.
+    if ! python3 -c 'import venv, ensurepip' 2>/dev/null; then
+        die "Python 'venv' module is missing. Install it (e.g. sudo apt install python3-venv) and re-run."
+    fi
+    ok "Python venv module available"
 }
 
 # --- Fix remote fetch config so branches and tags are tracked ---
@@ -90,7 +96,6 @@ check_prereqs() {
 # breaks `git fetch`, `git pull`, and the supervisor auto-updater.
 # Reconfigure to fetch all branches + tags so the repo stays alive.
 fix_remote_fetch() {
-    local rc
     rc=$(git -C "$EVONIC_HOME" config remote.origin.fetch 2>/dev/null)
     case "$rc" in
         *refs/tags/*:refs/tags/*)  # locked to a single tag -- fix it
@@ -166,7 +171,13 @@ create_venv() {
         return
     fi
 
-    python3 -m venv "$VENV_DIR"
+    python3 -m venv "$VENV_DIR" || die "Virtual environment creation failed. Install the venv module (e.g. sudo apt install python3-venv) and re-run."
+
+    # Some distros create the venv without bootstrapping pip; ensure it exists.
+    if [ ! -x "$VENV_DIR/bin/pip" ] && [ ! -x "$VENV_DIR/bin/pip3" ]; then
+        "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || \
+            die "Virtual environment has no pip. Install the venv module (e.g. sudo apt install python3-venv) and re-run."
+    fi
     ok "Virtual environment created at $VENV_DIR"
 }
 
@@ -174,13 +185,11 @@ create_venv() {
 install_deps() {
     step "Step 4/6: Installing Python dependencies"
 
-    pip="$VENV_DIR/bin/pip"
-    if [ ! -f "$pip" ]; then
-        pip="$VENV_DIR/bin/pip3"
-    fi
+    py="$VENV_DIR/bin/python"
+    [ -x "$py" ] || py="$VENV_DIR/bin/python3"
 
-    "$pip" install --upgrade pip --quiet
-    "$pip" install -r "$EVONIC_HOME/requirements.txt"
+    "$py" -m pip install --upgrade pip --quiet
+    "$py" -m pip install -r "$EVONIC_HOME/requirements.txt"
     ok "Dependencies installed"
 }
 
@@ -198,6 +207,8 @@ EVONIC_HOME="\${EVONIC_HOME:-$EVONIC_HOME}"
 # Activate venv and run
 if [ -f "\$EVONIC_HOME/.venv/bin/activate" ]; then
     . "\$EVONIC_HOME/.venv/bin/activate"
+elif [ -f "\$EVONIC_HOME/venv/bin/activate" ]; then
+    . "\$EVONIC_HOME/venv/bin/activate"
 fi
 
 cd "\$EVONIC_HOME"
