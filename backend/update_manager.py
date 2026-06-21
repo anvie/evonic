@@ -16,7 +16,6 @@ import os
 import queue
 import re
 import subprocess
-import sys
 import threading
 import time
 from datetime import datetime
@@ -536,18 +535,18 @@ def trigger_rollback() -> dict:
 
 
 def trigger_restart() -> dict:
-    """Spawn a detached subprocess that restarts the server after a short delay.
+    """Re-exec the server in place via the shared restart helper.
 
-    In the flat-repo model, the restart is handled by sending SIGTERM to the
-    parent process after a brief delay, allowing the process manager (systemd,
-    Docker, etc.) to restart it.
+    State is reset to idle BEFORE the restart so the persisted
+    state/update/update_state.json does not carry 'success' across server
+    restarts, which was causing the 'Update complete!' banner to reappear.
     """
     _append_log('info', 'Restart scheduled...')
     _notify_listeners()
 
-    # Reset state to idle BEFORE spawning restart so the persisted state
-    # does not carry over 'success' status after the server restarts.
-    # This must happen while _lock is held and before subprocess.Popen().
+    # Reset state to idle BEFORE restart so the persisted state does not
+    # carry over 'success' status after the server restarts. Must happen
+    # while _lock is held and before schedule_restart() fires the thread.
     with _lock:
         _state['status'] = 'idle'
         _state['progress'] = 0
@@ -557,19 +556,8 @@ def trigger_restart() -> dict:
         _state['crashed'] = False
         _persist_state(_state)
 
-    # Detached subprocess: sleeps 2s, then terminates the parent process.
-    script = (
-        "import time, signal, os; "
-        "time.sleep(2); "
-        "os.kill(os.getppid(), signal.SIGTERM)"
-    )
-
-    subprocess.Popen(
-        [sys.executable, '-c', script],
-        start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    from backend.restart import schedule_restart
+    schedule_restart()
     return {'success': True, 'restarting': True}
 
 

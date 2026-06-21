@@ -1,11 +1,8 @@
 import os
 import re
-import sys
 import sqlite3
 
 import logging
-import threading
-import time
 
 from flask import Blueprint, render_template, jsonify, request, redirect
 
@@ -16,11 +13,6 @@ from backend.skillsets import list_skillsets
 from backend.setup import (run_setup, test_connection, PROVIDER_DEFAULTS,
                             LANGUAGE_PRESETS, check_docker_available)
 import config
-
-# `resource` is a POSIX-only stdlib module — absent on Windows.
-# Guarded so the app can boot; restart-time FD cleanup is skipped there.
-if sys.platform != 'win32':
-    import resource
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -73,24 +65,8 @@ def api_setup():
         _log = logging.getLogger(__name__)
         _log.info("Setup complete — scheduling auto-restart")
 
-        def _do_restart():
-            time.sleep(1.5)
-            try:
-                from backend.channels.registry import channel_manager
-                channel_manager.stop_all()
-                time.sleep(1.0)
-                if sys.platform != 'win32':
-                    maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
-                    if maxfd == resource.RLIM_INFINITY or maxfd > 65535:
-                        maxfd = 4096
-                    os.closerange(3, maxfd)
-            except Exception as e:
-                _log.error("Error during restart cleanup: %s", e, exc_info=True)
-            _log.info("Re-executing server process")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-
-        t = threading.Thread(target=_do_restart, daemon=True)
-        t.start()
+        from backend.restart import schedule_restart
+        schedule_restart()
 
         return jsonify(result)
 

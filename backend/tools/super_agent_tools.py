@@ -675,9 +675,6 @@ def _exec_set_owner_name(args: dict) -> dict:
 
 def _exec_restart(args: dict, agent_context: dict = None) -> dict:
     """Restart the Evonic server. Same mechanism as /restart slash command."""
-    import sys as _sys
-    import threading
-    import time
     import json as _json
     import logging
 
@@ -798,32 +795,8 @@ def _exec_restart(args: dict, agent_context: dict = None) -> dict:
         'context': recent_context,
     }))
 
-    def _do_restart():
-        time.sleep(1.5)
-        from backend.channels.registry import channel_manager
-        channel_manager.stop_all()
-        time.sleep(1.0)
-        # `resource` is POSIX-only; skip FD cleanup on Windows.
-        if _sys.platform != 'win32':
-            try:
-                import resource
-                maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
-                if maxfd == resource.RLIM_INFINITY or maxfd > 65535:
-                    maxfd = 4096
-                os.closerange(3, maxfd)
-            except Exception:
-                pass
-        # Flat-repo architecture: project root IS the live directory.
-        import config as _config
-        _target = os.path.realpath(_config.BASE_DIR)
-        _app_py = os.path.join(_target, 'app.py')
-        _venv_python = os.path.join(_target, '.venv', 'bin', 'python')
-        _python = _venv_python if os.path.exists(_venv_python) else _sys.executable
-        os.chdir(_target)
-        os.execv(_python, [_python, _app_py])
-
-    t = threading.Thread(target=_do_restart, daemon=True)
-    t.start()
+    from backend.restart import schedule_restart
+    schedule_restart()
     return {'result': 'Restarting...'}
 
 

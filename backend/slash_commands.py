@@ -7,7 +7,6 @@ Commands are parsed and executed in the backend so they work on all channels
 import logging
 import re
 import os
-import sys
 import threading
 from typing import Optional, Dict, Any, Callable, Tuple
 
@@ -533,50 +532,8 @@ def _register_builtins():
         except Exception:
             pass
 
-        def _do_restart():
-            import time
-            import resource
-
-            time.sleep(1.5)  # Brief delay so response is sent first
-
-            # Stop all channels cleanly so Telegram releases its long-poll
-            # before the new process starts and re-opens them
-            from backend.channels.registry import channel_manager
-            channel_manager.stop_all()
-            time.sleep(1.0)  # Give Telegram server-side time to release
-
-            # Close all inherited file descriptors (including Flask's bound
-            # socket) so the new process can bind the same port cleanly.
-            # Use os.close_range with inheritable=False (Python 3.13+) so
-            # the child inherits the same FDs but the parent's semaphores
-            # don't trigger leak warnings on macOS. Fallback to
-            # os.closerange for older Python versions.
-            try:
-                maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
-                if maxfd == resource.RLIM_INFINITY or maxfd > 65535:
-                    maxfd = 4096
-                try:
-                    os.close_range(3, maxfd, inheritable=False)
-                except AttributeError:
-                    os.closerange(3, maxfd)
-            except Exception:
-                pass
-
-            # Flat-repo architecture: project root IS the live directory.
-            import config as _config
-            _target = os.path.realpath(_config.BASE_DIR)
-            _app_py = os.path.join(_target, 'app.py')
-            _venv_python = os.path.join(_target, '.venv', 'bin', 'python')
-            _python = _venv_python if os.path.exists(_venv_python) else sys.executable
-
-            # Replace the current process in-place so we preserve the
-            # original execution mode (foreground stays foreground,
-            # daemon stays daemon).
-            os.chdir(_target)
-            os.execv(_python, [_python, _app_py])
-
-        t = threading.Thread(target=_do_restart, daemon=True)
-        t.start()
+        from backend.restart import schedule_restart
+        schedule_restart()
         return "Restarting..."
 
     command_registry.register(
