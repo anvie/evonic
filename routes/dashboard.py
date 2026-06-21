@@ -3,6 +3,7 @@ import re
 import sqlite3
 
 import logging
+import threading
 
 from flask import Blueprint, render_template, jsonify, request, redirect
 
@@ -46,6 +47,7 @@ def api_setup():
         sandbox_enabled = data.get('sandbox_enabled', False)
         if 'sandbox_enabled' not in data:
             sandbox_enabled = check_docker_available().get('available', False)
+        install_evomem = data.get('install_evomem', True)
         result = run_setup(
             provider=data.get('provider', ''),
             model_name=data.get('model_name', '').strip(),
@@ -65,8 +67,17 @@ def api_setup():
         _log = logging.getLogger(__name__)
         _log.info("Setup complete — scheduling auto-restart")
 
-        from backend.restart import schedule_restart
-        schedule_restart()
+        def _provision_then_restart():
+            if install_evomem:
+                try:
+                    from backend.evomem_provision import ensure_evomem
+                    ensure_evomem()
+                except Exception as e:
+                    _log.error("evomem provisioning failed: %s", e)
+            from backend.restart import restart_in_place
+            restart_in_place()
+
+        threading.Thread(target=_provision_then_restart, daemon=True).start()
 
         return jsonify(result)
 
