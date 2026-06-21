@@ -2157,6 +2157,26 @@ def setup_command(non_interactive=False):
         print(f"\n  Error: {result['error']}")
         sys.exit(1)
 
+    # --- Memory engine (evomem) ---
+    # Offered interactively only (default yes). Headless/scripted runs
+    # (--non-interactive) skip the prompt; install.sh provisions evomem directly
+    # via `python -m backend.evomem_provision`. ensure_evomem() is idempotent, so
+    # the prompt is safe even when the installer already fetched the binary.
+    if not non_interactive:
+        try:
+            reply = input("\n  Install evomem memory engine? [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            reply = ""
+        if reply not in ("n", "no"):
+            print("  Installing evomem memory engine...")
+            from backend.evomem_provision import ensure_evomem
+            ev = ensure_evomem()
+            if ev["ok"]:
+                _ok(ev["msg"]) if ev["installed"] else _info(ev["msg"])
+            else:
+                _warn(ev["msg"])
+                _info("Run 'evonic evomem install' to retry.")
+
     print(f"\n  Setup complete! Super agent '{result['agent_id']}' created.")
     print(f"  Run 'evonic start -d' to start the platform.")
     print()
