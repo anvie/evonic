@@ -2,9 +2,11 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import backend.update_manager as um
 from backend.update_manager import _version_tuple
 
 
@@ -113,6 +115,107 @@ class TestVersionTuple(unittest.TestCase):
         self.assertLess(_version_tuple('v1.0.0-alpha.2'), _version_tuple('v1.0.0-beta'))
         self.assertLess(_version_tuple('v1.0.0-beta'), _version_tuple('v1.0.0-rc.1'))
         self.assertLess(_version_tuple('v1.0.0-rc.1'), _version_tuple('v1.0.0'))
+
+
+class TestApplyUpdate(unittest.TestCase):
+    """apply_update must reinstall, repair, smoke-test, and roll back on failure."""
+
+    def setUp(self):
+        # git: fetch ok, rev-parse HEAD -> 'oldsha', reset ok.
+        def fake_git(*args):
+            if args[0] == 'rev-parse':
+                return 0, 'oldsha', ''
+            return 0, '', ''
+        self._git = mock.patch.object(um, '_git_run', side_effect=fake_git)
+        self.git = self._git.start()
+        self.addCleanup(self._git.stop)
+        # Avoid touching the on-disk state file during apply_update.
+        self._rec = mock.patch.object(um, '_record_previous_commit')
+        self._rec.start()
+        self.addCleanup(self._rec.stop)
+        # doctor --fix is best-effort; keep it green and side-effect free.
+        self._doc = mock.patch.object(um, '_run_doctor_fix', return_value=(True, ''))
+        self._doc.start()
+        self.addCleanup(self._doc.stop)
+
+    def test_success(self):
+        with mock.patch.object(um, '_reinstall_deps', return_value=(True, '')), \
+                mock.patch.object(um, '_smoke_test', return_value=(True, '')):
+            result = um.apply_update('v1.2.3')
+        self.assertEqual(result, {'success': True})
+
+    def test_rolls_back_when_smoke_test_fails(self):
+        with mock.patch.object(um, '_reinstall_deps', return_value=(True, '')), \
+                mock.patch.object(um, '_smoke_test', return_value=(False, 'ImportError: boom')):
+            result = um.apply_update('v1.2.3')
+        self.assertIn('error', result)
+        # Last git call must be the rollback to the recorded prior commit.
+        self.git.assert_called_with('reset', '--hard', 'oldsha')
+
+    def test_rolls_back_when_deps_fail(self):
+        with mock.patch.object(um, '_reinstall_deps', return_value=(False, 'pip exploded')), \
+                mock.patch.object(um, '_smoke_test') as smoke:
+            result = um.apply_update('v1.2.3')
+        self.assertIn('error', result)
+        smoke.assert_not_called()  # never smoke-test if deps failed
+        self.git.assert_called_with('reset', '--hard', 'oldsha')
+
+    def test_records_previous_commit_before_reset(self):
+        with mock.patch.object(um, '_reinstall_deps', return_value=(True, '')), \
+                mock.patch.object(um, '_smoke_test', return_value=(True, '')):
+            um.apply_update('v1.2.3')
+        um._record_previous_commit.assert_called_once_with('oldsha')
+
+    def test_fetch_failure_aborts_before_changes(self):
+        with mock.patch.object(um, '_git_run', return_value=(1, '', 'network down')) as git, \
+                mock.patch.object(um, '_reinstall_deps') as deps:
+            result = um.apply_update('v1.2.3')
+        self.assertIn('error', result)
+        deps.assert_not_called()
+        # Only the fetch was attempted; no reset.
+        self.assertEqual(git.call_args_list[0][0][0], 'fetch')
+
+
+class TestRollback(unittest.TestCase):
+    """Rollback must be deterministic: prefer the recorded commit over reflog."""
+
+    def test_resolve_target_prefers_recorded_commit(self):
+        with mock.patch.object(um, '_load_persisted_state',
+                               return_value={'previous_commit': 'recorded'}):
+            self.assertEqual(um._resolve_rollback_target(), 'recorded')
+
+    def test_resolve_target_falls_back_to_reflog(self):
+        with mock.patch.object(um, '_load_persisted_state', return_value={}), \
+                mock.patch.object(um, '_git_run', return_value=(0, 'reflogsha', '')):
+            self.assertEqual(um._resolve_rollback_target(), 'reflogsha')
+
+    def test_resolve_target_empty_when_nothing_known(self):
+        with mock.patch.object(um, '_load_persisted_state', return_value={}), \
+                mock.patch.object(um, '_git_run', return_value=(1, '', 'no reflog')):
+            self.assertEqual(um._resolve_rollback_target(), '')
+
+    def test_apply_rollback_success(self):
+        with mock.patch.object(um, '_resolve_rollback_target', return_value='goodsha'), \
+                mock.patch.object(um, '_git_run', return_value=(0, '', '')) as git, \
+                mock.patch.object(um, '_repair_and_verify', return_value=(True, '')):
+            result = um.apply_rollback()
+        self.assertEqual(result, {'success': True, 'target': 'goodsha'})
+        git.assert_called_with('reset', '--hard', 'goodsha')
+
+    def test_apply_rollback_no_target(self):
+        with mock.patch.object(um, '_resolve_rollback_target', return_value=''), \
+                mock.patch.object(um, '_repair_and_verify') as repair:
+            result = um.apply_rollback()
+        self.assertIn('error', result)
+        repair.assert_not_called()
+
+    def test_apply_rollback_reports_repair_failure(self):
+        with mock.patch.object(um, '_resolve_rollback_target', return_value='goodsha'), \
+                mock.patch.object(um, '_git_run', return_value=(0, '', '')), \
+                mock.patch.object(um, '_repair_and_verify',
+                                  return_value=(False, 'ImportError: boom')):
+            result = um.apply_rollback()
+        self.assertIn('error', result)
 
 
 if __name__ == '__main__':

@@ -319,7 +319,10 @@ init_super_agent_notifier()
 import os as _os
 _reloader_active = _os.environ.get('WERKZEUG_RUN_MAIN') is not None
 _is_reloader_child = _os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
-if not _reloader_active or _is_reloader_child:
+# Smoke-test import (used by the updater to validate a new tree before
+# restarting): import all modules but skip channel/scheduler startup.
+_smoke_test = _os.environ.get('EVONIC_SMOKE_TEST') == '1'
+if (not _reloader_active or _is_reloader_child) and not _smoke_test:
     # Run SYSTEM.md migration eagerly (not lazily on first GET /api/agents).
     # Agents that predate the on-disk SYSTEM.md feature need their file written
     # before they start processing messages — otherwise read_file("/_self/SYSTEM.md")

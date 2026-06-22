@@ -2079,17 +2079,18 @@ def update_server(
     check_only=False, force=False, tag=None, rollback_flag=False, nightly=False
 ):
     """
-    Update evonic to the latest release tag, then repair the environment
-    with `evonic doctor --fix`.
+    Update evonic to the latest release tag via the shared apply pipeline
+    (reset → reinstall deps → doctor --fix → smoke test → auto-rollback on
+    failure), so the CLI and the web updater behave identically.
 
     In the flat-repo architecture, the project root IS the live directory.
 
     Modes:
     - check_only: fetch and report current version vs latest tag
-    - default: check out the latest vX.Y.Z tag GREATER than the current
-      version, then run `evonic doctor --fix`
-    - tag=X: check out a specific tag, then run `evonic doctor --fix`
+    - default: update to the latest vX.Y.Z tag GREATER than the current version
+    - tag=X: update to a specific tag
     - nightly: track origin/main instead of release tags
+    - rollback_flag: restore the previously recorded commit
     """
     import re
 
@@ -2133,14 +2134,17 @@ def update_server(
                 return line.strip(), ver
         return None, None
 
-    def _run_doctor_fix():
-        # Run via the wrapper so the freshly checked-out code is used.
-        print("\nRepairing environment (evonic doctor --fix)...")
-        evonic_bin = os.path.join(ROOT, "evonic")
-        proc = subprocess.run([evonic_bin, "doctor", "--fix"], cwd=ROOT)
-        if proc.returncode != 0:
-            print("doctor --fix reported problems. See output above.")
-            sys.exit(proc.returncode)
+    # Rollback to the previous version. Reuses the shared rollback core so the
+    # CLI and the web UI restore the same recorded commit and repair identically.
+    if rollback_flag:
+        print("Rolling back to the previous version...")
+        from backend import update_manager
+        result = update_manager.apply_rollback()
+        if "error" in result:
+            print(result["error"])
+            sys.exit(1)
+        print(f"Rollback complete — now at {result['target'][:8]}.")
+        return
 
     # Nightly channel: track origin/main instead of release tags.
     if nightly:
@@ -2155,12 +2159,12 @@ def update_server(
             print(f"Current     : {cur if rc == 0 else 'unknown'}")
             print(f"origin/main : {rem if rc2 == 0 else 'unknown'}")
             return
-        print("Resetting to origin/main...")
-        rc, _, err = _git(["reset", "--hard", "origin/main"])
-        if rc != 0:
-            print(f"Git reset failed: {err}")
+        print("Applying update (origin/main)...")
+        from backend import update_manager
+        result = update_manager.apply_update("origin/main")
+        if "error" in result:
+            print(result["error"])
             sys.exit(1)
-        _run_doctor_fix()
         print("Update complete.")
         return
 
@@ -2206,13 +2210,13 @@ def update_server(
         return
 
     print(f"Updating to {target_name}...")
-    rc, _, err = _git(["checkout", target_name])
-    if rc != 0:
-        print(f"Git checkout failed: {err}")
+    from backend import update_manager
+    result = update_manager.apply_update(target_name)
+    if "error" in result:
+        print(result["error"])
         print("Resolve local changes/conflicts, then re-run `evonic update`.")
         sys.exit(1)
 
-    _run_doctor_fix()
     print(f"Update complete — now at {target_name}.")
 
 

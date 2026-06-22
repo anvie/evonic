@@ -16,6 +16,7 @@ import os
 import queue
 import re
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -162,8 +163,8 @@ def _persist_state(state: dict) -> None:
 _lock = threading.Lock()
 _listeners: list = []  # list of queue.Queue, one per SSE client
 
-# Total steps in the simplified update process: fetch + apply
-TOTAL_STEPS = 2
+# Total pipeline steps: fetch + reset + reinstall deps + doctor --fix + smoke test
+TOTAL_STEPS = 5
 
 # Load persisted state on module import (survives crashes/restarts)
 _persisted = _load_persisted_state()
@@ -321,6 +322,219 @@ def _get_current_version():
 
 
 # ---------------------------------------------------------------------------
+# Shared apply pipeline (reused by the web updater and the CLI)
+# ---------------------------------------------------------------------------
+
+def _venv_python() -> str:
+    """Path to the project venv python, falling back to the current interpreter."""
+    venv = os.path.join(config.APP_ROOT, '.venv', 'bin', 'python')
+    return venv if os.path.exists(venv) else sys.executable
+
+
+def _reinstall_deps() -> tuple:
+    """Reinstall dependencies in case requirements.txt changed. Returns (ok, detail)."""
+    req = os.path.join(config.APP_ROOT, 'requirements.txt')
+    if not os.path.isfile(req):
+        return True, 'no requirements.txt'
+    proc = subprocess.run(
+        [_venv_python(), '-m', 'pip', 'install', '-q', '-r', req],
+        cwd=config.APP_ROOT, capture_output=True, text=True,
+    )
+    detail = (proc.stderr.strip() or proc.stdout.strip())[-500:]
+    return proc.returncode == 0, detail
+
+
+def _smoke_test() -> tuple:
+    """Import the updated tree in a subprocess to catch syntax/import errors
+    before the live server is restarted. EVONIC_SMOKE_TEST skips channel and
+    scheduler startup so the probe has no side effects. Returns (ok, detail)."""
+    env = dict(os.environ, EVONIC_SMOKE_TEST='1')
+    try:
+        proc = subprocess.run(
+            [_venv_python(), '-c', 'import app'],
+            cwd=config.APP_ROOT, capture_output=True, text=True,
+            timeout=120, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return False, 'smoke test timed out'
+    detail = (proc.stderr.strip() or proc.stdout.strip())[-1000:]
+    return proc.returncode == 0, detail
+
+
+def _run_doctor_fix() -> tuple:
+    """Repair the environment via `evonic doctor --fix` (creates dirs, installs
+    optional deps). Mirrors the CLI repair step so the web updater behaves the
+    same. Returns (ok, detail)."""
+    evonic_bin = os.path.join(config.APP_ROOT, 'evonic')
+    if not os.path.isfile(evonic_bin):
+        return True, 'no evonic wrapper'
+    proc = subprocess.run(
+        [evonic_bin, 'doctor', '--fix'],
+        cwd=config.APP_ROOT, capture_output=True, text=True,
+    )
+    detail = (proc.stderr.strip() or proc.stdout.strip())[-500:]
+    return proc.returncode == 0, detail
+
+
+def _repair_and_verify() -> tuple:
+    """Reinstall deps, repair the environment (doctor --fix), then smoke-test the
+    tree before it goes live. deps and smoke are gating; doctor is logged
+    best-effort so optional-dependency problems don't fail an otherwise bootable
+    tree (the smoke test is the real gate). Returns (ok, detail)."""
+    deps_ok, deps_detail = _reinstall_deps()
+    if not deps_ok:
+        return False, f'Dependency install failed: {deps_detail}'
+    doctor_ok, doctor_detail = _run_doctor_fix()
+    if not doctor_ok:
+        _append_log('warning', f'doctor --fix reported problems: {doctor_detail}')
+    smoke_ok, smoke_detail = _smoke_test()
+    if not smoke_ok:
+        return False, f'Updated code failed to import: {smoke_detail}'
+    return True, ''
+
+
+def _record_previous_commit(sha: str) -> None:
+    """Persist the pre-update commit so rollback is deterministic. The reflog's
+    HEAD@{1} is unreliable here: apply_update's auto-rollback on a failed update
+    moves HEAD@{1} onto the rejected commit."""
+    with _lock:
+        _state['previous_commit'] = sha
+        _persist_state(_state)
+
+
+def _resolve_rollback_target() -> str:
+    """Commit to roll back to: the recorded pre-update commit if available, else
+    the reflog fallback (HEAD@{1}) for back-compat. Reads persisted state from
+    disk so it works regardless of whether the CLI or the web path did the
+    update."""
+    persisted = _load_persisted_state().get('previous_commit')
+    if persisted:
+        return persisted
+    rc, prev, _ = _git_run('rev-parse', 'HEAD@{1}')
+    return prev if rc == 0 else ''
+
+
+def _acquire_update_lock():
+    """Cross-process advisory lock so concurrent web+CLI calls don't race on
+    git operations. POSIX only; no-op on Windows (single-user install assumption).
+    Returns (acquired: bool, fd: file | None)."""
+    if sys.platform == 'win32':
+        return True, None
+    lock_path = os.path.join(os.path.dirname(_get_state_file_path()), 'update.lock')
+    try:
+        import fcntl
+        fd = open(lock_path, 'w')
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True, fd
+    except (IOError, OSError):
+        try:
+            fd.close()
+        except Exception:
+            pass
+        return False, None
+
+
+def _release_update_lock(fd) -> None:
+    if fd is None:
+        return
+    try:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()
+    except Exception:
+        pass
+
+
+def apply_update(target: str, progress_cb=None) -> dict:
+    """Apply an update to the given git ref with reinstall, smoke test, and
+    auto-rollback. Shared by the web updater and the CLI so both behave the same.
+
+    Steps: fetch → record HEAD → reset --hard <ref> → reinstall deps → doctor
+    --fix → smoke test. If a gating step fails, the tree is reset back to the
+    prior commit so the running server stays bootable. Does NOT restart — the
+    caller decides. progress_cb(step, total, label) is called before each step
+    when provided (web notifier hook).
+
+    Returns {'success': True} or {'error': str, 'failed_step': int}.
+    """
+    STEPS = 5
+
+    def _step(n, label):
+        if progress_cb:
+            progress_cb(n, STEPS, label)
+
+    acquired, lock_fd = _acquire_update_lock()
+    if not acquired:
+        return {'error': 'Another update or rollback is already running', 'failed_step': 1}
+    try:
+        _step(1, 'Fetching updates from origin...')
+        rc, _, err = _git_run('fetch', 'origin', '--tags')
+        if rc != 0:
+            return {'error': f'Git fetch failed: {err}', 'failed_step': 1}
+
+        rc, prev, err = _git_run('rev-parse', 'HEAD')
+        if rc != 0:
+            return {'error': f'Could not record current commit: {err}', 'failed_step': 1}
+        _record_previous_commit(prev)
+
+        _step(2, f'Applying update to {target}...')
+        ref = target or 'origin/main'
+        rc, _, err = _git_run('reset', '--hard', ref)
+        if rc != 0:
+            return {'error': f'Git reset failed: {err}', 'failed_step': 2}
+
+        _step(3, 'Reinstalling dependencies...')
+        deps_ok, deps_detail = _reinstall_deps()
+        if not deps_ok:
+            _git_run('reset', '--hard', prev)
+            return {'error': f'Dependency install failed: {deps_detail} (rolled back)',
+                    'failed_step': 3}
+
+        # doctor --fix is best-effort: optional-dep issues must not block an
+        # otherwise bootable tree. The smoke test is the real boot gate.
+        _step(4, 'Repairing environment...')
+        doctor_ok, doctor_detail = _run_doctor_fix()
+        if not doctor_ok:
+            _append_log('warning', f'doctor --fix reported problems: {doctor_detail}')
+
+        _step(5, 'Running smoke test...')
+        smoke_ok, smoke_detail = _smoke_test()
+        if not smoke_ok:
+            _git_run('reset', '--hard', prev)
+            return {'error': f'Updated code failed to import: {smoke_detail} (rolled back)',
+                    'failed_step': 5}
+
+        return {'success': True}
+    finally:
+        _release_update_lock(lock_fd)
+
+
+def apply_rollback() -> dict:
+    """Reset to the recorded previous commit, then repair and verify. Synchronous
+    — shared by the CLI (`evonic update --rollback`) and the threaded web
+    trigger_rollback. Returns {'success': True, 'target': sha} or {'error': str}."""
+    acquired, lock_fd = _acquire_update_lock()
+    if not acquired:
+        return {'error': 'Another update or rollback is already running'}
+    try:
+        target = _resolve_rollback_target()
+        if not target:
+            return {'error': 'No previous state to roll back to'}
+
+        rc, _, stderr = _git_run('reset', '--hard', target)
+        if rc != 0:
+            return {'error': f'Rollback failed: {stderr}'}
+
+        ok, detail = _repair_and_verify()
+        if not ok:
+            return {'error': f'Rolled back to {target[:8]} but {detail}'}
+
+        return {'success': True, 'target': target}
+    finally:
+        _release_update_lock(lock_fd)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -453,28 +667,21 @@ def start_update(tag=None) -> dict:
 def _run_update_thread(target):
     """Run the update in a background thread.
 
-    Flow: git fetch → git reset --hard <target>.
-    Progress is broadcast to SSE listeners via WebNotifier.
+    Applies the update via the shared apply_update pipeline (git → reinstall →
+    doctor --fix → smoke test → auto-rollback on failure). Progress is broadcast
+    to SSE listeners via WebNotifier at each pipeline phase so operators can see
+    which step is running during a long update. On success the user restarts via
+    the existing "Restart" action (unchanged two-step flow).
     """
     notifier = WebNotifier()
     current = _get_current_version() or 'unknown'
     notifier.begin(current, target)
 
     try:
-        # Step 1: Fetch from origin
-        notifier.send_progress(1, TOTAL_STEPS, 'Fetching updates from origin...')
-        rc, stdout, stderr = _git_run('fetch', 'origin')
-        if rc != 0:
-            notifier.send_failure(1, TOTAL_STEPS, f'Git fetch failed: {stderr}')
-            return
-
-        # Step 2: Reset to target ref
-        notifier.send_progress(2, TOTAL_STEPS, f'Applying update to {target}...')
-        # If target is a tag, use it directly; otherwise use origin/main
-        ref = target if target else 'origin/main'
-        rc, stdout, stderr = _git_run('reset', '--hard', ref)
-        if rc != 0:
-            notifier.send_failure(2, TOTAL_STEPS, f'Git reset failed: {stderr}')
+        result = apply_update(target, progress_cb=notifier.send_progress)
+        if 'error' in result:
+            step = result.get('failed_step', TOTAL_STEPS)
+            notifier.send_failure(step, TOTAL_STEPS, result['error'])
             return
 
         notifier.send_success(target)
@@ -501,28 +708,18 @@ def trigger_rollback() -> dict:
 
     def _do_rollback():
         try:
-            # Get the commit hash before the latest pull (HEAD@{1})
-            rc, prev_commit, _ = _git_run('rev-parse', 'HEAD@{1}')
-            if rc != 0:
+            result = apply_rollback()
+            if 'error' in result:
                 with _lock:
                     _state['status'] = 'failed'
-                    _state['error'] = 'No previous state to roll back to'
-                _append_log('error', 'Rollback failed: no previous state found')
-                _notify_listeners()
-                return
-
-            rc, stdout, stderr = _git_run('reset', '--hard', prev_commit)
-            if rc == 0:
+                    _state['error'] = result['error']
+                _append_log('error', f"Rollback failed: {result['error']}")
+            else:
                 with _lock:
                     _state['status'] = 'success'
                     _state['step_label'] = 'Rollback complete'
                     _state['current_version'] = _get_current_version()
-                _append_log('info', f'Rollback successful to {prev_commit[:8]}')
-            else:
-                with _lock:
-                    _state['status'] = 'failed'
-                    _state['error'] = f'Rollback failed: {stderr}'
-                _append_log('error', f'Rollback failed: {stderr}')
+                _append_log('info', f"Rollback successful to {result['target'][:8]}")
         except Exception as e:
             with _lock:
                 _state['status'] = 'failed'
