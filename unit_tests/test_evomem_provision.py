@@ -6,6 +6,7 @@ real GitHub call or download occurs.
 """
 import hashlib
 import io
+import logging
 import os
 import zipfile
 
@@ -34,8 +35,15 @@ def _release(name, sha=None, url="https://example.invalid/evomem.zip", tag="v9.9
     return {"tag_name": tag, "assets": [asset]}
 
 
-def test_default_binary_path():
+def test_default_binary_path(monkeypatch):
+    monkeypatch.delenv("EVOMEM_BINARY", raising=False)
     assert ep.default_binary_path().endswith(os.path.join("shared", "bin", "evomem"))
+
+
+def test_default_binary_path_honours_env_override(monkeypatch):
+    # Provisioner must install where evomem_client._resolve_binary() reads from.
+    monkeypatch.setenv("EVOMEM_BINARY", "/custom/path/evomem")
+    assert ep.default_binary_path() == "/custom/path/evomem"
 
 
 def test_normalize_arch():
@@ -60,25 +68,33 @@ def test_idempotent_skip_when_present(tmp_path, monkeypatch):
     assert result["ok"] and not result["installed"]
 
 
-def test_unsupported_platform_falls_back(tmp_path, monkeypatch):
+def test_unsupported_platform_falls_back(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(ep, "default_binary_path", lambda: str(tmp_path / "evomem"))
     monkeypatch.setattr(ep, "_asset_pattern", lambda: None)
-    result = ep.ensure_evomem()
+    with caplog.at_level(logging.DEBUG, logger=ep._logger.name):
+        result = ep.ensure_evomem()
     assert not result["ok"]
     assert "FTS5" in result["msg"]
+    # Expected, non-actionable condition: logged at WARNING, not ERROR (log noise).
+    levels = [r.levelno for r in caplog.records]
+    assert logging.WARNING in levels
+    assert logging.ERROR not in levels
 
 
-def test_checksum_mismatch_aborts_install(tmp_path, monkeypatch):
+def test_checksum_mismatch_aborts_install(tmp_path, monkeypatch, caplog):
     dest = tmp_path / "evomem"
     monkeypatch.setattr(ep, "default_binary_path", lambda: str(dest))
     monkeypatch.setattr(ep, "_asset_pattern", lambda: "x86_64-unknown-linux-musl")
     monkeypatch.setattr(ep, "_fetch_release",
                         lambda v: _release("evomem-x86_64-unknown-linux-musl.zip", sha="0" * 64))
     monkeypatch.setattr(ep.requests, "get", lambda url, timeout=0: _Resp(_make_zip()))
-    result = ep.ensure_evomem(force=True)
+    with caplog.at_level(logging.DEBUG, logger=ep._logger.name):
+        result = ep.ensure_evomem(force=True)
     assert not result["ok"]
     assert "checksum mismatch" in result["msg"]
     assert not dest.exists()
+    # Genuine integrity failure stays at ERROR — must not be downgraded.
+    assert logging.ERROR in [r.levelno for r in caplog.records]
 
 
 def test_missing_digest_fails_closed(tmp_path, monkeypatch):

@@ -55,8 +55,14 @@ _DOWNLOAD_TIMEOUT = 60
 
 
 def default_binary_path() -> str:
-    """Canonical install path for the evomem binary: <repo>/shared/bin/evomem."""
-    return os.path.join(_BASE_DIR, "shared", "bin", _BINARY_NAME)
+    """Install path for the evomem binary.
+
+    Honours the EVOMEM_BINARY override so the provisioner writes exactly where
+    evomem_client._resolve_binary() reads it; otherwise <repo>/shared/bin/evomem.
+    Without this, setting EVOMEM_BINARY would install the binary to a path the
+    runtime never consults.
+    """
+    return os.environ.get("EVOMEM_BINARY") or os.path.join(_BASE_DIR, "shared", "bin", _BINARY_NAME)
 
 
 def _normalize_arch(machine: str) -> str:
@@ -126,8 +132,15 @@ def _atomic_install(binary: bytes, dest: str) -> None:
         raise
 
 
-def _fail(msg: str) -> Dict[str, object]:
-    _logger.error(msg)
+def _fail(msg: str, level: int = logging.ERROR) -> Dict[str, object]:
+    """Log a provisioning failure and return the standard not-installed result.
+
+    Genuine errors (network, checksum mismatch, missing digest, install failure)
+    log at ERROR. Expected, non-actionable conditions such as an unsupported
+    platform pass level=logging.WARNING to avoid production log noise — the
+    runtime falls back to FTS5 regardless.
+    """
+    _logger.log(level, msg)
     return {"ok": False, "installed": False, "version": None, "msg": msg}
 
 
@@ -149,7 +162,7 @@ def ensure_evomem(force: bool = False, version: Optional[str] = None) -> Dict[st
     pattern = _asset_pattern()
     if pattern is None:
         return _fail(f"No prebuilt evomem for {platform.system()}/{platform.machine()}; "
-                     f"memory engine will use FTS5.")
+                     f"memory engine will use FTS5.", level=logging.WARNING)
 
     version = version or os.environ.get("EVOMEM_VERSION") or None
     try:
@@ -165,7 +178,7 @@ def ensure_evomem(force: bool = False, version: Optional[str] = None) -> Dict[st
     )
     if asset is None:
         return _fail(f"Release {tag} has no evomem asset for this platform "
-                     f"({pattern}); memory engine will use FTS5.")
+                     f"({pattern}); memory engine will use FTS5.", level=logging.WARNING)
 
     digest = asset.get("digest") or ""
     if not digest.startswith("sha256:"):
