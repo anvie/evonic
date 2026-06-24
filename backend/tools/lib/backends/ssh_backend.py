@@ -52,6 +52,7 @@ class SSHBackend(ExecutionBackend):
         self._remote_pid = None
         self._active_channel = None
         self._evonic_installed = False
+        self._remote_evonic_dir = None
 
         self._client = paramiko.SSHClient()
         self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -315,6 +316,30 @@ class SSHBackend(ExecutionBackend):
         finally:
             process_tracker.unregister(self._session_id)
 
+    def _resolve_remote_evonic_dir(self):
+        """Resolve _REMOTE_EVONIC_DIR's leading ~ against the REMOTE home.
+
+        os.path.expanduser would expand ~ against the local process's HOME
+        (evonic runs as root → /root), producing a path the remote user often
+        cannot write (e.g. /root/.evonic on a host where we log in as ubuntu),
+        which caused an endless SFTP "Permission denied" retry loop and FD leak.
+        """
+        if self._remote_evonic_dir is not None:
+            return self._remote_evonic_dir
+        suffix = _REMOTE_EVONIC_DIR[1:].lstrip('/') if _REMOTE_EVONIC_DIR.startswith('~') else _REMOTE_EVONIC_DIR
+        remote_home = ''
+        try:
+            r = self._exec('printf %s "$HOME"', '', 10)
+            remote_home = (r.get('stdout', '') or '').strip()
+        except Exception:
+            remote_home = ''
+        if remote_home and _REMOTE_EVONIC_DIR.startswith('~'):
+            resolved = remote_home.rstrip('/') + '/' + suffix
+        else:
+            resolved = _REMOTE_EVONIC_DIR
+        self._remote_evonic_dir = resolved
+        return resolved
+
     def _ensure_evonic_on_remote(self):
         """Upload evonic helpers to ~/.evonic/evonic/ on first run_python call.
 
@@ -323,7 +348,7 @@ class SSHBackend(ExecutionBackend):
         """
         if self._evonic_installed:
             return
-        remote_dir = os.path.expanduser(_REMOTE_EVONIC_DIR)
+        remote_dir = self._resolve_remote_evonic_dir()
         remote_bin = remote_dir + '/bin'
         self._exec(f'mkdir -p {shlex.quote(remote_dir)} {shlex.quote(remote_bin)}', '', 10)
         files = [
@@ -352,7 +377,7 @@ class SSHBackend(ExecutionBackend):
 
     def run_python(self, code: str, timeout: int, env: dict) -> dict:
         self._ensure_evonic_on_remote()
-        remote_dir = os.path.expanduser(_REMOTE_EVONIC_DIR)
+        remote_dir = self._resolve_remote_evonic_dir()
         merged = dict(env or {})
         existing = merged.get('PYTHONPATH', '')
         merged['PYTHONPATH'] = f'{remote_dir}:{existing}'.rstrip(':')

@@ -585,6 +585,21 @@ def _close_db_connection(exc):
     SQLite connections accumulate until GC runs → "Too many open files".
     """
     db.close()
+    # The same per-thread SQLite leak applies to the rate-limit stores: the
+    # before_request hook opens a thread-local connection (3 FDs each in WAL
+    # mode: db + -wal + -shm) on every /api/* request, and with thread-per-
+    # request these pile up until GC — the dominant source of the FD-watchdog
+    # self-shutdown. Close them alongside the main DB connection.
+    try:
+        from models.api_rate_limit import close as _close_api_rl
+        _close_api_rl()
+    except Exception:
+        pass
+    try:
+        from models.rate_limit import close as _close_rl
+        _close_rl()
+    except Exception:
+        pass
 
 def _csrf_exempt(path):
     """Return True if the path should skip CSRF validation."""

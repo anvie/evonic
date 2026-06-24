@@ -611,6 +611,20 @@ class AgentRuntime:
         sig_name = signal.Signals(signum).name
         _logger.info("\nReceived %s, initiating graceful shutdown...", sig_name)
         cls.graceful_shutdown()
+        # sys.exit() only raises SystemExit in the main thread. When the signal
+        # arrives while the main thread is blocked in the threaded WSGI server's
+        # accept loop, that SystemExit gets swallowed by the server — the runtime
+        # ends up drained (queue workers + executor stopped) but the process
+        # stays alive serving requests. systemd still sees it as active, so
+        # Restart=always never fires and the FD-watchdog's SIGTERM produces a
+        # half-dead "zombie" instead of a restart. Arm a daemon backstop that
+        # force-exits if the clean exit doesn't take, then attempt the clean
+        # exit (which runs atexit Docker cleanup) first.
+        forcer = threading.Timer(
+            WORKER_JOIN_TIMEOUT_SECONDS + 3.0, lambda: os._exit(0)
+        )
+        forcer.daemon = True
+        forcer.start()
         # Use sys.exit to allow normal Python shutdown — this triggers
         # atexit handlers (including Docker container cleanup) and
         # thread cleanup, whereas os.kill hard-terminates the process.
