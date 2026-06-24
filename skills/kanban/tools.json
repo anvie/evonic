@@ -150,6 +150,68 @@
   {
     "type": "function",
     "function": {
+      "name": "kanban_bulk_create_tasks",
+      "description": "Create MULTIPLE tasks on the Kanban board in one call. Use this whenever you need to create more than one task at once (e.g. a multi-step plan). Returns {status, created_count, task_ids, results, errors}; status is 'success', 'partial' (some failed), or 'error' (all failed). Per-task failures do not abort the rest.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "description": "Array of task objects to create, in order. Each object accepts the same fields as kanban_create_task (title required; description, priority, assignee, dependencies optional) plus depends_on_index.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "The title of the task (required)."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "The description of the task (optional)."
+                },
+                "priority": {
+                  "type": "string",
+                  "description": "The priority of the task. One of: low, medium, high. Default is 'low'.",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "assignee": {
+                  "type": "string",
+                  "description": "The agent ID to assign the task to (optional)."
+                },
+                "dependencies": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "Array of EXISTING task IDs this task depends on (optional)."
+                },
+                "depends_on_index": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "Array of 1-based indices of EARLIER tasks in this same array that this task depends on. Use this to express dependencies on tasks being created in the same call (their IDs are not known yet). Example: the 2nd and 3rd tasks both depending on the 1st use depends_on_index: [1]."
+                }
+              },
+              "required": [
+                "title"
+              ]
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "kanban_update_task",
       "description": "Update a Kanban task's status, assignee, title, description, and/or priority. This is the successor to kanban_update_status. Supports updating all fields in a single call. For backward compatibility, kanban_update_status is still available.",
       "parameters": {
