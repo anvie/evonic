@@ -1297,6 +1297,7 @@ class SchemaMixin:
 
         _BUILTIN_PROVIDERS = {
             "openrouter": ("OpenRouter", "remote", "https://openrouter.ai/api/v1", "openai"),
+            "requesty": ("Requesty", "remote", "https://router.requesty.ai/v1", "openai"),
             "togetherai": ("Together AI", "remote", "https://api.together.xyz/v1", "openai"),
             "ollama": ("Ollama", "local", "http://localhost:11434/v1", "openai"),
             "ollama_cloud": ("Ollama Cloud", "remote", "https://ollama.com/api", "ollama"),
