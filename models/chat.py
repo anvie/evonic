@@ -700,6 +700,43 @@ class AgentChatDB:
             conn.commit()
             return len(session_ids), session_ids
 
+    def get_old_sessions(self, max_age_days: int) -> List[str]:
+        """Return session IDs for non-archived sessions not updated in `max_age_days` days."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id FROM chat_sessions
+                WHERE (archived IS NULL OR archived = 0)
+                  AND updated_at < datetime('now', '-' || ? || ' days')
+                """,
+                (max_age_days,),
+            )
+            return [row[0] for row in cursor.fetchall()]
+
+    def delete_old_sessions(self, max_age_days: int, dry_run: bool = False) -> int:
+        """Delete (archive) sessions older than `max_age_days` days.
+
+        When `dry_run=True`, returns the count of sessions that *would* be
+        deleted without modifying the database.
+
+        Returns the number of sessions deleted (or that would be deleted).
+        """
+        old_ids = self.get_old_sessions(max_age_days)
+        if dry_run or not old_ids:
+            return len(old_ids)
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            for sid in old_ids:
+                cursor.execute("DELETE FROM chat_messages WHERE session_id = ?", (sid,))
+                cursor.execute("DELETE FROM chat_summaries WHERE session_id = ?", (sid,))
+                cursor.execute(
+                    "UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (sid,),
+                )
+            conn.commit()
+        return len(old_ids)
+
     def has_session(self, session_id: str) -> bool:
         with self._connect() as conn:
             cursor = conn.cursor()

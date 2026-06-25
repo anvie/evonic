@@ -74,6 +74,19 @@ class Scheduler:
             )
         except Exception as e:  # pragma: no cover - defensive guard
             log.warning("Failed to register attachments cleanup job: %s", e)
+        
+        # Built-in: nightly session cleanup (delete old sessions based on EVONIC_SESSION_MAX_AGE_DAYS).
+        # Set EVONIC_SESSION_MAX_AGE_DAYS=0 to disable.
+        try:
+            self._scheduler.add_job(
+                self._cleanup_old_sessions,
+                CronTrigger(hour=4, minute=0),
+                id='builtin:sessions_cleanup',
+                replace_existing=True,
+            )
+        except Exception as e:  # pragma: no cover - defensive guard
+            log.warning("Failed to register sessions cleanup job: %s", e)
+        
         log.info("Started with %d jobs", len(self._scheduler.get_jobs()))
 
     def _cleanup_expired_attachments(self):
@@ -88,6 +101,50 @@ class Scheduler:
                 )
         except Exception as e:
             log.error("Attachments cleanup failed: %s", e, exc_info=True)
+
+    def _cleanup_old_sessions(self):
+        """Daily housekeeping: delete sessions older than configured threshold.
+
+        Set EVONIC_SESSION_MAX_AGE_DAYS=0 in your environment to disable cleanup.
+        """
+        try:
+            import os
+            from models.chat import AgentChatManager
+            from models.db import db
+
+            # Get max age from environment, default to 90 days; 0 = disabled
+            max_age_days = int(os.environ.get('EVONIC_SESSION_MAX_AGE_DAYS', '90'))
+            if max_age_days <= 0:
+                log.debug("Session cleanup disabled (EVONIC_SESSION_MAX_AGE_DAYS=%d)", max_age_days)
+                return
+
+            # Get all agents
+            agents = db.get_all_agents()
+            chat_manager = AgentChatManager()
+
+            total_deleted = 0
+            for agent in agents:
+                agent_id = agent['id']
+                try:
+                    chat_db = chat_manager.get(agent_id)
+                    deleted = chat_db.delete_old_sessions(max_age_days)
+                    if deleted > 0:
+                        total_deleted += deleted
+                        log.info(
+                            "Session cleanup for agent %s: deleted %d sessions older than %d days",
+                            agent_id, deleted, max_age_days
+                        )
+                except Exception as e:
+                    log.error(
+                        "Session cleanup failed for agent %s: %s",
+                        agent_id, e, exc_info=True
+                    )
+
+            if total_deleted > 0:
+                log.info("Session cleanup complete: deleted %d sessions total", total_deleted)
+        except Exception as e:
+            log.error("Session cleanup job failed: %s", e, exc_info=True)
+
 
     def shutdown(self):
         """Gracefully shut down the scheduler."""
