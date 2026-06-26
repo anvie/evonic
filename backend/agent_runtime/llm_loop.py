@@ -1110,6 +1110,12 @@ def run_tool_loop(agent: Dict[str, Any],
             # Recover final response embedded after </think> in reasoning_content
             if not content and embedded_final_in_reasoning:
                 content = embedded_final_in_reasoning
+            # Fallback: when content is empty and the model put its entire response
+            # in reasoning_content (e.g. Qwen models via llama.cpp), treat reasoning_text
+            # as the actual response content.
+            if not content and not embedded_final_in_reasoning and not tool_calls:
+                content = reasoning_text
+                reasoning_text = ''
             event_stream.emit('llm_thinking', {
                 'agent_id': agent_id, 'session_id': session_id,
                 'external_user_id': external_user_id, 'channel_id': channel_id,
