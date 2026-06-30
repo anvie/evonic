@@ -30,6 +30,14 @@ PROVIDER_DEFAULTS = {
         "label": "OpenRouter",
         "description": "Cloud · API key required",
     },
+    "requesty": {
+        "type": "remote",
+        "base_url": "https://router.requesty.ai/v1",
+        "api_key_required": True,
+        "placeholder_model": "openai/gpt-4o-mini",
+        "label": "Requesty",
+        "description": "Cloud · API key required",
+    },
     "togetherai": {
         "type": "remote",
         "base_url": "https://api.together.xyz/v1",
