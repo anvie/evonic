@@ -91,6 +91,14 @@ PROVIDER_DEFAULTS = {
         "label": "llama.cpp",
         "description": "Local · no API key needed",
     },
+    "lmstudio": {
+        "type": "local",
+        "base_url": "http://localhost:1234/v1",
+        "api_key_required": False,
+        "placeholder_model": "lmstudio",
+        "label": "LM Studio",
+        "description": "Local · no API key needed",
+    },
     "custom": {
         "type": "remote",
         "base_url": "",
