@@ -7,37 +7,31 @@
 <style>
 footer { display: none; }
 main { align-items: flex-start !important; }
-/* Bash mode must read as a terminal state, not as an unobtrusive status badge. */
-#chat-bash-mode {
-    align-items: center;
-    display: flex;
-    left: 8px;
-    position: absolute;
-    top: 7px;
-    z-index: 10;
+/* ! turns the composer itself into a bright red terminal-shell state. */
+#chat-input.chat-bash-input {
+    background: #ffe4e6;
+    border-color: #fb7185;
+    box-shadow: 0 0 0 2px rgba(251, 113, 133, 0.22);
+    caret-color: #e11d48;
+    color: #9f1239;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
-#chat-bash-mode:not(.hidden) {
-    background: #052e16;
-    border: 1px solid #22c55e;
-    border-radius: 6px;
-    box-shadow: 0 0 0 1px #dcfce7, 0 4px 12px rgba(22, 163, 74, 0.18);
-    color: #dcfce7;
+#chat-input.chat-bash-input::placeholder { color: #e11d48; opacity: 0.72; }
+#chat-bash-hint {
+    background: #fb7185;
+    border-radius: 4px 4px 0 0;
+    color: #fff1f2;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-size: 11px;
-    font-weight: 700;
-    gap: 6px;
-    letter-spacing: 0.08em;
-    margin-bottom: 6px;
-    padding: 5px 8px;
+    left: 2px;
+    line-height: 1;
+    padding: 4px 7px;
+    position: absolute;
+    top: -17px;
 }
-#chat-bash-mode.hidden { display: none; }
-#chat-bash-mode .bash-mode-status { color: #86efac; font-weight: 500; letter-spacing: normal; }
-#chat-bash-mode:not(.hidden).bash-disabled { background: #451a03; border-color: #f59e0b; box-shadow: 0 0 0 1px #fef3c7; color: #fef3c7; }
-#chat-bash-mode.bash-disabled .bash-mode-status { color: #fcd34d; }
-#chat-input.chat-bash-input { background: #f0fdf4; border-color: #16a34a; box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2); color: #14532d; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; padding-top: 36px; }
-#chat-input.chat-bash-disabled { background: #fffbeb; border-color: #d97706; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2); color: #78350f; padding-top: 36px; }
-html.dark #chat-input.chat-bash-input { background: #071a12; border-color: #22c55e; color: #dcfce7; }
-html.dark #chat-input.chat-bash-disabled { background: #241300; border-color: #f59e0b; color: #fef3c7; }
+html.dark #chat-input.chat-bash-input { background: #4c1020; border-color: #fb7185; box-shadow: 0 0 0 2px rgba(251, 113, 133, 0.26); caret-color: #fda4af; color: #fff1f2; }
+html.dark #chat-input.chat-bash-input::placeholder { color: #fda4af; }
+html.dark #chat-bash-hint { background: #e11d48; color: #fff1f2; }
 /* Dark mode: chat area */
 html.dark #agent-state-card { background: #1f2937; border-color: #374151; }
 html.dark #state-busy-dot { background: #451a03 !important; color: #fcd34d !important; }
@@ -1077,12 +1071,8 @@ html.dark .agent-tab.active {
                             style="max-height: 150px;"
                             onkeydown="chatInputKeydown(event)"
                             oninput="chatInputChanged(this)"></textarea>
+                            <div id="chat-bash-hint" class="hidden" aria-live="polite">! Bash mode: shell command</div>
                             <div id="chat-command-menu" class="hidden absolute left-0 right-0 z-50 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800" style="bottom: calc(100% + 0.5rem);" role="listbox" aria-label="Available slash commands"></div>
-                            <div id="chat-bash-mode" class="hidden" aria-live="polite">
-                                <span aria-hidden="true">$_</span>
-                                <span>BASH SHELL</span>
-                                <span class="bash-mode-status">Enabled</span>
-                            </div>
                         </div>
                         <button onclick="handleChatBtn()" id="chat-send-btn" title="Send" class="bg-indigo-500 hover:bg-indigo-600 text-white p-2.5 rounded-md text-sm transition-colors flex items-center justify-center"><svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
                     </div>
@@ -4917,14 +4907,9 @@ function updateChatComposer(input) {
     const value = input.value;
     const trimmed = value.trimStart();
     const bashMode = trimmed.startsWith('!');
-    const badge = document.getElementById('chat-bash-mode');
-    if (badge) {
-        badge.classList.toggle('hidden', !bashMode);
-        badge.classList.toggle('bash-disabled', bashMode && !BASH_EXEC_ENABLED);
-        badge.querySelector('.bash-mode-status').textContent = BASH_EXEC_ENABLED ? 'Enabled' : 'Disabled';
-    }
-    input.classList.toggle('chat-bash-input', bashMode && BASH_EXEC_ENABLED);
-    input.classList.toggle('chat-bash-disabled', bashMode && !BASH_EXEC_ENABLED);
+    input.classList.toggle('chat-bash-input', bashMode);
+    const bashHint = document.getElementById('chat-bash-hint');
+    if (bashHint) bashHint.classList.toggle('hidden', !bashMode);
     input.classList.toggle('font-mono', bashMode);
 
     const match = trimmed.match(/^\/([\w-]*)$/);
