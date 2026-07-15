@@ -1040,11 +1040,17 @@ html.dark .agent-tab.active {
                             <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                         </button>
                         {% endif %}
+                        <div class="relative flex-1 min-w-0">
                         <textarea id="chat-input" placeholder="Type a message..." rows="1"
-                            class="flex-1 p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 resize-none overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
+                            class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 resize-none overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
                             style="max-height: 150px;"
                             onkeydown="chatInputKeydown(event)"
-                            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,150)+'px';this.style.overflowY=this.scrollHeight>150?'auto':'hidden'"></textarea>
+                            oninput="chatInputChanged(this)"></textarea>
+                            <div id="chat-command-menu" class="hidden absolute bottom-full left-0 right-0 z-50 mb-2 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800" role="listbox" aria-label="Available slash commands"></div>
+                            <div id="chat-bash-mode" class="hidden absolute left-2 top-1 flex items-center gap-1 rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200" aria-live="polite">
+                                <span aria-hidden="true">$</span><span>Bash mode</span>
+                            </div>
+                        </div>
                         <button onclick="handleChatBtn()" id="chat-send-btn" title="Send" class="bg-indigo-500 hover:bg-indigo-600 text-white p-2.5 rounded-md text-sm transition-colors flex items-center justify-center"><svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
                     </div>
                 </div>
@@ -1690,7 +1696,7 @@ let chatLoaded = false;
     });
 
     // Restore on load
-    $(function() { restoreDraft(); });
+    $(function() { restoreDraft(); updateChatComposer(document.getElementById('chat-input')); loadChatCommands(); });
 
     // Safety net: save on page unload
     $(window).on('beforeunload', saveDraft);
@@ -4840,7 +4846,131 @@ function stopIdlePoll() {
 // Desktop = viewport >= 1024px: Enter without Shift submits, Shift+Enter inserts newline.
 // The check runs per-keypress so it reacts immediately to resize / rotation.
 const CHAT_DESKTOP_BREAKPOINT = 1024;
+let chatCommands = [];
+let chatCommandIndex = -1;
+let BASH_EXEC_ENABLED = {{ 'true' if agent.bash_exec_enabled else 'false' }};
+
+function chatInputChanged(input) {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+    input.style.overflowY = input.scrollHeight > 150 ? 'auto' : 'hidden';
+    updateChatComposer(input);
+}
+
+function loadChatCommands() {
+    const requestedAgentId = AGENT_ID;
+    return fetch(`/api/agents/${encodeURIComponent(requestedAgentId)}/commands`)
+        .then(res => res.ok ? res.json() : {commands: []})
+        .then(data => {
+            if (requestedAgentId === AGENT_ID) {
+                chatCommands = Array.isArray(data.commands) ? data.commands : [];
+                updateChatComposer(document.getElementById('chat-input'));
+            }
+        })
+        .catch(() => { if (requestedAgentId === AGENT_ID) chatCommands = []; });
+}
+
+function closeChatCommandMenu() {
+    const menu = document.getElementById('chat-command-menu');
+    if (menu) {
+        menu.classList.add('hidden');
+        menu.replaceChildren();
+    }
+    chatCommandIndex = -1;
+}
+
+function updateChatComposer(input) {
+    if (!input) return;
+    const value = input.value;
+    const trimmed = value.trimStart();
+    const bashMode = trimmed.startsWith('!');
+    const badge = document.getElementById('chat-bash-mode');
+    if (badge) {
+        badge.classList.toggle('hidden', !bashMode);
+        badge.lastElementChild.textContent = BASH_EXEC_ENABLED ? 'Bash mode' : 'Bash disabled';
+    }
+    input.classList.toggle('border-emerald-500', bashMode);
+    input.classList.toggle('dark:border-emerald-500', bashMode);
+    input.classList.toggle('font-mono', bashMode);
+    input.classList.toggle('pt-7', bashMode);
+
+    const match = trimmed.match(/^\/([\w-]*)$/);
+    if (!match) {
+        closeChatCommandMenu();
+        return;
+    }
+    const query = match[1].toLowerCase();
+    const choices = chatCommands.filter(command => command.name.toLowerCase().includes(query));
+    renderChatCommandMenu(choices);
+}
+
+function renderChatCommandMenu(choices) {
+    const menu = document.getElementById('chat-command-menu');
+    if (!menu || !choices.length) {
+        closeChatCommandMenu();
+        return;
+    }
+    if (chatCommandIndex < 0 || chatCommandIndex >= choices.length) chatCommandIndex = 0;
+    menu.replaceChildren();
+    choices.forEach((command, index) => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.role = 'option';
+        option.className = 'flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-indigo-50 dark:hover:bg-gray-700';
+        option.classList.toggle('bg-indigo-50', index === chatCommandIndex);
+        option.classList.toggle('dark:bg-gray-700', index === chatCommandIndex);
+        option.setAttribute('aria-selected', String(index === chatCommandIndex));
+        const name = document.createElement('span');
+        name.className = 'font-mono font-medium text-indigo-600 dark:text-indigo-300';
+        name.textContent = '/' + command.name;
+        const description = document.createElement('span');
+        description.className = 'min-w-0 truncate text-xs text-gray-500 dark:text-gray-400';
+        description.textContent = command.description || '';
+        option.append(name, description);
+        option.addEventListener('mousedown', event => event.preventDefault());
+        option.addEventListener('click', () => selectChatCommand(command));
+        menu.appendChild(option);
+    });
+    menu.classList.remove('hidden');
+}
+
+function getVisibleChatCommands() {
+    const input = document.getElementById('chat-input');
+    const match = input && input.value.trimStart().match(/^\/([\w-]*)$/);
+    if (!match) return [];
+    return chatCommands.filter(command => command.name.toLowerCase().includes(match[1].toLowerCase()));
+}
+
+function selectChatCommand(command) {
+    const input = document.getElementById('chat-input');
+    if (!input || !command) return;
+    input.value = `/${command.name} `;
+    closeChatCommandMenu();
+    chatInputChanged(input);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function chatInputKeydown(event) {
+    const choices = getVisibleChatCommands();
+    if (choices.length) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            chatCommandIndex = (chatCommandIndex + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+            renderChatCommandMenu(choices);
+            return;
+        }
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            selectChatCommand(choices[chatCommandIndex < 0 ? 0 : chatCommandIndex]);
+            return;
+        }
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            closeChatCommandMenu();
+            return;
+        }
+    }
     if (event.key !== 'Enter') return;
     if (event.shiftKey) {
         // Shift+Enter inserts a newline natively; offer the editor-mode tip for long messages.
@@ -5092,6 +5222,7 @@ async function sendChat() {
     input.value = '';
     input.style.height = 'auto';
     input.style.overflowY = 'hidden';
+    updateChatComposer(input);
     // Re-apply height reset after async input event (queued by value='') fires.
     // The oninput handler may set height from a stale scrollHeight before the
     // browser has reflowed the now-empty textarea.
@@ -6965,6 +7096,8 @@ window.softSwitchAgent = async function (newId, opts = {}) {
 
     // --- Swap identity + reset per-agent state ---
     AGENT_ID = newId;
+    BASH_EXEC_ENABLED = !!data.bash_exec_enabled;
+    chatCommands = [];
     _chatSessionId = null;
     chatLoaded = false;
     lastChatTs = 0;
@@ -7029,6 +7162,8 @@ window.softSwitchAgent = async function (newId, opts = {}) {
     const input = document.getElementById('chat-input');
     if (input) { input.value = ''; input.style.height = 'auto'; }
     if (window._restoreChatDraft) window._restoreChatDraft();
+    updateChatComposer(input);
+    loadChatCommands();
     if (typeof dismissBubble === 'function') dismissBubble(newId);
 
     // From popstate the browser already moved in history — pushing again would

@@ -267,6 +267,19 @@ def api_get_agent(agent_id):
     return jsonify(_sanitize_agent(agent))
 
 
+@agents_bp.route('/api/agents/<agent_id>/commands', methods=['GET'])
+def api_list_agent_commands(agent_id):
+    if not db.get_agent(agent_id):
+        return jsonify({'error': 'Agent not found'}), 404
+    from backend.slash_commands import list_available_commands
+
+    commands = [
+        {'name': name, 'description': description}
+        for name, description in list_available_commands(agent_id)
+    ]
+    return jsonify({'commands': commands})
+
+
 @agents_bp.route('/api/agents', methods=['POST'])
 def api_create_agent():
     if not db.has_super_agent():

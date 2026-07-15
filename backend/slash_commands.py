@@ -44,6 +44,33 @@ class SlashCommandRegistry:
         return [(cmd.name, cmd.description) for cmd in self._commands.values()]
 
 
+def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> list:
+    """Return registered commands available to an agent on the given channel."""
+    commands = command_registry.list_commands()
+    try:
+        from models.db import db
+        super_agent = db.get_super_agent()
+        is_super = bool(super_agent and super_agent.get('id') == agent_id)
+        agent = db.get_agent(agent_id)
+        workplace_id = agent.get('workplace_id') if agent else None
+        workplace = db.get_workplace(workplace_id) if workplace_id else None
+        can_cd = is_super or bool(workplace and workplace.get('type') in ('remote', 'tunnel'))
+        has_subagent = is_super or 'subagent' in db.get_agent_skills(agent_id)
+    except Exception:
+        is_super = can_cd = has_subagent = False
+
+    available = []
+    for name, description in commands:
+        if name in {'cd', 'cwd'} and not can_cd:
+            continue
+        if name in {'restart', 'shutdown'} and not is_super:
+            continue
+        if name == 'sub' and not has_subagent:
+            continue
+        available.append((name, description))
+    return sorted(available, key=lambda command: command[0])
+
+
 # Global registry instance
 command_registry = SlashCommandRegistry()
 
@@ -185,46 +212,8 @@ def _register_builtins():
         channel_id: Optional[str],
         args: str,
     ) -> str:
-        commands = command_registry.list_commands()
-        # Filter out /restart for non-super agents
-        try:
-            from models.db import db
-            super_agent = db.get_super_agent()
-            is_super = super_agent and super_agent.get('id') == agent_id
-        except Exception:
-            is_super = False
-        # /cd and /cwd are also available to agents with remote/tunnel workplaces
-        can_cd = is_super
-        if not can_cd:
-            try:
-                agent = db.get_agent(agent_id)
-                if agent:
-                    workplace_id = agent.get('workplace_id')
-                    if workplace_id:
-                        workplace = db.get_workplace(workplace_id)
-                        if workplace and workplace.get('type') in ('remote', 'tunnel'):
-                            can_cd = True
-            except Exception:
-                pass
         lines = ["**Available commands:**"]
-        super_only = {"restart", "cd", "cwd", "shutdown"}
-        web_only = set()  # all commands now available on both web and channels
-        # /sub requires the subagent skill
-        has_subagent = False
-        try:
-            skills = db.get_agent_skills(agent_id)
-            has_subagent = "subagent" in skills
-        except Exception:
-            pass
-        for name, desc in commands:
-            if name in {"cd", "cwd"} and not can_cd:
-                continue
-            if name in {"restart", "shutdown"} and not is_super:
-                continue
-            if name in web_only and channel_id is not None:
-                continue
-            if name == "sub" and not has_subagent and not is_super:
-                continue
+        for name, desc in list_available_commands(agent_id, channel_id):
             lines.append(f"- `/{name}` — {desc}")
         return "\n".join(lines)
 

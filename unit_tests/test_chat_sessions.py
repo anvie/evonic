@@ -325,3 +325,29 @@ class TestGetAllSessions:
 
         sessions, total = db.get_all_sessions(search='Test Agent')
         assert total >= 1
+
+
+class TestAgentCommandDiscoveryAPI:
+    def test_returns_sorted_commands_available_to_agent(self, agent_id, chat_db):
+        from app import app
+
+        with app.test_client() as client:
+            _auth(client)
+            response = client.get(f'/api/agents/{agent_id}/commands')
+
+        assert response.status_code == 200
+        commands = response.get_json()['commands']
+        names = [command['name'] for command in commands]
+        assert names == sorted(names)
+        assert 'help' in names
+        assert 'restart' not in names
+        assert all(set(command) == {'name', 'description'} for command in commands)
+
+    def test_returns_404_for_unknown_agent(self, agent_id, chat_db):
+        from app import app
+
+        with app.test_client() as client:
+            _auth(client)
+            response = client.get('/api/agents/missing_agent/commands')
+
+        assert response.status_code == 404
