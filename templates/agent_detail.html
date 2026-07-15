@@ -992,7 +992,7 @@ html.dark .agent-tab.active {
                     <div id="chat-drop-overlay" class="hidden absolute inset-0 z-40 flex items-center justify-center pointer-events-none" style="background:rgba(99,102,241,0.08)">
                         <div class="border-2 border-dashed border-indigo-400 rounded-xl px-8 py-6 flex flex-col items-center gap-2 bg-white/80 dark:bg-gray-800/80">
                             <svg class="w-8 h-8 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"/></svg>
-                            <span class="text-sm font-medium text-indigo-600 dark:text-indigo-400">Drop file here</span>
+                            <span class="text-sm font-medium text-indigo-600 dark:text-indigo-400">Drop files here</span>
                         </div>
                     </div>
                     <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 min-h-0" style="min-height: 300px;">
@@ -1012,16 +1012,8 @@ html.dark .agent-tab.active {
                     <button onclick="retryWorkplaceConnect()" class="ml-auto text-xs text-yellow-700 dark:text-yellow-400 hover:underline flex-shrink-0">Retry</button>
                 </div>
                 <div class="p-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
-                    <!-- File preview strip -->
-                    <div id="chat-file-preview" class="hidden mb-2 flex items-center gap-2 px-2 py-1.5 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                        <img id="chat-file-preview-img" class="hidden w-12 h-12 object-cover rounded" alt="">
-                        <svg id="chat-file-preview-icon" class="hidden w-6 h-6 text-gray-400 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4zm-3 9h4v2h-4v-2zm0 3h4v2h-4v-2zm-2-3h1v2H8v-2zm0 3h1v2H8v-2z"/></svg>
-                        <span id="chat-file-preview-name" class="text-xs text-gray-600 dark:text-gray-300 truncate flex-1"></span>
-                        <span id="chat-file-preview-size" class="text-[10px] text-gray-400 flex-shrink-0"></span>
-                        <button type="button" onclick="clearChatFileInput()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 flex-shrink-0" title="Remove file">
-                            <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM8.28 7.22a.75.75 0 0 0-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 1 0 1.06 1.06L10 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L11.06 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L10 8.94 8.28 7.22Z" clip-rule="evenodd"/></svg>
-                        </button>
-                    </div>
+                    <!-- Pending image/file attachments for the next message -->
+                    <div id="chat-file-preview" class="hidden mb-2 flex flex-wrap gap-2"></div>
                     <!-- Editor-mode tip (shown on Shift+Enter) -->
                     <div id="editor-tip" class="hidden mb-2 flex items-center gap-2 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 rounded-lg text-xs text-indigo-700 dark:text-indigo-300">
                         <svg class="w-4 h-4 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V18h6v-1.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>
@@ -1031,7 +1023,7 @@ html.dark .agent-tab.active {
                         </button>
                     </div>
                     <div class="flex gap-2">
-                        <input type="file" id="chat-file-input" class="hidden"
+                        <input type="file" id="chat-file-input" class="hidden" multiple
                                accept="image/*,.pdf,.txt,.md,.log,.json,.yaml,.yml,.xml,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.rb,.php,.html,.css,.sql,.sh,.toml,.ini,.zip,.docx,.xlsx,.pptx,.odt,.ods,.odp,.rtf,.epub"
                                onchange="onChatFileSelected(this)">
                         {% if agent.attachments_enabled %}
@@ -1596,7 +1588,7 @@ html.dark .agent-tab.active {
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=58" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=59" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=4" defer></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
@@ -4913,40 +4905,155 @@ document.addEventListener('keydown', function (e) {
 
 // ==================== File Upload Helpers ====================
 
-function onChatFileSelected(input) {
-    const file = input.files[0];
+const _chatPendingFiles = [];
+
+function _insertChatImageReference(slot) {
+    const input = document.getElementById('chat-input');
+    const token = `[Image #${slot}]`;
+    const start = input.selectionStart == null ? input.value.length : input.selectionStart;
+    const end = input.selectionEnd == null ? start : input.selectionEnd;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(end);
+    const prefix = before && !/\s$/.test(before) ? ' ' : '';
+    const suffix = after && !/^\s/.test(after) && !/^[,.;:!?)}\]]/.test(after) ? ' ' : '';
+    const piece = prefix + token + suffix;
+    input.value = before + piece + after;
+    const cursor = (before + piece).length;
+    input.focus();
+    input.setSelectionRange(cursor, cursor);
+    input.dispatchEvent(new Event('input'));
+}
+
+function _renumberChatImageReferences(removedSlot) {
+    const input = document.getElementById('chat-input');
+    input.value = input.value
+        .replace(new RegExp(`\\[Image #${removedSlot}\\]\\s?`, 'g'), '')
+        .replace(/\[Image #(\d+)\]/g, (token, number) =>
+            Number(number) > removedSlot ? `[Image #${Number(number) - 1}]` : token);
+    input.dispatchEvent(new Event('input'));
+}
+
+function _renderChatFilePreviews() {
     const preview = document.getElementById('chat-file-preview');
-    if (!file) { preview.classList.add('hidden'); return; }
+    preview.replaceChildren();
+    _chatPendingFiles.forEach((attachment, index) => {
+        const isImage = attachment.file.type.startsWith('image/');
+        const card = document.createElement('div');
+        card.className = 'relative flex items-center gap-2 max-w-full px-2 py-1.5 bg-gray-50 dark:bg-gray-700 rounded-lg';
+        if (isImage) {
+            card.title = 'Preview image';
+            card.style.cursor = 'zoom-in';
+            card.setAttribute('role', 'button');
+            card.setAttribute('tabindex', '0');
+            card.onclick = () => openChatAttachmentPreview(index);
+            card.onkeydown = event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openChatAttachmentPreview(index);
+                }
+            };
+        }
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'absolute w-5 h-5 rounded-full bg-gray-700 text-white text-sm leading-none hover:bg-red-600';
+        remove.style.cssText = 'top: -0.35rem; right: -0.35rem; z-index: 10;';
+        remove.title = 'Remove file';
+        remove.setAttribute('aria-label', `Remove ${attachment.file.name}`);
+        remove.textContent = '×';
+        remove.onclick = event => {
+            event.stopPropagation();
+            removeChatFileAttachment(index);
+        };
+        if (isImage) {
+            const image = document.createElement('img');
+            image.src = attachment.url;
+            image.alt = attachment.file.name;
+            image.className = 'w-12 h-12 object-cover rounded';
+            card.append(image);
+        } else {
+            const icon = document.createElement('span');
+            icon.className = 'w-12 h-12 flex items-center justify-center text-gray-400 text-xl';
+            icon.textContent = '📄';
+            card.append(icon);
+        }
+        const details = document.createElement('div');
+        details.className = 'min-w-0 pr-2';
+        const name = document.createElement('div');
+        name.className = 'text-xs text-gray-600 dark:text-gray-300 truncate max-w-40';
+        name.textContent = attachment.file.name;
+        const size = document.createElement('div');
+        size.className = 'text-[10px] text-gray-400';
+        size.textContent = _formatFileSize(attachment.file.size);
+        details.append(name, size);
+        card.append(details, remove);
+        preview.append(card);
+    });
+    preview.classList.toggle('hidden', _chatPendingFiles.length === 0);
+}
 
-    const previewImg = document.getElementById('chat-file-preview-img');
-    const previewIcon = document.getElementById('chat-file-preview-icon');
-    const previewName = document.getElementById('chat-file-preview-name');
-    const previewSize = document.getElementById('chat-file-preview-size');
-
-    previewName.textContent = file.name;
-    previewSize.textContent = file.size < 1024 ? `${file.size} B`
-        : file.size < 1048576 ? `${(file.size / 1024).toFixed(1)} KB`
-        : `${(file.size / 1048576).toFixed(1)} MB`;
-
-    if (file.type.startsWith('image/')) {
-        previewImg.src = URL.createObjectURL(file);
-        previewImg.classList.remove('hidden');
-        previewIcon.classList.add('hidden');
+function openChatAttachmentPreview(index) {
+    const images = _chatPendingFiles.filter(item => item.file.type.startsWith('image/'));
+    const imageIndex = _chatPendingFiles.slice(0, index + 1)
+        .filter(item => item.file.type.startsWith('image/')).length - 1;
+    if (!images.length || imageIndex < 0) return;
+    const urls = images.map(item => item.url);
+    if (window.Lightbox && typeof window.Lightbox.open === 'function') {
+        window.Lightbox.open(urls, imageIndex);
     } else {
-        previewImg.classList.add('hidden');
-        previewIcon.classList.remove('hidden');
+        window.open(urls[imageIndex], '_blank', 'noopener');
     }
-    preview.classList.remove('hidden');
+}
+
+function addChatFileAttachments(files, { insertImageReferences = true } = {}) {
+    const accepted = Array.from(files || []).filter(_isFileAccepted);
+    if (!accepted.length) return;
+    for (const file of accepted) {
+        _chatPendingFiles.push({ file, url: URL.createObjectURL(file) });
+        if (insertImageReferences && file.type.startsWith('image/')) {
+            const imageSlot = _chatPendingFiles.filter(item => item.file.type.startsWith('image/')).length;
+            _insertChatImageReference(imageSlot);
+        }
+    }
+    _renderChatFilePreviews();
+}
+
+function onChatFileSelected(input) {
+    addChatFileAttachments(input.files);
+    input.value = '';
+}
+
+function removeChatFileAttachment(index) {
+    const [attachment] = _chatPendingFiles.splice(index, 1);
+    if (attachment) {
+        URL.revokeObjectURL(attachment.url);
+        if (attachment.file.type.startsWith('image/')) {
+            const removedSlot = _chatPendingFiles.slice(0, index)
+                .filter(item => item.file.type.startsWith('image/')).length + 1;
+            _renumberChatImageReferences(removedSlot);
+        }
+    }
+    _renderChatFilePreviews();
 }
 
 function clearChatFileInput() {
-    const input = document.getElementById('chat-file-input');
-    input.value = '';
-    const preview = document.getElementById('chat-file-preview');
-    preview.classList.add('hidden');
-    const previewImg = document.getElementById('chat-file-preview-img');
-    if (previewImg.src) { URL.revokeObjectURL(previewImg.src); previewImg.src = ''; }
+    while (_chatPendingFiles.length) URL.revokeObjectURL(_chatPendingFiles.pop().url);
+    document.getElementById('chat-file-input').value = '';
+    _renderChatFilePreviews();
 }
+
+(function initChatImagePaste() {
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    input.addEventListener('paste', function(event) {
+        const images = Array.from(event.clipboardData?.items || [])
+            .filter(item => item.type.startsWith('image/'))
+            .map(item => item.getAsFile())
+            .filter(Boolean);
+        if (!images.length) return;
+        event.preventDefault();
+        addChatFileAttachments(images);
+    });
+})();
 
 // ==================== Drag & Drop File Upload ====================
 
@@ -4968,7 +5075,8 @@ function _isFileAccepted(file) {
 }
 
 (function initChatDropZone() {
-    const zone = document.getElementById('chat-drop-zone');
+    // Listen on the entire panel so a user can drop over the composer as well as messages.
+    const zone = document.getElementById('chat-panel');
     if (!zone) return;
     const overlay = document.getElementById('chat-drop-overlay');
 
@@ -4990,13 +5098,17 @@ function _isFileAccepted(file) {
         e.preventDefault();
         _dragCounter = 0;
         overlay.classList.add('hidden');
-        const file = e.dataTransfer.files[0];
-        if (!file) return;
-        if (!_isFileAccepted(file)) {
+        const droppedFiles = Array.from(e.dataTransfer?.files || []);
+        const accepted = droppedFiles.filter(_isFileAccepted);
+        if (!accepted.length) {
             if (typeof showToast === 'function') showToast('File type not supported', true);
             return;
         }
-        openChatDropModal(file);
+        addChatFileAttachments(accepted);
+        if (accepted.length !== droppedFiles.length && typeof showToast === 'function') {
+            showToast('Some dropped files are not supported', 'error');
+        }
+        document.getElementById('chat-input').focus();
     });
 })();
 
@@ -5039,17 +5151,13 @@ function submitChatDropModal() {
     if (!_droppedFile) return;
     const msgInput = document.getElementById('chat-drop-message');
     const chatInput = document.getElementById('chat-input');
-    const fileInput = document.getElementById('chat-file-input');
 
     // Set message text if provided
     if (msgInput.value.trim()) chatInput.value = msgInput.value.trim();
 
-    // Inject dropped file into the file input
-    const dt = new DataTransfer();
-    dt.items.add(_droppedFile);
-    fileInput.files = dt.files;
-
+    const droppedFile = _droppedFile;
     closeChatDropModal();
+    addChatFileAttachments([droppedFile]);
     sendChat();
 }
 
@@ -5086,9 +5194,12 @@ function stopChat() {
 async function sendChat() {
     const input = document.getElementById('chat-input');
     const msg = input.value.trim();
-    const fileInput = document.getElementById('chat-file-input');
-    const file = fileInput.files[0] || null;
-    if (!msg && !file) return;
+    const files = _chatPendingFiles.map(attachment => attachment.file);
+    if (!msg && !files.length) return;
+    const optimisticUrls = files.map(file => URL.createObjectURL(file));
+    const attachmentInfos = files.map(file => ({
+        filename: file.name, mime_type: file.type, is_image: file.type.startsWith('image/'), size_bytes: file.size,
+    }));
     input.value = '';
     input.style.height = 'auto';
     input.style.overflowY = 'hidden';
@@ -5103,19 +5214,17 @@ async function sendChat() {
     });
     window._clearChatDraft();
     hideEditorTip();
-    if (file) clearChatFileInput();
+    clearChatFileInput();
 
-    // Build optimistic metadata for image/file preview
-    let optimisticMeta = null;
-    if (file && file.type.startsWith('image/')) {
-        optimisticMeta = {image_url: URL.createObjectURL(file), _blob_url: true};
-    } else if (file) {
-        optimisticMeta = {attachment_info: {filename: file.name, mime_type: file.type, is_image: false}};
-    }
-    const displayText = msg || (file ? (file.type.startsWith('image/') ? '[Image]' : `[File: ${file.name}]`) : '');
+    const optimisticMeta = attachmentInfos.length
+        ? { image_urls: optimisticUrls.filter((_, index) => attachmentInfos[index].is_image), attachment_infos: attachmentInfos }
+        : null;
+    let imageSlot = 0;
+    const displayText = msg || attachmentInfos.map(info =>
+        info.is_image ? `[Image #${++imageSlot}]` : `[File: ${info.filename}]`).join(' ');
 
     const $msgEl = chatUI.appendMessage('user', displayText, {metadata: optimisticMeta});
-    if (file) chatUI.markMessageUploading($msgEl);
+    if (files.length) chatUI.markMessageUploading($msgEl);
     // Capture the user message wrapper for anchoring the thinking bubble
     const container = document.getElementById('chat-messages');
     const userWrappers = container ? container.querySelectorAll('[data-msg-role="user"]') : [];
@@ -5123,13 +5232,13 @@ async function sendChat() {
     chatUI.scrollToBottom();
     setChatBusy(true);
 
-    // Post chat message — uses XHR for file uploads (progress tracking), fetch otherwise
+    // Post chat message — uses XHR for uploads so all attachment progress is tracked together.
     function postChat(url, signal) {
-        if (file) {
+        if (files.length) {
             const formData = new FormData();
             formData.append('message', msg);
             formData.append('user_id', 'web_test');
-            formData.append('file', file);
+            files.forEach(file => formData.append('files', file));
             return new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
                 xhr.open('POST', url);

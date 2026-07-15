@@ -1512,69 +1512,77 @@ def api_chat(agent_id):
     if not db.get_agent(agent_id):
         return jsonify({'error': 'Agent not found'}), 404
 
-    # Support both JSON and multipart/form-data (for file uploads)
+    # Support both JSON and multipart/form-data (including repeated files fields).
     if request.content_type and request.content_type.startswith('multipart/form-data'):
         message = (request.form.get('message') or '').strip()
         user_id = (request.form.get('user_id') or 'anonymous').strip()
-        file = request.files.get('file')
+        files = [f for f in request.files.getlist('files') if f and f.filename]
+        if not files:
+            legacy_file = request.files.get('file')
+            files = [legacy_file] if legacy_file and legacy_file.filename else []
     else:
-        data = request.get_json()
+        data = request.get_json() or {}
         message = data.get('message', '').strip()
         user_id = data.get('user_id', 'anonymous')
-        file = None
+        files = []
 
-    if not message and not file:
+    if not message and not files:
         return jsonify({'error': 'Message is required'}), 400
 
     from backend.agent_runtime import agent_runtime
     from routes.sessions import _process_upload, _ALLOWED_EXTS
 
-    image_url = None
-    upload_meta = None
-    attachment_info = None
+    image_urls = []
+    attachment_infos = []
+    text_prefixes = []
 
-    if file:
-        # Validate extension
-        ext = os.path.splitext(file.filename or '')[1].lower()
-        if ext not in _ALLOWED_EXTS:
-            return jsonify({'error': f'File type {ext} not supported'}), 400
-
-        # Get/create session for attachment storage
+    if files:
         session_id = db.get_or_create_session(agent_id, user_id)
-
-        # Check if attachments are enabled for this agent
         cfg = db.get_agent_attachment_config(agent_id)
         if not cfg.get('enabled'):
             return jsonify({'error': 'File attachments are not enabled for this agent. Enable them in agent settings.'}), 400
 
         max_bytes = cfg.get('max_size_mb', 20) * 1024 * 1024
-        file.seek(0, os.SEEK_END)
-        fsize = file.tell()
-        file.seek(0)
-        if fsize > max_bytes:
-            return jsonify({'error': f'File too large (max {cfg.get("max_size_mb", 20)}MB)'}), 400
+        for file in files:
+            ext = os.path.splitext(file.filename or '')[1].lower()
+            if ext not in _ALLOWED_EXTS:
+                return jsonify({'error': f'File type {ext} not supported'}), 400
+            file.seek(0, os.SEEK_END)
+            fsize = file.tell()
+            file.seek(0)
+            if fsize > max_bytes:
+                return jsonify({'error': f'File too large (max {cfg.get("max_size_mb", 20)}MB)'}), 400
+            try:
+                upload = _process_upload(file, agent_id, session_id, user_id, None)
+            except Exception as e:
+                print(f"[WebChat] Upload processing failed: {e}")
+                return jsonify({'error': 'Failed to process uploaded file'}), 500
+            attachment_infos.append(upload['attachment_info'])
+            if upload['image_url']:
+                image_urls.append(upload['image_url'])
+            if upload['text_prefix']:
+                text_prefixes.append(upload['text_prefix'])
 
-        try:
-            result = _process_upload(
-                file, agent_id, session_id,
-                user_id,
-                None,  # channel_id
-            )
-        except Exception as e:
-            print(f"[WebChat] Upload processing failed: {e}")
-            return jsonify({'error': 'Failed to process uploaded file'}), 500
-
-        image_url = result['image_url']
-        attachment_info = result['attachment_info']
-        upload_meta = {'attachment_info': attachment_info}
-
-        # For non-image files, prepend extracted text to user message
-        if result['text_prefix']:
-            message = f"{result['text_prefix']}\n\n{message}" if message else result['text_prefix']
-
-        # Fallback display text when no user text provided
+        if text_prefixes:
+            message = '\n\n'.join(text_prefixes + ([message] if message else []))
         if not message:
-            message = '[Image]' if attachment_info.get('is_image') else f"[File: {attachment_info['filename']}]"
+            image_slot = 0
+            placeholders = []
+            for info in attachment_infos:
+                if info.get('is_image'):
+                    image_slot += 1
+                    placeholders.append(f'[Image #{image_slot}]')
+                else:
+                    placeholders.append(f'[File: {info["filename"]}]')
+            message = ' '.join(placeholders)
+
+    image_url = image_urls[0] if image_urls else None
+    attachment_info = attachment_infos[0] if attachment_infos else None
+    upload_meta = None
+    if attachment_infos:
+        upload_meta = {'attachment_infos': attachment_infos}
+        if len(attachment_infos) == 1:
+            upload_meta['attachment_info'] = attachment_info
 
     try:
         result = agent_runtime.handle_message(
@@ -1584,13 +1592,17 @@ def api_chat(agent_id):
         )
         if result.get('buffered'):
             resp = {'success': True, 'buffered': True}
-            if attachment_info:
-                resp['attachment_info'] = attachment_info
+            if attachment_infos:
+                resp['attachment_infos'] = attachment_infos
+                if len(attachment_infos) == 1:
+                    resp['attachment_info'] = attachment_info
             return jsonify(resp)
         if result.get('injected'):
             resp = {'success': True, 'injected': True}
-            if attachment_info:
-                resp['attachment_info'] = attachment_info
+            if attachment_infos:
+                resp['attachment_infos'] = attachment_infos
+                if len(attachment_infos) == 1:
+                    resp['attachment_info'] = attachment_info
             return jsonify(resp)
         resp = {
             'success': True,
@@ -1601,8 +1613,10 @@ def api_chat(agent_id):
             'bash_exec': result.get('bash_exec', False),
             'clear_ui': result.get('clear_ui', False),
         }
-        if attachment_info:
-            resp['attachment_info'] = attachment_info
+        if attachment_infos:
+            resp['attachment_infos'] = attachment_infos
+            if len(attachment_infos) == 1:
+                resp['attachment_info'] = attachment_info
         if result.get('error'):
             resp['error'] = True
         return jsonify(resp)

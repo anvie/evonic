@@ -511,6 +511,9 @@ def _reconstruct_llm_messages(entries: List[dict]) -> List[Dict[str, Any]]:
             wrapped = _meta.get('wrapped')
             if wrapped:
                 msg['_wrapped'] = True
+            atts = _meta.get('attachment_infos')
+            if isinstance(atts, list):
+                msg['attachment_infos'] = atts
             att = _meta.get('attachment_info')
             if att:
                 msg['attachment_info'] = att

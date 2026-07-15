@@ -51,6 +51,41 @@ _LOGS_DIR = os.path.join(_BASE_DIR, 'logs')
 _logger = logging.getLogger(__name__)
 
 
+def _append_attachment_context(content: str, attachment_infos, attachment_info,
+                               agent: dict, has_describe_image: bool) -> str:
+    """Append context notes for plural attachments with a legacy singular fallback."""
+    if not isinstance(attachment_infos, list):
+        attachment_infos = []
+    attachment_infos = [info for info in attachment_infos if isinstance(info, dict)]
+    if not attachment_infos and isinstance(attachment_info, dict):
+        attachment_infos = [attachment_info]
+
+    notes = []
+    for index, info in enumerate(attachment_infos, 1):
+        fp = info.get('file_path', '')
+        if fp and not os.path.isabs(fp):
+            fp = os.path.abspath(os.path.join(_BASE_DIR, fp))
+        fn = info.get('filename', '')
+        mt = info.get('mime_type', '')
+        sb = int(info.get('size_bytes', 0) or 0)
+        is_img = bool(mt and mt.startswith('image/'))
+        is_audio = bool(mt and mt.startswith('audio/'))
+        if sb >= 1048576:
+            sz = f"{sb / 1048576:.1f} MB"
+        elif sb >= 1024:
+            sz = f"{sb / 1024:.1f} KB"
+        else:
+            sz = f"{sb} B"
+        label = f"Attachment #{index}" if len(attachment_infos) > 1 else "Attachment"
+        note = f"\n\n[{label}: {fn} ({mt}, {sz})]\nFile path: {fp}"
+        if is_img and has_describe_image:
+            note += "\nUse the `describe_image` tool to view and analyze this image."
+        if is_audio and agent.get('audio_enabled'):
+            note += "\nUse the `transcribe_audio` tool to listen to this audio."
+        notes.append(note)
+    return content.rstrip() + ''.join(notes) if notes else content
+
+
 # --- Configuration constants ---
 CLEANUP_INTERVAL_SECONDS = 300       # Interval between idle session cleanup sweeps (5 minutes)
 CLEANUP_TTL_SECONDS = 3600          # TTL for session state entries before cleanup (1 hour)
@@ -1623,35 +1658,12 @@ class AgentRuntime:
             # Always pop _image_url/_audio_url but NEVER feed them to the LLM.
             msg.pop('_image_url', None)
             msg.pop('_audio_url', None)
-            # Append attachment_info note so agents see file path metadata.
-            _att = msg.pop('attachment_info', None) or msg.get('attachment_info')
-            if _att and isinstance(_att, dict):
-                fp = _att.get('file_path', '')
-                # Resolve relative paths (e.g. data/attachments/...) to absolute so
-                # agents can access the file from any working directory.
-                if fp and not os.path.isabs(fp):
-                    fp = os.path.abspath(os.path.join(_BASE_DIR, fp))
-                fn = _att.get('filename', '')
-                mt = _att.get('mime_type', '')
-                sb = int(_att.get('size_bytes', 0) or 0)
-                is_img = bool(mt and mt.startswith('image/'))
-                is_audio = bool(mt and mt.startswith('audio/'))
-                if sb >= 1048576:
-                    sz = f"{sb / 1048576:.1f} MB"
-                elif sb >= 1024:
-                    sz = f"{sb / 1024:.1f} KB"
-                else:
-                    sz = f"{sb} B"
-                note = (
-                    f"\n\n[Attachment: {fn} ({mt}, {sz})]"
-                    f"\nFile path: {fp}"
-                )
-                if is_img and _has_describe_image:
-                    note += "\nUse the `describe_image` tool to view and analyze this image."
-                if is_audio and agent.get('audio_enabled'):
-                    note += "\nUse the `transcribe_audio` tool to listen to this audio."
-                content = msg.get('content', '') or ''
-                msg['content'] = content.rstrip() + note
+            msg['content'] = _append_attachment_context(
+                msg.get('content', '') or '',
+                msg.pop('attachment_infos', None),
+                msg.pop('attachment_info', None),
+                agent, _has_describe_image,
+            )
             video = msg.pop('_video_url', None) if agent.get('video_enabled') else msg.pop('_video_url', None) and None
             if not video:
                 return msg
@@ -1700,6 +1712,9 @@ class AgentRuntime:
                     _vid = _cur_meta.get('video_url')
                     if _vid:
                         _cur_msg['_video_url'] = _vid
+                    _atts = _cur_meta.get('attachment_infos')
+                    if isinstance(_atts, list):
+                        _cur_msg['attachment_infos'] = _atts
                     _att = _cur_meta.get('attachment_info')
                     if _att:
                         _cur_msg['attachment_info'] = _att

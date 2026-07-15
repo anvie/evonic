@@ -77,7 +77,7 @@ def _process_upload(file_storage, agent_id: str, session_id: str,
     safe_name = _sanitize_filename(original_name)
     target_dir = os.path.join('data', 'attachments', agent_id, session_id)
     os.makedirs(target_dir, exist_ok=True)
-    target_path = os.path.join(target_dir, f"{int(time.time())}_{safe_name}")
+    target_path = os.path.join(target_dir, f"{time.time_ns()}_{safe_name}")
     with open(target_path, 'wb') as f:
         f.write(file_bytes)
 

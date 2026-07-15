@@ -1052,12 +1052,17 @@ def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True)
     # Images are NEVER auto-fed to the main LLM — always use the describe_image tool instead.
     # Audio is likewise never auto-fed — agents listen via the transcribe_audio tool.
     has_video = msg_video and agent.get('video_enabled')
-    has_image_attachment = msg_image is not None  # track for attachment note enhancement
+    has_image_attachment = bool(msg_image or _msg_meta.get('image_urls'))
 
-    # Build attachment context note if attachment_info is present in metadata
-    attachment_info = _msg_meta.get('attachment_info') if _msg_meta else None
-    attachment_note = None
-    if attachment_info and isinstance(attachment_info, dict):
+    attachment_infos = _msg_meta.get('attachment_infos') or []
+    if not isinstance(attachment_infos, list):
+        attachment_infos = []
+    attachment_infos = [info for info in attachment_infos if isinstance(info, dict)]
+    if not attachment_infos and isinstance(_msg_meta.get('attachment_info'), dict):
+        attachment_infos = [_msg_meta['attachment_info']]
+
+    attachment_notes = []
+    for index, attachment_info in enumerate(attachment_infos, 1):
         file_path = attachment_info.get('file_path', '')
         # Resolve relative paths (e.g. data/attachments/...) to absolute so agents
         # can access the file from any working directory.
@@ -1074,14 +1079,14 @@ def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True)
             size_str = f"{size_bytes} B"
         is_image = mime_type and mime_type.startswith("image/")
         is_audio = mime_type and mime_type.startswith("audio/")
-        attachment_note = (
-            f"\n\n[Attachment: {filename} ({mime_type}, {size_str})]"
-            f"\nFile path: {file_path}"
-        )
+        label = f"Attachment #{index}" if len(attachment_infos) > 1 else "Attachment"
+        note = f"\n\n[{label}: {filename} ({mime_type}, {size_str})]\nFile path: {file_path}"
         if is_image and has_image_attachment and has_describe_image:
-            attachment_note += "\nUse the `describe_image` tool to view and analyze this image."
+            note += "\nUse the `describe_image` tool to view and analyze this image."
         if is_audio and agent.get('audio_enabled'):
-            attachment_note += "\nUse the `transcribe_audio` tool to listen to this audio."
+            note += "\nUse the `transcribe_audio` tool to listen to this audio."
+        attachment_notes.append(note)
+    attachment_note = ''.join(attachment_notes) or None
 
     if has_video:
         parts = []
