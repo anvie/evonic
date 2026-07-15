@@ -4906,7 +4906,7 @@ function updateChatComposer(input) {
     if (!input) return;
     const value = input.value;
     const trimmed = value.trimStart();
-    const bashMode = trimmed.startsWith('!');
+    const bashMode = BASH_EXEC_ENABLED && trimmed.startsWith('!');
     input.classList.toggle('chat-bash-input', bashMode);
     const bashHint = document.getElementById('chat-bash-hint');
     if (bashHint) bashHint.classList.toggle('hidden', !bashMode);
