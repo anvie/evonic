@@ -35,10 +35,20 @@
             <i data-lucide="git-fork"></i>
             <h3>User &rarr; Agent Routes</h3>
         </div>
-        <div class="setting-group-body">
-            <div id="sc-routes-list" class="divide-y divide-gray-100 dark:divide-gray-700/60">
-                <p class="text-xs text-gray-400 text-center py-4">No routes configured.</p>
-            </div>
+        <div class="setting-group-body overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead>
+                    <tr class="text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30">
+                        <th class="px-4 py-3 font-semibold">Phone Number</th>
+                        <th class="px-4 py-3 font-semibold hidden sm:table-cell">Name</th>
+                        <th class="px-4 py-3 font-semibold">Agent</th>
+                        <th class="px-4 py-3 font-semibold text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="sc-routes-list">
+                    <tr><td colspan="4" class="text-center py-8 text-gray-400">No routes configured.</td></tr>
+                </tbody>
+            </table>
             <!-- Add route (manual pre-authorization) -->
             <div class="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30">
                 <div class="flex gap-2 flex-wrap">
@@ -472,22 +482,29 @@
             sharedChannel._routesSig = sig;
             var ids = Object.keys(routes);
             if (ids.length === 0) {
-                list.innerHTML = '<p class="text-xs text-gray-400 text-center py-4">No routes configured.</p>';
+                list.innerHTML = '<tr><td colspan="4" class="text-center py-8 text-gray-400">No routes configured.</td></tr>';
                 return;
             }
             list.innerHTML = ids.map(function(u) {
-                var name = names[u] ? '<span class="text-xs text-gray-600 dark:text-gray-400 truncate">' + sharedChannel.esc(names[u]) + '</span>' : '';
+                var nameCell = names[u]
+                    ? '<span class="text-xs text-gray-600 dark:text-gray-400">' + sharedChannel.esc(names[u]) + '</span>'
+                    : '<span class="text-gray-300 dark:text-gray-600">—</span>';
                 var agentName = sharedChannel.agentsById[routes[u]] || '(unknown agent)';
-                return '<div class="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors">' +
-                    '<div class="flex items-center gap-3 min-w-0">' +
-                    '<span class="text-xs text-gray-700 dark:text-gray-300 font-mono flex-shrink-0">' + sharedChannel.esc(u) + '</span>' +
-                    name +
-                    '<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800 flex-shrink-0">' +
-                    '<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>' +
-                    sharedChannel.esc(agentName) + '</span>' +
-                    '</div>' +
-                    '<button onclick="sharedChannel.removeRoute(\'' + sharedChannel.escAttr(u) + '\')" class="text-xs font-medium text-gray-400 hover:text-red-600 dark:hover:text-red-400 flex-shrink-0 transition-colors">Remove</button>' +
-                    '</div>';
+                return '<tr class="border-b border-gray-100 dark:border-gray-700/60 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors">' +
+                    '<td class="px-4 py-3">' +
+                        '<span class="text-xs text-gray-700 dark:text-gray-300 font-mono">' + sharedChannel.esc(u) + '</span>' +
+                    '</td>' +
+                    '<td class="px-4 py-3 hidden sm:table-cell">' + nameCell + '</td>' +
+                    '<td class="px-4 py-3">' +
+                        '<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800">' +
+                            '<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>' +
+                            sharedChannel.esc(agentName) +
+                        '</span>' +
+                    '</td>' +
+                    '<td class="px-4 py-3 text-right">' +
+                        '<button onclick="sharedChannel.removeRoute(\'' + sharedChannel.escAttr(u) + '\')" class="text-xs font-medium text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors">Remove</button>' +
+                    '</td>' +
+                '</tr>';
             }).join('');
         },
 
