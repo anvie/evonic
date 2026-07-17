@@ -492,7 +492,7 @@ html.dark .agent-tab.active {
                     </div>
                 </label>
             </div>
-            <button id="saveGeneralBtn" onclick="saveGeneral()" class="bg-indigo-500 hover:bg-indigo-600 text-white px-5 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed">Save Changes</button>
+
         </div>
         <!-- Right column -->
         <div class="space-y-6">
@@ -683,9 +683,7 @@ html.dark .agent-tab.active {
                         <textarea id="agent-summarize-prompt" rows="10" class="w-full p-2.5 border border-gray-300 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 {{ 'opacity-50' if not agent.summarize_prompt else '' }}" {{ '' if agent.summarize_prompt else 'disabled' }}>{{ agent.summarize_prompt or DEFAULT_SUMMARIZE_PROMPT }}</textarea>
                         <p class="text-xs text-gray-400 mt-1">Unchecked: the built-in default prompt is used (kept up to date automatically — recommended). Check to provide your own. Use <code>{existing_summary_section}</code> and <code>{messages_text}</code> placeholders.</p>
                     </div>
-                    <div class="pt-2">
-                        <button id="saveAdvancedBtn" onclick="saveAdvanced()" class="bg-indigo-500 hover:bg-indigo-600 text-white px-5 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed">Save Advanced</button>
-                    </div>
+
                 </div>
             </div>
             <!-- Variables Card -->
@@ -2201,130 +2199,209 @@ async function saveAgentSafetyRules() {
     } catch(e) { console.error('Failed to save agent safety rules:', e); }
 }
 
-const SPINNER_SVG = '<svg class="animate-spin h-4 w-4 mr-1.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
-
-function setSaveLoading(btnId, loading) {
-    const btn = document.getElementById(btnId);
-    if (!btn) return;
-    if (loading) {
-        btn.disabled = true;
-        btn.dataset.originalText = btn.textContent;
-        btn.innerHTML = '<span class="inline-flex items-center">' + SPINNER_SVG + 'Saving...</span>';
-    } else {
-        btn.disabled = false;
-        btn.textContent = btn.dataset.originalText || btn.textContent;
-    }
-}
-
-async function saveGeneral() {
-    const btnId = 'saveGeneralBtn';
-    setSaveLoading(btnId, true);
-    let workspaceChanged = false;
-    try {
-    const homeSel = document.getElementById('agent-workplace-id');
-    const selectedOpt = homeSel ? homeSel.options[homeSel.selectedIndex] : null;
-    const homeType = selectedOpt ? selectedOpt.dataset.type : '';
-    const sandboxForced = (homeType === 'remote' || homeType === 'tunnel' || homeType === 'bwrap');
-    const newWorkspace = document.getElementById('agent-workspace').value || null;
-    workspaceChanged = (newWorkspace || null) !== (ORIGINAL_WORKSPACE || null);
+// ==================== Settings auto-save ====================
+// Every control in the Settings tab persists on change/blur — no Save button,
+// mirroring System Settings > General. Selects/toggles save immediately;
+// text/number/textarea debounce on input then flush on blur. Feedback renders
+// as a small inline status appended to each field's label.
+async function putAgent(body) {
     const res = await fetch(`/api/agents/${AGENT_ID}`, {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            name: document.getElementById('agent-name').value,
-            description: document.getElementById('agent-desc').value,
-            workspace: newWorkspace,
-            workplace_id: homeSel ? homeSel.value || null : null,
-            system_prompt: document.getElementById('agent-system-prompt').value,
-            vision_enabled: document.getElementById('agent-vision').checked ? 1 : 0,
-            audio_enabled: document.getElementById('agent-audio').checked ? 1 : 0,
-            video_enabled: document.getElementById('agent-video').checked ? 1 : 0,
-            attachments_enabled: document.getElementById('agent-attachments').checked ? 1 : 0,
-            attachment_max_size_mb: Math.min(20, Math.max(1, parseInt(document.getElementById('agent-attachment-max-mb').value) || 20)),
-            sandbox_enabled: sandboxForced ? 0 : (document.getElementById('agent-sandbox').checked ? 1 : 0),
-            inject_agent_id: document.getElementById('agent-inject-id').checked ? 1 : 0,
-            inject_datetime: document.getElementById('agent-inject-datetime').checked ? 1 : 0,
-        })
+        body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (!data.success) { showToast("Failed to save settings.", "error"); return; }
+    if (!data.success) throw new Error(data.error || 'Save failed');
+    return data;
+}
 
-    const selectedModelId = document.getElementById('agent-model-select').value || null;
-    const selectedFallbackModelId = document.getElementById('agent-fallback-model-select').value || null;
-    await fetch(`/api/agents/${AGENT_ID}/model`, {
+async function saveAgentModel() {
+    const model_id = document.getElementById('agent-model-select').value || null;
+    const fallback_model_id = document.getElementById('agent-fallback-model-select').value || null;
+    const res = await fetch(`/api/agents/${AGENT_ID}/model`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ model_id: selectedModelId, fallback_model_id: selectedFallbackModelId })
-    });
-
-    if (workspaceChanged) {
-        location.reload();
-        return;
-    }
-    showToast("Settings saved successfully!", "success");
-    loadTools();
-    } finally {
-        if (!workspaceChanged) setSaveLoading(btnId, false);
-    }
-}
-
-async function saveAdvanced() {
-    const btnId = 'saveAdvancedBtn';
-    const oldBuiltinTools = document.getElementById('agent-builtin-tools').checked;
-    setSaveLoading(btnId, true);
-    try {
-    const res = await fetch(`/api/agents/${AGENT_ID}`, {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            summarize_threshold: parseInt(document.getElementById('agent-summarize-threshold').value) || 0,
-            summarize_tail: parseInt(document.getElementById('agent-summarize-tail').value) || 5,
-            summarize_prompt: document.getElementById('agent-summarize-prompt-override').checked
-                ? (document.getElementById('agent-summarize-prompt').value || null)
-                : null,
-            message_buffer_seconds: parseFloat(document.getElementById('agent-buffer-seconds').value) || 0,
-            send_intermediate_responses: document.getElementById('agent-send-intermediate').checked ? 1 : 0,
-            enable_agent_state: document.getElementById('agent-state-enabled').checked ? 1 : 0,
-            enable_atg: document.getElementById('agent-atg-enabled').checked ? 1 : 0,
-            enable_cmp: document.getElementById('agent-cmp-enabled').checked ? 1 : 0,
-            disable_parallel_tool_execution: document.getElementById('agent-parallel-exec').checked ? 1 : 0,
-            disable_turn_prefetch: document.getElementById('agent-prefetch').checked ? 1 : 0,
-            agent_messaging_enabled: document.getElementById('agent-messaging-enabled').checked ? 1 : 0,
-            inter_agent_clear_context: document.getElementById('agent-inter-agent-clear').checked ? 1 : 0,
-            builtin_tools_enabled: document.getElementById('agent-builtin-tools').checked ? 1 : 0,
-            artifacts_enabled: document.getElementById('agent-artifacts').checked ? 1 : 0,
-            safety_checker_enabled: document.getElementById('agent-safety-checker').checked ? 1 : 0,
-            bash_exec_enabled: document.getElementById('agent-bash-exec').checked ? 1 : 0,
-            message_wrapper_enabled: document.getElementById('agent-message-wrapper').checked ? 1 : 0,
-            run_as_user: document.getElementById('agent-run-as-user').value.trim() || null,
-            memory_engine: document.getElementById('agent-memory-engine').value || null,
-            kb_organizer_mode: document.getElementById('agent-kb-organizer').value || null,
-        })
+        body: JSON.stringify({ model_id, fallback_model_id }),
     });
     const data = await res.json();
-    if (!data.success) { showToast("Failed to save advanced settings.", "error"); return; }
-
-    // Persist variables + injection guard flag. collectVariables() embeds the
-    // toggle state (canonical lowercase, once), so no manual merge is needed.
-    try {
-        await fetch(`/api/agents/${AGENT_ID}/variables`, {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ variables: collectVariables() })
-        });
-    } catch (e) {
-        console.error('Failed to save injection guard state:', e);
-    }
-
-    showToast("Advanced settings saved!", "success");
-    // Refresh tools list if builtin_tools_enabled toggled
-    if (oldBuiltinTools !== document.getElementById('agent-builtin-tools').checked) {
-        loadTools();
-    }
-    } finally {
-        setSaveLoading(btnId, false);
-    }
+    if (!data.success) throw new Error(data.error || 'Failed to set model');
 }
+
+async function saveSummarizePrompt() {
+    const override = document.getElementById('agent-summarize-prompt-override').checked;
+    const val = override ? (document.getElementById('agent-summarize-prompt').value || null) : null;
+    await putAgent({ summarize_prompt: val });
+}
+
+const AS_SPINNER = '<svg class="animate-spin h-4 w-4 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>';
+const AS_CHECK = '<svg class="h-4 w-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>';
+const AS_ERROR = '<svg class="h-4 w-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+
+const AgentAutoSave = {
+    DEBOUNCE_MS: 700,
+    _timers: {},
+    _handlers: {},
+
+    // Controls whose value maps directly to an agent column via PUT /api/agents.
+    FIELDS: [
+        { id: 'agent-name', key: 'name', type: 'str' },
+        { id: 'agent-desc', key: 'description', type: 'str' },
+        { id: 'agent-system-prompt', key: 'system_prompt', type: 'str' },
+        { id: 'agent-vision', key: 'vision_enabled', type: 'bool' },
+        { id: 'agent-audio', key: 'audio_enabled', type: 'bool' },
+        { id: 'agent-video', key: 'video_enabled', type: 'bool' },
+        { id: 'agent-attachments', key: 'attachments_enabled', type: 'bool' },
+        { id: 'agent-sandbox', key: 'sandbox_enabled', type: 'bool' },
+        { id: 'agent-inject-id', key: 'inject_agent_id', type: 'bool' },
+        { id: 'agent-inject-datetime', key: 'inject_datetime', type: 'bool' },
+        { id: 'agent-workplace-id', key: 'workplace_id', type: 'selnull' },
+        { id: 'agent-summarize-threshold', key: 'summarize_threshold', type: 'int', def: 0 },
+        { id: 'agent-summarize-tail', key: 'summarize_tail', type: 'int', def: 5 },
+        { id: 'agent-buffer-seconds', key: 'message_buffer_seconds', type: 'float' },
+        { id: 'agent-send-intermediate', key: 'send_intermediate_responses', type: 'bool' },
+        { id: 'agent-state-enabled', key: 'enable_agent_state', type: 'bool' },
+        { id: 'agent-atg-enabled', key: 'enable_atg', type: 'bool' },
+        { id: 'agent-cmp-enabled', key: 'enable_cmp', type: 'bool' },
+        { id: 'agent-parallel-exec', key: 'disable_parallel_tool_execution', type: 'bool' },
+        { id: 'agent-prefetch', key: 'disable_turn_prefetch', type: 'bool' },
+        { id: 'agent-messaging-enabled', key: 'agent_messaging_enabled', type: 'bool' },
+        { id: 'agent-inter-agent-clear', key: 'inter_agent_clear_context', type: 'bool' },
+        { id: 'agent-artifacts', key: 'artifacts_enabled', type: 'bool' },
+        { id: 'agent-safety-checker', key: 'safety_checker_enabled', type: 'bool' },
+        { id: 'agent-bash-exec', key: 'bash_exec_enabled', type: 'bool' },
+        { id: 'agent-message-wrapper', key: 'message_wrapper_enabled', type: 'bool' },
+        { id: 'agent-run-as-user', key: 'run_as_user', type: 'strnull' },
+        { id: 'agent-memory-engine', key: 'memory_engine', type: 'selnull' },
+        { id: 'agent-kb-organizer', key: 'kb_organizer_mode', type: 'selnull' },
+        // Special-handled controls (persist fn registered below); listed here so
+        // they still get change/blur listeners wired.
+        { id: 'agent-model-select' },
+        { id: 'agent-fallback-model-select' },
+        { id: 'agent-workspace' },
+        { id: 'agent-attachment-max-mb' },
+        { id: 'agent-builtin-tools' },
+        { id: 'agent-summarize-prompt-override' },
+        { id: 'agent-summarize-prompt' },
+        { id: 'agent-injection-guard' },
+    ],
+
+    init() {
+        if (this._inited) return; // idempotent — safe across soft agent switches
+        this._inited = true;
+        // Composite model save (primary + fallback together).
+        this._handlers['agent-model-select'] = saveAgentModel;
+        this._handlers['agent-fallback-model-select'] = saveAgentModel;
+        // Workspace change requires a reload (affects sandbox paths) — parity
+        // with the old saveGeneral behavior.
+        this._handlers['agent-workspace'] = async (el) => {
+            const newWorkspace = el.value || null;
+            await putAgent({ workspace: newWorkspace });
+            if ((newWorkspace || null) !== (ORIGINAL_WORKSPACE || null)) location.reload();
+        };
+        this._handlers['agent-attachment-max-mb'] = async (el) => {
+            const v = Math.min(20, Math.max(1, parseInt(el.value) || 20));
+            el.value = v;
+            await putAgent({ attachment_max_size_mb: v });
+        };
+        this._handlers['agent-builtin-tools'] = async (el) => {
+            await putAgent({ builtin_tools_enabled: el.checked ? 1 : 0 });
+            loadTools();
+        };
+        this._handlers['agent-summarize-prompt-override'] = saveSummarizePrompt;
+        this._handlers['agent-summarize-prompt'] = saveSummarizePrompt;
+        // Injection guard is stored as an agent variable, not a column.
+        this._handlers['agent-injection-guard'] = async () => { await saveVariables(true); };
+
+        this.FIELDS.forEach((f) => this._bind(f));
+    },
+
+    _bind(f) {
+        const el = document.getElementById(f.id);
+        if (!el) return;
+        el._asField = f;
+        if (el.type === 'checkbox' || el.tagName === 'SELECT') {
+            el.addEventListener('change', () => this._persist(el, f));
+        } else {
+            el._asLast = this._value(el, f.type);
+            el.addEventListener('input', () => this._queue(el, f));
+            el.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && el.tagName !== 'TEXTAREA') el.blur();
+            });
+            el.addEventListener('blur', () => this._flush(el, f));
+        }
+    },
+
+    _queue(el, f) {
+        clearTimeout(this._timers[f.id]);
+        this._timers[f.id] = setTimeout(() => this._flush(el, f), this.DEBOUNCE_MS);
+    },
+
+    _flush(el, f) {
+        clearTimeout(this._timers[f.id]);
+        const v = this._value(el, f.type);
+        if (el._asLast === v) return; // nothing changed
+        el._asLast = v;
+        this._persist(el, f);
+    },
+
+    async _persist(el, f) {
+        this._status(el, 'saving');
+        try {
+            const handler = this._handlers[f.id];
+            if (handler) {
+                await handler(el);
+            } else {
+                await putAgent({ [f.key]: this._value(el, f.type) });
+            }
+            this._status(el, 'saved');
+        } catch (e) {
+            this._status(el, 'error', e.message || 'Save failed');
+        }
+    },
+
+    _value(el, type) {
+        switch (type) {
+            case 'bool': return el.checked ? 1 : 0;
+            case 'int': { const n = parseInt(el.value, 10); return isNaN(n) ? (el._asField ? el._asField.def : 0) : n; }
+            case 'float': return parseFloat(el.value) || 0;
+            case 'strnull': return el.value.trim() || null;
+            case 'selnull': return el.value || null;
+            default: return el.value;
+        }
+    },
+
+    _host(el) {
+        if (el.type === 'checkbox') {
+            const lbl = el.closest('label');
+            if (lbl) return lbl;
+        }
+        const explicit = document.querySelector(`label[for="${el.id}"]`);
+        if (explicit) return explicit;
+        const block = el.closest('.mb-4') || el.parentElement;
+        return block ? block.querySelector('label') : null;
+    },
+
+    _status(el, state, msg) {
+        const host = this._host(el);
+        if (!host) return;
+        let s = host.querySelector(':scope > .as-status');
+        if (!s) {
+            s = document.createElement('span');
+            s.className = 'as-status ml-2 inline-flex items-center align-middle';
+            host.appendChild(s);
+        }
+        clearTimeout(s._fade);
+        if (state === 'saving') {
+            s.innerHTML = AS_SPINNER;
+        } else if (state === 'saved') {
+            s.innerHTML = AS_CHECK;
+            s._fade = setTimeout(() => { s.innerHTML = ''; }, 1600);
+        } else if (state === 'error') {
+            s.innerHTML = AS_ERROR;
+            if (msg) showToast(msg, 'error');
+        }
+    },
+};
 
 // ==================== Plugin Settings (per-agent) ====================
 async function loadPluginSettings() {
@@ -6256,6 +6333,7 @@ function loadGeneralTabData() {
     loadVariables();
     loadPluginSettings();
     loadAgentSafetyRules();
+    AgentAutoSave.init();
 }
 
 // ==================== Workplace Selector ====================
