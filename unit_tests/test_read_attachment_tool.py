@@ -80,12 +80,27 @@ def test_path_within_agent_allowed(tmp_path, monkeypatch):
     assert '1: hello' in result['result']
 
 
-def test_missing_attachment_id_returns_error(tmp_path, monkeypatch):
+def test_missing_attachment_id_returns_actionable_not_found_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _make_agent('agent_m')
-    result = ra.execute({'id': 'agent_m'}, {'attachment_id': 999999})
+    result = ra.execute({'id': 'agent_m'}, {'attachment_id': 75433064})
     assert 'error' in result
-    assert 'not found' in result['error'].lower()
+    assert 'Attachment ID 75433064 was not found' in result['error']
+    assert "numeric 'Attachment ID' shown in the attachment metadata" in result['error']
+    assert 'session ID' in result['error']
+    assert 'expired' not in result['error'].lower()
+
+
+def test_existing_record_with_missing_file_reports_distinct_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _make_agent('agent_missing_file')
+    aid, path = _store('agent_missing_file', b'gone', tmp_path=tmp_path)
+    os.remove(path)
+
+    result = ra.execute({'id': 'agent_missing_file'}, {'attachment_id': aid})
+
+    assert 'missing on disk' in result['error']
+    assert 'retention cleanup' in result['error']
 
 
 def test_invalid_attachment_id_type(tmp_path, monkeypatch):

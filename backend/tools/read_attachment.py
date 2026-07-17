@@ -217,7 +217,13 @@ def execute(agent, args: dict) -> dict:
             return {"error": "Invalid attachment_id — must be an integer."}
         row = db.get_attachment(attachment_id)
         if not row:
-            return {"error": "Attachment not found or expired."}
+            return {
+                "error": (
+                    f"Attachment ID {attachment_id} was not found. Use the numeric "
+                    "'Attachment ID' shown in the attachment metadata; do not use "
+                    "a session ID or a number inferred from the file path."
+                )
+            }
         if row['agent_id'] != agent_id and not agent.get('is_super'):
             return {"error": "Access denied — attachment belongs to a different agent."}
         resolved_path = row.get('file_path')

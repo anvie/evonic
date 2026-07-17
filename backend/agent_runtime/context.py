@@ -1045,6 +1045,57 @@ def command_hint_from_content(content: str) -> str:
     return "unknown"
 
 
+def build_attachment_note(attachment_info: dict,
+                          has_describe_image: bool = True,
+                          audio_enabled: bool = False) -> str:
+    """Render authoritative attachment metadata for model-visible context.
+
+    The database attachment ID is intentionally explicit so the model can call
+    ``read_attachment(attachment_id=N)`` without inferring an ID from a session
+    name or storage path.
+    """
+    file_path = attachment_info.get('file_path', '')
+    if file_path and not os.path.isabs(file_path):
+        file_path = os.path.abspath(os.path.join(_BASE_DIR, file_path))
+
+    filename = attachment_info.get('filename', '')
+    mime_type = attachment_info.get('mime_type') or 'application/octet-stream'
+    size_bytes = int(attachment_info.get('size_bytes', 0) or 0)
+    attachment_id = attachment_info.get('attachment_id')
+    if size_bytes >= 1048576:
+        size_str = f"{size_bytes / 1048576:.1f} MB"
+    elif size_bytes >= 1024:
+        size_str = f"{size_bytes / 1024:.1f} KB"
+    else:
+        size_str = f"{size_bytes} B"
+
+    note = f"\n\n[Attachment: {filename} ({mime_type}, {size_str})]"
+    if attachment_id is not None:
+        note += f"\nAttachment ID: {attachment_id}"
+    note += f"\nFile path: {file_path}"
+
+    if mime_type.startswith('image/') and has_describe_image:
+        note += "\nUse the `describe_image` tool to view and analyze this image."
+    if mime_type.startswith('audio/') and audio_enabled:
+        note += "\nUse the `transcribe_audio` tool to listen to this audio."
+    return note
+
+
+def append_attachment_note(msg: dict,
+                           attachment_info: dict,
+                           has_describe_image: bool = True,
+                           audio_enabled: bool = False) -> dict:
+    """Append structured attachment metadata to a model message in-place."""
+    note = build_attachment_note(
+        attachment_info,
+        has_describe_image=has_describe_image,
+        audio_enabled=audio_enabled,
+    )
+    content = msg.get('content', '') or ''
+    msg['content'] = content.rstrip() + note
+    return msg
+
+
 def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True) -> dict:
     """Convert a DB message row into an LLM message dict."""
     entry = {"role": msg['role']}
@@ -1054,41 +1105,16 @@ def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True)
     # Images are NEVER auto-fed to the main LLM — always use the describe_image tool instead.
     # Audio is likewise never auto-fed — agents listen via the transcribe_audio tool.
     has_video = msg_video and agent.get('video_enabled')
-    has_image_attachment = bool(msg_image or _msg_meta.get('image_urls'))
 
-    attachment_infos = _msg_meta.get('attachment_infos') or []
-    if not isinstance(attachment_infos, list):
-        attachment_infos = []
-    attachment_infos = [info for info in attachment_infos if isinstance(info, dict)]
-    if not attachment_infos and isinstance(_msg_meta.get('attachment_info'), dict):
-        attachment_infos = [_msg_meta['attachment_info']]
-
-    attachment_notes = []
-    for index, attachment_info in enumerate(attachment_infos, 1):
-        file_path = attachment_info.get('file_path', '')
-        # Resolve relative paths (e.g. data/attachments/...) to absolute so agents
-        # can access the file from any working directory.
-        if file_path and not os.path.isabs(file_path):
-            file_path = os.path.abspath(os.path.join(_BASE_DIR, file_path))
-        filename = attachment_info.get('filename', '')
-        mime_type = attachment_info.get('mime_type', 'application/octet-stream')
-        size_bytes = int(attachment_info.get('size_bytes', 0) or 0)
-        if size_bytes >= 1048576:
-            size_str = f"{size_bytes / 1048576:.1f} MB"
-        elif size_bytes >= 1024:
-            size_str = f"{size_bytes / 1024:.1f} KB"
-        else:
-            size_str = f"{size_bytes} B"
-        is_image = mime_type and mime_type.startswith("image/")
-        is_audio = mime_type and mime_type.startswith("audio/")
-        label = f"Attachment #{index}" if len(attachment_infos) > 1 else "Attachment"
-        note = f"\n\n[{label}: {filename} ({mime_type}, {size_str})]\nFile path: {file_path}"
-        if is_image and has_image_attachment and has_describe_image:
-            note += "\nUse the `describe_image` tool to view and analyze this image."
-        if is_audio and agent.get('audio_enabled'):
-            note += "\nUse the `transcribe_audio` tool to listen to this audio."
-        attachment_notes.append(note)
-    attachment_note = ''.join(attachment_notes) or None
+    # Build attachment context note from authoritative structured metadata.
+    attachment_info = _msg_meta.get('attachment_info') if _msg_meta else None
+    attachment_note = None
+    if attachment_info and isinstance(attachment_info, dict):
+        attachment_note = build_attachment_note(
+            attachment_info,
+            has_describe_image=has_describe_image,
+            audio_enabled=bool(agent.get('audio_enabled')),
+        )
 
     if has_video:
         parts = []

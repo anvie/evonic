@@ -1751,17 +1751,17 @@ function openBgProcessModal(jobId) {
     const body = document.getElementById('bg-process-modal-body');
     const title = document.getElementById('bg-process-modal-title');
     const subtitle = document.getElementById('bg-process-modal-subtitle');
-    const statusColors = {
-        running: 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-        done: 'border-sky-200 bg-sky-100 text-sky-700 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300',
-        timeout: 'border-amber-200 bg-amber-100 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300',
-        failed: 'border-red-200 bg-red-100 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300'
-    };
     const kindColors = {
-        wrapper: 'border-gray-200 bg-white/80 text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300',
-        tmux: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300',
-        screen: 'border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-800 dark:bg-purple-950 dark:text-purple-300',
-        nohup: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300'
+        wrapper: 'border-gray-300 text-gray-600 dark:border-white/15 dark:text-slate-300',
+        tmux: 'border-amber-300 text-amber-600 dark:border-amber-500/40 dark:text-amber-400',
+        screen: 'border-purple-300 text-purple-600 dark:border-purple-500/40 dark:text-purple-400',
+        nohup: 'border-sky-300 text-sky-600 dark:border-sky-500/40 dark:text-sky-400'
+    };
+    const pillStyles = {
+        running: { text: 'Running • Live', cls: 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300 dark:shadow-lg dark:shadow-emerald-500/30', dot: 'bg-emerald-500 dark:bg-emerald-400', ping: true },
+        done: { text: 'Done', cls: 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300', dot: 'bg-sky-500 dark:bg-sky-400', ping: false },
+        timeout: { text: 'Timeout', cls: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300', dot: 'bg-amber-500 dark:bg-amber-400', ping: false },
+        failed: { text: 'Failed', cls: 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300', dot: 'bg-red-500 dark:bg-red-400', ping: false }
     };
 
     const startedDate = new Date(p.started_at * 1000);
@@ -1770,52 +1770,59 @@ function openBgProcessModal(jobId) {
     const status = p.status || 'running';
     const isRunning = status === 'running' && !p.finished_at;
     const exitCode = !isRunning && p.exit_code != null ? String(p.exit_code) : null;
-    const statusColor = statusColors[status] || statusColors.failed;
     const kindColor = kindColors[p.kind] || kindColors.wrapper;
-    const liveDot = isRunning ? '<span class="relative flex h-2.5 w-2.5" aria-hidden="true"><span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60"></span><span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span></span>' : '';
+    const pill = pillStyles[status] || pillStyles.failed;
     const dateOptions = { year: 'numeric', month: 'short', day: 'numeric' };
     const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit' };
     const startedDay = startedDate.toLocaleDateString([], dateOptions);
     const startedTime = startedDate.toLocaleTimeString([], timeOptions);
-    const finishedDay = finishedDate ? finishedDate.toLocaleDateString([], dateOptions) : 'In progress';
-    const finishedTime = finishedDate ? finishedDate.toLocaleTimeString([], timeOptions) : 'Waiting for completion';
 
-    let html = '<div class="space-y-5 text-sm">';
-    html += '<section aria-label="Process overview" class="overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-4 shadow-sm dark:border-gray-700 dark:from-indigo-950/50 dark:via-gray-900 dark:to-emerald-950/40 sm:p-5">';
-    html += '<div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">';
-    html += '<div class="flex min-w-0 items-start gap-3">';
-    html += '<div class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div>';
-    html += '<div class="min-w-0"><p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-600 dark:text-indigo-300">Process identity</p>';
-    html += `<p class="mt-1 break-all font-mono text-sm font-semibold text-gray-900 dark:text-white">${esc(p.job_id)}</p>`;
-    html += `<div class="mt-2 flex flex-wrap items-center gap-2"><span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${kindColor}">${esc(p.kind || 'wrapper')}</span></div></div></div>`;
-    html += `<div class="inline-flex flex-shrink-0 items-center gap-2 self-start rounded-full border px-3 py-1.5 text-xs font-bold uppercase tracking-wide ${statusColor}" role="status">${liveDot}${esc(status)}${isRunning ? '<span class="font-medium opacity-70">Live</span>' : ''}</div>`;
-    html += '</div></section>';
+    const iconClock = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l2.5 2.5"/></svg>';
+    const iconRefresh = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>';
+    const iconTerminal = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg>';
 
-    html += '<section aria-labelledby="bg-process-overview-heading"><div class="mb-2.5 flex items-center justify-between"><h4 id="bg-process-overview-heading" class="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">Execution overview</h4><span class="text-xs text-gray-400 dark:text-gray-500">Local time</span></div>';
-    html += '<div class="grid grid-cols-2 gap-2.5 sm:grid-cols-4">';
-    html += `<div class="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/70"><span class="block text-[11px] font-medium text-gray-500 dark:text-gray-400">Started</span><strong class="mt-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">${esc(startedDay)}</strong><span class="mt-0.5 block text-xs tabular-nums text-gray-500 dark:text-gray-400">${esc(startedTime)}</span></div>`;
-    html += `<div class="rounded-xl border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-800 dark:bg-indigo-950/50"><span class="block text-[11px] font-medium text-indigo-600 dark:text-indigo-300">Elapsed</span><strong class="bg-process-elapsed mt-1 block font-mono text-base font-bold tabular-nums text-indigo-700 dark:text-indigo-200" data-started="${p.started_at}" data-finished="${p.finished_at || 0}">${esc(elapsed)}</strong><span class="mt-0.5 block text-xs text-indigo-500 dark:text-indigo-400">${isRunning ? 'Updating live' : 'Total runtime'}</span></div>`;
-    html += `<div class="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/70"><span class="block text-[11px] font-medium text-gray-500 dark:text-gray-400">Finished</span><strong class="mt-1 block text-sm font-semibold ${finishedDate ? 'text-gray-900 dark:text-gray-100' : 'text-emerald-600 dark:text-emerald-300'}">${esc(finishedDay)}</strong><span class="mt-0.5 block text-xs tabular-nums text-gray-500 dark:text-gray-400">${esc(finishedTime)}</span></div>`;
-    html += `<div class="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/70"><span class="block text-[11px] font-medium text-gray-500 dark:text-gray-400">Exit code</span><strong class="mt-1 block font-mono text-base font-bold ${exitCode === '0' ? 'text-emerald-600 dark:text-emerald-300' : (exitCode ? 'text-red-600 dark:text-red-300' : 'text-gray-400 dark:text-gray-500')}">${esc(exitCode || 'Pending')}</strong><span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">${exitCode == null ? 'Available when finished' : (exitCode === '0' ? 'Completed successfully' : 'Process returned an error')}</span></div>`;
-    html += '</div></section>';
+    // Header subtitle (job id + kind + status text) and status pill.
+    const subtitleHtml = `<span class="font-mono text-gray-700 dark:text-slate-200">${esc(p.job_id)}</span>`
+        + `<span class="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${kindColor}">${esc(p.kind || 'wrapper')}</span>`
+        + '<span class="text-gray-300 dark:text-slate-600" aria-hidden="true">•</span>'
+        + `<span>${isRunning ? 'Running in the background' : 'Process ' + esc(status)}</span>`;
+    const pillDot = pill.ping
+        ? `<span class="relative flex h-2 w-2" aria-hidden="true"><span class="absolute inline-flex h-full w-full animate-ping rounded-full ${pill.dot} opacity-70"></span><span class="relative inline-flex h-2 w-2 rounded-full ${pill.dot}"></span></span>`
+        : `<span class="h-2 w-2 rounded-full ${pill.dot}" aria-hidden="true"></span>`;
+    const pillHtml = `<span class="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-bold uppercase tracking-wider ${pill.cls}" role="status">${pillDot}${esc(pill.text)}</span>`;
 
-    html += '<section aria-labelledby="bg-process-command-heading" class="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">';
-    html += '<div class="flex items-center justify-between gap-3 border-b border-gray-200 bg-gray-50 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-900/70"><div><h4 id="bg-process-command-heading" class="text-xs font-bold uppercase tracking-[0.14em] text-gray-600 dark:text-gray-300">Command</h4><p class="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500">Exact command used to launch this process</p></div>';
-    html += '<button id="bg-process-copy-btn" type="button" onclick="copyBgProcessCommand()" class="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-600 shadow-sm transition hover:border-indigo-300 hover:text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-indigo-500 dark:hover:text-indigo-300 dark:focus:ring-offset-gray-900" aria-label="Copy background process command"><svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 9V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7a2 2 0 002 2h3"/></svg><span id="bg-process-copy-label">Copy</span></button></div>';
-    html += `<pre class="max-h-36 overflow-auto whitespace-pre-wrap break-words bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-200"><code>${esc(p.command || '')}</code></pre></section>`;
+    let html = '<div class="space-y-6">';
+
+    // Execution stats — four columns split by vertical dividers on desktop.
+    html += '<div class="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-4 sm:gap-x-0 sm:gap-y-0 sm:divide-x sm:divide-gray-200 sm:dark:divide-white/10">';
+    html += `<div class="sm:px-6 sm:first:pl-0"><div class="flex items-center gap-2 text-gray-500 dark:text-slate-400">${iconClock}<span class="text-sm font-medium">Started</span></div><p class="mt-2 text-lg font-bold text-gray-900 dark:text-white">${esc(startedDay)}</p><p class="mt-1 text-sm tabular-nums text-gray-400 dark:text-slate-500">${esc(startedTime)}</p></div>`;
+    html += `<div class="sm:px-6"><div class="flex items-center gap-2 text-gray-500 dark:text-slate-400">${iconClock}<span class="text-sm font-medium">Elapsed</span></div><p class="bg-process-elapsed mt-2 font-mono text-lg font-bold tabular-nums text-gray-900 dark:text-white" data-started="${p.started_at}" data-finished="${p.finished_at || 0}">${esc(elapsed)}</p><p class="mt-1 text-sm ${isRunning ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-slate-500'}">${isRunning ? 'Updating live' : 'Total runtime'}</p></div>`;
+    html += `<div class="sm:px-6"><div class="flex items-center gap-2 text-gray-500 dark:text-slate-400">${iconRefresh}<span class="text-sm font-medium">Finished</span></div><p class="mt-2 text-lg font-bold ${finishedDate ? 'text-gray-900 dark:text-white' : 'text-emerald-600 dark:text-emerald-400'}">${finishedDate ? esc(finishedDate.toLocaleDateString([], dateOptions)) : 'In progress'}</p><p class="mt-1 text-sm tabular-nums text-gray-400 dark:text-slate-500">${finishedDate ? esc(finishedDate.toLocaleTimeString([], timeOptions)) : 'Waiting for completion'}</p></div>`;
+    html += `<div class="sm:px-6 sm:last:pr-0"><div class="flex items-center gap-2 text-gray-500 dark:text-slate-400">${iconTerminal}<span class="text-sm font-medium">Exit code</span></div><p class="mt-2 text-lg font-bold ${exitCode === '0' ? 'text-emerald-600 dark:text-emerald-400' : (exitCode ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-slate-300')}">${esc(exitCode || 'Pending')}</p><p class="mt-1 text-sm text-gray-400 dark:text-slate-500">${exitCode == null ? 'Available when finished' : (exitCode === '0' ? 'Completed successfully' : 'Process returned an error')}</p></div>`;
+    html += '</div>';
+
+    // Command block — kept dark in both themes (terminal aesthetic).
+    html += '<div class="border-t border-gray-200 pt-5 dark:border-white/10">';
+    html += '<h4 class="text-sm font-bold text-gray-700 dark:text-slate-300">Command</h4>';
+    html += '<div class="mt-2.5 flex items-start gap-3 rounded-xl border border-white/10 bg-slate-950 p-4">';
+    html += `<pre class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-sm leading-6 text-slate-200"><code>${esc(p.command || '')}</code></pre>`;
+    html += '<button id="bg-process-copy-btn" type="button" onclick="copyBgProcessCommand()" class="inline-flex flex-shrink-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50" aria-label="Copy background process command"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 9V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7a2 2 0 002 2h3"/></svg><span id="bg-process-copy-label">Copy</span></button>';
+    html += '</div></div>';
 
     if (p.log_file) {
-        html += '<section aria-labelledby="bg-process-log-heading" class="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">';
-        html += '<div class="flex flex-col gap-2 border-b border-gray-200 bg-gray-50 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-900/70 sm:flex-row sm:items-center sm:justify-between"><div class="min-w-0"><div class="flex items-center gap-2"><h4 id="bg-process-log-heading" class="text-xs font-bold uppercase tracking-[0.14em] text-gray-600 dark:text-gray-300">Live output</h4><span id="bg-log-live-badge" class="hidden items-center gap-1.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>LIVE</span></div>';
-        html += `<p class="mt-1 truncate font-mono text-[10px] text-gray-400 dark:text-gray-500" title="${esc(p.log_file)}">${esc(p.log_file)}</p></div><span id="bg-log-refreshed" class="flex-shrink-0 text-[10px] text-gray-400 dark:text-gray-500" aria-live="polite"></span></div>`;
-        html += '<pre id="bg-log-content" class="max-h-80 min-h-[9rem] overflow-auto bg-[#08111f] p-4 font-mono text-[11px] leading-5 text-emerald-300" aria-label="Background process log output" aria-live="polite"><span class="flex items-center justify-center py-8 text-slate-500"><svg class="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="9" stroke-width="3"></circle><path class="opacity-75" stroke-width="3" stroke-linecap="round" d="M21 12a9 9 0 00-9-9"></path></svg>Loading live output...</span></pre></section>';
+        html += '<div class="border-t border-gray-200 pt-5 dark:border-white/10">';
+        html += '<div class="mb-2 flex items-center justify-between gap-3"><div class="flex items-center gap-2"><h4 class="text-sm font-bold text-gray-700 dark:text-slate-300">Live output</h4><span id="bg-log-live-badge" class="hidden items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-300"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400"></span>LIVE</span></div><span id="bg-log-refreshed" class="flex-shrink-0 text-xs text-gray-400 dark:text-slate-500" aria-live="polite"></span></div>';
+        html += `<p class="mb-2 truncate font-mono text-xs text-gray-400 dark:text-slate-500" title="${esc(p.log_file)}">${esc(p.log_file)}</p>`;
+        html += '<pre id="bg-log-content" class="max-h-80 min-h-[9rem] overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 font-mono text-[11px] leading-5 text-emerald-300" aria-label="Background process log output" aria-live="polite"><span class="flex items-center justify-center py-8 text-slate-500"><svg class="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="9" stroke-width="3"></circle><path class="opacity-75" stroke-width="3" stroke-linecap="round" d="M21 12a9 9 0 00-9-9"></path></svg>Loading live output...</span></pre></div>';
     } else {
-        html += '<div class="flex items-start gap-3 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-gray-500 dark:border-gray-700 dark:bg-gray-900/50 dark:text-gray-400"><svg class="mt-0.5 h-4 w-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.3 4.7l-7.6 13.2A2 2 0 004.4 21h15.2a2 2 0 001.7-3.1L13.7 4.7a2 2 0 00-3.4 0z"/></svg><div><p class="text-xs font-semibold">Live output unavailable</p><p class="mt-0.5 text-[11px]">This process was started without a log file.</p></div></div>';
+        html += '<div class="flex flex-wrap items-center gap-4 border-t border-gray-200 pt-5 dark:border-white/10"><div class="flex items-center gap-3"><svg class="h-5 w-5 flex-shrink-0 text-gray-400 dark:text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.3 4.7l-7.6 13.2A2 2 0 004.4 21h15.2a2 2 0 001.7-3.1L13.7 4.7a2 2 0 00-3.4 0z"/></svg><span class="font-bold text-gray-700 dark:text-slate-200">Live output unavailable</span></div><span class="hidden h-8 w-px bg-gray-200 sm:block dark:bg-white/10"></span><span class="text-sm text-gray-500 dark:text-slate-500">This process was started without a log file.</span></div>';
     }
 
     html += '</div>';
     title.textContent = p.session_name || 'Background Process';
-    subtitle.textContent = isRunning ? 'Running in the background' : `Process ${status}`;
+    subtitle.innerHTML = subtitleHtml;
+    const pillEl = document.getElementById('bg-process-status-pill');
+    if (pillEl) pillEl.innerHTML = pillHtml;
     body.innerHTML = html;
     backdrop.classList.remove('hidden');
     modal.classList.remove('hidden');
@@ -1846,12 +1853,12 @@ async function copyBgProcessCommand() {
             if (!document.execCommand('copy')) throw new Error('Copy command failed');
         }
         label.textContent = 'Copied';
-        button.classList.add('border-emerald-300', 'text-emerald-600');
-        setTimeout(() => { label.textContent = 'Copy'; button.classList.remove('border-emerald-300', 'text-emerald-600'); }, 1800);
+        button.classList.add('border-emerald-500/50', 'text-emerald-300');
+        setTimeout(() => { label.textContent = 'Copy'; button.classList.remove('border-emerald-500/50', 'text-emerald-300'); }, 1800);
     } catch (error) {
         label.textContent = 'Copy failed';
-        button.classList.add('border-red-300', 'text-red-600');
-        setTimeout(() => { label.textContent = 'Copy'; button.classList.remove('border-red-300', 'text-red-600'); }, 2200);
+        button.classList.add('border-red-500/50', 'text-red-300');
+        setTimeout(() => { label.textContent = 'Copy'; button.classList.remove('border-red-500/50', 'text-red-300'); }, 2200);
     } finally {
         if (textarea) textarea.remove();
     }
@@ -2519,24 +2526,25 @@ document.addEventListener('keydown', function(e) {
 
 <!-- Background Process Modal -->
 <div id="bg-process-modal-backdrop" class="hidden fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-sm sm:items-center sm:p-4" onclick="closeBgProcessModal()" role="presentation">
-    <div id="bg-process-modal" class="hidden flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-white shadow-2xl dark:bg-gray-800 sm:max-h-[90vh] sm:rounded-2xl" role="dialog" aria-modal="true" aria-labelledby="bg-process-modal-title" aria-describedby="bg-process-modal-subtitle" onclick="event.stopPropagation()">
-        <header class="relative flex flex-shrink-0 items-center justify-between overflow-hidden border-b border-gray-200 bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3.5 text-white dark:border-gray-700 sm:px-6">
-            <div class="pointer-events-none absolute inset-y-0 right-0 w-40 bg-gradient-to-l from-white/10 to-transparent"></div>
-            <div class="relative flex min-w-0 items-center gap-3">
-                <span class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/20"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></span>
-                <div class="min-w-0"><h3 id="bg-process-modal-title" class="truncate text-sm font-bold tracking-tight sm:text-base">Background Process</h3><p id="bg-process-modal-subtitle" class="mt-0.5 truncate text-xs text-indigo-100">Process execution details</p></div>
+    <div id="bg-process-modal" class="hidden flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-white/10 dark:bg-slate-950 dark:text-slate-100 sm:max-h-[90vh] sm:rounded-2xl" role="dialog" aria-modal="true" aria-labelledby="bg-process-modal-title" aria-describedby="bg-process-modal-subtitle" onclick="event.stopPropagation()">
+        <header class="relative flex flex-shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-white/10 sm:px-6 sm:py-5">
+            <div class="flex min-w-0 items-center gap-4">
+                <span class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl border border-gray-200 bg-gray-100 text-gray-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 sm:h-12 sm:w-12"><svg class="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></span>
+                <div class="min-w-0">
+                    <h3 id="bg-process-modal-title" class="truncate text-lg font-bold tracking-tight text-gray-900 dark:text-white sm:text-xl">Background Process</h3>
+                    <p id="bg-process-modal-subtitle" class="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-slate-400">Process execution details</p>
+                </div>
             </div>
-            <button type="button" onclick="closeBgProcessModal()" class="relative ml-3 rounded-lg p-2 text-indigo-100 transition hover:bg-white/15 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/80" aria-label="Close background process details" title="Close (Esc)">
-                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
+            <div class="flex flex-shrink-0 items-center gap-2 sm:gap-3">
+                <span id="bg-process-status-pill" class="hidden sm:inline-flex"></span>
+                <button type="button" onclick="closeBgProcessModal()" class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white dark:focus:ring-white/40" aria-label="Close background process details" title="Close (Esc)">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
         </header>
-        <div id="bg-process-modal-body" class="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
-            <div class="flex items-center justify-center py-12 text-gray-400"><svg class="mr-2 h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="9" stroke-width="3"></circle><path class="opacity-75" stroke-width="3" stroke-linecap="round" d="M21 12a9 9 0 00-9-9"></path></svg><span class="text-sm">Loading process details...</span></div>
+        <div id="bg-process-modal-body" class="flex-1 overflow-y-auto overscroll-contain p-5 sm:p-6">
+            <div class="flex items-center justify-center py-12 text-gray-400 dark:text-slate-500"><svg class="mr-2 h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="9" stroke-width="3"></circle><path class="opacity-75" stroke-width="3" stroke-linecap="round" d="M21 12a9 9 0 00-9-9"></path></svg><span class="text-sm">Loading process details...</span></div>
         </div>
-        <footer class="flex flex-shrink-0 items-center justify-between gap-3 border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/70 sm:px-6">
-            <p class="hidden text-[11px] text-gray-400 dark:text-gray-500 sm:block">Elapsed time and live output refresh automatically.</p>
-            <button type="button" onclick="closeBgProcessModal()" class="ml-auto rounded-lg bg-gray-900 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200 dark:focus:ring-offset-gray-900">Close</button>
-        </footer>
     </div>
 </div>
 

@@ -1718,12 +1718,17 @@ class AgentRuntime:
             # Always pop _image_url/_audio_url but NEVER feed them to the LLM.
             msg.pop('_image_url', None)
             msg.pop('_audio_url', None)
-            msg['content'] = _append_attachment_context(
-                msg.get('content', '') or '',
-                msg.pop('attachment_infos', None),
-                msg.pop('attachment_info', None),
-                agent, _has_describe_image,
-            )
+            # Append authoritative structured metadata, including the numeric ID
+            # required by read_attachment. This also repairs legacy message text
+            # that omitted the ID when restored from JSONL.
+            _att = msg.pop('attachment_info', None) or msg.get('attachment_info')
+            if _att and isinstance(_att, dict):
+                _ctx.append_attachment_note(
+                    msg,
+                    _att,
+                    has_describe_image=_has_describe_image,
+                    audio_enabled=bool(agent.get('audio_enabled')),
+                )
             video = msg.pop('_video_url', None) if agent.get('video_enabled') else msg.pop('_video_url', None) and None
             if not video:
                 return msg
