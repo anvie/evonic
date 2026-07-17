@@ -120,6 +120,9 @@ class Scheduler:
                      len(sefton_agents), cutoff.isoformat())
 
             for agent in sefton_agents:
+                if not agent.get('enabled'):
+                    log.info("SEFTON tidy [%s]: skipped (agent disabled)", agent['id'])
+                    continue
                 last_active = agent.get('last_active_at')
                 if not last_active:
                     log.info("SEFTON tidy [%s]: skipped (never active)", agent['id'])
