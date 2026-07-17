@@ -47,6 +47,19 @@ html.dark #agent-state-card .text-gray-400 { color: #6b7280 !important; }
 html.dark #agent-state-card .text-gray-600 { color: #d1d5db !important; }
 html.dark #agent-state-card .border-gray-100 { border-color: #374151 !important; }
 html.dark #summary-card { background: #1f2937; border-color: #374151; }
+/* Prevent pre/code overflow in right sidebar panels */
+#agent-state-card pre,
+#agent-state-card code,
+#summary-card pre,
+#summary-card code,
+#mobile-agent-state-content pre,
+#mobile-agent-state-content code,
+#mobile-summary-content pre,
+#mobile-summary-content code {
+    white-space: pre-wrap !important;
+    word-break: break-all;
+    overflow-wrap: break-word;
+}
 /* Dark mode: Channels tab (channel type badges) */
 html.dark #channels-list .bg-blue-100 { background: #172554 !important; color: #93c5fd !important; }
 html.dark #channels-list .bg-green-100 { background: #052e16 !important; color: #86efac !important; }
@@ -1117,7 +1130,7 @@ html.dark .agent-tab.active {
             <div class="hidden lg:flex flex-col gap-3 flex-shrink-0 min-h-0 min-w-0 overflow-hidden w-80">
                 <!-- Agent State Card -->
                 {% if agent.enable_agent_state %}
-                <div id="agent-state-card" class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 flex-col flex-shrink-0" style="min-height:0;">
+                <div id="agent-state-card" class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 flex-col flex-shrink-0 min-w-0 overflow-hidden" style="min-height:0;">
                     <div class="flex justify-between items-center px-4 pt-4 pb-2 flex-shrink-0">
                         <div class="flex items-center gap-2">
                             <h3 class="font-semibold text-gray-800 dark:text-gray-100">Agent State</h3>
@@ -1178,7 +1191,7 @@ html.dark .agent-tab.active {
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3.5 h-3.5"><path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l-.312.311a7 7 0 0 0 11.712-3.138.75.75 0 0 0-1.449-.39Zm-10.625-2.85a5.5 5.5 0 0 1 9.201-2.465l.312.31H11.767a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.535a.75.75 0 0 0-1.5 0v2.033l-.312-.31A7 7 0 0 0 2.627 8.396a.75.75 0 0 0 1.449.39l.611.789Z" clip-rule="evenodd"/></svg>
                     </button>
                 </div>
-                <div id="mobile-agent-state-content" class="p-4">
+                <div id="mobile-agent-state-content" class="p-4 overflow-x-hidden break-words">
                     <p class="text-sm text-gray-400 italic">No state yet.</p>
                 </div>
             </div>
@@ -1188,7 +1201,7 @@ html.dark .agent-tab.active {
                 <div class="flex justify-between items-center px-4 py-2 border-b border-gray-100">
                     <h5 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Session State</h5>
                 </div>
-                <div id="mobile-summary-content" class="p-4">
+                <div id="mobile-summary-content" class="p-4 overflow-x-hidden break-words">
                     <p class="text-sm text-gray-400 italic">No summary yet. Start chatting to generate one.</p>
                 </div>
             </div>

@@ -93,6 +93,19 @@ html.dark #plan-modal .recap-prose h5, html.dark #plan-modal .recap-prose h6 { c
 html.dark #plan-modal .recap-prose blockquote { border-left-color: #475569; color: #94a3b8; }
 html.dark #plan-modal .recap-prose code { background: #1e293b; color: #e2e8f0; }
 html.dark #plan-modal .recap-prose pre { background: #1e293b; }
+/* Prevent pre/code overflow in right sidebar panels */
+#agent-state-content pre,
+#agent-state-content code,
+#mobile-agent-state-content pre,
+#mobile-agent-state-content code,
+#SessionStateContent pre,
+#SessionStateContent code,
+#mobile-SessionStateContent pre,
+#mobile-SessionStateContent code {
+    white-space: pre-wrap !important;
+    word-break: break-all;
+    overflow-wrap: break-word;
+}
 </style>
 <div class="sessions-page flex flex-col h-[calc(100vh-3.5rem)]">
 
@@ -193,7 +206,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
                 </div>
 
                 <!-- Side panels wrapper (Agent State + Session State stacked vertically) -->
-                <div id="side-panels-wrapper" class="hidden lg:flex flex-col border-l dark:border-gray-600 border-gray-200 bg-white dark:bg-gray-800 flex-shrink-0 min-h-0" style="width: 300px;">
+                <div id="side-panels-wrapper" class="hidden lg:flex flex-col border-l dark:border-gray-600 border-gray-200 bg-white dark:bg-gray-800 flex-shrink-0 min-h-0 min-w-0 overflow-hidden" style="width: 300px;">
                     <!-- Agent State Panel -->
                     <div id="agent-state-panel" class="flex-shrink-0">
                         <div id="AgentState" class="flex justify-between items-center px-4 py-3 border-b border-gray-100 dark:border-gray-600">
@@ -202,7 +215,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3.5 h-3.5"><path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.312.311a7 7 0 0 0 11.712-3.138.75.75 0 0 0-1.449-.39Zm-10.625-2.85a5.5 5.5 0 0 1 9.201-2.465l.312.31H11.767a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.535a.75.75 0 0 0-1.5 0v2.033l-.312-.31A7 7 0 0 0 2.627 8.396a.75.75 0 0 0 1.449.39l.611.789Z" clip-rule="evenodd"/></svg>
                             </button>
                         </div>
-                        <div id="agent-state-content" class="overflow-y-auto p-4" style="max-height:200px;">
+                        <div id="agent-state-content" class="overflow-y-auto overflow-x-hidden p-4 break-words" style="max-height:200px;">
                             <p class="text-xs text-gray-400 dark:text-gray-500 italic">No state yet.</p>
                         </div>
                     </div>
@@ -218,7 +231,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
                                 </button>
                             </div>
                         </div>
-                        <div id="SessionStateContent" class="flex-1 overflow-y-auto p-4">
+                        <div id="SessionStateContent" class="flex-1 overflow-y-auto overflow-x-hidden p-4 break-words">
                             <div id="SessionContext"></div>
                             <div id="SessionPlan"></div>
                             <div id="SessionSkills"></div>
@@ -407,7 +420,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
                 </button>
             </div>
         </div>
-        <div id="mobile-SessionStateContent" class="flex-1 overflow-y-auto p-4">
+        <div id="mobile-SessionStateContent" class="flex-1 overflow-y-auto overflow-x-hidden p-4 break-words">
             <div id="mobile-SessionContext"></div>
             <div id="mobile-SessionPlan"></div>
             <div id="mobile-SessionSkills"></div>
@@ -422,7 +435,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3.5 h-3.5"><path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.598a.75.75 0 0 0-.75.75v3.634a.75.75 0 0 0 1.5 0v-2.033l.312.311a7 7 0 0 0 11.712-3.138.75.75 0 0 0-1.449-.39Zm-10.625-2.85a5.5 5.5 0 0 1 9.201-2.465l.312.31H11.767a.75.75 0 0 0 0 1.5h3.634a.75.75 0 0 0 .75-.75V3.535a.75.75 0 0 0-1.5 0v2.033l-.312-.31A7 7 0 0 0 2.627 8.396a.75.75 0 0 0 1.449.39l.611.789Z" clip-rule="evenodd"/></svg>
                 </button>
             </div>
-            <div id="mobile-agent-state-content" class="p-4">
+            <div id="mobile-agent-state-content" class="p-4 overflow-x-hidden break-words">
                 <p class="text-xs text-gray-400 dark:text-gray-500 italic">No state yet.</p>
             </div>
         </div>
