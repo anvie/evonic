@@ -602,6 +602,10 @@ class WhatsAppChannel(BaseChannel):
         if is_group:
             group_id = jid.split('@')[0] if '@' in jid else jid
             session_user_id = group_id
+            # Map group_id → sender JID so that _do_send (including the
+            # buffered worker path where external_user_id is the group_id)
+            # can resolve the correct individual JID for replies.
+            self._jid_map[group_id] = sender
         else:
             session_user_id = sender
 
