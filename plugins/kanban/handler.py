@@ -1153,6 +1153,12 @@ command_registry.register(
     "autopilot",
     _autopilot_handler,
     "Enable/disable autopilot mode for automatic task processing",
+    [{
+        "name": "state",
+        "required": False,
+        "description": "New autopilot state; omit to show current state",
+        "options": ["on", "off"],
+    }],
 )
 
 

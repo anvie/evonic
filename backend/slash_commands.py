@@ -17,12 +17,27 @@ CommandHandler = Callable[[str, str, str, Optional[str], str], str]
 
 
 class SlashCommand:
-    """Represents a single slash command."""
+    """Represents a single slash command and its input guidance metadata."""
 
-    def __init__(self, name: str, handler: CommandHandler, description: str = ""):
+    def __init__(
+        self,
+        name: str,
+        handler: CommandHandler,
+        description: str = "",
+        parameters: Optional[list] = None,
+    ):
         self.name = name
         self.handler = handler
         self.description = description
+        self.parameters = parameters or []
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+            "accepts_args": bool(self.parameters),
+        }
 
 
 class SlashCommandRegistry:
@@ -31,17 +46,23 @@ class SlashCommandRegistry:
     def __init__(self):
         self._commands: Dict[str, SlashCommand] = {}
 
-    def register(self, name: str, handler: CommandHandler, description: str = ""):
-        """Register a command handler."""
-        self._commands[name] = SlashCommand(name, handler, description)
+    def register(
+        self,
+        name: str,
+        handler: CommandHandler,
+        description: str = "",
+        parameters: Optional[list] = None,
+    ):
+        """Register a command handler and optional positional input metadata."""
+        self._commands[name] = SlashCommand(name, handler, description, parameters)
 
     def get(self, name: str) -> Optional[SlashCommand]:
         """Get a command by name."""
         return self._commands.get(name)
 
     def list_commands(self) -> list:
-        """Return list of (name, description) tuples."""
-        return [(cmd.name, cmd.description) for cmd in self._commands.values()]
+        """Return registered command objects."""
+        return list(self._commands.values())
 
 
 def _expand_slash_list(raw_value: str, all_names: set) -> set:
@@ -74,20 +95,20 @@ def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> 
         is_super = can_cd = has_subagent = False
         disabled_raw = ''
 
-    disabled_set = _expand_slash_list(disabled_raw, {name for name, _desc in commands})
+    disabled_set = _expand_slash_list(disabled_raw, {command.name for command in commands})
 
     available = []
-    for name, description in commands:
-        if name in {'cd', 'cwd'} and not can_cd:
+    for command in commands:
+        if command.name in {'cd', 'cwd'} and not can_cd:
             continue
-        if name in {'restart', 'shutdown'} and not is_super:
+        if command.name in {'restart', 'shutdown'} and not is_super:
             continue
-        if name == 'sub' and not has_subagent:
+        if command.name == 'sub' and not has_subagent:
             continue
-        if not is_super and name in disabled_set:
+        if not is_super and command.name in disabled_set:
             continue
-        available.append((name, description))
-    return sorted(available, key=lambda command: command[0])
+        available.append(command)
+    return sorted(available, key=lambda command: command.name)
 
 
 # Global registry instance
@@ -224,6 +245,12 @@ def _register_builtins():
         "clear",
         clear_handler,
         "Clear chat history (`/clear ar` archives it)",
+        [{
+            "name": "archive",
+            "required": False,
+            "description": "Whether to skip session archiving",
+            "options": ["noa", "noarchive"],
+        }],
     )
 
     # /help — Show available commands
@@ -235,8 +262,8 @@ def _register_builtins():
         args: str,
     ) -> str:
         lines = ["**Available commands:**"]
-        for name, desc in list_available_commands(agent_id, channel_id):
-            lines.append(f"- `/{name}` — {desc}")
+        for command in list_available_commands(agent_id, channel_id):
+            lines.append(f"- `/{command.name}` — {command.description}")
         return "\n".join(lines)
 
     command_registry.register(
@@ -390,6 +417,10 @@ def _register_builtins():
         "investigate",
         investigate_handler,
         "Send investigation request to another agent with session context",
+        [
+            {"name": "agent-id", "required": True, "description": "Enabled agent to investigate"},
+            {"name": "context", "required": True, "description": "Investigation request and relevant context", "greedy": True},
+        ],
     )
 
 
@@ -554,6 +585,7 @@ def _register_builtins():
         "cd",
         cd_handler,
         "Change workspace directory",
+        [{"name": "path", "required": True, "description": "Target workspace directory", "greedy": True}],
     )
 
 
@@ -1009,44 +1041,40 @@ def _register_builtins():
             current_id = current.get("id") if current else None
             providers = db.get_providers()
             all_models = db.get_enabled_llm_models()
-
             if not all_models:
                 return "No models configured. Add models in Settings > Models."
 
             models_by_prov = {}
-            for m in all_models:
-                prov = m.get("provider", "unknown")
-                models_by_prov.setdefault(prov, []).append(m)
-
+            for model_item in all_models:
+                provider = model_item.get("provider", "unknown")
+                models_by_prov.setdefault(provider, []).append(model_item)
             prov_names = {p["id"]: p.get("name", p["id"]) for p in providers}
 
             is_compact = False
             if channel_id:
                 channel = db.get_channel(channel_id)
                 if channel:
-                    ch_type = channel.get("type", "")
-                    is_compact = ch_type in ("telegram", "whatsapp", "whatsapp_shared")
+                    is_compact = channel.get("type", "") in (
+                        "telegram", "whatsapp", "whatsapp_shared")
             dot = "." if is_compact else "\\."
 
-            def _sort_key(m):
-                sc = m.get("shortcode")
-                return sc if isinstance(sc, int) else 1_000_000
+            def _sort_key(model_item):
+                shortcode = model_item.get("shortcode")
+                return shortcode if isinstance(shortcode, int) else 1_000_000
 
             lines = ["**Available Models**", ""]
-            for prov_id in sorted(models_by_prov.keys()):
-                prov_label = prov_names.get(prov_id, prov_id)
-                lines.append(f"**{prov_label}**")
+            for prov_id in sorted(models_by_prov):
+                lines.extend((f"**{prov_names.get(prov_id, prov_id)}**", ""))
+                for model_item in sorted(models_by_prov[prov_id], key=_sort_key):
+                    shortcode = model_item.get("shortcode", "?")
+                    name = model_item.get("name", "unknown")
+                    model_name = model_item.get("model_name", "")
+                    detail = f" ({model_name})" if model_name else ""
+                    marker = " ✓" if model_item.get("id") == current_id else ""
+                    lines.append(f"{shortcode}{dot} {name}{detail}{marker}")
                 lines.append("")
-                for m in sorted(models_by_prov[prov_id], key=_sort_key):
-                    sc = m.get("shortcode", "?")
-                    name = m.get("name", "unknown")
-                    model_name = m.get("model_name", "")
-                    is_current = " ✓" if m.get("id") == current_id else ""
-                    if model_name:
-                        lines.append(f"{sc}{dot} {name} ({model_name}){is_current}")
-                    else:
-                        lines.append(f"{sc}{dot} {name}{is_current}")
-                lines.append("")
+            lines.append("Type /model set <number|provider/model> to switch.")
+            return "\n".join(lines) if is_compact else "\n\n".join(l for l in lines if l)
 
             if current:
                 sc = current.get("shortcode", "?")
@@ -1059,8 +1087,13 @@ def _register_builtins():
                 return "\n".join(lines)
             return "\n\n".join(l for l in lines if l)
 
-        # Set model
+        # Set model - accept direct arg or explicit `set` prefix
         new_model_id = args.strip()
+        if new_model_id.lower().startswith("set "):
+            new_model_id = new_model_id[4:].strip()
+        elif new_model_id.lower() == "set":
+            return "Usage: /model set <number|provider/model>"
+
 
         # Try shortcode first (numeric input)
         model = None
@@ -1073,7 +1106,7 @@ def _register_builtins():
             model = db.get_model_by_model_name(new_model_id)
 
         if not model:
-            return f"Model '{new_model_id}' not found. Type /model to see available models."
+            return f"Model '{new_model_id}' not found. Type /model list to see available models."
 
         success = db.set_agent_model(agent_id, model["id"])
         if not success:
@@ -1091,6 +1124,17 @@ def _register_builtins():
         "model",
         model_handler,
         "Show or switch LLM model — /model, /model list|ls, /model [number|provider/model]",
+        [{
+            "name": "action",
+            "required": False,
+            "description": "Action to perform; omit to show the current model",
+            "options": ["current", "list", "set"],
+        }, {
+            "name": "model",
+            "required": False,
+            "description": "Model shortcode or provider/model ID; used with set",
+            "placeholder": "number|provider/model",
+        }],
     )
 
 
@@ -1167,6 +1211,7 @@ def _register_builtins():
         "sub",
         sub_handler,
         "Spawn a sub-agent with a direct task",
+        [{"name": "task", "required": True, "description": "Task for the new sub-agent", "greedy": True}],
     )
 
     # /detach — Hand off the running long-running process to a background watcher

@@ -1121,6 +1121,7 @@ html.dark .agent-tab.active {
                             onkeydown="chatInputKeydown(event)"
                             oninput="chatInputChanged(this)"></textarea>
                             <div id="chat-bash-hint" class="hidden" aria-live="polite">! Bash mode: shell command</div>
+                            <div id="chat-command-hint" class="hidden absolute left-0 right-0 z-40 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs shadow-sm dark:border-indigo-800 dark:bg-gray-800" style="bottom: calc(100% + 0.5rem);" aria-live="polite"></div>
                             <div id="chat-command-menu" class="hidden absolute left-0 right-0 z-50 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800" style="bottom: calc(100% + 0.5rem);" role="listbox" aria-label="Available slash commands"></div>
                         </div>
                         <button onclick="handleChatBtn()" id="chat-send-btn" title="Send" class="bg-indigo-500 hover:bg-indigo-600 text-white p-2.5 rounded-md text-sm transition-colors flex items-center justify-center"><svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
@@ -5226,6 +5227,54 @@ function closeChatCommandMenu() {
     chatCommandIndex = -1;
 }
 
+function closeChatCommandHint() {
+    const hint = document.getElementById('chat-command-hint');
+    if (hint) {
+        hint.classList.add('hidden');
+        hint.replaceChildren();
+    }
+}
+
+function commandInputContext(value) {
+    const match = value.trimStart().match(/^\/([\w-]+)(?:\s+(.*))?$/s);
+    if (!match) return null;
+    const command = chatCommands.find(item => item.name.toLowerCase() === match[1].toLowerCase());
+    if (!command || !command.accepts_args) return null;
+    const args = match[2] || '';
+    const complete = args.trim() ? args.trim().split(/\s+/).length : 0;
+    const trailingSpace = /\s$/.test(value);
+    let activeIndex = args.trim() ? complete - (trailingSpace ? 0 : 1) : 0;
+    const greedyIndex = command.parameters.findIndex(parameter => parameter.greedy);
+    if (greedyIndex >= 0 && activeIndex >= greedyIndex) activeIndex = greedyIndex;
+    activeIndex = Math.min(activeIndex, command.parameters.length - 1);
+    return {command, activeIndex: Math.max(activeIndex, 0)};
+}
+
+function renderChatCommandHint(context) {
+    const hint = document.getElementById('chat-command-hint');
+    if (!hint || !context) {
+        closeChatCommandHint();
+        return;
+    }
+    const {command, activeIndex} = context;
+    const syntax = document.createElement('div');
+    syntax.className = 'font-mono font-semibold text-indigo-700 dark:text-indigo-300';
+    syntax.textContent = `/${command.name} ` + command.parameters.map(parameter =>
+        parameter.required ? `<${parameter.placeholder || parameter.name}>` : `[${parameter.placeholder || parameter.name}]`
+    ).join(' ');
+    const details = document.createElement('div');
+    details.className = 'mt-1 flex flex-wrap gap-x-3 gap-y-1 text-gray-600 dark:text-gray-300';
+    command.parameters.forEach((parameter, index) => {
+        const item = document.createElement('span');
+        item.className = index === activeIndex ? 'font-semibold text-indigo-700 dark:text-indigo-300' : '';
+        const options = parameter.options?.length ? ` Options: ${parameter.options.join(' | ')}.` : '';
+        item.textContent = `${index + 1}. ${parameter.name}${parameter.required ? ' (required)' : ' (optional)'} — ${parameter.description || ''}${options}`;
+        details.appendChild(item);
+    });
+    hint.replaceChildren(syntax, details);
+    hint.classList.remove('hidden');
+}
+
 function updateChatComposer(input) {
     if (!input) return;
     const value = input.value;
@@ -5236,9 +5285,10 @@ function updateChatComposer(input) {
     if (bashHint) bashHint.classList.toggle('hidden', !bashMode);
     input.classList.toggle('font-mono', bashMode);
 
-    // No commands available (all disabled) — don't show suggestions
+    // No commands available (all disabled) — don’t show suggestions
     if (!chatCommands.length) return;
 
+    renderChatCommandHint(commandInputContext(value));
     const match = trimmed.match(/^\/([\w-]*)$/);
     if (!match) {
         closeChatCommandMenu();
@@ -5286,14 +5336,15 @@ function getVisibleChatCommands() {
     return chatCommands.filter(command => command.name.toLowerCase().includes(match[1].toLowerCase()));
 }
 
-function selectChatCommand(command) {
+function selectChatCommand(command, executeNoArgs = false) {
     const input = document.getElementById('chat-input');
     if (!input || !command) return;
-    input.value = `/${command.name} `;
+    input.value = `/${command.name}${command.accepts_args ? ' ' : ''}`;
     closeChatCommandMenu();
     chatInputChanged(input);
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
+    if (executeNoArgs && !command.accepts_args) sendChat();
 }
 
 function chatInputKeydown(event) {
@@ -5307,7 +5358,7 @@ function chatInputKeydown(event) {
         }
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
-            selectChatCommand(choices[chatCommandIndex < 0 ? 0 : chatCommandIndex]);
+            selectChatCommand(choices[chatCommandIndex < 0 ? 0 : chatCommandIndex], true);
             return;
         }
         if (event.key === 'Escape') {
