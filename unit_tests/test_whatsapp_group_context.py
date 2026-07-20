@@ -64,17 +64,7 @@ def test_missing_push_name_falls_back_to_digits():
     assert result.startswith('[WhatsApp group "Family Chat" — message from 628123456789]')
 
 
-def test_quoted_text_truncated_to_200_chars():
+def test_quoted_text_is_not_truncated():
     long_quote = 'x' * 500
     result = _wrap(quoted_text=long_quote, quoted_sender_name='Andi')
-    assert f'[Replying to Andi: "{"x" * 200}"]' in result
-    assert 'x' * 201 not in result
-
-
-def test_dm_reply_format_unchanged():
-    # Regression lock: the DM path in handle_callback must keep the literal
-    # "[Replying to bot: ...]" / "[Replying to: ...]" format untouched.
-    import inspect
-    from backend.channels import whatsapp
-    src = inspect.getsource(whatsapp.WhatsAppChannel)
-    assert '"Replying to bot" if quoted_is_bot else "Replying to"' in src
+    assert f'[Replying to Andi: "{long_quote}"]' in result

@@ -5,6 +5,7 @@ const pino = require('pino');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
+const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const CALLBACK_URL = process.env.CALLBACK_URL || '';
@@ -126,16 +127,6 @@ function scheduleRestart() {
         restartScheduled = false;
         startBaileys().catch((e) => console.error('[whatsapp-bridge] Baileys restart error:', e));
     }, delay);
-}
-
-// Unwrap container messages (disappearing / view-once) to reach the real content.
-// Groups with disappearing messages enabled wrap every message in ephemeralMessage.
-function unwrapMessage(message) {
-    return message?.ephemeralMessage?.message
-        || message?.viewOnceMessage?.message
-        || message?.viewOnceMessageV2?.message
-        || message?.documentWithCaptionMessage?.message
-        || message;
 }
 
 async function startBaileys() {
@@ -365,17 +356,15 @@ async function startBaileys() {
             const contextInfo = content?.extendedTextMessage?.contextInfo
                 || content?.imageMessage?.contextInfo
                 || content?.videoMessage?.contextInfo
+                || content?.documentMessage?.contextInfo
                 || content?.audioMessage?.contextInfo;
-            let quotedText = null;
+            let quotedDetails = null;
             let quotedIsBot = false;
             let quotedSender = '';
             let quotedSenderName = '';
             const quoted = contextInfo?.quotedMessage;
             if (quoted) {
-                quotedText =
-                    quoted.conversation ||
-                    quoted.extendedTextMessage?.text ||
-                    null;
+                quotedDetails = extractQuotedMessage(quoted);
                 const quotedParticipant = contextInfo.participant || '';
                 if (quotedParticipant) {
                     quotedIsBot = (botId && areJidsSameUser(quotedParticipant, botId))
@@ -413,7 +402,10 @@ async function startBaileys() {
                 from: sender, jid, message_id: messageId, text, image,
                 alt_sender: altSender,
                 alt_jid: altJid,
-                quoted_text: quotedText,
+                // quoted_text remains for older channel consumers; quoted_message
+                // carries media identity even when the quoted item has no caption.
+                quoted_text: quotedDetails?.text || null,
+                quoted_message: quotedDetails,
                 is_group: isGroup,
                 bot_mentioned: botMentioned,
                 quoted_is_bot: quotedIsBot,
