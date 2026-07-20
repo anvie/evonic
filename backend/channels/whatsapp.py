@@ -605,7 +605,7 @@ class WhatsAppChannel(BaseChannel):
             # Map group_id → sender JID so that _do_send (including the
             # buffered worker path where external_user_id is the group_id)
             # can resolve the correct individual JID for replies.
-            self._jid_map[group_id] = sender
+            self._jid_map[group_id] = jid
         else:
             session_user_id = sender
 
