@@ -1799,6 +1799,7 @@ class AgentRuntime:
             if _jsonl_entries is None:
                 _jsonl_entries = chatlog.get_entries_for_llm_trail(
                     after_ts=summary_record.get('last_message_ts') if summary_record else None,
+                    **_ctx.trail_history_kwargs(agent_id),
                 )
             # NOTE: The second condition handles an edge case where _jsonl_entries is empty
             # but the chatlog still has entries for this session. This happens when ALL

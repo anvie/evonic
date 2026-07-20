@@ -546,6 +546,26 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
     return True
 
 
+def trail_history_kwargs(agent_id: str) -> dict:
+    """Extra kwargs for chatlog.get_entries_for_llm_trail().
+
+    Normally empty, so trail history keeps its default 50-message sliding
+    window. For agent ids listed in the `trail_history_full_agents` setting,
+    raise the message limit to `trail_history_limit` (default 1_000_000), i.e.
+    TRUE full history — the whole transcript is sent every turn until the model
+    hits its context ceiling. Used by the CMP endurance benchmark to run a
+    genuine full-history baseline against the bounded windowed/CMP arms.
+    """
+    try:
+        from models.db import db
+        full = (db.get_setting('trail_history_full_agents', '') or '')
+        if agent_id and agent_id in {a.strip() for a in full.split(',') if a.strip()}:
+            return {'limit': int(db.get_setting('trail_history_limit', '1000000') or 1000000)}
+    except Exception:
+        pass
+    return {}
+
+
 def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, str] = None) -> str:
     """Build the system prompt including tool injections and KB file listing.
 
