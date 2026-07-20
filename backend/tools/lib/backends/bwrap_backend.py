@@ -52,6 +52,7 @@ import time
 from backend.tools.lib.exec_backend import truncate
 from backend.tools.lib.process_tracker import process_tracker
 from backend.tools.lib.backends.local_backend import LocalBackend, _MAX_OUTPUT_BYTES
+from backend.tools._workspace import scratch_dir
 
 try:
     from config import (
@@ -352,7 +353,9 @@ def _nsenter_argv(inner_pid: int, workdir: str, inner: list, ulimit_v_kb: int = 
     trampoline. nsenter -p makes the forked child enter the PID namespace;
     zombies inside the sandbox are reaped by bwrap's init.
     """
-    setup = f'cd {shlex.quote(workdir)} || exit 127'
+    # /tmp is a fresh tmpfs at sandbox start, so the scratchpad workdir may not
+    # exist yet — create it before cd (harmless for /workspace, which exists).
+    setup = f'mkdir -p {shlex.quote(workdir)} 2>/dev/null; cd {shlex.quote(workdir)} || exit 127'
     if ulimit_v_kb > 0:
         setup += f'; ulimit -v {ulimit_v_kb} 2>/dev/null'
     return ['nsenter', '--preserve-credentials', '-U', '-m', '-u', '-i', '-p',
@@ -400,7 +403,8 @@ class BwrapBackend(LocalBackend):
             return
         ws = self._cwd()
         os.makedirs(os.path.join(ws, _HOME_SUBDIR), exist_ok=True)
-        os.makedirs(os.path.join(ws, '.scratch'), exist_ok=True)
+        # The scratchpad lives in the sandbox's tmpfs /tmp (created lazily by the
+        # nsenter cd trampoline), not in the bound workspace — nothing to mkdir here.
         self._dirs_ready = True
 
     def _bwrap_argv(self) -> list:
@@ -451,7 +455,7 @@ class BwrapBackend(LocalBackend):
             'TMPDIR': '/tmp',
             'LANG': 'C.UTF-8',
             'TERM': 'dumb',
-            'SCRATCH': '/workspace/.scratch',
+            'SCRATCH': scratch_dir(self._agent_id),
         }
         run_env.update(env)
         return run_env
@@ -464,11 +468,11 @@ class BwrapBackend(LocalBackend):
         return prefix
 
     def _workdir(self) -> str:
-        # Normal sub-agents run with cwd = /workspace/.scratch so their
-        # relative-path writes stay out of the project root.  Explorer
-        # sub-agents have their own explicit workspace and must NOT be
-        # redirected to .scratch/.
-        return '/workspace/.scratch' if (self._is_subagent and not self._is_explorer) else '/workspace'
+        # Normal sub-agents run with cwd = their scratchpad so their relative-path
+        # writes stay out of the project root.  Explorer sub-agents have their own
+        # explicit workspace and must NOT be redirected.  The scratchpad is created
+        # by the nsenter cd trampoline (tmpfs /tmp is empty at sandbox start).
+        return scratch_dir(self._agent_id) if (self._is_subagent and not self._is_explorer) else '/workspace'
 
     # ------------------------------------------------------------------
     # Keeper lifecycle

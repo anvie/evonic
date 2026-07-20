@@ -20,6 +20,7 @@ import time
 
 from backend.tools.lib.exec_backend import ExecutionBackend, truncate
 from backend.tools.lib.process_tracker import process_tracker
+from backend.tools._workspace import scratch_dir
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,7 @@ def _get_or_create_container(session_id: str, agent_id: str = '', workspace: str
 
     name = _container_name(session_id, agent_id)
     effective_workspace = os.path.abspath(workspace if workspace else SANDBOX_WORKSPACE)
+    scratch = scratch_dir(agent_id)
     created_at = time.time()
 
     cmd = [
@@ -296,9 +298,9 @@ def _get_or_create_container(session_id: str, agent_id: str = '', workspace: str
         '-v', f'{effective_workspace}:/workspace:rw',
         '-v', f'{_HELPERS_DIR}:{_HELPERS_MOUNT}:ro',
         '-w', '/workspace',
-        '-e', 'SCRATCH=/workspace/.scratch',
+        '-e', f'SCRATCH={scratch}',
         SANDBOX_IMAGE,
-        'sh', '-c', 'mkdir -p /workspace/.scratch && exec sleep infinity',
+        'sh', '-c', f'mkdir -p {scratch} && exec sleep infinity',
     ]
 
     result = _docker(*cmd)
@@ -397,11 +399,11 @@ class DockerBackend(ExecutionBackend):
         self._session_id = session_id
         self._agent_id = agent_id
         self._workspace = workspace
-        # Normal sub-agents run with cwd = /workspace/.scratch so their
-        # relative-path writes stay out of the project root.  Explorer
-        # sub-agents have their own explicit workspace and must NOT be
-        # redirected to .scratch/.
-        self._workdir = '/workspace/.scratch' if (is_subagent and not is_explorer) else None
+        # Normal sub-agents run with cwd = their scratchpad so their relative-path
+        # writes stay out of the project root.  Explorer sub-agents have their own
+        # explicit workspace and must NOT be redirected to the scratchpad.  The
+        # dir is created at container start (see _get_or_create_container).
+        self._workdir = scratch_dir(agent_id) if (is_subagent and not is_explorer) else None
 
     # ------------------------------------------------------------------
     # Path resolution — translate host paths to /workspace mount point

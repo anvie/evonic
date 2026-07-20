@@ -11,6 +11,17 @@ _SHARED_AGENTS_DIR = os.path.join(_BASE_DIR, 'shared', 'agents')
 _SELF_PREFIX = '/_self/'
 
 
+def scratch_dir(agent_id: str) -> str:
+    """Per-agent scratchpad for throwaway scripts and temp files.
+
+    A sandbox/container path (tmpfs) — NOT under the workspace mount.  The
+    $SCRATCH env var, the sandbox cwd redirect, and sub-agent relative-write
+    redirection all resolve here so an agent's scripts and their output stay
+    together and never clutter the project workspace.
+    """
+    return f"/tmp/evonic-temp/{agent_id or 'default'}-scratchpad"
+
+
 def effective_agent_id(agent: dict) -> str:
     """Return the effective agent ID for /_self/ path resolution.
 
@@ -211,15 +222,22 @@ def resolve_workspace_path(agent, file_path: str, fallback_workspace: str) -> st
         return resolved
 
     if not os.path.isabs(file_path):
+        # Sub-agents are delegated, throwaway tasks — contain their relative-path
+        # writes inside the per-agent scratchpad (tmpfs, outside the workspace) so
+        # they never clutter the project and stay alongside bash/runpy output.
+        # Absolute paths pass through unchanged (mirrors the shell cwd redirect).
+        if (agent or {}).get('is_subagent') and not (agent or {}).get('is_explorer'):
+            base = scratch_dir((agent or {}).get('id', ''))
+            resolved = os.path.normpath(os.path.join(base, file_path))
+            # Keep the write inside the scratchpad (block ../ escape).  Uses
+            # normpath, not realpath: this is a container path that need not
+            # exist on the host, and realpath would rewrite /tmp on some hosts.
+            if resolved == base or resolved.startswith(base + os.sep):
+                return resolved
+            return file_path  # block: return unresolvable path
         workspace = (agent or {}).get('workspace')
         if workspace:
-            # Sub-agents are delegated, throwaway tasks — contain their
-            # relative-path writes inside the gitignored .scratch/ dir so they
-            # never clutter the project root.  Absolute paths pass through
-            # unchanged (mirrors the shell cwd redirect for sub-agents).
             base = os.path.abspath(workspace)
-            if (agent or {}).get('is_subagent') and not (agent or {}).get('is_explorer'):
-                base = os.path.join(base, '.scratch')
             resolved = os.path.join(base, file_path)
             # Boundary check for relative path traversal (e.g. ../../etc/passwd)
             try:
@@ -281,7 +299,8 @@ def root_pollution_nudge(agent, host_path: Optional[str]) -> Optional[str]:
     name = os.path.basename(host_path)
     return (
         f"Refused: '{name}' would be written to the project root, which must stay clean. "
-        f"Write throwaway scripts and temp files to /workspace/.scratch (gitignored, "
-        f"available as the $SCRATCH env var). Durable project scripts belong in scripts/ "
-        f"(migrations in scripts/migrations/). Re-issue the write with one of those paths."
+        f"Write throwaway scripts and temp files to your scratchpad "
+        f"({scratch_dir((agent or {}).get('id', ''))}, available as the $SCRATCH env var). "
+        f"Durable project scripts belong in scripts/ (migrations in scripts/migrations/). "
+        f"Re-issue the write with one of those paths."
     )

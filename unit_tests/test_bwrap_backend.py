@@ -15,6 +15,7 @@ import pytest
 
 from backend.tools.lib.backends import bwrap_backend
 from backend.tools.lib.backends.bwrap_backend import BwrapBackend, _sanitize_hostname
+from backend.tools._workspace import scratch_dir
 
 
 @pytest.fixture(autouse=True)
@@ -123,8 +124,8 @@ def test_bwrap_argv_core_flags(tmp_path):
 
 def test_workdir_subagent(tmp_path):
     assert BwrapBackend(session_id='s1', workspace=str(tmp_path))._workdir() == '/workspace'
-    assert BwrapBackend(session_id='s1', workspace=str(tmp_path),
-                        is_subagent=True)._workdir() == '/workspace/.scratch'
+    assert BwrapBackend(session_id='s1', workspace=str(tmp_path), agent_id='a_sub_1',
+                        is_subagent=True)._workdir() == scratch_dir('a_sub_1')
 
 
 def test_bwrap_argv_binds_resolv_conf_target(tmp_path, monkeypatch):
@@ -181,12 +182,12 @@ def test_run_bash_returns_error_when_unavailable(tmp_path, monkeypatch):
 
 def test_base_env_is_minimal(tmp_path, monkeypatch):
     monkeypatch.setenv('EVONIC_SECRET_TOKEN', 'leak-me-not')
-    b = BwrapBackend(session_id='s1', workspace=str(tmp_path), agent_name='bot')
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path), agent_id='botagent', agent_name='bot')
     env = b._base_env({'FOO': 'bar'})
     assert 'EVONIC_SECRET_TOKEN' not in env
     assert env['HOME'] == '/home/agent'
     assert env['HOSTNAME'] == 'bot'
-    assert env['SCRATCH'] == '/workspace/.scratch'
+    assert env['SCRATCH'] == scratch_dir('botagent')
     assert env['FOO'] == 'bar'
 
 
