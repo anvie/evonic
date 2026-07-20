@@ -107,8 +107,18 @@ def render_cmp_section(cmp: dict, agent_name: str = "Agent") -> str:
         lines.append("")
         lines.extend(_compact_card(cmp["paths"][dep_id], "dependency of active path"))
 
+    # Pinned waypoints: non-active paths this turn references (set by the
+    # detector's pin field). Rendered as compact cards — key facts included —
+    # even when archived, so cross-path recap/compare queries can be answered
+    # without switching. Transient: refreshed every turn.
+    pinned_ids = [pid for pid in (cmp.get("pinned_ids") or [])
+                  if pid in cmp["paths"] and pid != active_id and pid not in ancestors]
+    for pid in sort_path_ids({p: cmp["paths"][p] for p in pinned_ids}):
+        lines.append("")
+        lines.extend(_compact_card(cmp["paths"][pid], "pinned for this request"))
+
     others = [cmp["paths"][pid] for pid in sort_path_ids(cmp["paths"])
-              if pid != active_id and pid not in ancestors]
+              if pid != active_id and pid not in ancestors and pid not in pinned_ids]
     # Lifecycle tiers: preserved paths keep their snippet card; archived
     # paths contribute their title only (their map node) — the next rung
     # down in context cost before pruning removes them entirely.
@@ -120,13 +130,17 @@ def render_cmp_section(cmp: dict, agent_name: str = "Agent") -> str:
         lines.extend(_snippet_card(p) for p in preserved)
     if archived:
         lines.append("")
-        lines.append("Archived paths (title only — returning restores them):")
-        lines.extend(f"- {p['id']} {p.get('title') or ''} [archived]"
-                     for p in archived)
+        lines.append("Archived paths (title + tags — recall(query) searches them, "
+                     "read_transcript(id) reads them):")
+        for p in archived:
+            tags = ", ".join((p.get("tags") or [])[:6])
+            tag_note = f" · tags: {tags}" if tags else ""
+            lines.append(f"- {p['id']} {p.get('title') or ''} [archived]{tag_note}")
 
     lines.append("")
-    lines.append("Use switch_path(path_id) to resume another path, or "
-                 "new_path(title) to start an unrelated task as its own path.")
+    lines.append("To retrieve an earlier task's details: recall(query) searches "
+                 "all paths, read_transcript(path_id) reads one, switch_path(path_id) "
+                 "resumes it, new_path(title) starts an unrelated task.")
 
     text = "\n".join(lines)
     if len(text) > RENDER_MAX_CHARS:

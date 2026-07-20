@@ -16,28 +16,37 @@ _FENCE_RE = re.compile(r'```(?:json)?\s*(.*?)```', re.DOTALL)
 _decoder = json.JSONDecoder()
 
 
-def extract_first_json(text: str):
-    """Return the first complete JSON object (dict) in an LLM response,
-    or None. Fenced ```json blocks are preferred; otherwise scans for the
-    first parseable object, ignoring surrounding prose."""
+def extract_first_json(text: str, require_key: str = None):
+    """Return a complete JSON object (dict) from an LLM response, or None.
+
+    Fenced ```json blocks are preferred; otherwise scans for parseable objects,
+    ignoring surrounding prose (reasoning before, commentary after). When
+    `require_key` is set, returns the FIRST object that contains that key —
+    so a distractor object in the model's prose (e.g. an example, or a nested
+    sub-object emitted before the real envelope) is skipped in favor of the
+    actual payload. Without it, returns the first parseable object."""
     if not text:
         return None
     candidates = []
-    fence = _FENCE_RE.search(text)
-    if fence:
+    for fence in _FENCE_RE.finditer(text):
         candidates.append(fence.group(1))
     candidates.append(text)
+    first_any = None
     for candidate in candidates:
         idx = candidate.find('{')
         while idx != -1:
             try:
                 obj, _end = _decoder.raw_decode(candidate[idx:])
                 if isinstance(obj, dict):
-                    return obj
+                    if require_key is None or require_key in obj:
+                        return obj
+                    if first_any is None:
+                        first_any = obj
             except ValueError:
                 pass
             idx = candidate.find('{', idx + 1)
-    return None
+    # require_key requested but no object had it — fall back to first object
+    return first_any
 
 
 def complete_truncated_json(text: str):

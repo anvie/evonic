@@ -13,6 +13,12 @@ Public surface:
 """
 
 
+# How many turns a detector-referenced (pinned) path keeps its full card
+# rendered after it was last named — the follow-up window over which a
+# just-referenced offloaded path stays fully in context.
+_PIN_TTL = 3
+
+
 def is_cmp_enabled(agent: dict) -> bool:
     """CMP applies only with agent-state enabled (paths live on AgentState)
     and never for sub-agents (delegated single-task workers)."""
@@ -94,6 +100,30 @@ def on_turn_boundary(agent: dict, ms, chatlog, user_text: str):
         logging.getLogger(__name__).exception(
             "CMP path operation failed — continuing on the active path")
         decision = {'decision': 'continue', 'target': None, 'layer': 'error'}
+
+    # Waypoint pinning (paper's load_waypoint, made automatic + STICKY): the
+    # detector flags non-active paths whose stored facts this turn references
+    # (recaps, cross-path summaries). Those paths are (a) pinned for a short
+    # window so their FULL cards stay rendered across follow-up turns — not
+    # only the turn they were named — and (b) promoted archived->preserved so
+    # the card survives lifecycle decay. The count-cap (tick_lifecycle) then
+    # enforces MAX_PRESERVED by archiving the OLDEST preserved, so the 10-cap
+    # holds and the least-recently-referenced card decays out. Active path is
+    # never pinned (its full card is already in context).
+    referenced = [pid for pid in (decision.get('pin') or [])
+                  if pid in ms.cmp['paths'] and pid != ms.cmp['active_id']]
+    ttl = ms.cmp.setdefault('pin_ttl', {})
+    for pid in list(ttl):                      # decay existing pins
+        ttl[pid] -= 1
+        if ttl[pid] <= 0 or pid not in ms.cmp['paths'] or pid == ms.cmp['active_id']:
+            ttl.pop(pid, None)
+    for pid in referenced:                     # (re)arm referenced pins
+        ttl[pid] = _PIN_TTL
+    ms.cmp['pinned_ids'] = list(ttl)
+    promoted = store.promote_pinned(ms.cmp, list(ttl), user_ts)
+    if referenced:
+        _emit(agent, 'cmp_waypoints_pinned',
+              {'path_ids': referenced, 'promoted': promoted})
 
     lifecycle = store.tick_lifecycle(ms.cmp, now_ts=user_ts)
     for archived_id in lifecycle['archived']:

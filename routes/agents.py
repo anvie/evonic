@@ -1879,7 +1879,7 @@ def api_chat_agent_state(agent_id):
                     card = {k: p.get(k) for k in
                             ('id', 'title', 'status', 'action', 'goal', 'outcome',
                              'key_facts', 'artifacts', 'depends_on', 'last_active',
-                             'state_since')}
+                             'state_since', 'tags')}
                     card['tokens'] = path_token_estimate(_cmp_chatlog, p)
                     card['llm_tokens'] = path_llm_token_estimate(_cmp_chatlog, p)
                     card['card_tokens'] = card_token_estimate(p)
