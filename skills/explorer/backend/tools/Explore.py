@@ -74,9 +74,9 @@ def execute(agent: dict, args: dict) -> dict:
         path = posixpath.join(caller_ws, raw_path)
     else:
         path = raw_path
-    path = posixpath.abspath(path)
+    host_path = posixpath.abspath(path)
     backend = registry.get_backend(agent.get('session_id') or 'default', agent)
-    path = backend.resolve_path(path)
+    path = backend.resolve_path(host_path)
     check = backend.run_python(
         f'import json, os; p={path!r}; print(json.dumps({{"path": os.path.realpath(p), "is_dir": os.path.isdir(p)}}))',
         30, {},
@@ -124,7 +124,7 @@ def execute(agent: dict, args: dict) -> dict:
 
     def _build(explorer_id: str) -> dict:
         return explorer.build_config(
-            parent_agent, explorer_id, path, skill_cfg, explorer_tool_ids,
+            parent_agent, explorer_id, host_path, skill_cfg, explorer_tool_ids,
         )
 
     try:
