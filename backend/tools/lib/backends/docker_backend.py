@@ -433,7 +433,10 @@ class DockerBackend(ExecutionBackend):
         # Abort if a /stop landed in the race window just before this call.
         if process_tracker.is_stop_pending(self._session_id):
             return {'error': 'Execution stopped by user', 'exit_code': -9, 'execution_time': 0.0}
-        container_id, err = _get_or_create_container(self._container_session_id, agent_id=self._agent_id, workspace=self._container_workspace)
+        container_id, err = _get_or_create_container(
+            self._container_session_id, agent_id=self._agent_id,
+            workspace=self._container_workspace,
+        )
         if err:
             return {'error': err}
 
@@ -480,7 +483,10 @@ class DockerBackend(ExecutionBackend):
             info = _containers.get(self._container_session_id, {})
             is_first = info.get('first_call', False)
 
-        container_id, err = _get_or_create_container(self._container_session_id, agent_id=self._agent_id, workspace=self._container_workspace)
+        container_id, err = _get_or_create_container(
+            self._container_session_id, agent_id=self._agent_id,
+            workspace=self._container_workspace,
+        )
         if err:
             return {'error': err}
 
@@ -491,10 +497,15 @@ class DockerBackend(ExecutionBackend):
         result = self._run_code(container_id, code, timeout, env)
 
         if _is_container_gone(result):
-            logger.info(f'Container {container_id[:12]} gone — recreating for session {self._session_id[:12]}')
+            logger.info(
+                f'Container {container_id[:12]} gone — recreating for pool session '
+                f'{self._container_session_id[:12]}')
             with _pool_lock:
                 _containers.pop(self._container_session_id, None)
-            container_id, err = _get_or_create_container(self._container_session_id, agent_id=self._agent_id, workspace=self._container_workspace)
+            container_id, err = _get_or_create_container(
+                self._container_session_id, agent_id=self._agent_id,
+                workspace=self._container_workspace,
+            )
             if err:
                 return {'error': err}
             with _pool_lock:
@@ -598,7 +609,10 @@ class DockerBackend(ExecutionBackend):
     # ------------------------------------------------------------------
 
     def _container_exec_python(self, code: str, timeout: int = 30) -> dict:
-        container_id, err = _get_or_create_container(self._container_session_id, agent_id=self._agent_id, workspace=self._container_workspace)
+        container_id, err = _get_or_create_container(
+            self._container_session_id, agent_id=self._agent_id,
+            workspace=self._container_workspace,
+        )
         if err:
             return {'error': err}
         cmd = ['exec', '-i', container_id, 'python3', '-']
