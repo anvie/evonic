@@ -443,7 +443,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
 </div>
 
 <script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=59"></script>
-<script src="{{ url_for('static', filename='js/agent-state.js') }}?v=5"></script>
+<script src="{{ url_for('static', filename='js/agent-state.js') }}?v=7"></script>
 <script>
 let allSessions = [];
 let currentSessionId = null;
@@ -2000,22 +2000,7 @@ function _renderSessionStateSnapshot(stateData) {
     if (stateData.plan_file) {
         planHtml += `<button class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300 ml-1 cursor-pointer hover:underline hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors border-0" onclick="openPlanModal('${esc(stateData.plan_file)}')" title="Click to view plan">📋 ${esc(stateData.plan_file)}</button> `;
     }
-    if (stateData.tasks && stateData.tasks.length > 0) {
-        const icons = {pending: '\u2610', in_progress: '\u27f3', done: '\u2713'};
-        const iconColors = {pending: 'text-gray-400', in_progress: 'text-amber-500', done: 'text-green-500'};
-        planHtml += '<div class="mt-2"><div class="text-gray-500 dark:text-gray-400 font-medium mb-1 text-xs uppercase tracking-wide">Tasks</div><ul class="space-y-0.5">';
-        for (const t of stateData.tasks) {
-            const active = t.status === 'in_progress';
-            const spinnerSvg = '<svg class="task-active-icon animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-opacity="0.2"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="40 60"/></svg>';
-            const icon = active ? spinnerSvg : (icons[t.status] || '\u2610');
-            const color = iconColors[t.status] || 'text-gray-400';
-            const textClass = t.status === 'done' ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200';
-            const iconCls = `${color} inline-flex items-center justify-center w-4 h-4 text-xs flex-shrink-0`;
-            const textCls = active ? 'task-active-text text-xs' : `${textClass} text-xs`;
-            planHtml += `<li class="flex items-start gap-1.5"><span class="${iconCls}">${icon}</span><span class="${textCls}">${esc(t.text)}</span></li>`;
-        }
-        planHtml += '</ul></div>';
-    }
+    planHtml += buildAgentTasksHtml(stateData.tasks);
     planHtml += buildBgProcessesHtml(stateData.background_processes);
 
     const skills = Array.isArray(stateData.loaded_skills)
