@@ -822,6 +822,8 @@ async function selectSession(sessionId) {
     _pollThinkingId = null;
     _pollInFlight = false;
     _pendingSlashResponse = null;
+    _pendingReplyText = null;
+    _pendingFileUpload = false;
     renderSessionList();
 
     const res = await fetch(`/api/sessions/${sessionId}`);
@@ -905,7 +907,7 @@ async function selectSession(sessionId) {
         } catch (e) {
             console.error('[selectSession] JSONL fetch/parse error, falling back to SQLite:', e);
             // Clear any partial render before falling back to SQLite
-            container.innerHTML = '';
+            chatUI.clear();
             _pollThinkingId = null;
             _renderSqliteMessages(messages, container);
         }
