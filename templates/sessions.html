@@ -1371,6 +1371,12 @@ function _isFileAccepted(file) {
             if (typeof showToast === 'function') showToast('Select a session first', true);
             return;
         }
+        if (!currentAttachmentsEnabled) {
+            if (typeof showToast === 'function') {
+                showToast('This agent does not support file attachments. Enable attachments in Agent Settings to upload files.', true);
+            }
+            return;
+        }
         if (!_isFileAccepted(file)) {
             if (typeof showToast === 'function') showToast('File type not supported', true);
             return;
