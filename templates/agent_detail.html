@@ -5069,6 +5069,7 @@ document.addEventListener('keydown', function (e) {
 
 // ==================== File Upload Helpers ====================
 
+const CHAT_ATTACHMENTS_ENABLED = {{ 'true' if agent.attachments_enabled else 'false' }};
 const _chatPendingFiles = [];
 
 function _insertChatImageReference(slot) {
@@ -5169,7 +5170,16 @@ function openChatAttachmentPreview(index) {
 }
 
 function addChatFileAttachments(files, { insertImageReferences = true } = {}) {
-    const accepted = Array.from(files || []).filter(_isFileAccepted);
+    const candidates = Array.from(files || []);
+    if (!candidates.length) return;
+    if (!CHAT_ATTACHMENTS_ENABLED) {
+        showToast(
+            'This agent does not support file attachments. Enable attachments in Agent Settings to upload files.',
+            'error'
+        );
+        return;
+    }
+    const accepted = candidates.filter(_isFileAccepted);
     if (!accepted.length) return;
     for (const file of accepted) {
         _chatPendingFiles.push({ file, url: URL.createObjectURL(file) });
