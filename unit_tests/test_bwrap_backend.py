@@ -105,6 +105,37 @@ def test_file_io_round_trip(tmp_path):
     assert not (tmp_path / 'a.txt').exists()
 
 
+def test_scratch_file_io_routes_through_sandbox(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path), agent_id='agent_s')
+    path = f"{scratch_dir('agent_s')}/attachments/session_a/report.txt"
+    calls = []
+
+    def fake_run_python(code, timeout, env):
+        calls.append(code)
+        if "op = 'write_bytes'" in code:
+            return {'stdout': '{"ok": true}', 'exit_code': 0}
+        if "op = 'stat'" in code:
+            return {'stdout': '{"exists": true, "size": 4, "is_binary": false}', 'exit_code': 0}
+        if "op = 'read_bytes'" in code:
+            return {'stdout': '{"data": "ZGF0YQ=="}', 'exit_code': 0}
+        return {'stdout': 'true', 'exit_code': 0}
+
+    monkeypatch.setattr(b, 'run_python', fake_run_python)
+
+    assert b.write_file_bytes(path, b'data') == {'ok': True}
+    assert b.file_stat(path) == {'exists': True, 'size': 4, 'is_binary': False}
+    assert b.cat_file_bytes(path) == {'bytes': b'data'}
+    assert not (tmp_path / 'attachments').exists()
+    assert all(scratch_dir('agent_s') in call for call in calls)
+
+
+def test_non_agent_scratch_path_uses_existing_host_file_io(tmp_path):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path), agent_id='agent_s')
+    path = tmp_path / 'other-scratch' / 'file.txt'
+    assert b.write_file(str(path), 'host') == {'ok': True}
+    assert path.read_text() == 'host'
+
+
 # ---------------------------------------------------------------------------
 # _bwrap_argv
 # ---------------------------------------------------------------------------

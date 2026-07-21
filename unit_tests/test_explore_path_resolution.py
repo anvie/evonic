@@ -186,6 +186,30 @@ class TestWorkspacePath:
             assert "error" not in result
             assert str(tmp_workspace) in result["path"]
 
+    def test_sandbox_explorer_inherits_parent_container_identity(
+            self, explore_module, agent, tmp_workspace):
+        backend = MockBackend()
+        built = {}
+
+        def spawn(_parent, builder):
+            built.update(builder('explorer-1'))
+            return 'explorer-1'
+
+        with patch("backend.tools.lib.exec_backend.registry.get_backend", return_value=backend), \
+             patch("models.db.db.get_agent", return_value=agent), \
+             patch("backend.agent_runtime.explorer.worker_skill_enabled", return_value=True), \
+             patch("backend.agent_runtime.explorer.resolve_tool_ids", return_value=([], None)), \
+             patch("backend.agent_runtime.explorer.build_config", return_value={}), \
+             patch("backend.skills_manager.skills_manager.get_skill_config", return_value={}), \
+             patch("backend.subagent_manager.subagent_manager.spawn_explorer", side_effect=spawn), \
+             patch("backend.agent_report_to.resolve_report_to_for_subagent_spawn", return_value=("test-agent", None, None)), \
+             patch("backend.agent_runtime.notifier.notify_agent", return_value={"session_id": "sess-1"}):
+            result = explore_module.execute(agent, {"path": "/workspace/src", "query": "test"})
+
+        assert "error" not in result
+        assert built['_sandbox_parent_session_id'] == 'test-session'
+        assert built['_sandbox_parent_workspace'] == str(tmp_workspace)
+
     def test_workspace_relative(self, explore_module, agent, tmp_workspace):
         """Path '/workspace/src' resolves to workspace/src."""
         backend = MockBackend()

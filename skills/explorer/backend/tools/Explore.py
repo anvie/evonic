@@ -123,9 +123,13 @@ def execute(agent: dict, args: dict) -> dict:
         return {'error': tool_err}
 
     def _build(explorer_id: str) -> dict:
-        return explorer.build_config(
+        config = explorer.build_config(
             parent_agent, explorer_id, host_path, skill_cfg, explorer_tool_ids,
         )
+        if agent.get('sandbox_enabled', 1) and not agent.get('workplace_id'):
+            config['_sandbox_parent_session_id'] = agent.get('session_id') or 'default'
+            config['_sandbox_parent_workspace'] = caller_ws or None
+        return config
 
     try:
         explorer_id = subagent_manager.spawn_explorer(parent_agent, _build)

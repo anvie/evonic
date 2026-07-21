@@ -9,6 +9,27 @@ If there is no workplace, the path is returned as-is (it's already accessible).
 """
 
 import os
+import re
+import uuid
+
+from backend.tools._workspace import scratch_dir
+
+
+def _safe_component(value: str, fallback: str) -> str:
+    """Return a filesystem-safe path component without changing useful IDs."""
+    value = re.sub(r'[^A-Za-z0-9._-]+', '_', str(value or '')).strip('._')
+    return value or fallback
+
+
+def _staging_path(local_path: str, agent: dict) -> str:
+    """Return an agent- and session-scoped backend staging path."""
+    agent_id = _safe_component(agent.get('id'), 'default')
+    session_id = _safe_component(agent.get('session_id'), 'default')
+    filename = _safe_component(os.path.basename(local_path), 'attachment')
+    return os.path.join(
+        scratch_dir(agent_id), 'attachments', session_id,
+        f"{uuid.uuid4().hex}_{filename}",
+    )
 
 
 def ensure_workplace_file(local_path: str, agent: dict) -> str:
@@ -59,9 +80,9 @@ def ensure_workplace_file(local_path: str, agent: dict) -> str:
         session_id = agent.get('session_id', 'default')
         backend = exec_registry.get_backend(session_id, agent)
 
-    # Compute a unique destination path on the remote
-    basename = os.path.basename(local_path)
-    dest_path = os.path.join('/workspace', 'attachments', basename)
+    # Stage the copy in the execution environment's per-agent scratchpad.
+    # A unique name prevents collisions when different attachments share a basename.
+    dest_path = _staging_path(local_path, agent)
 
     # Resolve path if the backend supports it
     resolved_dest = (
@@ -85,7 +106,7 @@ def ensure_workplace_file(local_path: str, agent: dict) -> str:
         except Exception:
             pass
         raise RuntimeError(
-            f"Size mismatch after transferring {basename}: "
+            f"Size mismatch after transferring {os.path.basename(local_path)}: "
             f"expected {len(data)} bytes, got {file_stat.get('size', -1)} bytes"
         )
 

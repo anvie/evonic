@@ -36,6 +36,7 @@ or `kernel.apparmor_restrict_unprivileged_userns` (Ubuntu 24.04+).
 """
 
 import atexit
+import base64
 import json
 import logging
 import os
@@ -741,29 +742,90 @@ class BwrapBackend(LocalBackend):
             return os.path.join(ws, _HOME_SUBDIR) + path[len(_HOME_MOUNT):]
         return path
 
+    def _is_scratch_path(self, path: str) -> bool:
+        root = scratch_dir(self._agent_id)
+        return path == root or path.startswith(root + '/')
+
+    def _scratch_python(self, code: str) -> dict:
+        result = self.run_python(code, 30, {})
+        if result.get('error') or result.get('exit_code', 0) != 0:
+            return {'error': result.get('error') or result.get('stderr', 'sandbox file operation failed')}
+        try:
+            return json.loads(result.get('stdout', '{}'))
+        except (TypeError, ValueError):
+            return {'error': 'Invalid response from sandbox file operation'}
+
+    @staticmethod
+    def _scratch_operation(path: str, operation: str, **values) -> str:
+        return (
+            'import base64, json, os\n'
+            f'p = {path!r}\n'
+            f'op = {operation!r}\n'
+            f'values = {values!r}\n'
+            'try:\n'
+            "    if op == 'exists': result = os.path.exists(p)\n"
+            "    elif op == 'stat':\n"
+            "        exists = os.path.isfile(p)\n"
+            "        chunk = open(p, 'rb').read(8192) if exists else b''\n"
+            "        result = {'exists': exists, 'size': os.path.getsize(p) if exists else 0, 'is_binary': b'\\x00' in chunk}\n"
+            "    elif op == 'read':\n"
+            "        with open(p, encoding='utf-8') as f: result = {'content': f.read()}\n"
+            "    elif op == 'mkdir': os.makedirs(p, exist_ok=True); result = {'ok': True}\n"
+            "    elif op == 'delete': os.remove(p); result = {'ok': True}\n"
+            "    elif op == 'read_bytes':\n"
+            "        with open(p, 'rb') as f: result = {'data': base64.b64encode(f.read()).decode('ascii')}\n"
+            "    elif op == 'write_bytes':\n"
+            "        if values['create_dirs']: os.makedirs(os.path.dirname(p), exist_ok=True)\n"
+            "        with open(p, 'wb') as f: f.write(base64.b64decode(values['data']))\n"
+            "        result = {'ok': True}\n"
+            "    print(json.dumps(result))\n"
+            'except Exception as e: print(json.dumps({\'error\': str(e)}))\n'
+        )
+
     def file_exists(self, path: str) -> bool:
-        return super().file_exists(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().file_exists(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'exists')) is True
 
     def file_stat(self, path: str) -> dict:
-        return super().file_stat(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().file_stat(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'stat'))
 
     def read_file(self, path: str) -> dict:
-        return super().read_file(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().read_file(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'read'))
 
     def write_file(self, path: str, content: str, create_dirs: bool = True) -> dict:
-        return super().write_file(self._to_host(path), content, create_dirs)
+        if not self._is_scratch_path(path):
+            return super().write_file(self._to_host(path), content, create_dirs)
+        return self.write_file_bytes(path, content.encode('utf-8'), create_dirs)
 
     def make_dirs(self, path: str) -> dict:
-        return super().make_dirs(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().make_dirs(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'mkdir'))
 
     def cat_file_bytes(self, path: str) -> dict:
-        return super().cat_file_bytes(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().cat_file_bytes(self._to_host(path))
+        result = self._scratch_python(self._scratch_operation(path, 'read_bytes'))
+        if 'data' in result:
+            return {'bytes': base64.b64decode(result['data'])}
+        return result
 
     def delete_file(self, path: str) -> dict:
-        return super().delete_file(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().delete_file(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'delete'))
 
     def write_file_bytes(self, path: str, data: bytes, create_dirs: bool = True) -> dict:
-        return super().write_file_bytes(self._to_host(path), data, create_dirs)
+        if not self._is_scratch_path(path):
+            return super().write_file_bytes(self._to_host(path), data, create_dirs)
+        return self._scratch_python(self._scratch_operation(
+            path, 'write_bytes', data=base64.b64encode(data).decode('ascii'), create_dirs=create_dirs,
+        ))
 
     # ------------------------------------------------------------------
     # Lifecycle
