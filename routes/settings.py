@@ -1299,6 +1299,17 @@ def api_delete_shared_route(channel_id, user_id):
         return jsonify({'error': 'Route not found'}), 404
     del routes[user_id]
     config['routes'] = routes
+
+    # Names annotate active routes only. Remove the selected name plus any
+    # historical/orphaned metadata so stale contacts cannot reappear later.
+    names = config.get('user_names')
+    if isinstance(names, dict):
+        config['user_names'] = {
+            route_id: display_name
+            for route_id, display_name in names.items()
+            if route_id in routes
+        }
+
     db.update_channel(channel_id, {'config': config})
     return jsonify({'success': True})
 
