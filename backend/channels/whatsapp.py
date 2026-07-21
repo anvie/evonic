@@ -536,6 +536,37 @@ class WhatsAppChannel(BaseChannel):
             sender, jid, is_group, bot_mentioned, quoted_is_bot,
             (text[:60] if text else ''))
 
+        # Determine message type for debug listener
+        msg_type = payload.get('type') or 'text'
+        if payload.get('image'):
+            msg_type = 'image'
+        elif payload.get('audio'):
+            msg_type = 'audio'
+        elif payload.get('video'):
+            msg_type = 'video'
+        elif payload.get('document'):
+            msg_type = 'document'
+        elif payload.get('sticker'):
+            msg_type = 'sticker'
+        elif payload.get('location'):
+            msg_type = 'location'
+
+        # Emit debug event BEFORE routing so ALL inbound messages are visible,
+        # including those routed to different agents or dropped entirely.
+        from datetime import datetime
+        event_stream.emit('whatsapp_inbound', {
+            'channel_id': self.channel_id,
+            'channel_name': self.config.get('name', self.channel_id),
+            'sender': sender,
+            'jid': jid,
+            'is_group': is_group,
+            'push_name': push_name,
+            'group_name': group_name,
+            'text': (text[:200] if text else ''),
+            'type': msg_type,
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+        })
+
         # Resolve the handling agent (shared channels route per sender/group).
         # Runs BEFORE the group mention gate so shared channels capture unrouted
         # groups into the Unassigned inbox on ANY group message — group discovery

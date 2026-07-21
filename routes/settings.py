@@ -1,9 +1,11 @@
+import json
 import logging
 import os
+import queue
 import re
 from typing import Dict, Any
 
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, Response, stream_with_context
 
 from backend.audit_logger import audit
 import config
@@ -1334,3 +1336,53 @@ def api_dismiss_inbox_entry(channel_id, entry_id):
     if not db.delete_inbox_entry(entry_id):
         return jsonify({'error': 'Inbox entry not found'}), 404
     return jsonify({'success': True})
+
+
+# ---------------------------------------------------------------------------
+# Debug Listener — SSE endpoint for real-time WhatsApp inbound monitoring
+# ---------------------------------------------------------------------------
+
+@settings_bp.route('/api/shared-channels/debug/listen', methods=['GET'])
+def api_shared_channel_debug_listen():
+    """SSE endpoint: push all whatsapp_inbound events to the client in real-time."""
+    from backend.event_stream import event_stream
+
+    q = queue.Queue(maxsize=500)
+
+    def handler(data):
+        try:
+            q.put_nowait(('whatsapp_inbound', data, None))
+        except queue.Full:
+            pass  # drop oldest; queue bounded at 500
+
+    event_stream.on('whatsapp_inbound', handler)
+
+    def generate():
+        # Send initial connected event so the client knows it's live
+        yield (
+            f"event: connected\n"
+            f"data: {json.dumps({'type': 'connected', 'message': 'Listening for WhatsApp inbound messages...'})}\n\n"
+        )
+        try:
+            while True:
+                try:
+                    item = q.get(timeout=30)
+                except queue.Empty:
+                    yield ": heartbeat\n\n"
+                    continue
+                sse_event, payload, _seq = item
+                yield f"event: {sse_event}\ndata: {json.dumps(payload)}\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            event_stream.off('whatsapp_inbound', handler)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
