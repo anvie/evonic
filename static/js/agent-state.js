@@ -12,43 +12,6 @@ function esc(str) {
 }
 
 /**
- * Build a readable task list shared by the session and agent-detail sidebars.
- * Task text stays plain and escaped so state content cannot inject markup.
- */
-function buildAgentTasksHtml(tasks) {
-    if (!Array.isArray(tasks) || tasks.length === 0) return '';
-
-    var statusMeta = {
-        pending: { icon: '\u2610', label: 'Pending' },
-        in_progress: { icon: '', label: 'In progress' },
-        done: { icon: '\u2713', label: 'Done' }
-    };
-    var spinnerSvg = '<svg class="task-active-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-opacity="0.25"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="40 60"/></svg>';
-    var rows = [];
-
-    for (var i = 0; i < tasks.length; i++) {
-        var task = tasks[i] || {};
-        var status = statusMeta[task.status] ? task.status : 'pending';
-        var meta = statusMeta[status];
-        var icon = status === 'in_progress' ? spinnerSvg : meta.icon;
-        rows.push(
-            '<li class="agent-task agent-task--' + status + '">' +
-                '<span class="agent-task__status" aria-label="' + meta.label + '">' +
-                    '<span class="agent-task__icon" aria-hidden="true">' + icon + '</span>' +
-                    '<span class="agent-task__label">' + meta.label + '</span>' +
-                '</span>' +
-                '<span class="agent-task__text">' + esc(task.text) + '</span>' +
-            '</li>'
-        );
-    }
-
-    return '<section class="agent-tasks" aria-label="Tasks">' +
-        '<div class="agent-tasks__heading">Tasks</div>' +
-        '<ul class="agent-tasks__list">' + rows.join('') + '</ul>' +
-        '</section>';
-}
-
-/**
  * Build HTML for loaded skill badges.
  * Returns an object: { html, hasBadges }
  */
