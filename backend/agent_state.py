@@ -211,17 +211,8 @@ class AgentState:
         if action == "set":
             if not isinstance(tasks, list):
                 return {"error": "Action 'set' requires a 'tasks' list of strings."}
-            # Preserve completed tasks and auto-complete stale in-progress tasks
-            # from the previous plan so they don't stay in-progress forever.
-            preserved = []
-            for t in self.tasks:
-                if t.get("status") == "done":
-                    preserved.append(t)
-                elif t.get("status") == "in_progress":
-                    t["status"] = "done"
-                    preserved.append(t)
-            self.tasks = preserved
-            self._next_task_id = max((t["id"] for t in self.tasks), default=0) + 1
+            self.tasks = []
+            self._next_task_id = 1
             for t in tasks:
                 clean, inferred = _sanitize_task_text(str(t))
                 self.tasks.append({
@@ -230,8 +221,7 @@ class AgentState:
                     "status": inferred or "pending",
                 })
                 self._next_task_id += 1
-            preserved_count = len(preserved)
-            return {"result": f"Task list set with {len(self.tasks)} tasks ({preserved_count} from previous plan preserved/auto-completed).", "tasks": self._task_summary()}
+            return {"result": f"Task list replaced with {len(self.tasks)} tasks.", "tasks": self._task_summary()}
 
         if action == "add":
             if not text:

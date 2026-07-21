@@ -84,12 +84,30 @@ class TestUpdateTasks:
         assert ms.tasks[0]["status"] == "pending"
         assert "error" not in result
 
+    def test_set_discards_completed_and_in_progress_tasks(self):
+        ms = AgentState()
+        ms.update_tasks("set", tasks=["Completed", "Active", "Pending"])
+        ms.update_tasks("done", task_id=1)
+        ms.update_tasks("in_progress", task_id=2)
+
+        result = ms.update_tasks("set", tasks=["New A", "New B"])
+
+        assert result["result"] == "Task list replaced with 2 tasks."
+        assert result["tasks"] == [
+            {"id": 1, "text": "New A", "status": "pending"},
+            {"id": 2, "text": "New B", "status": "pending"},
+        ]
+        assert ms.tasks == result["tasks"]
+
     def test_set_resets_ids_from_1(self):
         ms = AgentState()
-        ms.update_tasks("set", tasks=["First"])
+        ms.update_tasks("add", text="First")
+        ms.update_tasks("add", text="Second")
         ms.update_tasks("set", tasks=["New A", "New B"])
         assert ms.tasks[0]["id"] == 1
         assert ms.tasks[1]["id"] == 2
+        ms.update_tasks("add", text="New C")
+        assert ms.tasks[2]["id"] == 3
 
     def test_add_appends_task(self):
         ms = AgentState()
