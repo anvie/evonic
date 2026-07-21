@@ -8,6 +8,7 @@ SANDBOX_BACKEND config.
 """
 
 import os
+import subprocess
 import sys
 import time
 
@@ -176,6 +177,63 @@ def test_run_bash_returns_error_when_unavailable(tmp_path, monkeypatch):
     assert result['error'] == 'bwrap missing'
 
 
+def _probe(returncode, stderr=''):
+    return subprocess.CompletedProcess([], returncode, '', stderr)
+
+
+def test_nsenter_readiness_retries_transient_startup_failure(monkeypatch):
+    results = [
+        _probe(1, 'nsenter: failed to execute /usr/bin/bash: No such file or directory'),
+        _probe(0),
+    ]
+    calls = []
+    monkeypatch.setattr(bwrap_backend.subprocess, 'run',
+                        lambda *args, **kwargs: calls.append(args) or results.pop(0))
+    monkeypatch.setattr(bwrap_backend.time, 'sleep', lambda _: None)
+
+    probe, failure = bwrap_backend._wait_for_nsenter_ready(4242, timeout=1)
+
+    assert probe.returncode == 0 and failure is None and len(calls) == 2
+
+
+def test_nsenter_readiness_exhaustion_has_initialization_diagnostic(monkeypatch):
+    result = _probe(1, 'nsenter: failed to execute /usr/bin/bash: No such file or directory')
+    clock = iter((0.0, 0.0, 0.2, 1.1))
+    monkeypatch.setattr(bwrap_backend.subprocess, 'run', lambda *args, **kwargs: result)
+    monkeypatch.setattr(bwrap_backend.time, 'monotonic', lambda: next(clock))
+    monkeypatch.setattr(bwrap_backend.time, 'sleep', lambda _: None)
+
+    probe, failure = bwrap_backend._wait_for_nsenter_ready(4242, timeout=1)
+    message = bwrap_backend._nsenter_failure_message(probe, failure)
+
+    assert failure == 'readiness' and 'did not finish initializing' in message
+    assert 'WSL2' not in message and 'incompatible' not in message
+
+
+def test_nsenter_readiness_does_not_retry_permission_failure(monkeypatch):
+    calls = []
+    result = _probe(1, 'nsenter: reassociate to namespace ns/user failed: Operation not permitted')
+    monkeypatch.setattr(bwrap_backend.subprocess, 'run',
+                        lambda *args, **kwargs: calls.append(args) or result)
+
+    probe, failure = bwrap_backend._wait_for_nsenter_ready(4242, timeout=1)
+    message = bwrap_backend._nsenter_failure_message(probe, failure)
+
+    assert len(calls) == 1 and failure is None
+    assert 'cannot join' in message and 'WSL2' in message
+
+
+def test_nsenter_other_failure_avoids_compatibility_claim(monkeypatch):
+    result = _probe(1, 'nsenter: failed to execute /usr/bin/bash: Input/output error')
+    monkeypatch.setattr(bwrap_backend.subprocess, 'run', lambda *args, **kwargs: result)
+
+    probe, failure = bwrap_backend._wait_for_nsenter_ready(4242, timeout=1)
+    message = bwrap_backend._nsenter_failure_message(probe, failure)
+
+    assert failure is None and 'failed while checking' in message
+    assert 'WSL2' not in message and 'incompatible' not in message
+
+
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
@@ -269,6 +327,27 @@ def test_read_child_pid_parses_json():
         assert bwrap_backend._read_child_pid(r, FakeProc(returncode=1), timeout=2) is None
     finally:
         os.close(r); os.close(w)
+
+
+def test_spawn_keeper_readiness_failure_cleans_up(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='sess-1', workspace=str(tmp_path))
+    proc = FakeProc(pid=1000)
+    r_fd, w_fd = os.pipe()
+    monkeypatch.setattr(bwrap_backend.os, 'pipe', lambda: (r_fd, w_fd))
+    monkeypatch.setattr(bwrap_backend.subprocess, 'Popen', lambda *args, **kwargs: proc)
+    monkeypatch.setattr(bwrap_backend, '_read_child_pid', lambda fd, child: 4242)
+    failed_probe = _probe(1, 'nsenter: failed to execute /usr/bin/bash: No such file or directory')
+    monkeypatch.setattr(bwrap_backend, '_wait_for_nsenter_ready',
+                        lambda pid: (failed_probe, 'readiness'))
+    destroyed = []
+    monkeypatch.setattr(bwrap_backend, '_destroy_probe',
+                        lambda child, fd: destroyed.append((child, fd)))
+
+    info, error = b._spawn_keeper()
+
+    assert info is None and 'failed readiness check' in error
+    assert destroyed == [(proc, r_fd)]
+    os.close(r_fd)
 
 
 def test_keeper_pool_reuse_and_workspace_change(tmp_path, monkeypatch):

@@ -97,11 +97,67 @@ _USERNS_HINT = (
 )
 
 
+_NSENTER_READY_TIMEOUT = 1.0
+_NSENTER_READY_INTERVAL = 0.01
+_NSENTER_EXEC_NOT_READY = 'failed to execute /usr/bin/bash: No such file or directory'
+
+
 def _nsenter_probe_argv(inner_pid: int) -> list:
     """Build a minimal nsenter probe command — same namespace flags as _nsenter_argv."""
     return ['nsenter', '--preserve-credentials', '-U', '-m', '-u', '-i', '-p',
             '-t', str(inner_pid), '--',
             '/usr/bin/bash', '-c', 'exit 0']
+
+
+def _wait_for_nsenter_ready(inner_pid: int, timeout: float = _NSENTER_READY_TIMEOUT,
+                            interval: float = _NSENTER_READY_INTERVAL):
+    """Return ``(probe, failure)`` once a new bwrap child is nsenter-ready.
+
+    Bubblewrap can report its child PID just before its mount setup is visible.
+    Retry only that narrow startup signature; all other failures are final.
+    """
+    deadline = time.monotonic() + timeout
+    probe = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return probe, 'readiness'
+        try:
+            probe = subprocess.run(
+                _nsenter_probe_argv(inner_pid), capture_output=True, text=True,
+                timeout=max(0.001, remaining),
+            )
+        except subprocess.TimeoutExpired:
+            return None, 'timeout'
+        if probe.returncode == 0:
+            return probe, None
+        stderr = (probe.stderr or '').strip()
+        if _NSENTER_EXEC_NOT_READY.lower() not in stderr.lower():
+            return probe, None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return probe, 'readiness'
+        time.sleep(min(interval, remaining))
+
+
+def _nsenter_failure_message(probe, failure: str | None) -> str | None:
+    if failure == 'timeout':
+        return 'nsenter probe timed out — the bwrap sandbox may not be responding.'
+    if probe is None or probe.returncode == 0:
+        return None
+    stderr = (probe.stderr or '').strip()
+    if failure == 'readiness':
+        return (f'The bwrap sandbox did not finish initializing before the nsenter readiness deadline. '
+                f'Details: {stderr or "sandbox executable not ready"}.')
+    lowered = stderr.lower()
+    if any(phrase in lowered for phrase in ('operation not permitted', 'permission denied',
+                                              'reassociate to namespace')):
+        return (f'nsenter cannot join the bwrap sandbox namespaces on this host. '
+                f'Details: {stderr or "permission denied"}. '
+                f'The bwrap backend is incompatible with this environment '
+                f'(e.g. WSL2 has known namespace limitations).')
+    return (f'nsenter failed while checking bwrap sandbox readiness. '
+            f'Details: {stderr or "unknown nsenter failure"}.')
 
 
 def _check_nsenter_capability() -> str | None:
@@ -136,25 +192,9 @@ def _check_nsenter_capability() -> str | None:
         _destroy_probe(proc, r_fd)
         return None       # bwrap failed — not a nsenter-compatibility issue
 
-    # Probe: can nsenter join all namespaces?
-    try:
-        probe = subprocess.run(
-            _nsenter_probe_argv(inner_pid),
-            capture_output=True, text=True, timeout=5,
-        )
-    except subprocess.TimeoutExpired:
-        _destroy_probe(proc, r_fd)
-        return 'nsenter probe timed out — the bwrap sandbox may not be responding.'
-
+    probe, failure = _wait_for_nsenter_ready(inner_pid)
     _destroy_probe(proc, r_fd)
-
-    if probe.returncode != 0:
-        stderr = (probe.stderr or '').strip()
-        return (f'nsenter cannot join the bwrap sandbox namespaces on this host. '
-                f'Details: {stderr or "permission denied"}. '
-                f'The bwrap backend is incompatible with this environment '
-                f'(e.g. WSL2 has known namespace limitations).')
-    return None
+    return _nsenter_failure_message(probe, failure)
 
 
 def _destroy_probe(proc, r_fd):
@@ -519,6 +559,11 @@ class BwrapBackend(LocalBackend):
             if 'bwrap:' in stderr:
                 msg += _USERNS_HINT
             return None, msg
+        probe, failure = _wait_for_nsenter_ready(inner_pid)
+        readiness_error = _nsenter_failure_message(probe, failure)
+        if readiness_error:
+            _destroy_probe(proc, r_fd)
+            return None, f'bwrap keeper failed readiness check: {readiness_error}'
         now = time.time()
         # Keep r_fd open in the pool entry (closed in _destroy_keeper) so
         # bwrap never hits a broken pipe when writing its exit-status line.
