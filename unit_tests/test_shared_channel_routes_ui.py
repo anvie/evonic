@@ -33,3 +33,29 @@ def test_route_renderer_formats_identifier_without_changing_raw_action_value():
     assert "formatRouteIdentifier: function(value)" in markup
     assert "sharedChannel.formatRouteIdentifier(userId)" in markup
     assert "sharedChannel.removeRoute(\\\'" in markup
+
+
+def test_routes_have_accessible_responsive_pagination_controls():
+    markup = TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="sc-routes-filter"' in markup
+    assert 'aria-label="Routes pagination"' in markup
+    assert 'id="sc-routes-page-summary"' in markup
+    assert 'aria-live="polite"' in markup
+    assert 'id="sc-routes-prev"' in markup
+    assert 'id="sc-routes-next"' in markup
+    assert "previous.disabled = sharedChannel.routesPage === 1;" in markup
+    assert "next.disabled = sharedChannel.routesPage === totalPages;" in markup
+    assert "grid grid-cols-2 gap-2 sm:flex" in markup
+
+
+def test_route_pagination_filters_resets_and_clamps_data_changes():
+    markup = TEMPLATE.read_text(encoding="utf-8")
+
+    assert "routesPageSize: 10" in markup
+    assert "filterRoutes: function(value)" in markup
+    assert "sharedChannel.routesPage = 1;" in markup
+    assert "sharedChannel.resetRoutesView();" in markup
+    assert "sharedChannel.routesPage = Math.min(sharedChannel.routesPage, totalPages);" in markup
+    assert "filteredRows.slice(start, start + sharedChannel.routesPageSize)" in markup
+    assert "No routes match your filter." in markup

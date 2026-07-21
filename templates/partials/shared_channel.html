@@ -46,7 +46,18 @@
             <h3 id="sc-routes-heading">User &rarr; Agent Routes</h3>
             <span id="sc-routes-count" class="text-[11px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-2 py-0.5 rounded-full empty:hidden"></span>
         </div>
-        <p class="mb-3 text-xs text-gray-400 dark:text-gray-500">Each sender is directed to the assigned agent. Contact names remain visible on every screen size.</p>
+        <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <p class="text-xs text-gray-400 dark:text-gray-500">Each sender is directed to the assigned agent. Contact names remain visible on every screen size.</p>
+            <div class="w-full sm:w-64">
+                <label for="sc-routes-filter" class="sr-only">Filter routes</label>
+                <div class="relative">
+                    <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="search" id="sc-routes-filter" autocomplete="off" placeholder="Filter routes"
+                        oninput="sharedChannel.filterRoutes(this.value)"
+                        class="w-full rounded-md border border-gray-300 py-1.5 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
+                </div>
+            </div>
+        </div>
         <div class="setting-group-body overflow-hidden">
             <!-- Mobile route cards -->
             <div id="sc-routes-mobile" class="divide-y divide-gray-100 dark:divide-gray-700/60 sm:hidden">
@@ -70,6 +81,20 @@
                     </tbody>
                 </table>
             </div>
+
+            <nav id="sc-routes-pagination" class="hidden flex-col gap-3 border-t border-gray-200 px-4 py-3 dark:border-gray-700 sm:flex-row sm:items-center sm:justify-between" aria-label="Routes pagination">
+                <p id="sc-routes-page-summary" class="text-center text-xs text-gray-500 dark:text-gray-400 sm:text-left" aria-live="polite"></p>
+                <div class="grid grid-cols-2 gap-2 sm:flex">
+                    <button type="button" id="sc-routes-prev" onclick="sharedChannel.goRoutesPage(sharedChannel.routesPage - 1)"
+                        class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                        Previous
+                    </button>
+                    <button type="button" id="sc-routes-next" onclick="sharedChannel.goRoutesPage(sharedChannel.routesPage + 1)"
+                        class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                        Next
+                    </button>
+                </div>
+            </nav>
 
             <!-- Add route (manual pre-authorization) -->
             <div class="border-t border-gray-200 bg-gray-50/60 px-4 py-4 dark:border-gray-700 dark:bg-gray-900/30">
@@ -149,6 +174,9 @@
         channels: [],       // all shared channels
         activeId: null,     // id of the channel currently shown in the detail
         agentsById: {},
+        routesPage: 1,
+        routesPageSize: 10,
+        routesFilter: '',
         _pollTimer: null,
         _qrTimer: null,
         // Render signatures — polls skip re-rendering when nothing changed,
@@ -224,12 +252,16 @@
 
         load: function() {
             fetch('/api/shared-channels').then(function(r) { return r.json(); }).then(function(data) {
+                var previousActiveId = sharedChannel.activeId;
                 sharedChannel.channels = data.channels || [];
                 // Keep the current selection if it still exists; otherwise fall
                 // back to the first channel (or none).
                 var stillThere = sharedChannel.active();
                 if (!stillThere) {
                     sharedChannel.activeId = sharedChannel.channels.length ? sharedChannel.channels[0].id : null;
+                }
+                if (sharedChannel.activeId !== previousActiveId) {
+                    sharedChannel.resetRoutesView();
                 }
                 sharedChannel.renderSwitcher();
                 sharedChannel.renderChannel();
@@ -292,9 +324,18 @@
             if (i) { i.value = ''; i.focus(); }
         },
 
+        resetRoutesView: function() {
+            sharedChannel.routesPage = 1;
+            sharedChannel.routesFilter = '';
+            var routesFilter = document.getElementById('sc-routes-filter');
+            if (routesFilter) routesFilter.value = '';
+            sharedChannel._routesSig = null;
+        },
+
         selectChannel: function(id) {
             if (id === sharedChannel.activeId) return;
             sharedChannel.activeId = id;
+            sharedChannel.resetRoutesView();
             // A different channel's detail must render fresh (and its QR poller reset).
             if (sharedChannel._qrTimer) { clearInterval(sharedChannel._qrTimer); sharedChannel._qrTimer = null; }
             sharedChannel._chanSig = null;
@@ -534,6 +575,19 @@
             return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
         },
 
+        filterRoutes: function(value) {
+            sharedChannel.routesFilter = String(value || '').trim().toLowerCase();
+            sharedChannel.routesPage = 1;
+            sharedChannel._routesSig = null;
+            sharedChannel.renderRoutes();
+        },
+
+        goRoutesPage: function(page) {
+            sharedChannel.routesPage = Math.max(1, Number(page) || 1);
+            sharedChannel._routesSig = null;
+            sharedChannel.renderRoutes();
+        },
+
         renderRoutes: function() {
             var ch = sharedChannel.active();
             var config = (ch && ch.config) || {};
@@ -542,17 +596,12 @@
             var list = document.getElementById('sc-routes-list');
             var mobileList = document.getElementById('sc-routes-mobile');
             var count = document.getElementById('sc-routes-count');
-            var sig = JSON.stringify([sharedChannel.activeId, routes, names, sharedChannel.agentsById]);
+            var pagination = document.getElementById('sc-routes-pagination');
+            var summary = document.getElementById('sc-routes-page-summary');
+            var previous = document.getElementById('sc-routes-prev');
+            var next = document.getElementById('sc-routes-next');
+            var sig = JSON.stringify([sharedChannel.activeId, routes, names, sharedChannel.agentsById, sharedChannel.routesFilter, sharedChannel.routesPage]);
             if (sig === sharedChannel._routesSig) return;
-            sharedChannel._routesSig = sig;
-
-            var ids = Object.keys(routes);
-            count.textContent = ids.length ? ids.length + (ids.length === 1 ? ' route' : ' routes') : '';
-            if (ids.length === 0) {
-                list.innerHTML = '<tr><td colspan="4" class="px-4 py-10 text-center text-xs text-gray-400 dark:text-gray-500">No routes configured.</td></tr>';
-                mobileList.innerHTML = '<p class="px-4 py-8 text-center text-xs text-gray-400 dark:text-gray-500">No routes configured.</p>';
-                return;
-            }
 
             function routeData(userId) {
                 var name = String(names[userId] || '').trim();
@@ -564,7 +613,35 @@
                 };
             }
 
-            var rows = ids.map(routeData);
+            var allRows = Object.keys(routes).map(routeData);
+            var query = sharedChannel.routesFilter;
+            var filteredRows = query ? allRows.filter(function(route) {
+                return [route.name, route.userId, route.formattedId, route.agentName].some(function(value) {
+                    return String(value).toLowerCase().indexOf(query) !== -1;
+                });
+            }) : allRows;
+            var totalPages = Math.max(1, Math.ceil(filteredRows.length / sharedChannel.routesPageSize));
+            sharedChannel.routesPage = Math.min(sharedChannel.routesPage, totalPages);
+            var start = (sharedChannel.routesPage - 1) * sharedChannel.routesPageSize;
+            var rows = filteredRows.slice(start, start + sharedChannel.routesPageSize);
+            sharedChannel._routesSig = JSON.stringify([sharedChannel.activeId, routes, names, sharedChannel.agentsById, sharedChannel.routesFilter, sharedChannel.routesPage]);
+
+            count.textContent = allRows.length ? allRows.length + (allRows.length === 1 ? ' route' : ' routes') : '';
+            pagination.classList.toggle('hidden', totalPages <= 1);
+            pagination.classList.toggle('flex', totalPages > 1);
+            previous.disabled = sharedChannel.routesPage === 1;
+            next.disabled = sharedChannel.routesPage === totalPages;
+            summary.textContent = filteredRows.length
+                ? 'Showing ' + (start + 1) + '\u2013' + (start + rows.length) + ' of ' + filteredRows.length + ' routes \u00b7 Page ' + sharedChannel.routesPage + ' of ' + totalPages
+                : 'No matching routes';
+
+            if (allRows.length === 0 || filteredRows.length === 0) {
+                var emptyMessage = allRows.length === 0 ? 'No routes configured.' : 'No routes match your filter.';
+                list.innerHTML = '<tr><td colspan="4" class="px-4 py-10 text-center text-xs text-gray-400 dark:text-gray-500">' + emptyMessage + '</td></tr>';
+                mobileList.innerHTML = '<p class="px-4 py-8 text-center text-xs text-gray-400 dark:text-gray-500">' + emptyMessage + '</p>';
+                return;
+            }
+
             list.innerHTML = rows.map(function(route, index) {
                 var name = route.name
                     ? '<span class="font-medium text-gray-900 dark:text-gray-100">' + sharedChannel.esc(route.name) + '</span>'
