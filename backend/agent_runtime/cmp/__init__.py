@@ -85,11 +85,12 @@ def on_turn_boundary(agent: dict, ms, chatlog, user_text: str):
             _emit(agent, 'cmp_path_switched',
                   {'to': target, 'initiator': 'detector'})
         elif d in ('dep_branch', 'indep_branch'):
+            from backend.task_classifier import classify_task
             finalize_active_card(chatlog, ms.cmp, ms)
             record = store.create_path(
                 ms.cmp, ms, title=text[:60], goal=text[:300],
                 depends_on=[target] if (d == 'dep_branch' and target) else [],
-                now_ts=user_ts)
+                now_ts=user_ts, trivial=classify_task(text) == 'trivial')
             _apply_naming(record, decision.get('new_path'))
             decision['target'] = record['id']
             _emit(agent, 'cmp_path_created',

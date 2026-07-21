@@ -926,8 +926,8 @@ def _builtin_switch_path_factory(agent_context: dict):
 def _builtin_new_path_factory(agent_context: dict):
     """Factory for the built-in 'new_path' tool (CMP navigation).
 
-    Starts a separate task path (fresh plan cycle). depends_on records that
-    the new task consumes results of existing paths, pinning their cards.
+    Starts a separate task path in execute or plan mode based on complexity.
+    depends_on records that the new task consumes results of existing paths.
     """
     tool_def = {
         "type": "function",
@@ -980,22 +980,25 @@ def _builtin_new_path_factory(agent_context: dict):
             _cmp_emit(agent_context, 'cmp_path_created',
                       {'path_id': 'P1', 'title': str(prev_title)[:60],
                        'initiator': 'auto-init'})
+        goal = (arguments.get('goal') or '').strip()
+        from backend.task_classifier import classify_task
+        trivial = classify_task(goal or title) == 'trivial'
         _cmp_finalize_outgoing(agent_context, ms)  # card-first ordering
         try:
             record = cmp_store.create_path(
-                ms.cmp, ms, title,
-                goal=(arguments.get('goal') or '').strip(),
-                depends_on=arguments.get('depends_on') or [])
+                ms.cmp, ms, title, goal=goal,
+                depends_on=arguments.get('depends_on') or [], trivial=trivial)
         except ValueError as e:
             return {"error": str(e)}
         _cmp_emit(agent_context, 'cmp_path_created',
                   {'path_id': record['id'], 'title': record['title'],
                    'depends_on': record['depends_on'], 'initiator': 'agent'})
+        mode_note = "execute mode" if trivial else "plan mode"
         return {
             "result": (
                 f"Started {record['id']} — {record['title']}. The previous "
                 "path is preserved (resumable via switch_path). You are now in "
-                "plan mode for this new task."
+                f"{mode_note} for this new task."
             ),
             "path_id": record['id'],
         }

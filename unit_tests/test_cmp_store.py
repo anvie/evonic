@@ -60,6 +60,20 @@ def test_create_path_branches_and_resets_task_state():
     assert ms.auto_trivial is False
 
 
+def test_create_trivial_path_starts_execute_and_round_trips_state():
+    ms = _init(_ms(mode='plan', plan_file='plan/old.md'), ts=1000)
+    record = store.create_path(ms.cmp, ms, 'push dev', now_ts=2000,
+                               trivial=True)
+    assert ms.mode == 'execute' and ms.auto_trivial is True
+    assert ms.plan_file is None and ms.atg is None
+
+    store.switch_to(ms.cmp, ms, 'A1', now_ts=3000)
+    assert ms.mode == 'plan' and ms.auto_trivial is False
+    assert ms.plan_file == 'plan/old.md'
+    store.switch_to(ms.cmp, ms, record['id'], now_ts=4000)
+    assert ms.mode == 'execute' and ms.auto_trivial is True
+
+
 def test_create_path_unknown_dependency_raises():
     ms = _init()
     with pytest.raises(ValueError):

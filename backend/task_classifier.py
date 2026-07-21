@@ -40,6 +40,7 @@ _TRIVIAL_PATTERNS = [
     re.compile(r"^(create|write|make|add|generate)\s+(a\s+)?(\w+\s+){0,3}file", re.I),
     re.compile(r"^(say|print|echo|output)\s+", re.I),
     re.compile(r"^(create|write)\s+hello\s+world", re.I),
+    re.compile(r"^(?:(?:now\s+)?please\s+)?(?:git\s+)?(push|pull|fetch|status)\b", re.I),
 ]
 
 _CLASSIFIER_SYSTEM = """You classify tasks as TRIVIAL or COMPLEX for an AI coding agent.

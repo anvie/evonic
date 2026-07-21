@@ -356,11 +356,12 @@ def valid_targets(cmp: dict) -> list:
 
 
 def create_path(cmp: dict, ms, title: str, goal: str = "",
-                depends_on: list = None, now_ts: int = None) -> dict:
-    """Create a new path, switch to it (branch semantics: the new path
-    starts a fresh plan cycle — mode plan, no plan_file, no atg).
+                depends_on: list = None, now_ts: int = None,
+                trivial: bool = False) -> dict:
+    """Create and switch to a new path with task-appropriate mode.
 
-    Returns the new path record. Raises ValueError on invalid depends_on.
+    Trivial paths start executable immediately; complex paths start a fresh
+    plan cycle. Returns the record and raises ValueError on invalid depends_on.
     """
     depends_on = list(depends_on or [])
     unknown = [d for d in depends_on if d not in cmp["paths"]]
@@ -376,10 +377,10 @@ def create_path(cmp: dict, ms, title: str, goal: str = "",
     cmp["paths"][pid] = record
     cmp["active_id"] = pid
 
-    # Fresh plan cycle on ms (the maybe_rearm_atg mutations)
-    ms.mode = "plan"
+    # Start trivial tasks executable; complex tasks enter a fresh plan cycle.
+    ms.mode = "execute" if trivial else "plan"
     ms.plan_file = None
-    ms.auto_trivial = False
+    ms.auto_trivial = trivial
     ms.atg = None
 
     cmp["stats"]["branches"] = cmp["stats"].get("branches", 0) + 1
