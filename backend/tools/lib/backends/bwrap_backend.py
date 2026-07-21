@@ -160,6 +160,36 @@ def _nsenter_failure_message(probe, failure: str | None) -> str | None:
             f'Details: {stderr or "unknown nsenter failure"}.')
 
 
+def _exited_process_stderr(proc, wait_timeout: float = 0.1) -> str:
+    """Return stderr only when a process has exited (or exits promptly)."""
+    try:
+        if proc.poll() is None:
+            proc.wait(timeout=wait_timeout)
+        if proc.poll() is None:
+            return ''
+        return (proc.stderr.read() or '').strip()
+    except (AttributeError, OSError, ValueError, subprocess.TimeoutExpired):
+        return ''
+
+
+def _bwrap_startup_failure_message(stderr: str) -> str:
+    """Explain a primary bwrap startup failure without blaming nsenter."""
+    stderr = (stderr or '').strip()
+    match = re.search(r"Can't find source path (.+?): Permission denied(?:\n|$)", stderr,
+                      flags=re.IGNORECASE)
+    if match:
+        source = match.group(1).strip()
+        return (f'Bubblewrap could not access bind source {source}: permission denied. '
+                f'Check that the Evonic service user has execute/traverse permission on every '
+                f'parent directory leading to this source. A private parent directory (for '
+                f'example, a home directory with mode 0700) can make the source inaccessible '
+                f'after Bubblewrap enters its user namespace. Do not weaken filesystem '
+                f'permissions automatically; move or stage the bind source under a suitably '
+                f'traversable directory, or adjust permissions according to your security policy. '
+                f'Bubblewrap details: {stderr}')
+    return f'Bubblewrap keeper exited during startup. Details: {stderr or "no error output"}.'
+
+
 def _check_nsenter_capability() -> str | None:
     """Probe whether nsenter can actually join all namespaces created by bwrap.
 
@@ -541,28 +571,20 @@ class BwrapBackend(LocalBackend):
         os.close(w_fd)  # our copy; bwrap holds its own
         inner_pid = _read_child_pid(r_fd, proc)
         if inner_pid is None:
-            stderr = ''
-            if proc.poll() is not None:
-                try:
-                    stderr = (proc.stderr.read() or '').strip()
-                except Exception:
-                    pass
-            try:
-                os.close(r_fd)
-            except OSError:
-                pass
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
-            msg = f'bwrap keeper failed to start: {stderr or "no child-pid reported"}'
-            if 'bwrap:' in stderr:
-                msg += _USERNS_HINT
-            return None, msg
+            stderr = _exited_process_stderr(proc)
+            _destroy_probe(proc, r_fd)
+            if stderr:
+                return None, f'bwrap keeper failed to start: {_bwrap_startup_failure_message(stderr)}'
+            return None, 'bwrap keeper failed to start: no child-pid reported'
         probe, failure = _wait_for_nsenter_ready(inner_pid)
         readiness_error = _nsenter_failure_message(probe, failure)
         if readiness_error:
+            # bwrap may report its child PID and then fail while mounting sources.
+            # Its stderr is the primary cause; nsenter only sees the vanished child.
+            stderr = _exited_process_stderr(proc)
             _destroy_probe(proc, r_fd)
+            if stderr:
+                return None, f'bwrap keeper failed to start: {_bwrap_startup_failure_message(stderr)}'
             return None, f'bwrap keeper failed readiness check: {readiness_error}'
         now = time.time()
         # Keep r_fd open in the pool entry (closed in _destroy_keeper) so

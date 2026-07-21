@@ -7,6 +7,7 @@ guard, host-side file I/O round-trips, and registry selection via the
 SANDBOX_BACKEND config.
 """
 
+import io
 import os
 import subprocess
 import sys
@@ -28,9 +29,10 @@ def clean_keeper_pool():
 
 
 class FakeProc:
-    def __init__(self, pid=1000, returncode=None):
+    def __init__(self, pid=1000, returncode=None, stderr=''):
         self.pid = pid
         self.returncode = returncode
+        self.stderr = io.StringIO(stderr)
 
     def poll(self):
         return self.returncode
@@ -329,25 +331,70 @@ def test_read_child_pid_parses_json():
         os.close(r); os.close(w)
 
 
-def test_spawn_keeper_readiness_failure_cleans_up(tmp_path, monkeypatch):
-    b = BwrapBackend(session_id='sess-1', workspace=str(tmp_path))
-    proc = FakeProc(pid=1000)
+def _mock_keeper_spawn(monkeypatch, proc, probe, failure='readiness'):
     r_fd, w_fd = os.pipe()
     monkeypatch.setattr(bwrap_backend.os, 'pipe', lambda: (r_fd, w_fd))
     monkeypatch.setattr(bwrap_backend.subprocess, 'Popen', lambda *args, **kwargs: proc)
     monkeypatch.setattr(bwrap_backend, '_read_child_pid', lambda fd, child: 4242)
-    failed_probe = _probe(1, 'nsenter: failed to execute /usr/bin/bash: No such file or directory')
     monkeypatch.setattr(bwrap_backend, '_wait_for_nsenter_ready',
-                        lambda pid: (failed_probe, 'readiness'))
+                        lambda pid: (probe, failure))
     destroyed = []
     monkeypatch.setattr(bwrap_backend, '_destroy_probe',
                         lambda child, fd: destroyed.append((child, fd)))
+    return r_fd, destroyed
+
+
+def test_spawn_keeper_readiness_failure_cleans_up(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='sess-1', workspace=str(tmp_path))
+    proc = FakeProc(pid=1000)
+    failed_probe = _probe(1, 'nsenter: failed to execute /usr/bin/bash: No such file or directory')
+    r_fd, destroyed = _mock_keeper_spawn(monkeypatch, proc, failed_probe)
 
     info, error = b._spawn_keeper()
 
     assert info is None and 'failed readiness check' in error
     assert destroyed == [(proc, r_fd)]
     os.close(r_fd)
+
+
+def test_spawn_keeper_prefers_bwrap_stderr_after_early_exit(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='sess-1', workspace=str(tmp_path))
+    proc = FakeProc(pid=1000, returncode=1,
+                    stderr='bwrap: setup failed for a primary reason\n')
+    failed_probe = _probe(1, 'nsenter: cannot open /proc/4242/ns/user: No such file or directory')
+    r_fd, destroyed = _mock_keeper_spawn(monkeypatch, proc, failed_probe, failure=None)
+
+    info, error = b._spawn_keeper()
+
+    assert info is None and 'setup failed for a primary reason' in error
+    assert 'nsenter' not in error and destroyed == [(proc, r_fd)]
+    os.close(r_fd)
+
+
+def test_spawn_keeper_helper_permission_error_is_actionable(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='sess-1', workspace=str(tmp_path))
+    helper = '/srv/private/evonic/runpy_helpers'
+    proc = FakeProc(pid=1000, returncode=1,
+                    stderr=f"bwrap: Can't find source path {helper}: Permission denied\n")
+    failed_probe = _probe(1, 'nsenter: cannot open /proc/4242/ns/user: No such file or directory')
+    r_fd, destroyed = _mock_keeper_spawn(monkeypatch, proc, failed_probe, failure=None)
+
+    info, error = b._spawn_keeper()
+
+    assert info is None and helper in error and 'execute/traverse permission' in error
+    assert 'every parent directory' in error and 'mode 0700' in error
+    assert 'Do not weaken filesystem permissions automatically' in error
+    assert 'WSL2' not in error and 'incompatible' not in error
+    assert destroyed == [(proc, r_fd)]
+    os.close(r_fd)
+
+
+def test_exited_process_stderr_does_not_block_for_live_keeper():
+    class LiveProc(FakeProc):
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired('bwrap', timeout)
+
+    assert bwrap_backend._exited_process_stderr(LiveProc(stderr='unavailable')) == ''
 
 
 def test_keeper_pool_reuse_and_workspace_change(tmp_path, monkeypatch):
