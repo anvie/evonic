@@ -820,8 +820,8 @@ def _exec_restart(args: dict, agent_context: dict = None) -> dict:
         'context': recent_context,
     }))
 
-    from backend.restart import schedule_restart
-    schedule_restart()
+    from backend.restart import restart_service
+    restart_service()
     return {'result': 'Restarting...'}
 
 

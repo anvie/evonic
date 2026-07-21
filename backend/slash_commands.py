@@ -570,8 +570,8 @@ def _register_builtins():
         except Exception:
             pass
 
-        from backend.restart import schedule_restart
-        schedule_restart()
+        from backend.restart import restart_service
+        restart_service()
         return "Restarting..."
 
     command_registry.register(
@@ -605,8 +605,8 @@ def _register_builtins():
 
             os._exit(0)
 
-        t = threading.Thread(target=_do_shutdown, daemon=True)
-        t.start()
+        from backend.restart import stop_service
+        stop_service(fallback=_do_shutdown)
         return "Shutting down..."
 
     command_registry.register(

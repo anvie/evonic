@@ -150,6 +150,10 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = _get_env_int("PORT", 8080, min_val=1, max_val=65535)
 DEBUG = os.getenv("DEBUG", "0") == "1"
 
+# External service manager. When unset, Evonic manages its own process.
+SERVICE_SYSTEM = os.getenv("SERVICE_SYSTEM", "").strip().lower()
+SYSTEMD_SERVICE_NAME = os.getenv("SYSTEMD_SERVICE_NAME", "").strip()
+
 # Cookie security — FORCE_INSECURE_COOKIES=true disables the Secure flag
 # for all cookies (session + CSRF). Intended for local development without
 # HTTPS. Default False: cookies ALWAYS have Secure=True regardless of DEBUG.

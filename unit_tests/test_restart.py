@@ -75,5 +75,55 @@ class TestScheduleRestart(unittest.TestCase):
         Thread.return_value.start.assert_called_once()
 
 
+class TestServiceManagement(unittest.TestCase):
+
+    def test_systemd_restart_command(self):
+        with mock.patch('config.SYSTEMD_SERVICE_NAME', 'evonic'), \
+                mock.patch.object(restart.subprocess, 'run') as run:
+            restart._systemd_command('restart')
+        run.assert_called_once_with(
+            ['systemctl', 'restart', 'evonic'], check=True
+        )
+
+    def test_systemd_stop_command(self):
+        with mock.patch('config.SYSTEMD_SERVICE_NAME', 'evonic'), \
+                mock.patch.object(restart.subprocess, 'run') as run:
+            restart._systemd_command('stop')
+        run.assert_called_once_with(['systemctl', 'stop', 'evonic'], check=True)
+
+    def test_systemd_requires_service_name(self):
+        with mock.patch('config.SYSTEMD_SERVICE_NAME', ''):
+            with self.assertRaisesRegex(RuntimeError, 'SYSTEMD_SERVICE_NAME'):
+                restart._systemd_command('restart')
+
+    def test_systemd_command_failure_propagates(self):
+        error = restart.subprocess.CalledProcessError(1, ['systemctl'])
+        with mock.patch('config.SYSTEMD_SERVICE_NAME', 'evonic'), \
+                mock.patch.object(restart.subprocess, 'run', side_effect=error):
+            with self.assertRaises(restart.subprocess.CalledProcessError):
+                restart._systemd_command('restart')
+
+    def test_unconfigured_restart_uses_fallback(self):
+        with mock.patch('config.SERVICE_SYSTEM', ''), \
+                mock.patch.object(restart, 'schedule_restart') as schedule:
+            restart.restart_service(delay=0)
+        schedule.assert_called_once_with(0)
+
+    def test_systemd_restart_requires_service_name_before_thread(self):
+        with mock.patch('config.SERVICE_SYSTEM', 'systemd'), \
+                mock.patch('config.SYSTEMD_SERVICE_NAME', ''):
+            with self.assertRaisesRegex(RuntimeError, 'SYSTEMD_SERVICE_NAME'):
+                restart.restart_service(delay=0)
+
+    def test_systemd_restart_spawns_service_thread(self):
+        with mock.patch('config.SERVICE_SYSTEM', 'systemd'), \
+                mock.patch('config.SYSTEMD_SERVICE_NAME', 'evonic'), \
+                mock.patch.object(restart.threading, 'Thread') as Thread:
+            restart.restart_service(delay=0)
+        Thread.assert_called_once()
+        self.assertTrue(Thread.call_args.kwargs['daemon'])
+        Thread.return_value.start.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()

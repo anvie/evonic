@@ -861,7 +861,7 @@ def trigger_rollback() -> dict:
 
 
 def trigger_restart() -> dict:
-    """Re-exec the server in place via the shared restart helper.
+    """Restart through the configured service-management helper.
 
     State is reset to idle BEFORE the restart so the persisted
     state/update/update_state.json does not carry 'success' across server
@@ -872,7 +872,7 @@ def trigger_restart() -> dict:
 
     # Reset state to idle BEFORE restart so the persisted state does not
     # carry over 'success' status after the server restarts. Must happen
-    # while _lock is held and before schedule_restart() fires the thread.
+    # while _lock is held and before restart_service() fires the thread.
     with _lock:
         _state['status'] = 'idle'
         _state['progress'] = 0
@@ -884,8 +884,8 @@ def trigger_restart() -> dict:
         _state['latest_version'] = None
         _persist_state(_state)
 
-    from backend.restart import schedule_restart
-    schedule_restart()
+    from backend.restart import restart_service
+    restart_service()
     return {'success': True, 'restarting': True}
 
 

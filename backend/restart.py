@@ -14,6 +14,7 @@ identically.
 
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -73,6 +74,76 @@ def restart_in_place(delay: float = 1.5) -> None:
     log.info("Re-executing server process")
     os.chdir(target)
     os.execv(python, [python, app_py])
+
+
+def _systemd_command(action: str) -> None:
+    """Run a systemctl action for the configured Evonic unit."""
+    import config
+
+    service_name = config.SYSTEMD_SERVICE_NAME
+    if not service_name:
+        raise RuntimeError(
+            "SYSTEMD_SERVICE_NAME is required when SERVICE_SYSTEM=systemd"
+        )
+
+    command = ["systemctl", action, service_name]
+    log.info("Managing Evonic via systemd: %s", " ".join(command))
+    try:
+        subprocess.run(command, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        log.exception("Failed to run systemd service command: %s", action)
+        raise
+
+
+def restart_service(delay: float = 1.5) -> None:
+    """Restart using the configured service manager or the in-place fallback."""
+    import config
+
+    if config.SERVICE_SYSTEM == "systemd":
+        if not config.SYSTEMD_SERVICE_NAME:
+            raise RuntimeError(
+                "SYSTEMD_SERVICE_NAME is required when SERVICE_SYSTEM=systemd"
+            )
+
+        def _restart_systemd():
+            time.sleep(delay)
+            _systemd_command("restart")
+
+        threading.Thread(target=_restart_systemd, daemon=True).start()
+        return
+
+    if config.SERVICE_SYSTEM:
+        log.warning(
+            "Unsupported SERVICE_SYSTEM=%r; using in-place restart",
+            config.SERVICE_SYSTEM,
+        )
+    schedule_restart(delay)
+
+
+def stop_service(delay: float = 1.5, fallback=None) -> None:
+    """Stop via the configured service manager or invoke the supplied fallback."""
+    import config
+
+    if config.SERVICE_SYSTEM == "systemd":
+        if not config.SYSTEMD_SERVICE_NAME:
+            raise RuntimeError(
+                "SYSTEMD_SERVICE_NAME is required when SERVICE_SYSTEM=systemd"
+            )
+
+        def _stop_systemd():
+            time.sleep(delay)
+            _systemd_command("stop")
+
+        threading.Thread(target=_stop_systemd, daemon=True).start()
+        return
+
+    if config.SERVICE_SYSTEM:
+        log.warning(
+            "Unsupported SERVICE_SYSTEM=%r; using process stop fallback",
+            config.SERVICE_SYSTEM,
+        )
+    if fallback is not None:
+        threading.Thread(target=fallback, daemon=True).start()
 
 
 def schedule_restart(delay: float = 1.5) -> None:
