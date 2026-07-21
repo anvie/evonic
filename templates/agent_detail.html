@@ -4752,14 +4752,13 @@ async function restoreActiveReasoning() {
         const sessionId = await _getChatSessionId();
         if (!sessionId || _chatBusy || _currentTurn) return; // bail if user already sent a message or turn exists
 
-        // Fetch all buffered events for this session
+        // Fetch all buffered events for this session.
         const eRes = await fetch(`/api/agents/${encodeURIComponent(AGENT_ID)}/chat/events?session_id=${encodeURIComponent(sessionId)}&after=0`);
         if (!eRes.ok || _chatBusy || _currentTurn) return; // bail if user sent a message while fetching
         const eData = await eRes.json();
-        if (epoch !== window._agentEpoch) return; // agent switched mid-fetch — discard
+        if (epoch !== window._agentEpoch || sessionId !== _chatSessionId) return; // agent/session switched mid-fetch
         if (_chatBusy || _currentTurn) return; // bail before touching shared state
         const events = eData.events || [];
-        if (!events.length) return;
 
         // Only replay events from the current in-progress turn.
         // Discard everything up to and including the last 'done' OR 'turn_split' so
@@ -4770,7 +4769,17 @@ async function restoreActiveReasoning() {
         const lastClearIdx = events.reduce((idx, ev, i) => ev.event === 'session_clear' ? i : idx, -1);
         const cutIdx = Math.max(lastDoneIdx, lastSplitIdx, lastClearIdx);
         const replayEvents = cutIdx >= 0 ? events.slice(cutIdx + 1) : events;
-        if (!replayEvents.length) return;
+
+        // An immediate refresh can happen before turn_begin reaches the event
+        // buffer. In that narrow window, the busy snapshot is the authoritative
+        // fallback — but only when it names this exact chat session.
+        if (!replayEvents.length) {
+            const busyRes = await fetch(`/api/agents/${encodeURIComponent(AGENT_ID)}/busy`);
+            if (!busyRes.ok || _chatBusy || _currentTurn) return;
+            const busyState = await busyRes.json();
+            if (epoch !== window._agentEpoch || sessionId !== _chatSessionId) return;
+            if (_chatBusy || _currentTurn || !busyState.busy || busyState.session_id !== sessionId) return;
+        }
 
         // Guard: if the in-progress turn started before the last turn_end rendered
         // from chatlog history, that turn was already fully finalized — skip to avoid
