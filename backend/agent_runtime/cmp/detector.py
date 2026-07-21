@@ -196,7 +196,7 @@ def _call_turn_llm(cmp: dict, ms, text: str, recent_tail: str,
                          getattr(client, 'model', None), _dur,
                          bool(env['card_delta']), bool(env['new_path']))
             return env
-        if choice.get('finish_reason') != 'length' or budget != 1024:
+        if choice.get('finish_reason') != 'length' or budget == 4096:
             break
         _logger.info("CMP turn envelope truncated beyond repair at "
                      "max_tokens=%d — retrying with a doubled budget", budget)

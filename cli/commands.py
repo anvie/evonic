@@ -4201,7 +4201,7 @@ except ImportError:
 
 def _build_backup_sources():
     """Return the list of backup sources as (rel_path, label, is_db, is_glob)."""
-    sources = [
+    backup_sources = [
         # 1. Agent runtime data
         ("agents/", "Agent runtime data", False, True),
         # 2. Shared agent KB files
@@ -4234,7 +4234,7 @@ def _build_backup_sources():
         # 14. Plan files
         ("plan/", "Agent plan files", False, True),
     ]
-    return sources
+    return backup_sources
 
 
 # Excluded paths (relative to ROOT)
@@ -4806,11 +4806,11 @@ def backup_command(output=None, fmt="gz", quiet=False, exclude=None, encrypt=Fal
     
     try:
         # Step 3: Collect all sources
-        sources = _build_backup_sources()
+        backup_sources = _build_backup_sources()
         all_files = []  # (rel_path, staging_path, size_bytes)
         db_files_collected = []  # DB files needing snapshot
         
-        for rel_pattern, label, is_db, is_glob in sources:
+        for rel_pattern, label, is_db, is_glob in backup_sources:
             if is_db:
                 # DB files get atomic snapshot
                 abs_src = os.path.join(ROOT, rel_pattern)

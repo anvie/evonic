@@ -19,7 +19,7 @@ MAX_PATHS = 100
 # boundaries): each state strictly reduces a path's context cost — active
 # (full card), preserved (snippet, max MAX_PRESERVED), archived (map-node
 # title only), pruned (record removed).
-MAX_PRESERVED = 10                         # per-cap, oldest preserved archived
+MAX_PRESERVED = 100                        # per-cap, oldest preserved archived
 ARCHIVED_TTL_MS = 3 * 24 * 3600 * 1000    # archived  > 3 days → pruned
 RESTORE_MAX_HOPS = 3                       # lineage auto-restore depth
 
@@ -141,6 +141,59 @@ def _path_search_tokens(path: dict) -> tuple:
     for a in path.get("artifacts") or []:
         allt |= _tokenize(str(a))
     return strong, allt
+
+
+def _stem(tok: str) -> str:
+    """Suffix-strip stemmer for recall matching ('graduated'~'graduate',
+    'degrees'~'degree'). Deterministic, English-lite; only used for transcript
+    search where exact-token overlap is too brittle."""
+    for suf in ('ing', 'ed', 'es', 's'):
+        if len(tok) > 4 and tok.endswith(suf):
+            tok = tok[:-len(suf)]
+            break
+    return tok[:-1] if len(tok) > 4 and tok.endswith('e') else tok
+
+
+def search_cmp_transcripts(cmp: dict, chatlog, query: str, limit: int = 3,
+                           exclude_active: bool = True) -> list:
+    """Lexical recall over each path's RAW transcript segments — the fallback
+    layer beneath card search, for facts the compactor never lifted into
+    key_facts (cards are lossy by design). Stemmed token overlap, no LLM.
+    Returns [{id, score, excerpts}] where excerpts are the best-matching
+    transcript lines (the actual text holding the fact)."""
+    q = {_stem(t) for t in _tokenize(query)}
+    if not q or not cmp or not cmp.get('paths'):
+        return []
+    from backend.agent_runtime.cmp.compactor import collect_path_entries
+    scored = []
+    for pid, path in cmp['paths'].items():
+        if exclude_active and pid == cmp.get('active_id'):
+            continue
+        lines, user_lines = [], []
+        for e in collect_path_entries(chatlog, path):
+            if e.get('type') not in ('user', 'final', 'intermediate'):
+                continue
+            content = e.get('content') or ''
+            s = len(q & {_stem(t) for t in _tokenize(content)})
+            if s > 0:
+                item = (s, content.strip()[:300])
+                lines.append(item)
+                if e.get('type') == 'user':
+                    user_lines.append(item)
+        if lines:
+            # User-authored matches are the strongest evidence for personal
+            # memory queries. Assistant boilerplate often repeats query words
+            # ("store", "returns") across unrelated sessions and otherwise
+            # crowds the actual user facts out of a small recall limit.
+            evidence = user_lines or lines
+            evidence.sort(key=lambda t: -t[0])
+            score = max(s for s, _ in evidence)
+            total = sum(s for s, _ in evidence)
+            scored.append((bool(user_lines), score, total, pid,
+                           [ln for _, ln in evidence[:3]]))
+    scored.sort(key=lambda t: (-t[0], -t[1], -t[2], t[3]))
+    return [{'id': pid, 'score': score, 'excerpts': ex}
+            for _, score, _, pid, ex in scored[:limit]]
 
 
 def search_cmp_paths(cmp: dict, query: str, limit: int = 5,

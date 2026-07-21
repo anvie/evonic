@@ -413,8 +413,8 @@ def test_truncation_beyond_repair_retries_with_doubled_budget():
         result = detect(ms.cmp, ms, LONG_NEW_TASK)
     assert (result['decision'], result['target']) == ('return', 'A1')
     assert client.chat_completion.call_count == 2
-    assert client.chat_completion.call_args_list[0][1]['max_tokens'] == 1024
-    assert client.chat_completion.call_args_list[1][1]['max_tokens'] == 2048
+    assert client.chat_completion.call_args_list[0][1]['max_tokens'] == 2048
+    assert client.chat_completion.call_args_list[1][1]['max_tokens'] == 4096
 
 
 def test_unparseable_without_length_never_retries():
