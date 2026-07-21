@@ -566,7 +566,10 @@ def _builtin_update_tasks_factory(agent_context: dict):
             "name": "update_tasks",
             "description": (
                 "Manage your implementation task list "
-                "(set, add, update status, remove)."
+                "(set, add, update status, remove). Each entry must describe "
+                "exactly one concrete action or outcome that can be completed "
+                "independently. Split multi-action work into separate entries; "
+                "never batch several actions into one task."
             ),
             "parameters": {
                 "type": "object",
@@ -576,7 +579,7 @@ def _builtin_update_tasks_factory(agent_context: dict):
                         "enum": ["set", "add", "done", "in_progress", "remove"],
                         "description": (
                             "'set': replace entire task list (provide 'tasks' array). "
-                            "'add': add one task. "
+                            "'add': add one atomic task. "
                             "'done'/'in_progress': update status. "
                             "'remove': delete a task."
                         )
@@ -587,12 +590,24 @@ def _builtin_update_tasks_factory(agent_context: dict):
                     },
                     "text": {
                         "type": "string",
-                        "description": "Task description for the 'add' action."
+                        "description": (
+                            "One atomic task for the 'add' action: exactly one "
+                            "concrete, independently completable action or outcome."
+                        )
                     },
                     "tasks": {
                         "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of task descriptions for the 'set' action."
+                        "items": {
+                            "type": "string",
+                            "description": (
+                                "Exactly one concrete, independently completable "
+                                "action or outcome."
+                            )
+                        },
+                        "description": (
+                            "Atomic task descriptions for the 'set' action. "
+                            "Split multi-action work across separate array entries."
+                        )
                     }
                 },
                 "required": ["action"]
