@@ -3,6 +3,7 @@ sub-agent deadlock mitigation (paused_model_gate)."""
 
 import threading
 import time
+from unittest.mock import MagicMock, patch
 
 from backend.agent_runtime.concurrency import (
     ConcurrencyGate,
@@ -79,3 +80,27 @@ def test_manager_explorer_gets_own_agent_gate_but_shared_model_gate():
     parent_agent = mgr._get_agent_gate('aisyah')
     child_agent = mgr._get_agent_gate('aisyah_explorer_1')
     assert parent_agent is not child_agent      # distinct agent gates
+
+
+def test_runtime_gates_explorer_on_its_configured_model():
+    """An explorer must gate the model it calls, not the global default model."""
+    from backend.agent_runtime.runtime import AgentRuntime, SessionContext
+
+    runtime = object.__new__(AgentRuntime)
+    runtime._llm_serializer = MagicMock()
+    gate = runtime._llm_serializer._concurrency_mgr.turn_gate
+    runtime._get_session_lock = MagicMock(return_value=threading.Lock())
+    runtime._do_process = MagicMock(return_value={'response': 'ok'})
+    agent = {
+        'id': 'aisyah_explorer_1',
+        '_db_agent_id': 'aisyah_explorer_1',
+        'is_explorer': True,
+        'model_id': 'explorer-model',
+    }
+    ctx = SessionContext('session-1', '__agent__aisyah', None)
+
+    with patch('backend.agent_runtime.explorer.primary_model', return_value={'id': 'explorer-model'}), \
+         patch('backend.agent_runtime.runtime.db.get_agent_model', return_value={'id': 'global-default'}):
+        assert runtime._process_and_respond(agent, ctx) == {'response': 'ok'}
+
+    gate.assert_called_once_with('aisyah_explorer_1', 'explorer-model')

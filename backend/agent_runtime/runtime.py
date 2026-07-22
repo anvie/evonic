@@ -1413,14 +1413,17 @@ class AgentRuntime:
         """Build messages from DB, call LLM, trigger summarization, return response.
         Uses per-agent/per-model concurrency gate then per-session lock."""
         agent_id = agent['id']
-        # Sub-agents don't exist in the agents DB — use parent's ID for model lookup
         db_agent_id = agent.get('_db_agent_id', agent_id)
         AgentRuntime._touch_session(ctx.session_id)
         try:
-            model = db.get_agent_model(db_agent_id)
+            if agent.get('is_explorer'):
+                from backend.agent_runtime import explorer as _explorer
+                model = _explorer.primary_model(agent) or db.get_agent_model(db_agent_id)
+            else:
+                model = db.get_agent_model(db_agent_id)
             model_id = model.get('id') if model else None
         except Exception as e:
-            _logger.warning("Failed to get default model for agent %s, proceeding without model gating: %s", agent_id, e)
+            _logger.warning("Failed to resolve turn model for agent %s, proceeding without model gating: %s", agent_id, e)
             model_id = None
         with self._llm_serializer._concurrency_mgr.turn_gate(agent_id, model_id):
             session_lock = self._get_session_lock(ctx.session_id)
