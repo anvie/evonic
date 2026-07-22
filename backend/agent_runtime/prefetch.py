@@ -100,6 +100,26 @@ class TurnPrefetcher:
             else:
                 assigned_tool_ids = db.get_agent_tools(db_agent_id)
 
+            # Inject skill tool IDs from assigned skills into assigned_tool_ids.
+            # This mirrors build_tools() Layer 9 auto-injection and ensures
+            # the authorization guard allows execution of skill tools that
+            # belong to skills explicitly assigned to the agent.
+            assigned_skill_ids = set(db.get_agent_skills(db_agent_id))
+            if assigned_skill_ids:
+                from backend.skills_manager import skills_manager
+                _existing_ids = set(assigned_tool_ids)
+                for _sd in skills_manager.get_all_skill_tool_defs():
+                    _tid = _sd.get('id', '')
+                    if not _tid:
+                        continue
+                    # Parse skill:<skill_id>:<fn_name>
+                    _parts = _tid.split(':', 2)
+                    if len(_parts) != 3 or _parts[0] != 'skill':
+                        continue
+                    _skill_id = _parts[1]
+                    if _skill_id in assigned_skill_ids and _tid not in _existing_ids:
+                        assigned_tool_ids.append(_tid)
+
             # Auto-assign save_artifact to all agents so they can save files.
             # No DB assignment needed — every agent can create and store artifacts.
             if 'save_artifact' not in assigned_tool_ids:
