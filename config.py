@@ -207,6 +207,11 @@ CONNECTOR_PAIRING_CODE_TTL = _get_env_int("CONNECTOR_PAIRING_CODE_TTL", 300, min
 AGENT_MAX_TOOL_ITERATIONS = _get_env_int("AGENT_MAX_TOOL_ITERATIONS", 100, min_val=1, max_val=1000)
 EVAL_MAX_TOOL_ITERATIONS = _get_env_int("EVAL_MAX_TOOL_ITERATIONS", 30, min_val=1, max_val=500)
 AGENT_MAX_TOOL_RESULT_CHARS = _get_env_int("AGENT_MAX_TOOL_RESULT_CHARS", 8000, min_val=1, max_val=1_048_576)
+# Maximum time the agent loop waits for each parallel tool, measured from
+# submission. Running Python threads cannot be terminated, so expired workers
+# are abandoned while pending work is cancelled during non-blocking cleanup.
+AGENT_PARALLEL_TOOL_WAIT_TIMEOUT = _get_env_int(
+    "AGENT_PARALLEL_TOOL_WAIT_TIMEOUT", 300, min_val=1, max_val=3600)
 
 # Same-turn context projection. Shadow mode computes the bounded model-facing
 # projection and emits attribution, while the provider still receives canonical
