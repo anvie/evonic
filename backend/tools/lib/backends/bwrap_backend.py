@@ -37,6 +37,7 @@ or `kernel.apparmor_restrict_unprivileged_userns` (Ubuntu 24.04+).
 
 import atexit
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -47,6 +48,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -70,8 +72,12 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Directory containing the evonic helper package (bound into the sandbox).
+# Directory containing the evonic helper package. Bubblewrap cannot bind this
+# path when an ancestor (commonly the service user's home) is mode 0700, so a
+# content-addressed copy is staged under a traversable runtime directory first.
 _HELPERS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'runpy_helpers'))
+_HELPERS_RUNTIME_ROOT = os.path.join(tempfile.gettempdir(), f'evonic-bwrap-{os.getuid()}', 'helpers')
+_helpers_stage_lock = threading.Lock()
 # Helpers are bound at a top-level path: mount points inside read-only binds
 # (/usr, /opt, …) cannot be created by bwrap, but the sandbox root is a tmpfs
 # where top-level directories can.
@@ -101,6 +107,48 @@ _USERNS_HINT = (
 _NSENTER_READY_TIMEOUT = 1.0
 _NSENTER_READY_INTERVAL = 0.01
 _NSENTER_EXEC_NOT_READY = 'failed to execute /usr/bin/bash: No such file or directory'
+
+
+def _helpers_digest(source: str) -> str:
+    digest = hashlib.sha256()
+    for root, dirs, files in os.walk(source):
+        dirs[:] = sorted(d for d in dirs if d != '__pycache__')
+        for name in sorted(files):
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, source).encode()
+            digest.update(rel + b'\0')
+            with open(path, 'rb') as handle:
+                for chunk in iter(lambda: handle.read(65536), b''):
+                    digest.update(chunk)
+    return digest.hexdigest()[:16]
+
+
+def _stage_helpers(source: str = _HELPERS_DIR, runtime_root: str = _HELPERS_RUNTIME_ROOT) -> str:
+    """Copy helpers to a traversable, immutable-by-convention bind source."""
+    digest = _helpers_digest(source)
+    destination = os.path.join(runtime_root, digest)
+    with _helpers_stage_lock:
+        os.makedirs(runtime_root, mode=0o755, exist_ok=True)
+        os.chmod(os.path.dirname(runtime_root), 0o755)
+        os.chmod(runtime_root, 0o755)
+        if not os.path.isdir(destination):
+            staging = tempfile.mkdtemp(prefix=f'.{digest}-', dir=runtime_root)
+            try:
+                shutil.copytree(source, staging, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+                for root, dirs, files in os.walk(staging):
+                    os.chmod(root, 0o755)
+                    for name in files:
+                        path = os.path.join(root, name)
+                        os.chmod(path, 0o755 if os.access(path, os.X_OK) else 0o644)
+                try:
+                    os.rename(staging, destination)
+                except FileExistsError:
+                    shutil.rmtree(staging)
+            except Exception:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+    return destination
 
 
 def _nsenter_probe_argv(inner_pid: int) -> list:
@@ -480,6 +528,7 @@ class BwrapBackend(LocalBackend):
 
     def _bwrap_argv(self) -> list:
         ws = self._cwd()
+        helpers_dir = _stage_helpers()
         argv = [
             'bwrap',
             '--ro-bind', '/usr', '/usr',
@@ -505,7 +554,7 @@ class BwrapBackend(LocalBackend):
             '--tmpfs', '/tmp',
             '--bind', ws, '/workspace',
             '--bind', os.path.join(ws, _HOME_SUBDIR), _HOME_MOUNT,
-            '--ro-bind', _HELPERS_DIR, _HELPERS_MOUNT,
+            '--ro-bind', helpers_dir, _HELPERS_MOUNT,
             '--unshare-pid', '--unshare-uts', '--unshare-ipc', '--unshare-user',
             '--hostname', self._hostname,
             '--die-with-parent',

@@ -151,9 +151,44 @@ def test_bwrap_argv_core_flags(tmp_path):
     ws_bind = argv.index('--bind')
     assert argv[ws_bind + 1:ws_bind + 3] == [ws, '/workspace']
     assert os.path.join(ws, '.home') in argv and '/home/agent' in argv
-    assert bwrap_backend._HELPERS_DIR in argv
+    helper_source = argv[argv.index(bwrap_backend._HELPERS_MOUNT) - 1]
+    assert helper_source.startswith(bwrap_backend._HELPERS_RUNTIME_ROOT + os.sep)
+    assert bwrap_backend._HELPERS_DIR not in argv
     # workdir is set per-exec by the nsenter trampoline, not on the keeper
     assert '--chdir' not in argv
+
+
+def test_stage_helpers_works_below_private_parent(tmp_path):
+    private = tmp_path / 'private'
+    source = private / 'helpers'
+    runtime = tmp_path / 'runtime' / 'helpers'
+    (source / 'bin').mkdir(parents=True)
+    (source / '__init__.py').write_text('value = 1\n')
+    executable = source / 'bin' / 'rg'
+    executable.write_text('#!/bin/sh\n')
+    executable.chmod(0o755)
+    private.chmod(0o700)
+
+    staged = bwrap_backend._stage_helpers(str(source), str(runtime))
+
+    assert staged.startswith(str(runtime) + os.sep)
+    assert open(os.path.join(staged, '__init__.py')).read() == 'value = 1\n'
+    assert os.stat(runtime.parent).st_mode & 0o777 == 0o755
+    assert os.stat(runtime).st_mode & 0o777 == 0o755
+    assert os.stat(os.path.join(staged, 'bin', 'rg')).st_mode & 0o111
+
+
+def test_stage_helpers_is_content_addressed(tmp_path):
+    source = tmp_path / 'source'
+    runtime = tmp_path / 'runtime' / 'helpers'
+    source.mkdir()
+    helper = source / 'display.py'
+    helper.write_text('first\n')
+    first = bwrap_backend._stage_helpers(str(source), str(runtime))
+    assert bwrap_backend._stage_helpers(str(source), str(runtime)) == first
+    helper.write_text('second\n')
+    second = bwrap_backend._stage_helpers(str(source), str(runtime))
+    assert second != first and open(os.path.join(second, 'display.py')).read() == 'second\n'
 
 
 def test_workdir_subagent(tmp_path):
