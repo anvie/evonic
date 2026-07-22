@@ -137,18 +137,28 @@ def _check_nsenter_capability() -> str | None:
         return None       # bwrap failed — not a nsenter-compatibility issue
 
     # Probe: can nsenter join all namespaces?
-    try:
-        probe = subprocess.run(
-            _nsenter_probe_argv(inner_pid),
-            capture_output=True, text=True, timeout=5,
-        )
-    except subprocess.TimeoutExpired:
-        _destroy_probe(proc, r_fd)
-        return 'nsenter probe timed out — the bwrap sandbox may not be responding.'
+    # Retry with exponential backoff — the bwrap mount namespace may not
+    # be fully settled immediately (race condition, ~50ms typical).
+    delay_ms = 0
+    probe = None
+    for _ in range(3):
+        if delay_ms > 0:
+            time.sleep(delay_ms / 1000.0)
+        try:
+            probe = subprocess.run(
+                _nsenter_probe_argv(inner_pid),
+                capture_output=True, text=True, timeout=5,
+            )
+        except subprocess.TimeoutExpired:
+            _destroy_probe(proc, r_fd)
+            return 'nsenter probe timed out — the bwrap sandbox may not be responding.'
+        if probe.returncode == 0:
+            break
+        delay_ms = 50 if delay_ms == 0 else delay_ms * 2
 
     _destroy_probe(proc, r_fd)
 
-    if probe.returncode != 0:
+    if probe is not None and probe.returncode != 0:
         stderr = (probe.stderr or '').strip()
         return (f'nsenter cannot join the bwrap sandbox namespaces on this host. '
                 f'Details: {stderr or "permission denied"}. '
