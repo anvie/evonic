@@ -88,25 +88,29 @@ def test_sessions_refresh_restores_empty_buffer_thinking_placeholder():
 
 def test_agent_detail_refresh_restores_only_matching_busy_session():
     detail = read_repo_file("templates/agent_detail.html")
+    restore = detail[
+        detail.index("async function restoreActiveReasoning()"):
+        detail.index("let chatPollTimer = null")
+    ]
 
-    # Replay is authoritative; an empty replay falls back to /busy and rejects
-    # idle or other-session state before any bubble/Turn is created.
-    replay_pos = detail.index("const replayEvents =", detail.index("async function restoreActiveReasoning()"))
-    busy_pos = detail.index("const busyRes = await fetch", replay_pos)
-    bubble_pos = detail.index("let thinkingId = chatUI.showThinkingIndicator", busy_pos)
-    assert replay_pos < busy_pos < bubble_pos
-    assert "`/api/agents/${encodeURIComponent(AGENT_ID)}/busy`" in detail
-    assert (
-        "!busyState.busy || busyState.session_id !== sessionId"
-        in detail
+    # /busy is authoritative even when replay contains a stale incomplete tail.
+    # Idle and cross-session snapshots must both return before any bubble is created.
+    replay_pos = restore.index("const replayEvents =")
+    busy_pos = restore.index("const busyRes = await fetch", replay_pos)
+    busy_guard_pos = restore.index(
+        "!busyState.busy || busyState.session_id !== sessionId", busy_pos
     )
+    bubble_pos = restore.index("let thinkingId = chatUI.showThinkingIndicator", busy_guard_pos)
+    assert replay_pos < busy_pos < busy_guard_pos < bubble_pos
+    assert "`/api/agents/${encodeURIComponent(AGENT_ID)}/busy`" in restore
+    assert "if (!replayEvents.length)" not in restore[replay_pos:bubble_pos]
 
     # Agent/session epoch guards survive both awaits, and the restored placeholder
     # is reused by the stream and polling fallback rather than duplicated.
     guard = "epoch !== window._agentEpoch || sessionId !== _chatSessionId"
-    assert detail.count(guard) >= 2
-    assert "_currentTurn = { abortController: null, thinkingId" in detail
-    assert "chatUI.connectThinkingStream(" in detail
-    assert "pollForResponse(thinkingId);" in detail
+    assert restore.count(guard) >= 2
+    assert "_currentTurn = { abortController: null, thinkingId" in restore
+    assert "chatUI.connectThinkingStream(" in restore
+    assert "pollForResponse(thinkingId);" in restore
     assert "function _destroyCurrentTurn()" in detail
     assert "chatUI.removeThinkingIndicator(_currentTurn.thinkingId);" in detail
