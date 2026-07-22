@@ -1366,6 +1366,38 @@ function clearFileInput() {
     if (previewImg.src) { URL.revokeObjectURL(previewImg.src); previewImg.src = ''; }
 }
 
+// ==================== Image Paste ====================
+
+(function initChatImagePaste() {
+    const input = document.getElementById('reply-input');
+    if (!input) return;
+    input.addEventListener('paste', function(event) {
+        const items = event.clipboardData?.items;
+        if (!items) return;
+        const images = Array.from(items)
+            .filter(item => item.type.startsWith('image/'))
+            .map(item => item.getAsFile())
+            .filter(Boolean);
+        if (!images.length) return;
+        event.preventDefault();
+
+        if (!currentAttachmentsEnabled) {
+            if (typeof showToast === 'function') {
+                showToast('This agent does not support file attachments. Enable attachments in Agent Settings to upload files.', true);
+            }
+            return;
+        }
+
+        // Sessions page supports a single file attachment; use the first pasted image.
+        const file = images[0];
+        const fileInput = document.getElementById('file-input');
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        fileInput.files = dt.files;
+        onFileSelected(fileInput);
+    });
+})();
+
 // ==================== Drag & Drop File Upload ====================
 
 let _dragCounter = 0;
