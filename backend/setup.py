@@ -521,7 +521,7 @@ def run_setup(
         )
 
         # 5.5 Assign default skills (core built-in skills pre-assigned for super agent)
-        db.set_agent_skills(agent_id, ["direxplorer", "explorer"])
+        db.set_agent_skills(agent_id, ["explorer"])
 
         # 6. Store settings
         db.set_setting("super_agent_id", agent_id)

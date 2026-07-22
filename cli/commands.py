@@ -3381,7 +3381,7 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False):
 
         agents = db.get_agents()
         super_agents = [a for a in agents if a.get("is_super")]
-        core_skills = ["direxplorer", "explorer"]
+        core_skills = ["explorer"]
 
         if not super_agents:
             results.append(_ok("No super agents found — nothing to migrate"))
