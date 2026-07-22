@@ -740,73 +740,34 @@ def _on_final_answer(data: dict) -> None:
     except Exception:
         pass
 
-    # Find the original message metadata from A
+    # Find the newest routable request metadata from A. This targeted lookup
+    # considers user requests only, so tool and assistant traffic cannot hide
+    # the originating delegation.
     try:
-        messages = db.get_session_messages(session_id, limit=20, agent_id=_db_agent_id)
+        meta = db.get_latest_agent_request_metadata(
+            session_id, agent_id=_db_agent_id, sender_agent_id=sender_id,
+        )
     except Exception as e:
         _logger.warning(
-            "Auto-forward: could not fetch session messages for '%s' (agent_b=%s): %s",
+            "Auto-forward: agent-request metadata lookup failed for '%s' (agent_b=%s): %s",
             session_id, agent_b_id, e,
         )
         return
 
-    report_to_id = None
-    report_to_channel_id = None
-    session_id_from_meta = None
-    original_depth = 0
-    subagent_user_direct = False
-    reply_to_id = None
-    skip_auto_forward = False
-    for msg in reversed(messages):
-        meta = msg.get('metadata') or {}
-        if isinstance(meta, str):
-            try:
-                import json
-                meta = json.loads(meta)
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
-        if meta.get('from_agent_id') == sender_id:
-            report_to_id = meta.get('report_to_id')
-            report_to_channel_id = meta.get('report_to_channel_id') or None
-            session_id_from_meta = meta.get('session_id')
-            original_depth = meta.get('agent_message_depth', 0)
-            subagent_user_direct = meta.get('subagent_user_direct', False)
-            reply_to_id = meta.get('reply_to_id')
-            skip_auto_forward = meta.get('skip_auto_forward', False)
-            break
-
-    if not report_to_id:
-        # The originating message may be older than the recent-message window
-        # (e.g. when B executed many tool calls).  Fall back to a targeted DB
-        # query that finds the first agent-request message in the session.
-        _logger.debug(
-            "Auto-forward: report_to_id not found in recent %d messages for '%s' "
-            "in session '%s' — falling back to latest-agent-request lookup.",
-            len(messages), sender_id, session_id,
-        )
-        try:
-            latest_meta = db.get_latest_agent_request_metadata(
-                session_id, agent_id=_db_agent_id, sender_agent_id=sender_id,
-            )
-        except Exception as e:
-            _logger.warning("Auto-forward: latest-agent-request fallback failed for '%s': %s", session_id, e)
-            latest_meta = None
-        if latest_meta and latest_meta.get('from_agent_id') == sender_id:
-            report_to_id = latest_meta.get('report_to_id')
-            report_to_channel_id = latest_meta.get('report_to_channel_id') or None
-            session_id_from_meta = latest_meta.get('session_id')
-            original_depth = latest_meta.get('agent_message_depth', 0)
-            subagent_user_direct = latest_meta.get('subagent_user_direct', False)
-            reply_to_id = latest_meta.get('reply_to_id')
-            skip_auto_forward = latest_meta.get('skip_auto_forward', False)
-
-    if not report_to_id:
+    if not meta or meta.get('from_agent_id') != sender_id or not meta.get('report_to_id'):
         _logger.warning(
-            "Auto-forward skip: no report_to_id found for sender '%s' in session '%s' "
-            "(searched %d messages + first-message fallback).",
-            sender_id, session_id, len(messages),
+            "Auto-forward skip: no routable request metadata found for sender '%s' in session '%s'.",
+            sender_id, session_id,
         )
         return
+
+    report_to_id = meta['report_to_id']
+    report_to_channel_id = meta.get('report_to_channel_id') or None
+    session_id_from_meta = meta.get('session_id')
+    original_depth = meta.get('agent_message_depth', 0)
+    subagent_user_direct = meta.get('subagent_user_direct', False)
+    reply_to_id = meta.get('reply_to_id')
+    skip_auto_forward = meta.get('skip_auto_forward', False)
 
     if skip_auto_forward:
         _logger.info(

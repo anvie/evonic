@@ -809,8 +809,8 @@ class TestOnFinalAnswer(unittest.TestCase):
             {'metadata': {'from_agent_id': 'agent_a'}},  # no report_to_id
         ]
         with mock.patch(
-            'backend.tools.agent_messaging.db.get_session_messages',
-            return_value=messages,
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=messages[0]['metadata'],
         ), mock.patch('backend.agent_runtime.notifier.notify_agent') as mock_notify:
             self._call(self._build_data())
         mock_notify.assert_not_called()
@@ -825,9 +825,9 @@ class TestOnFinalAnswer(unittest.TestCase):
         ]
         target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
         with mock.patch(
-            'backend.tools.agent_messaging.db.get_session_messages',
-            return_value=messages,
-        ), mock.patch(
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=messages[0]['metadata'],
+        ) as mock_lookup, mock.patch(
             'backend.tools.agent_messaging.db.get_agent',
             return_value=target_agent,
         ), mock.patch(
@@ -841,6 +841,37 @@ class TestOnFinalAnswer(unittest.TestCase):
         self.assertEqual(kwargs.get('agent_id'), 'agent_a')
         self.assertEqual(kwargs.get('external_user_id'), 'user_123')
         self.assertTrue(kwargs.get('trigger_llm'))
+        mock_lookup.assert_called_once_with(
+            'sess_001', agent_id='agent_b', sender_agent_id='agent_a',
+        )
+
+    def test_auto_forward_uses_parent_db_for_subagent(self):
+        """Sub-agent replies resolve request metadata from the parent's chat DB."""
+        metadata = {
+            'from_agent_id': 'agent_a',
+            'report_to_id': 'user_123',
+        }
+        target_agent = _make_target_agent(agent_id='child_b', name='Child B')
+        subagent = types.SimpleNamespace(get=lambda key, default=None: {
+            'parent_id': 'parent_b',
+        }.get(key, default))
+        with mock.patch(
+            'backend.subagent_manager.subagent_manager.get',
+            return_value=subagent,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=metadata,
+        ) as mock_lookup, mock.patch(
+            'backend.tools.agent_messaging.db.get_agent',
+            return_value=target_agent,
+        ), mock.patch(
+            'backend.agent_runtime.notifier.notify_agent',
+        ):
+            self._call(self._build_data(agent_id='child_b'))
+
+        mock_lookup.assert_called_once_with(
+            'sess_001', agent_id='parent_b', sender_agent_id='agent_a',
+        )
 
     def test_auto_forward_preserves_exact_origin_session(self):
         """Human-origin replies pass the saved session ID to central validation."""
@@ -854,8 +885,8 @@ class TestOnFinalAnswer(unittest.TestCase):
         ]
         target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
         with mock.patch(
-            'backend.tools.agent_messaging.db.get_session_messages',
-            return_value=messages,
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=messages[0]['metadata'],
         ), mock.patch(
             'backend.tools.agent_messaging.db.get_agent',
             return_value=target_agent,
@@ -883,8 +914,8 @@ class TestOnFinalAnswer(unittest.TestCase):
         ]
         target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
         with mock.patch(
-            'backend.tools.agent_messaging.db.get_session_messages',
-            return_value=messages,
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=messages[0]['metadata'],
         ), mock.patch(
             'backend.tools.agent_messaging.db.get_agent',
             return_value=target_agent,
@@ -909,8 +940,8 @@ class TestOnFinalAnswer(unittest.TestCase):
             }},
         ]
         with mock.patch(
-            'backend.tools.agent_messaging.db.get_session_messages',
-            return_value=messages,
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=messages[0]['metadata'],
         ), mock.patch(
             'backend.agent_runtime.notifier.notify_agent',
         ) as mock_notify:
@@ -928,8 +959,8 @@ class TestOnFinalAnswer(unittest.TestCase):
         ]
         target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
         with mock.patch(
-            'backend.tools.agent_messaging.db.get_session_messages',
-            return_value=messages,
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=messages[0]['metadata'],
         ), mock.patch(
             'backend.tools.agent_messaging.db.get_agent',
             return_value=target_agent,
@@ -939,23 +970,20 @@ class TestOnFinalAnswer(unittest.TestCase):
             self._call(self._build_data(answer='Async result'))
         mock_notify.assert_called_once()
 
-    def test_skip_auto_forward_fallback_path(self):
-        """skip_auto_forward is respected in the fallback metadata lookup path."""
-        fallback_meta = {
+    def test_skip_auto_forward_from_targeted_lookup(self):
+        """skip_auto_forward is respected in targeted request metadata."""
+        metadata = {
             'from_agent_id': 'agent_a',
             'report_to_id': 'user_123',
             'skip_auto_forward': True,
         }
         with mock.patch(
-            'backend.tools.agent_messaging.db.get_session_messages',
-            return_value=[],
-        ), mock.patch(
             'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
-            return_value=fallback_meta,
+            return_value=metadata,
         ), mock.patch(
             'backend.agent_runtime.notifier.notify_agent',
         ) as mock_notify:
-            self._call(self._build_data(answer='Sync via fallback'))
+            self._call(self._build_data(answer='Sync via targeted lookup'))
         mock_notify.assert_not_called()
 
     def test_depth_defaults_to_zero_when_missing(self):
@@ -969,8 +997,8 @@ class TestOnFinalAnswer(unittest.TestCase):
         ]
         target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
         with mock.patch(
-            'backend.tools.agent_messaging.db.get_session_messages',
-            return_value=messages,
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=messages[0]['metadata'],
         ), mock.patch(
             'backend.tools.agent_messaging.db.get_agent',
             return_value=target_agent,

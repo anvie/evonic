@@ -364,39 +364,31 @@ class AgentChatDB:
             return rows
 
     def get_latest_agent_request_metadata(self, session_id: str, sender_agent_id: str = None) -> Optional[dict]:
-        """Return metadata of the most recent user message with agent_message=true in the session.
+        """Return the newest routable agent-request metadata in a session.
 
-        Used by auto-forward to locate report_to_id even when the originating
-        message falls outside the recent-message window.
-
-        Args:
-            sender_agent_id: If provided, only match messages where
-                metadata->from_agent_id equals this value.
+        Only user-role rows are candidates. Invalid JSON, non-agent messages,
+        sender mismatches, and requests without ``report_to_id`` are skipped so
+        later background notifications cannot shadow a routable delegation.
         """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            if sender_agent_id:
-                cursor.execute("""
-                    SELECT metadata FROM chat_messages
-                    WHERE session_id = ? AND role = 'user'
-                      AND metadata LIKE '%"agent_message"%'
-                      AND metadata LIKE ?
-                    ORDER BY created_at DESC LIMIT 1
-                """, (session_id, f'%"from_agent_id": "{sender_agent_id}"%'))
-            else:
-                cursor.execute("""
-                    SELECT metadata FROM chat_messages
-                    WHERE session_id = ? AND role = 'user' AND metadata LIKE '%"agent_message"%'
-                    ORDER BY created_at DESC LIMIT 1
-                """, (session_id,))
-            row = cursor.fetchone()
-            if not row or not row['metadata']:
-                return None
-            try:
-                return json.loads(row['metadata'])
-            except (json.JSONDecodeError, TypeError):
-                return None
+            rows = conn.execute("""
+                SELECT metadata FROM chat_messages
+                WHERE session_id = ? AND role = 'user' AND metadata IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+            """, (session_id,))
+            for row in rows:
+                try:
+                    metadata = json.loads(row['metadata'])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(metadata, dict) or metadata.get('agent_message') is not True:
+                    continue
+                if sender_agent_id and metadata.get('from_agent_id') != sender_agent_id:
+                    continue
+                if metadata.get('report_to_id'):
+                    return metadata
+        return None
 
     def add_chat_message(self, session_id: str, role: str, content: str = None,
                           tool_calls=None, tool_call_id: str = None,
