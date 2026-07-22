@@ -208,6 +208,21 @@ AGENT_MAX_TOOL_ITERATIONS = _get_env_int("AGENT_MAX_TOOL_ITERATIONS", 100, min_v
 EVAL_MAX_TOOL_ITERATIONS = _get_env_int("EVAL_MAX_TOOL_ITERATIONS", 30, min_val=1, max_val=500)
 AGENT_MAX_TOOL_RESULT_CHARS = _get_env_int("AGENT_MAX_TOOL_RESULT_CHARS", 8000, min_val=1, max_val=1_048_576)
 
+# Same-turn context projection. Shadow mode computes the bounded model-facing
+# projection and emits attribution, while the provider still receives canonical
+# messages. "enforced" is parsed for forward-compatible rollout controls but this
+# release deliberately remains shadow-only in run_tool_loop.
+ACTIVE_CONTEXT_MODE = os.getenv("ACTIVE_CONTEXT_MODE", "shadow").strip().lower()
+if ACTIVE_CONTEXT_MODE not in ("off", "shadow", "enforced"):
+    _logger.warning("Invalid ACTIVE_CONTEXT_MODE=%r, using off", ACTIVE_CONTEXT_MODE)
+    ACTIVE_CONTEXT_MODE = "off"
+ACTIVE_CONTEXT_SOFT_TOKENS = _get_env_int(
+    "ACTIVE_CONTEXT_SOFT_TOKENS", 12000, min_val=0, max_val=10_000_000)
+ACTIVE_CONTEXT_RECENT_GROUPS = _get_env_int(
+    "ACTIVE_CONTEXT_RECENT_GROUPS", 2, min_val=0, max_val=100)
+ACTIVE_CONTEXT_RECEIPT_MAX_CHARS = _get_env_int(
+    "ACTIVE_CONTEXT_RECEIPT_MAX_CHARS", 4000, min_val=128, max_val=100_000)
+
 # RTK token compression — per-agent toggle with env var control
 # TOOL_COMPRESSION_ENABLED: True unless RTK_NO_COMPRESS=1 (env var force-disables)
 # TOOL_COMPRESSION_VERBOSE: True if RTK_VERBOSE=1 (logs pre/post compression stats)

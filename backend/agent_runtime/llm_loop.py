@@ -210,7 +210,11 @@ def _persist_context_usage(session_id, agent_id, usage):
 from backend.tools import tool_registry
 from config import (AGENT_MAX_TOOL_ITERATIONS as MAX_TOOL_ITERATIONS,
                     AGENT_MAX_TOOL_RESULT_CHARS as MAX_TOOL_RESULT_CHARS,
-                    AGENT_TIMEOUT_RETRIES as MAX_TIMEOUT_RETRIES)
+                    AGENT_TIMEOUT_RETRIES as MAX_TIMEOUT_RETRIES,
+                    ACTIVE_CONTEXT_MODE,
+                    ACTIVE_CONTEXT_SOFT_TOKENS,
+                    ACTIVE_CONTEXT_RECENT_GROUPS,
+                    ACTIVE_CONTEXT_RECEIPT_MAX_CHARS)
 
 # RTK token compressor — lazy-init, do NOT load on module import
 _rtk_registry = None
@@ -773,6 +777,47 @@ def run_tool_loop(agent: Dict[str, Any],
         if _sanitize_tool_call_pairs(messages):
             _logger.warning("Repaired orphaned tool_call/tool pairs before LLM call (session=%s)", session_id)
 
+        # Build the bounded same-turn projection before every provider request.
+        # Phase 1 is deliberately shadow-only: even when ACTIVE_CONTEXT_MODE is
+        # "enforced", canonical messages remain authoritative on the wire until
+        # replay/provider compatibility gates approve enforcement.
+        from backend.agent_runtime.active_context import (
+            ActiveContextProjection, project_active_context)
+        try:
+            _active_projection = project_active_context(
+                messages,
+                tools,
+                mode=ACTIVE_CONTEXT_MODE,
+                recent_completed_groups=ACTIVE_CONTEXT_RECENT_GROUPS,
+                receipt_max_chars=ACTIVE_CONTEXT_RECEIPT_MAX_CHARS,
+                soft_token_threshold=ACTIVE_CONTEXT_SOFT_TOKENS,
+            )
+        except Exception as _active_exc:
+            # Telemetry/projection must never prevent the canonical provider call.
+            _active_projection = ActiveContextProjection(
+                messages=messages, mode=ACTIVE_CONTEXT_MODE, applied=False,
+                failed_open=True,
+                error=f"{type(_active_exc).__name__}: {_active_exc}",
+                canonical_tokens=0, projected_tokens=0, receipt_tokens=0,
+                completed_groups=0, compacted_groups=0, retained_groups=0,
+            )
+        if _active_projection.failed_open:
+            _logger.warning(
+                "active_context fail-open session=%s error=%s",
+                session_id, _active_projection.error)
+        elif _active_projection.applied:
+            _logger.info(
+                "active_context shadow session=%s canonical=%d projected=%d saved=%d groups=%d",
+                session_id, _active_projection.canonical_tokens,
+                _active_projection.projected_tokens, _active_projection.saved_tokens,
+                _active_projection.compacted_groups)
+        event_stream.emit('active_context_projection', {
+            'agent_id': agent_id,
+            'session_id': session_id,
+            **_active_projection.metrics(),
+        })
+        _request_messages = messages
+
         # LOCK ORDERING: Main path — llm_lock only. No other locks held here.
         # Keep thinking enabled unless the thinking budget was exceeded, in which
         # case we disable thinking to force the model to commit without deliberating.
@@ -781,7 +826,7 @@ def run_tool_loop(agent: Dict[str, Any],
         with llm_lock:
             # _logger.info("[LOCK] _llm_lock - ACQUIRED (session=%s, main LLM call)", session_id)
             result = llm.chat_completion(
-                messages=messages,
+                messages=_request_messages,
                 tools=tools if tools else None,
                 temperature=None,
                 enable_thinking=_enable_thinking_this_call,
@@ -1279,6 +1324,7 @@ def run_tool_loop(agent: Dict[str, Any],
                     'total_tokens': result.get('total_tokens') or (_cu_prompt + _cu_completion),
                     'model': (result.get('request_payload') or {}).get('model'),
                     'estimated': _cu_estimated,
+                    'active_context': _active_projection.metrics(),
                     'ts': int(time.time()),
                 })
             except Exception:
