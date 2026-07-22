@@ -1252,7 +1252,31 @@ class AgentRuntime:
             'image_url': image_url,
             'audio_url': audio_url,
             'video_url': video_url,
+            'metadata': meta,
         })
+
+        # A plain human reply in the exact originating session resumes the
+        # delegated agent that requested it. Save and emit it above for complete
+        # history, then stop the originating agent from processing it as a new turn.
+        is_human_message = not external_user_id.startswith(
+            ('__agent__', '__system__', '__scheduler__'))
+        if is_human_message and not meta.get('escalation_reply'):
+            from backend.escalation_routing import route_pending_escalation_reply
+            escalation_result = route_pending_escalation_reply(
+                agent_id, session_id, message,
+            )
+            if escalation_result is not None:
+                routed = bool(escalation_result.get('success'))
+                return {
+                    "response": (
+                        "Your response was sent to the requesting agent."
+                        if routed else
+                        "Your response could not be sent to the requesting agent."
+                    ),
+                    "tool_trace": [],
+                    "timeline": [],
+                    "escalation_routed": routed,
+                }
 
         # Busy-ack: if the agent-level concurrency gate is saturated, send an
         # immediate acknowledgment so the user knows their message was received.
@@ -2045,6 +2069,9 @@ class AgentRuntime:
                         agent_context['from_agent_id'] = _meta['from_agent_id']
                     if _meta.get('injected_system_vars') is not None:
                         agent_context['injected_system_vars'] = _meta['injected_system_vars']
+                    for _key in ('report_to_id', 'report_to_channel_id', 'session_id', 'reply_to_id'):
+                        if _meta.get(_key) is not None:
+                            agent_context[f'origin_{_key}'] = _meta[_key]
             else:
                 # Fall back to SQLite for pre-migration sessions
                 _recent = db.get_session_messages(ctx.session_id, limit=5, agent_id=db_agent_id)
@@ -2058,6 +2085,9 @@ class AgentRuntime:
                                 agent_context['from_agent_id'] = _meta['from_agent_id']
                             if _meta.get('injected_system_vars') is not None:
                                 agent_context['injected_system_vars'] = _meta['injected_system_vars']
+                            for _key in ('report_to_id', 'report_to_channel_id', 'session_id', 'reply_to_id'):
+                                if _meta.get(_key) is not None:
+                                    agent_context[f'origin_{_key}'] = _meta[_key]
                         break
 
         # Agent state: restore or create, then check for user approval

@@ -4745,6 +4745,11 @@ async function loadChatHistory() {
     restoreActiveReasoning(); // fire-and-forget — history already rendered
 }
 
+document.addEventListener('evonic:message-received', function (event) {
+    const meta = (event.detail && event.detail.metadata) || {};
+    if (meta.escalated_from_agent_session) loadChatHistory();
+});
+
 async function restoreActiveReasoning() {
     const epoch = window._agentEpoch;
     try {

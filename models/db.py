@@ -24,6 +24,7 @@ from models.mixins import (
     UserMixin,
     TransferJobMixin,
     SystemAlertMixin,
+    EscalationMixin,
 )
 
 
@@ -47,6 +48,7 @@ class Database(
     AttachmentsMixin,
     TransferJobMixin,
     SystemAlertMixin,
+    EscalationMixin,
 ):
     def __init__(self, db_path: str = config.DB_PATH):
         self.db_path = db_path
