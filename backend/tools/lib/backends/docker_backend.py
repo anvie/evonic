@@ -395,10 +395,14 @@ class DockerBackend(ExecutionBackend):
     """Executes bash/python inside a persistent Docker container."""
 
     def __init__(self, session_id: str, agent_id: str = '', workspace: str = None,
-                 is_subagent: bool = False, is_explorer: bool = False):
+                 is_subagent: bool = False, is_explorer: bool = False,
+                 container_session_id: str = None, container_workspace: str = None):
         self._session_id = session_id
+        self._container_session_id = container_session_id or session_id
+        self._owns_container = not bool(container_session_id)
         self._agent_id = agent_id
         self._workspace = workspace
+        self._container_workspace = container_workspace or workspace
         # Normal sub-agents run with cwd = their scratchpad so their relative-path
         # writes stay out of the project root.  Explorer sub-agents have their own
         # explicit workspace and must NOT be redirected to the scratchpad.  The
@@ -417,8 +421,9 @@ class DockerBackend(ExecutionBackend):
         Paths that fall within the host workspace are translated to their
         /workspace counterpart; all other paths pass through unchanged.
         """
-        effective = os.path.abspath(self._workspace if self._workspace else SANDBOX_WORKSPACE)
-        if path.startswith(effective):
+        effective = os.path.abspath(
+            self._container_workspace if self._container_workspace else SANDBOX_WORKSPACE)
+        if path == effective or path.startswith(effective + os.sep):
             return '/workspace' + path[len(effective):]
         return path
 
@@ -428,7 +433,10 @@ class DockerBackend(ExecutionBackend):
         # Abort if a /stop landed in the race window just before this call.
         if process_tracker.is_stop_pending(self._session_id):
             return {'error': 'Execution stopped by user', 'exit_code': -9, 'execution_time': 0.0}
-        container_id, err = _get_or_create_container(self._session_id, agent_id=self._agent_id, workspace=self._workspace)
+        container_id, err = _get_or_create_container(
+            self._container_session_id, agent_id=self._agent_id,
+            workspace=self._container_workspace,
+        )
         if err:
             return {'error': err}
 
@@ -472,35 +480,43 @@ class DockerBackend(ExecutionBackend):
         if process_tracker.is_stop_pending(self._session_id):
             return {'error': 'Execution stopped by user', 'exit_code': -9, 'execution_time': 0.0}
         with _pool_lock:
-            info = _containers.get(self._session_id, {})
+            info = _containers.get(self._container_session_id, {})
             is_first = info.get('first_call', False)
 
-        container_id, err = _get_or_create_container(self._session_id, agent_id=self._agent_id, workspace=self._workspace)
+        container_id, err = _get_or_create_container(
+            self._container_session_id, agent_id=self._agent_id,
+            workspace=self._container_workspace,
+        )
         if err:
             return {'error': err}
 
         with _pool_lock:
-            info = _containers.get(self._session_id, {})
+            info = _containers.get(self._container_session_id, {})
             is_first = info.get('first_call', False)
 
         result = self._run_code(container_id, code, timeout, env)
 
         if _is_container_gone(result):
-            logger.info(f'Container {container_id[:12]} gone — recreating for session {self._session_id[:12]}')
+            logger.info(
+                f'Container {container_id[:12]} gone — recreating for pool session '
+                f'{self._container_session_id[:12]}')
             with _pool_lock:
-                _containers.pop(self._session_id, None)
-            container_id, err = _get_or_create_container(self._session_id, agent_id=self._agent_id, workspace=self._workspace)
+                _containers.pop(self._container_session_id, None)
+            container_id, err = _get_or_create_container(
+                self._container_session_id, agent_id=self._agent_id,
+                workspace=self._container_workspace,
+            )
             if err:
                 return {'error': err}
             with _pool_lock:
-                info = _containers.get(self._session_id, {})
+                info = _containers.get(self._container_session_id, {})
                 is_first = info.get('first_call', False)
             result = self._run_code(container_id, code, timeout, env)
 
         if is_first and 'error' not in result:
             with _pool_lock:
-                if self._session_id in _containers:
-                    _containers[self._session_id]['first_call'] = False
+                if self._container_session_id in _containers:
+                    _containers[self._container_session_id]['first_call'] = False
             helpers = _get_available_helpers(container_id)
             if helpers:
                 result['available_helpers'] = helpers
@@ -593,7 +609,10 @@ class DockerBackend(ExecutionBackend):
     # ------------------------------------------------------------------
 
     def _container_exec_python(self, code: str, timeout: int = 30) -> dict:
-        container_id, err = _get_or_create_container(self._session_id, agent_id=self._agent_id, workspace=self._workspace)
+        container_id, err = _get_or_create_container(
+            self._container_session_id, agent_id=self._agent_id,
+            workspace=self._container_workspace,
+        )
         if err:
             return {'error': err}
         cmd = ['exec', '-i', container_id, 'python3', '-']
@@ -813,7 +832,8 @@ class DockerBackend(ExecutionBackend):
     def docker_cp_out(self, container_path: str, host_path: str) -> dict:
         """Copy a file from the container to the host filesystem."""
         container_id, err = _get_or_create_container(
-            self._session_id, agent_id=self._agent_id, workspace=self._workspace,
+            self._container_session_id, agent_id=self._agent_id,
+            workspace=self._container_workspace,
         )
         if err:
             return {'error': err}
@@ -826,7 +846,8 @@ class DockerBackend(ExecutionBackend):
     def docker_cp_in(self, host_path: str, container_path: str) -> dict:
         """Copy a file from the host filesystem into the container."""
         container_id, err = _get_or_create_container(
-            self._session_id, agent_id=self._agent_id, workspace=self._workspace,
+            self._container_session_id, agent_id=self._agent_id,
+            workspace=self._container_workspace,
         )
         if err:
             return {'error': err}
@@ -836,11 +857,13 @@ class DockerBackend(ExecutionBackend):
         return {'ok': True}
 
     def destroy(self) -> dict:
-        return _destroy_container(self._session_id)
+        if not self._owns_container:
+            return {'result': 'shared_container_retained'}
+        return _destroy_container(self._container_session_id)
 
     def status(self) -> dict:
         with _pool_lock:
-            info = _containers.get(self._session_id)
+            info = _containers.get(self._container_session_id)
         if info:
             return {
                 'backend': 'docker',

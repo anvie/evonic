@@ -5,4 +5,4 @@ package version
 // sent to the server as the X-Evonet-Version header (which gates protocol
 // capabilities like idempotent-replay), included in the pairing payload, and
 // shown in the desktop GUI.
-const Version = "1.2.6"
+const Version = "1.2.7"

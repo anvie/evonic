@@ -273,18 +273,17 @@ function _openCmpMap() {
     overlay.id = 'cmp-map-modal';
     overlay.setAttribute('style',
         'position:fixed;inset:0;z-index:1000;display:flex;justify-content:center;' +
-        'background:rgba(0,0,0,0.55);' +
-        (isMobile ? 'align-items:stretch;padding:0;' : 'align-items:center;padding:16px;'));
+        'align-items:stretch;padding:0;background:rgba(0,0,0,0.55);');
     overlay.addEventListener('click', function (e) {
         if (e.target === overlay) _closeCmpMap();
     });
 
     var panel = document.createElement('div');
-    panel.className = 'bg-white dark:bg-gray-800 shadow-xl' + (isMobile ? '' : ' rounded-lg');
-    // Mobile: fill the screen; desktop: large viewport-based card.
-    panel.setAttribute('style', isMobile
-        ? 'width:100%;max-width:100%;height:100%;overflow-y:auto;padding:14px;'
-        : 'width:min(90vw,1100px);height:min(85vh,800px);overflow-y:auto;padding:20px;');
+    panel.className = 'bg-white dark:bg-gray-800 shadow-xl';
+    // Full screen on all viewports.
+    panel.setAttribute('style',
+        'width:100%;max-width:100%;height:100%;overflow-y:auto;'
+        + (isMobile ? 'padding:14px;' : 'padding:20px;'));
 
     panel.innerHTML =
         '<div class="flex items-center justify-between mb-3">' +
@@ -428,6 +427,14 @@ function _cmpRenderDetail() {
     }
     if (p.depends_on && p.depends_on.length) {
         html += '<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">depends on: ' + esc(p.depends_on.join(', ')) + '</div>';
+    }
+    if (p.tags && p.tags.length) {
+        html += '<div class="mt-1.5 flex flex-wrap gap-1">';
+        for (var ti = 0; ti < p.tags.length; ti++) {
+            html += '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 ' +
+                'text-gray-600 dark:text-gray-300">#' + esc(p.tags[ti]) + '</span>';
+        }
+        html += '</div>';
     }
     if (isMobile) {
         html += '<div class="mt-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex gap-4 text-xs">' +

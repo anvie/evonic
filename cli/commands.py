@@ -282,8 +282,37 @@ def start_server(port=None, host=None, debug=None, daemon=False):
     app.run(host=host, port=port, debug=debug, use_reloader=False, threaded=True)
 
 
+def _configured_systemd_service():
+    """Return the configured systemd unit, or None when self-managed."""
+    import config
+
+    if config.SERVICE_SYSTEM != "systemd":
+        return None
+    if not config.SYSTEMD_SERVICE_NAME:
+        print("Error: SYSTEMD_SERVICE_NAME is required when SERVICE_SYSTEM=systemd")
+        return ""
+    return config.SYSTEMD_SERVICE_NAME
+
+
+def _run_systemctl(action, service_name):
+    command = ["systemctl", action, service_name]
+    try:
+        subprocess.run(command, check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        print(f"Failed to run {' '.join(command)}: {e}")
+        return False
+    print(f"Systemd service {service_name} {action} requested.")
+    return True
+
+
 def stop_server():
     """Stop the running server."""
+    systemd_service = _configured_systemd_service()
+    if systemd_service is not None:
+        if systemd_service:
+            _run_systemctl("stop", systemd_service)
+        return
+
     pid = _get_pid()
 
     if pid is None:
@@ -358,7 +387,13 @@ def status_server():
 
 
 def restart_server():
-    """Stop the running server, then start it again in daemon mode."""
+    """Restart through systemd or use Evonic's self-managed process path."""
+    systemd_service = _configured_systemd_service()
+    if systemd_service is not None:
+        if systemd_service:
+            _run_systemctl("restart", systemd_service)
+        return
+
     print("Stopping server...")
     stop_server()
 
@@ -4201,7 +4236,7 @@ except ImportError:
 
 def _build_backup_sources():
     """Return the list of backup sources as (rel_path, label, is_db, is_glob)."""
-    sources = [
+    backup_sources = [
         # 1. Agent runtime data
         ("agents/", "Agent runtime data", False, True),
         # 2. Shared agent KB files
@@ -4234,7 +4269,7 @@ def _build_backup_sources():
         # 14. Plan files
         ("plan/", "Agent plan files", False, True),
     ]
-    return sources
+    return backup_sources
 
 
 # Excluded paths (relative to ROOT)
@@ -4806,11 +4841,11 @@ def backup_command(output=None, fmt="gz", quiet=False, exclude=None, encrypt=Fal
     
     try:
         # Step 3: Collect all sources
-        sources = _build_backup_sources()
+        backup_sources = _build_backup_sources()
         all_files = []  # (rel_path, staging_path, size_bytes)
         db_files_collected = []  # DB files needing snapshot
         
-        for rel_pattern, label, is_db, is_glob in sources:
+        for rel_pattern, label, is_db, is_glob in backup_sources:
             if is_db:
                 # DB files get atomic snapshot
                 abs_src = os.path.join(ROOT, rel_pattern)

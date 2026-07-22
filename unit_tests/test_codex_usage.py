@@ -42,12 +42,13 @@ def test_codex_chat_completion_propagates_usage():
     }
     codex = MagicMock()
     codex.send_request.return_value = fake_result
+    messages = [{'role': 'user', 'content': 'halo'}]
     with patch('backend.provider.oauth_codex.get_valid_token',
                return_value='tok'), \
          patch('backend.provider.codex_client.CodexClient',
-               return_value=codex):
-        result = client._codex_chat_completion(
-            [{'role': 'user', 'content': 'halo'}])
+               return_value=codex), \
+         patch('backend.llm_usage_events.record_llm_usage') as record_usage:
+        result = client._codex_chat_completion(messages)
 
     assert result['success']
     assert result['prompt_tokens'] == 1234        # not hardcoded zero anymore
@@ -56,6 +57,15 @@ def test_codex_chat_completion_propagates_usage():
     # traces/archive get a request payload now (was None)
     assert result['request_payload']['model'] == 'gpt-5.6-terra'
     assert result['request_payload']['messages'][0]['content'] == 'halo'
+    record_usage.assert_called_once_with(
+        model='gpt-5.6-terra',
+        prompt_tokens=1234,
+        completion_tokens=56,
+        total_tokens=1290,
+        duration_ms=result['duration_ms'],
+        messages=messages,
+        response_text='hi',
+    )
 
 
 def test_estimate_context_tokens_from_messages_and_tools():

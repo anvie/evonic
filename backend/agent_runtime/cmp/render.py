@@ -25,7 +25,7 @@ import re
 from backend.agent_runtime.cmp.store import (dependency_ancestors, path_status,
                                               sort_path_ids)
 
-RENDER_MAX_CHARS = 4000
+RENDER_MAX_CHARS = 6000
 
 _LABEL_SAFE_RE = re.compile(r'[|"\[\]{}<>`]')
 
@@ -107,28 +107,66 @@ def render_cmp_section(cmp: dict, agent_name: str = "Agent") -> str:
         lines.append("")
         lines.extend(_compact_card(cmp["paths"][dep_id], "dependency of active path"))
 
+    # Pinned waypoints: non-active paths this turn references (set by the
+    # detector's pin field or query-relevant auto-pinning). Rendered as
+    # compact cards — key facts included — even when archived, so cross-path
+    # recap/compare queries can be answered without switching. Transient:
+    # refreshed every turn. Kept in a SEPARATE block so the budget trim below
+    # can protect it: this is the most query-relevant content in the section.
+    pinned_ids = [pid for pid in (cmp.get("pinned_ids") or [])
+                  if pid in cmp["paths"] and pid != active_id and pid not in ancestors]
+    pin_excerpts = cmp.get("pin_excerpts") or {}
+    pin_lines = []
+    for pid in sort_path_ids({p: cmp["paths"][p] for p in pinned_ids}):
+        pin_lines.append("")
+        pin_lines.extend(_compact_card(cmp["paths"][pid], "pinned for this request"))
+        # transcript-recall excerpts: the matching raw lines from this path's
+        # own segments — carries facts the card never lifted into key_facts.
+        for ln in (pin_excerpts.get(pid) or [])[:3]:
+            pin_lines.append(f"  » {ln}")
+
     others = [cmp["paths"][pid] for pid in sort_path_ids(cmp["paths"])
-              if pid != active_id and pid not in ancestors]
+              if pid != active_id and pid not in ancestors and pid not in pinned_ids]
     # Lifecycle tiers: preserved paths keep their snippet card; archived
     # paths contribute their title only (their map node) — the next rung
     # down in context cost before pruning removes them entirely.
     preserved = [p for p in others if path_status(p) != "archived"]
     archived = [p for p in others if path_status(p) == "archived"]
+    rest_lines = []
     if preserved:
-        lines.append("")
-        lines.append("Offloaded paths (details load on return):")
-        lines.extend(_snippet_card(p) for p in preserved)
+        rest_lines.append("")
+        rest_lines.append("Offloaded paths (details load on return):")
+        rest_lines.extend(_snippet_card(p) for p in preserved)
     if archived:
-        lines.append("")
-        lines.append("Archived paths (title only — returning restores them):")
-        lines.extend(f"- {p['id']} {p.get('title') or ''} [archived]"
-                     for p in archived)
+        rest_lines.append("")
+        rest_lines.append("Archived paths (title + tags — recall(query) searches them, "
+                          "read_transcript(id) reads them):")
+        for p in archived:
+            tags = ", ".join((p.get("tags") or [])[:6])
+            tag_note = f" · tags: {tags}" if tags else ""
+            rest_lines.append(f"- {p['id']} {p.get('title') or ''} [archived]{tag_note}")
 
-    lines.append("")
-    lines.append("Use switch_path(path_id) to resume another path, or "
-                 "new_path(title) to start an unrelated task as its own path.")
+    tail = ("\nTo retrieve an earlier task's details: recall(query) searches "
+            "all paths, read_transcript(path_id) reads one, switch_path(path_id) "
+            "resumes it, new_path(title) starts an unrelated task.")
 
-    text = "\n".join(lines)
-    if len(text) > RENDER_MAX_CHARS:
-        text = text[:RENDER_MAX_CHARS] + "\n…[session map truncated]"
-    return text
+    # Budget-aware assembly (most query-relevant content survives first):
+    # pinned recall > head (map + active + ancestors) > tiered lists. A blind
+    # tail-truncate would silently drop pinned cards behind a large map —
+    # exactly the content the current request needs.
+    head = "\n".join(lines)
+    pins = "\n".join(pin_lines)
+    rest = "\n".join(rest_lines)
+    def _truncate(text, limit, marker):
+        if len(text) <= limit:
+            return text
+        return text[:max(0, limit - len(marker))] + marker if limit > 0 else ""
+
+    budget = RENDER_MAX_CHARS - len(tail)
+    pins = _truncate(pins, budget, "\n…[pinned cards truncated]")
+    remaining = budget - len(pins)
+    head = _truncate(head, remaining, "\n…[session map truncated]")
+    remaining -= len(head)
+    rest = _truncate(rest, remaining,
+                     "\n…[path list truncated — recall(query) searches all paths]")
+    return head + pins + rest + tail

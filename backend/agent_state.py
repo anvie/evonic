@@ -220,10 +220,8 @@ class AgentState:
         if action == "set":
             if not isinstance(tasks, list):
                 return {"error": "Action 'set' requires a 'tasks' list of strings."}
-            # Preserve completed tasks so history isn't lost when starting a new plan.
-            done_tasks = [t for t in self.tasks if t.get("status") == "done"]
-            self.tasks = list(done_tasks)
-            self._next_task_id = max((t["id"] for t in self.tasks), default=0) + 1
+            self.tasks = []
+            self._next_task_id = 1
             for t in tasks:
                 clean, inferred = _sanitize_task_text(str(t))
                 self.tasks.append({
@@ -232,7 +230,7 @@ class AgentState:
                     "status": inferred or "pending",
                 })
                 self._next_task_id += 1
-            return {"result": f"Task list set with {len(self.tasks)} tasks ({len(done_tasks)} completed preserved).", "tasks": self._task_summary()}
+            return {"result": f"Task list replaced with {len(self.tasks)} tasks.", "tasks": self._task_summary()}
 
         if action == "add":
             if not text:

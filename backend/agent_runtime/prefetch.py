@@ -139,9 +139,13 @@ class TurnPrefetcher:
                 'session_id': session_id,
                 'assigned_tool_ids': assigned_tool_ids,
                 'workspace': agent.get('workspace') or None,
+                'workplace_id': agent.get('workplace_id') or None,
                 'is_super': bool(agent.get('is_super')),
                 'is_subagent': bool(agent.get('is_subagent')),
+                'is_explorer': bool(agent.get('is_explorer')),
                 'parent_id': agent.get('parent_id'),
+                '_sandbox_parent_session_id': agent.get('_sandbox_parent_session_id'),
+                '_sandbox_parent_workspace': agent.get('_sandbox_parent_workspace'),
                 'agent_messaging_enabled': bool(agent.get('agent_messaging_enabled')),
                 'sandbox_enabled': agent.get('sandbox_enabled', 1),
                 'safety_checker_enabled': agent.get('safety_checker_enabled', 1),
@@ -189,8 +193,10 @@ class TurnPrefetcher:
                     _logger.exception("CMP prefetch history filter failed — full history")
                     _jsonl_entries = None
             if _jsonl_entries is None:
+                from backend.agent_runtime import context as _ctx
                 _jsonl_entries = chatlog.get_entries_for_llm_trail(
                     after_ts=summary_record.get('last_message_ts') if summary_record else None,
+                    **_ctx.trail_history_kwargs(agent_id),
                 )
             _use_jsonl = bool(_jsonl_entries) or chatlog.get_last_entry() is not None
 

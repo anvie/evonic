@@ -52,6 +52,7 @@ class ToolRegistry:
         # CMP session-path navigation — exposed only when agent_context['enable_cmp']
         self._builtins['builtin:switch_path'] = _builtin_switch_path_factory
         self._builtins['builtin:new_path'] = _builtin_new_path_factory
+        self._builtins['builtin:read_transcript'] = _builtin_read_transcript_factory
         # State machine gate tool — always available, handlers registered by system/plugins
         self._builtins['builtin:state'] = _builtin_state_factory
         # Long-term memory tools. `recall` covers keyword search, brain-layer
@@ -275,7 +276,8 @@ class ToolRegistry:
             # otherwise, so non-flagged agents keep a byte-identical tool list.
             if builtin_id == 'builtin:compile_task_graph' and not agent_context.get('enable_atg'):
                 continue
-            if (builtin_id in ('builtin:switch_path', 'builtin:new_path')
+            if (builtin_id in ('builtin:switch_path', 'builtin:new_path',
+                               'builtin:read_transcript')
                     and not agent_context.get('enable_cmp')):
                 continue
             tool_def, _ = factory(agent_context)
@@ -564,7 +566,10 @@ def _builtin_update_tasks_factory(agent_context: dict):
             "name": "update_tasks",
             "description": (
                 "Manage your implementation task list "
-                "(set, add, update status, remove)."
+                "(set, add, update status, remove). Each entry must describe "
+                "exactly one concrete action or outcome that can be completed "
+                "independently. Split multi-action work into separate entries; "
+                "never batch several actions into one task."
             ),
             "parameters": {
                 "type": "object",
@@ -574,7 +579,7 @@ def _builtin_update_tasks_factory(agent_context: dict):
                         "enum": ["set", "add", "done", "in_progress", "remove"],
                         "description": (
                             "'set': replace entire task list (provide 'tasks' array). "
-                            "'add': add one task. "
+                            "'add': add one atomic task. "
                             "'done'/'in_progress': update status. "
                             "'remove': delete a task."
                         )
@@ -585,12 +590,24 @@ def _builtin_update_tasks_factory(agent_context: dict):
                     },
                     "text": {
                         "type": "string",
-                        "description": "Task description for the 'add' action."
+                        "description": (
+                            "One atomic task for the 'add' action: exactly one "
+                            "concrete, independently completable action or outcome."
+                        )
                     },
                     "tasks": {
                         "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of task descriptions for the 'set' action."
+                        "items": {
+                            "type": "string",
+                            "description": (
+                                "Exactly one concrete, independently completable "
+                                "action or outcome."
+                            )
+                        },
+                        "description": (
+                            "Atomic task descriptions for the 'set' action. "
+                            "Split multi-action work across separate array entries."
+                        )
                     }
                 },
                 "required": ["action"]
@@ -924,8 +941,8 @@ def _builtin_switch_path_factory(agent_context: dict):
 def _builtin_new_path_factory(agent_context: dict):
     """Factory for the built-in 'new_path' tool (CMP navigation).
 
-    Starts a separate task path (fresh plan cycle). depends_on records that
-    the new task consumes results of existing paths, pinning their cards.
+    Starts a separate task path in execute or plan mode based on complexity.
+    depends_on records that the new task consumes results of existing paths.
     """
     tool_def = {
         "type": "function",
@@ -978,24 +995,107 @@ def _builtin_new_path_factory(agent_context: dict):
             _cmp_emit(agent_context, 'cmp_path_created',
                       {'path_id': 'P1', 'title': str(prev_title)[:60],
                        'initiator': 'auto-init'})
+        goal = (arguments.get('goal') or '').strip()
+        from backend.task_classifier import classify_task
+        trivial = classify_task(goal or title) == 'trivial'
         _cmp_finalize_outgoing(agent_context, ms)  # card-first ordering
         try:
             record = cmp_store.create_path(
-                ms.cmp, ms, title,
-                goal=(arguments.get('goal') or '').strip(),
-                depends_on=arguments.get('depends_on') or [])
+                ms.cmp, ms, title, goal=goal,
+                depends_on=arguments.get('depends_on') or [], trivial=trivial)
         except ValueError as e:
             return {"error": str(e)}
         _cmp_emit(agent_context, 'cmp_path_created',
                   {'path_id': record['id'], 'title': record['title'],
                    'depends_on': record['depends_on'], 'initiator': 'agent'})
+        mode_note = "execute mode" if trivial else "plan mode"
         return {
             "result": (
                 f"Started {record['id']} — {record['title']}. The previous "
                 "path is preserved (resumable via switch_path). You are now in "
-                "plan mode for this new task."
+                f"{mode_note} for this new task."
             ),
             "path_id": record['id'],
+        }
+
+    return tool_def, executor
+
+
+def _builtin_read_transcript_factory(agent_context: dict):
+    """Factory for the built-in 'read_transcript' tool (CMP retrieval).
+
+    Fallback for when a path's waypoint card lacks a detail the user asks for:
+    returns a compact digest (user turns + agent replies) of an offloaded
+    path's own transcript segments, WITHOUT switching to it. Covers facts
+    produced in replies that the compactor did not lift into key_facts.
+    """
+    tool_def = {
+        "type": "function",
+        "function": {
+            "name": "read_transcript",
+            "description": (
+                "Retrieve a compact digest of an earlier task path's own "
+                "conversation when its card on the map lacks a detail you need "
+                "(e.g. a specific value discussed there). Reads that path only, "
+                "without switching to it. Use for recap/compare questions about "
+                "an offloaded or archived path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path_id": {
+                        "type": "string",
+                        "description": "Path id to read from the session map, e.g. 'A3'."
+                    }
+                },
+                "required": ["path_id"]
+            }
+        }
+    }
+
+    def executor(arguments: dict) -> dict:
+        ms, err = _cmp_gate(agent_context)
+        if err:
+            return err
+        if not ms.cmp or not ms.cmp.get("paths"):
+            return {"error": "No session paths exist yet."}
+        path_id = (arguments.get('path_id') or '').strip().upper()
+        path = ms.cmp["paths"].get(path_id)
+        if not path:
+            valid = ", ".join(sorted(ms.cmp["paths"]))
+            return {"error": f"Unknown path id '{path_id}'. Valid ids: {valid}."}
+        try:
+            from models.chatlog import chatlog_manager
+            from backend.agent_runtime.cmp.compactor import collect_path_entries
+            chatlog = chatlog_manager.get(
+                agent_context.get('_db_agent_id', agent_context.get('id', '')),
+                agent_context.get('session_id'))
+            entries = collect_path_entries(chatlog, path)
+        except Exception as e:
+            return {"error": f"Failed to read transcript for {path_id}: {e}"}
+
+        # Compact digest: user turns + agent replies only (drop tool-call noise),
+        # each truncated, bounded to a token budget so it stays far cheaper than
+        # rehydrating the raw transcript.
+        BUDGET_CHARS, PER_MSG = 4000, 500
+        lines, used = [], 0
+        for e in entries:
+            if e.get('type') not in ('user', 'final', 'intermediate'):
+                continue
+            content = (e.get('content') or '').strip()
+            if not content:
+                continue
+            role = 'User' if e.get('type') == 'user' else 'Agent'
+            snippet = f"{role}: {content[:PER_MSG]}"
+            if used + len(snippet) > BUDGET_CHARS:
+                lines.append("… [transcript truncated]")
+                break
+            lines.append(snippet)
+            used += len(snippet)
+        digest = "\n".join(lines) or "(no readable transcript for this path)"
+        return {
+            "result": f"Transcript digest of {path_id} — {path.get('title')}:\n\n{digest}",
+            "path_id": path_id,
         }
 
     return tool_def, executor
@@ -1097,18 +1197,45 @@ def _builtin_recall_factory(agent_context: dict):
         agent_id = agent_context.get('id', '')
         query = args.get('query', '')
         mode = args.get('mode', 'fts')
+
+        def _augment(result):
+            # Surface matching task paths from THIS session's CMP graph so an
+            # offloaded/archived path's facts are recallable even when the
+            # per-turn detector did not pin it. Applies to EVERY recall mode
+            # (the agent mostly uses mode='think'). Additive — never breaks the
+            # underlying memory result.
+            try:
+                if not agent_context.get('enable_cmp'):
+                    return result
+                ms = agent_context.get('agent_state')
+                cmp = getattr(ms, 'cmp', None) if ms is not None else None
+                if not (cmp and cmp.get('paths')):
+                    return result
+                from backend.agent_runtime.cmp.store import search_cmp_paths
+                hits = search_cmp_paths(cmp, query, limit=5)
+                if hits:
+                    result = dict(result or {})
+                    result['session_paths'] = hits
+                    result['session_paths_hint'] = (
+                        "Matches from the current session's task map. For the "
+                        "full detail of one, call read_transcript(path_id) or "
+                        "switch_path(path_id).")
+            except Exception:
+                pass
+            return result
+
         if mode == 'think':
-            return synthesize_memory(agent_id, query)
+            return _augment(synthesize_memory(agent_id, query))
         if mode == 'graph':
-            return graph_lookup(
+            return _augment(graph_lookup(
                 agent_id, query,
                 edge_type=args.get('edge_type'),
                 hops=int(args.get('hops', 2) or 2),
-            )
+            ))
         if mode == 'links':
             from backend.tools.kb_graph import execute as kb_graph_execute
-            return kb_graph_execute(agent_context, {'filename': query})
-        return search_memories(agent_id, query)
+            return _augment(kb_graph_execute(agent_context, {'filename': query}))
+        return _augment(search_memories(agent_id, query))
 
     return tool_def, executor
 

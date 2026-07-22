@@ -10,10 +10,11 @@ from backend.agent_state import AgentState
 
 @pytest.fixture(autouse=True)
 def _no_network(monkeypatch):
-    """The single-pass turn op is a real LLM call — fail it fast so any
-    unmocked detect() falls back mechanically (no network in tests)."""
+    """Fail unmocked classifier calls fast so tests never use the network."""
     monkeypatch.setattr('backend.agent_runtime.cmp.detector._call_turn_llm',
                         lambda *a, **k: None)
+    monkeypatch.setattr('backend.task_classifier.classify_task',
+                        lambda text: 'complex')
 
 
 AGENT = {'id': 'a1', 'enable_cmp': 1, 'enable_agent_state': 1}
@@ -22,20 +23,21 @@ LONG_NEW_TASK = ('please build a completely new scraper project under /tmp/scrap
 
 
 class FakeChatlog:
-    def __init__(self, user_ts=5000):
+    def __init__(self, user_ts=5000, entries=None):
         self.user_ts = user_ts
+        self.entries = entries or []
 
     def get_last_entry(self, types=None):
         return {'type': 'user', 'ts': self.user_ts}
 
     def tail(self, limit=24, to_ts=None):
-        return []
+        return self.entries[-limit:]
 
     def get_entries_between_ts(self, a, b):
-        return []
+        return [e for e in self.entries if a <= e.get('ts', 0) <= b]
 
     def get_entries_after_ts(self, a):
-        return []
+        return [e for e in self.entries if e.get('ts', 0) > a]
 
 
 def _detect(decision, target=None, layer='LLM', new_path=None, card_delta=None):
@@ -157,6 +159,25 @@ def test_dep_branch_creates_dependent_plan_mode_path():
     assert ms.cmp['paths'][new_id]['depends_on'] == ['A1']
     # fresh plan cycle (this IS the re-arm)
     assert ms.mode == 'plan' and ms.atg is None and ms.plan_file is None
+    assert ms.auto_trivial is False
+
+
+def test_trivial_branch_starts_in_execute_mode_and_restores_state():
+    ms = _session_with_two_paths()
+    ms.plan_file = 'plan/server.md'
+    with _detect('dep_branch', 'A2'), \
+         patch('backend.task_classifier.classify_task', return_value='trivial'):
+        result = on_turn_boundary(AGENT, ms, FakeChatlog(user_ts=9000),
+                                  'now please push to origin dev')
+    trivial_id = result['target']
+    assert ms.mode == 'execute' and ms.auto_trivial is True
+    assert ms.plan_file is None and ms.atg is None
+
+    store.switch_to(ms.cmp, ms, 'A2', now_ts=10000)
+    assert ms.mode == 'execute' and ms.auto_trivial is False
+    assert ms.plan_file == 'plan/server.md'
+    store.switch_to(ms.cmp, ms, trivial_id, now_ts=11000)
+    assert ms.mode == 'execute' and ms.auto_trivial is True
 
 
 def test_dep_branch_on_the_active_path_creates_its_child():
@@ -213,23 +234,41 @@ def test_path_op_failure_degrades_to_continue():
     assert ms.cmp['active_id'] == 'A2'  # untouched
 
 
+def test_transcript_hits_compete_with_card_hits_for_auto_pins():
+    ms = _session_with_two_paths()
+    store.create_path(ms.cmp, ms, 'current question', now_ts=3000)
+    with _detect('continue'), \
+         patch.object(store, 'search_cmp_paths', return_value=[
+             {'id': 'A1', 'score': 2}, {'id': 'A2', 'score': 2},
+         ]), patch.object(store, 'search_cmp_transcripts', return_value=[
+             {'id': 'A2', 'score': 4, 'excerpts': ['pick up boots']},
+             {'id': 'A1', 'score': 3, 'excerpts': ['return blazer']},
+         ]):
+        on_turn_boundary(AGENT, ms, FakeChatlog(),
+                         'How many clothing items do I pick up or return?')
+
+    assert ms.cmp['pinned_ids'] == ['A2', 'A1']
+    assert ms.cmp['pin_excerpts'] == {
+        'A2': ['pick up boots'], 'A1': ['return blazer'],
+    }
+
+
 def test_lifecycle_archives_then_prunes_on_turn_boundaries():
     """Count-based preserved cap: when > MAX_PRESERVED, oldest archived
     on turn boundary; archived > 3 days → pruned."""
     ms = _session_with_two_paths()         # A1 preserved @2000, A2 active @2000
-    # Build up 4 preserved to push A1 over the cap:
-    store.create_path(ms.cmp, ms, 'third', now_ts=2500)   # A2→preserved, A3 active
-    store.create_path(ms.cmp, ms, 'fourth', now_ts=2900)  # A3→preserved, A4 active
-    store.create_path(ms.cmp, ms, 'fifth', now_ts=3000)   # A4→preserved, A5 active
-    # preserved: A1(2000), A2(2500), A3(2900), A4(3000) = 4 > 3
+    # Build up MAX_PRESERVED+1 preserved to push A1 over the cap:
+    N = store.MAX_PRESERVED
+    for i in range(3, N + 4):
+        store.create_path(ms.cmp, ms, f'path{i}', now_ts=2000 + i * 100)
 
     with _detect('continue'):
-        on_turn_boundary(AGENT, ms, FakeChatlog(user_ts=3100),
+        on_turn_boundary(AGENT, ms, FakeChatlog(user_ts=(N + 4) * 100 + 2000),
                          'lanjutkan kerjaan server config ini ya')
     assert ms.cmp['paths']['A1']['status'] == 'archived'
 
     # Wait 3+ days for prune
-    t_prune = 3100 + store.ARCHIVED_TTL_MS + 1
+    t_prune = (N + 4) * 100 + 2000 + store.ARCHIVED_TTL_MS + 1
     with _detect('continue'):
         on_turn_boundary(AGENT, ms,
                          FakeChatlog(user_ts=t_prune),

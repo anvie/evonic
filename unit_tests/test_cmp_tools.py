@@ -1,5 +1,7 @@
 """Tests for the CMP navigation builtins (switch_path / new_path)."""
 
+from unittest.mock import patch
+
 from backend.agent_runtime.cmp import store
 from backend.agent_state import AgentState
 from backend.tools.registry import (
@@ -57,6 +59,20 @@ def test_new_path_auto_inits_first_path_from_current_work():
     assert p1['atg']['status'] == 'done'
     # fresh plan cycle for the new path
     assert ms.mode == 'plan' and ms.atg is None and ms.plan_file is None
+    assert ms.auto_trivial is False
+
+
+def test_new_path_starts_trivial_task_in_execute_mode():
+    ms = AgentState(mode='execute')
+    ms.cmp = store.new_cmp(ms, title='earlier task', now_ts=1000)
+    _, new = _executors(_ctx(ms))
+    with patch('backend.task_classifier.classify_task', return_value='trivial'):
+        result = new({'title': 'Push origin dev',
+                      'goal': 'now please push to origin dev'})
+    assert result['path_id'] == 'A2'
+    assert 'execute mode' in result['result']
+    assert ms.mode == 'execute' and ms.auto_trivial is True
+    assert ms.plan_file is None and ms.atg is None
 
 
 def test_new_path_invalid_dependency():

@@ -16,16 +16,33 @@ to the ACTIVE path's card, and (3) name the new path if routing creates one.
 
 ## 1. Routing — the "route" field
 Routes:
-  continue      - same deliverable of the ACTIVE path: refine, correct,
-                  approve, retry, or ask about what it ALREADY produced.
-  return        - resume a NON-ACTIVE path; "target" = its id (ids look
-                  like A1, B2 — the letter is the level). The map's
-                  "builds on X" shows which path each one grew out of.
-  dep_branch    - a NEW goal or NEW question whose deliverable builds on
-                  the results, tools, or context of an existing path;
-                  "target" = that path's id. The parent may be the ACTIVE
-                  path itself.
-  indep_branch  - a new goal unrelated to every path on the map.
+  continue      - keep working the ACTIVE path's OWN deliverable: refine,
+                  correct, approve, retry, EXTEND, add a feature, or ask
+                  about what it produced.
+  return        - resume a NON-ACTIVE path whose OWN deliverable/artifact
+                  the message works on again — resuming, questioning, OR
+                  extending it; "target" = its id (ids look like A1, B2 —
+                  the letter is the level). The map's "builds on X" shows
+                  which path each one grew out of.
+  dep_branch    - start a SEPARATE, NEW deliverable (a DIFFERENT document,
+                  file, or artifact) that CONSUMES or references another
+                  path's output; "target" = the path it consumes. The
+                  parent may be the ACTIVE path itself.
+  indep_branch  - a new deliverable unrelated to every path on the map.
+
+CORE TEST — "same artifact, or a new separate one?":
+Each path OWNS an artifact/subject (a file, a project, a codebase, a
+document, a topic under study). Ask whether the message keeps working on an
+artifact a path ALREADY owns, or calls for a brand-new separate artifact.
+  • Same artifact evolving — add/extend/modify/fix/rename/test/run-again,
+    add a command/function/flag/section to it, "back to X and do Y to it"
+    → the SAME path (continue if ACTIVE, else return). Wording like "add",
+    "also", "a new command", "quick tweak", "buatkan ... untuk yg tadi"
+    does NOT make a new path when the artifact is the same one.
+  • A brand-new SEPARATE artifact that merely USES another path's result
+    (an invoice FROM a report, a summary OF a researched topic) → dep_branch
+    on the path it consumes.
+  • A brand-new artifact unrelated to any path → indep_branch.
 
 Decide by applying these steps IN ORDER — take the FIRST that matches:
 S1. The message names a path id ("lanjutkan A2") → return to that id
@@ -35,54 +52,80 @@ S2. Pure approval / acknowledgement / retry adding NO new subject ("ok",
     ("gak usah", "no need", "cancel that") followed by a request is NOT
     this: ignore the dismissal and classify the request with the steps
     below.
-S3. Feedback, correction, bug report, or a question about the deliverable
-    the ACTIVE path is producing or JUST produced → continue.
-S4. The message goes back to the SUBJECT an earlier path owns — even
-    without naming an id ("balik ke laporan", "yg issue kanban tadi udah
-    solved kah?") → return to that path. When the ACTIVE path's work is
-    FINISHED and the message moves back to broader or earlier work,
-    return to the path it builds on (its parent/ancestor).
-S5. The message asks for a NEW deliverable — a new piece of information,
-    a new document, a new action — that uses an existing path's results
-    or topic → dep_branch on that path (a sub-question on the active
-    topic is a dep_branch on the ACTIVE path).
+S3. Feedback, correction, bug report, a question about, OR an
+    EXTENSION/MODIFICATION of the ACTIVE path's OWN artifact ("add a filter
+    to it", "add another function", "run it again", "tambahkan kolom")
+    → continue.
+S4. The message works again on the OWN artifact/subject of a NON-ACTIVE
+    path — resuming it, questioning it, OR extending/modifying it ("balik
+    ke laporan", "back to the dashboard and add X", "on the auth module add
+    Y", "yg issue kanban tadi udah solved kah?") → return to that path. Match by
+    artifact/project name, file, or subject on the map, even when phrased
+    as "add"/"also"/"tambah". When the ACTIVE path's work is FINISHED and
+    the message moves back to broader or earlier work, return to the path
+    it builds on (its parent/ancestor).
+S5. The message calls for a SEPARATE NEW deliverable — a DIFFERENT
+    document/file/artifact, or a new piece of information — that consumes
+    an existing path's results or topic → dep_branch on that path (a
+    new-info sub-question on the active topic is a dep_branch on the
+    ACTIVE path).
 S6. Otherwise → indep_branch.
 
-The test is the SUBJECT/DELIVERABLE, never size or phrasing: a short or
-casual message about a DIFFERENT subject still returns or branches, and a
-"small/quick" request is still a branch when it asks for something new.
-When the active card says the work is FINISHED, a new message is more
-often a return or branch than a continue. When you genuinely cannot tell
-whether the subject is the same → continue.
+The test is ARTIFACT IDENTITY, never size or phrasing: "add a small helper
+to the parser" is the SAME path (continue/return), while "write a changelog
+from that parser's commits" is a NEW separate artifact (dep_branch). When you
+cannot tell whether the artifact is the same or new → prefer the SAME path
+(continue/return); a false new path is worse than a missed one.
 
-### Examples (maps shown compressed)
+### Examples (maps shown compressed; domains here are illustrative only)
 - ACTIVE A1 "laporan penjualan"; msg "coba lagi" → continue (S2: retry)
+- ACTIVE A1 "sales dashboard"; msg "add a date filter and run it"
+  → continue (S3: extends A1's own artifact)
 - ACTIVE A1; msg "hasilnya kurang lengkap, tambahkan bulan Juni"
   → continue (S3: refines the same deliverable)
+- preserved A1 "sales dashboard", ACTIVE A5 "email draft"; msg "back to the
+  dashboard — add a totals row" → return A1 (S4: same artifact)
+- preserved A4 "auth module", ACTIVE A5; msg "on the auth module, add a
+  logout endpoint" → return A4 (S4: extends A4's own file)
 - ACTIVE A1 "jadwal minggu ini", preserved A2 "invoice Intan"; msg
   "gak usah, tolong checkkan invoice atas nama Intan" → return A2
   (S2 exception + S4: dismissal dropped, the request is A2's subject)
+- ACTIVE A1 "Company A report" (FINISHED); msg "make an invoice from
+  company A to client X" → dep_branch A1 (S5: invoice is a NEW artifact)
 - ACTIVE A1 "Informasi Universitas Maju"; msg "siapa rektornya sekarang?"
   → dep_branch A1 (S5: a NEW piece of information on that topic)
-- preserved A1 "laporan keuangan", ACTIVE B1 "perbaiki chart" (builds on
-  A1, work FINISHED); msg "oke sip, sekarang lanjut laporannya"
-  → return A1 (S4: sub-task done, back to the parent's subject)
 - ACTIVE A1 (plan AWAITING USER APPROVAL), preserved A2 "issue kanban";
   msg "oke, sip, btw yg issue kanban tadi udah solved kah?" → return A2
   (S4: the approval words do not outweigh the question about A2)
 - ACTIVE A1 "server config"; msg "buatkan scraper harga produk"
   → indep_branch (S6)
 
-## 2. Card delta — the "card" field (for the ACTIVE path):
+## 2. Pinned references — the "pin" field
+A list of path ids (may be empty) whose stored details this message needs in
+context to answer well. Use it when the message asks ABOUT, RECAPS, SUMMARIZES,
+or COMPARES earlier paths without switching to them — e.g. "recap: the
+dashboard's data source, the migration's new column, and the vendor we chose"
+pins the dashboard path, the migration path, and the vendor-decision path so
+their key facts are available. Pin only paths actually referenced (≤5),
+never the active path.
+Leave "pin" empty ([]) for ordinary single-path turns.
+
+## 3. Card delta — the "card" field (for the ACTIVE path):
   "outcome":       one sentence: where the active path stands NOW, after the
                    last agent reply. Omit or empty if nothing was delivered.
-  "new_facts":     0-3 short strings: ONLY NEW information from the latest
-                   exchange — decisions made, constraints discovered,
-                   FAILURES AND THEIR CAUSES, locations. NEVER repeat facts
-                   already on the active path's card. Do not invent facts.
+  "new_facts":     0-3 short strings capturing the ANSWERS/RESULTS the agent
+                   just produced — the concrete values, names, numbers, file
+                   paths, decisions, or failure causes a later turn would need
+                   to recall. Record the ANSWER, not the question: write
+                   "endpoint: /api/v2/orders", "deploy window: Sat 02:00 UTC",
+                   "chosen vendor: Acme", NOT "user asked for the endpoint" or
+                   "user wants the deploy window".
+                   Each fact must be self-contained (subject + value), not a
+                   pointer to where the answer lives. NEVER repeat facts already
+                   on the card. Do not invent facts.
   "new_artifacts": file paths or URLs newly created/modified, if any.
 
-## 3. New path naming — the "new_path" field, ONLY when route is
+## 4. New path naming — the "new_path" field, ONLY when route is
 dep_branch or indep_branch (omit otherwise):
   "title":  <= 40 chars, concise noun phrase naming the deliverable or
             subject (keep the user's language).
@@ -92,6 +135,7 @@ dep_branch or indep_branch (omit otherwise):
 Respond with ONLY a JSON object, no prose:
 {"route": "continue" | "return" | "dep_branch" | "indep_branch",
  "target": "<path id — required for return and dep_branch>",
+ "pin": ["<path id>", ...],
  "new_path": {"title": "...", "action": "..."},
  "card": {"outcome": "...", "new_facts": ["..."], "new_artifacts": ["..."]}}"""
 

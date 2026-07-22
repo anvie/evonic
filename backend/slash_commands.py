@@ -570,8 +570,8 @@ def _register_builtins():
         except Exception:
             pass
 
-        from backend.restart import schedule_restart
-        schedule_restart()
+        from backend.restart import restart_service
+        restart_service()
         return "Restarting..."
 
     command_registry.register(
@@ -605,8 +605,8 @@ def _register_builtins():
 
             os._exit(0)
 
-        t = threading.Thread(target=_do_shutdown, daemon=True)
-        t.start()
+        from backend.restart import stop_service
+        stop_service(fallback=_do_shutdown)
         return "Shutting down..."
 
     command_registry.register(
@@ -950,8 +950,56 @@ def _register_builtins():
     ) -> str:
         from models.db import db
 
+        import json as _json
+
         if not args or not args.strip():
-            # No args — list all models grouped by provider
+            # No args — show current model only (with fallback awareness)
+            current = db.get_agent_model(agent_id)
+            if not current:
+                return "No model configured. Type /model list to see available models, or /model <number> to set one."
+
+            # Check for active fallback model in agent_state
+            try:
+                state_content = db.get_agent_state(agent_id)
+                if state_content:
+                    state_data = _json.loads(state_content) if isinstance(state_content, str) else state_content
+                    fb_active_id = state_data.get("active_fallback_model_id")
+                    if fb_active_id:
+                        fb_model = db.get_model_by_id(fb_active_id)
+                        if fb_model:
+                            fb_name = fb_model.get("name", fb_active_id)
+                            fb_mn = fb_model.get("model_name", "")
+                            fb_sc = fb_model.get("shortcode", "?")
+                            if fb_mn:
+                                return (
+                                    f"**Current model:** {fb_name} ({fb_mn}) [#{fb_sc}] (fallback)\n\n"
+                                    "Type /model list to see all available models. /model <number> to switch."
+                                )
+                            else:
+                                return (
+                                    f"**Current model:** {fb_name} [#{fb_sc}] (fallback)\n\n"
+                                    "Type /model list to see all available models. /model <number> to switch."
+                                )
+            except Exception:
+                pass
+
+            # No fallback — show primary
+            sc = current.get("shortcode", "?")
+            name = current.get("name", "unknown")
+            mn = current.get("model_name", "")
+            if mn:
+                return (
+                    f"**Current model:** {name} ({mn}) [#{sc}]\n\n"
+                    "Type /model list to see all available models. /model <number> to switch."
+                )
+            else:
+                return (
+                    f"**Current model:** {name} [#{sc}]\n\n"
+                    "Type /model list to see all available models. /model <number> to switch."
+                )
+
+        if args.strip().lower() == "list":
+            # Full listing grouped by provider
             current = db.get_agent_model(agent_id)
             current_id = current.get("id") if current else None
             providers = db.get_providers()
@@ -967,10 +1015,6 @@ def _register_builtins():
 
             prov_names = {p["id"]: p.get("name", p["id"]) for p in providers}
 
-            # Web renders responses as markdown, where "21. name" becomes an
-            # ordered-list item and gets renumbered sequentially — hiding the
-            # real shortcode. Escape the dot so the number renders verbatim.
-            # Messaging channels show plain text, so keep the plain dot there.
             is_compact = False
             if channel_id:
                 channel = db.get_channel(channel_id)
@@ -1006,8 +1050,6 @@ def _register_builtins():
                 lines.append("**Current:** none")
             lines.append("")
             lines.append("Type /model <number> or /model <provider/model> to switch.")
-            # Web: escaped-dot lines are plain paragraphs, so they need a
-            # blank line between them to render one model per line.
             if is_compact:
                 return "\n".join(lines)
             return "\n\n".join(l for l in lines if l)
@@ -1043,7 +1085,7 @@ def _register_builtins():
     command_registry.register(
         "model",
         model_handler,
-        "Show or set agent's LLM model — /model [number|provider/model]",
+        "Show or switch LLM model — /model, /model list, /model [number|provider/model]",
     )
 
 

@@ -651,6 +651,37 @@ class TestApiErrorOrphanRecovery(unittest.TestCase):
         self.assertLessEqual(llm.chat_completion.call_count, 3)
 
 
+class TestActiveContextShadowIntegration(TestApiErrorOrphanRecovery):
+    """Shadow projection emits attribution without changing provider messages."""
+
+    def test_shadow_mode_keeps_canonical_messages_on_wire(self):
+        llm = MagicMock()
+        llm.chat_completion.return_value = _ok('Done.')
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "go"},
+            _asst_tc("old"),
+            {"role": "tool", "tool_call_id": "old", "content": "large result " * 1000},
+            _asst_tc("frontier"),
+            {"role": "tool", "tool_call_id": "frontier", "content": "recent"},
+        ]
+        canonical_snapshot = json.loads(json.dumps(messages))
+
+        with patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_MODE', 'shadow'), \
+             patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_SOFT_TOKENS', 0), \
+             patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_RECENT_GROUPS', 1):
+            (_, _, _), mock_es = self._run_tool_loop(llm, messages, 'sess_shadow')
+
+        sent = llm.chat_completion.call_args[1]['messages']
+        self.assertIs(sent, messages)
+        self.assertEqual(sent, canonical_snapshot)
+        projections = [c[0][1] for c in mock_es.emit.call_args_list
+                       if c[0][0] == 'active_context_projection']
+        self.assertEqual(len(projections), 1)
+        self.assertTrue(projections[0]['applied'])
+        self.assertGreater(projections[0]['saved_tokens'], 0)
+
+
 class TestHumanizeInsufficientToolMessages(unittest.TestCase):
     def test_maps_insufficient_tool_messages(self):
         humanize = _llm_loop_mod._humanize_llm_error

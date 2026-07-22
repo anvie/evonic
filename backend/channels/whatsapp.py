@@ -48,21 +48,54 @@ def _split_message(text: str, max_len: int = 4096) -> list:
     return chunks
 
 
+def _format_quoted_context(quoted_text=None, quoted_message=None,
+                           quoted_is_bot=False, quoted_sender_name='',
+                           quoted_sender='', is_group=False) -> str:
+    """Render complete quoted content for an agent, including media identity."""
+    details = quoted_message if isinstance(quoted_message, dict) else {}
+    message_type = details.get('type') or 'text'
+    content = details.get('caption') or details.get('text') or quoted_text or ''
+    filename = details.get('filename') or ''
+    mimetype = details.get('mimetype') or ''
+
+    if not content and message_type == 'text' and not filename and not mimetype:
+        return ''
+
+    if quoted_is_bot:
+        target = 'your message' if is_group else 'bot'
+    elif is_group:
+        target = quoted_sender_name or quoted_sender or 'unknown'
+    else:
+        target = ''
+
+    prefix = f'Replying to {target}' if target else 'Replying to'
+    if message_type == 'text' and not filename and not mimetype:
+        return f'[{prefix}: "{content}"]'
+
+    metadata = [f'quoted {message_type}']
+    if filename:
+        metadata.append(f'filename: "{filename}"')
+    if mimetype:
+        metadata.append(f'MIME type: "{mimetype}"')
+    header = f'[{prefix} — {"; ".join(metadata)}]'
+    if content:
+        return f'{header}\n{content}\n[/Quoted message]'
+    return f'{header}\n(no caption)\n[/Quoted message]'
+
+
 def _wrap_group_message(text, group_name, push_name, sender,
                         quoted_text, quoted_is_bot,
-                        quoted_sender_name, quoted_sender) -> str:
-    """Wrap a group message with group/sender context so the agent knows
-    it is in a WhatsApp group, who is talking to it, and whose message
-    was quoted on replies."""
+                        quoted_sender_name, quoted_sender,
+                        quoted_message=None) -> str:
+    """Wrap a group message with sender and complete reply context."""
     group_label = f'WhatsApp group "{group_name}"' if group_name else 'WhatsApp group'
     sender_label = f'{push_name} ({sender})' if push_name else sender
     lines = [f'[{group_label} — message from {sender_label}]']
-    if quoted_text:
-        if quoted_is_bot:
-            lines.append(f'[Replying to your message: "{quoted_text[:200]}"]')
-        else:
-            who = quoted_sender_name or quoted_sender or 'unknown'
-            lines.append(f'[Replying to {who}: "{quoted_text[:200]}"]')
+    quote_context = _format_quoted_context(
+        quoted_text, quoted_message, quoted_is_bot,
+        quoted_sender_name, quoted_sender, is_group=True)
+    if quote_context:
+        lines.append(quote_context)
     lines.append(text)
     return '\n'.join(lines)
 
@@ -493,11 +526,46 @@ class WhatsAppChannel(BaseChannel):
         audio_data = payload.get('audio')
         video_data = payload.get('video')
         quoted_text = payload.get('quoted_text')
+        quoted_message = payload.get('quoted_message')
+        quoted_context = _format_quoted_context(
+            quoted_text, quoted_message, quoted_is_bot,
+            quoted_sender_name, quoted_sender, is_group=is_group)
 
         _logger.info(
             "WhatsApp callback: sender=%s jid=%s group=%s mentioned=%s quoted_bot=%s text=%r",
             sender, jid, is_group, bot_mentioned, quoted_is_bot,
             (text[:60] if text else ''))
+
+        # Determine message type for debug listener
+        msg_type = payload.get('type') or 'text'
+        if payload.get('image'):
+            msg_type = 'image'
+        elif payload.get('audio'):
+            msg_type = 'audio'
+        elif payload.get('video'):
+            msg_type = 'video'
+        elif payload.get('document'):
+            msg_type = 'document'
+        elif payload.get('sticker'):
+            msg_type = 'sticker'
+        elif payload.get('location'):
+            msg_type = 'location'
+
+        # Emit debug event BEFORE routing so ALL inbound messages are visible,
+        # including those routed to different agents or dropped entirely.
+        from datetime import datetime
+        event_stream.emit('whatsapp_inbound', {
+            'channel_id': self.channel_id,
+            'channel_name': self.config.get('name', self.channel_id),
+            'sender': sender,
+            'jid': jid,
+            'is_group': is_group,
+            'push_name': push_name,
+            'group_name': group_name,
+            'text': (text[:200] if text else ''),
+            'type': msg_type,
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+        })
 
         # Resolve the handling agent (shared channels route per sender/group).
         # Runs BEFORE the group mention gate so shared channels capture unrouted
@@ -577,7 +645,7 @@ class WhatsAppChannel(BaseChannel):
             elif not text:
                 text = '[Video]'
 
-        if not text and not image_url and not video_url and not quoted_text:
+        if not text and not image_url and not video_url and not quoted_context:
             _logger.info("WhatsApp message dropped (no usable content): sender=%s", sender)
             return
 
@@ -585,16 +653,15 @@ class WhatsAppChannel(BaseChannel):
         # adding the sender context that normal group messages require.
         group_command = is_group and parse_command(text)
 
-        # Prepend group/sender context (groups) or reply context (DMs)
+        # Prepend group/sender context (groups) or reply context (DMs).
         final_text = text
         if is_group and not group_command:
             final_text = _wrap_group_message(
                 text, group_name, push_name, sender,
                 quoted_text, quoted_is_bot,
-                quoted_sender_name, quoted_sender)
-        elif not is_group and quoted_text:
-            label = "Replying to bot" if quoted_is_bot else "Replying to"
-            final_text = f"[{label}: {quoted_text[:200]}]\n{text}"
+                quoted_sender_name, quoted_sender, quoted_message)
+        elif not is_group and quoted_context:
+            final_text = f"{quoted_context}\n{text}"
 
         # For group messages, anchor the session to the group ID so all
         # participants share a single session.  Individual DMs keep the
@@ -602,6 +669,10 @@ class WhatsAppChannel(BaseChannel):
         if is_group:
             group_id = jid.split('@')[0] if '@' in jid else jid
             session_user_id = group_id
+            # Map group_id → sender JID so that _do_send (including the
+            # buffered worker path where external_user_id is the group_id)
+            # can resolve the correct individual JID for replies.
+            self._jid_map[group_id] = jid
         else:
             session_user_id = sender
 

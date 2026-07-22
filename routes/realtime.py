@@ -533,6 +533,10 @@ def _producer_chat(ring: BoundedRing, breaker: CircuitBreaker,
             'content': d.get('content', ''),
             'count': d.get('count', 1),
         }),
+        'message_received': ('message_received', lambda d: {
+            'message': d.get('message', ''),
+            'metadata': d.get('metadata', {}),
+        }),
         'session_clear': ('session_clear', lambda d: {
             'session_id': d.get('session_id', ''),
             'agent_id': d.get('agent_id', ''),

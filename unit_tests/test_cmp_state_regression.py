@@ -74,7 +74,7 @@ def test_chat_state_api_exposes_cmp_map():
     assert set(cmp['paths'][0]) == {'id', 'title', 'status', 'action', 'goal',
                                     'outcome', 'key_facts', 'artifacts',
                                     'depends_on', 'last_active', 'state_since',
-                                    'tokens', 'llm_tokens', 'card_tokens'}
+                                    'tokens', 'llm_tokens', 'card_tokens', 'tags'}
     assert all('tokens' in c and 'card_tokens' in c for c in cmp['paths'])
     # dependency child gets the next level letter
     assert cmp['paths'][1]['id'] == 'B1'

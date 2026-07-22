@@ -230,9 +230,16 @@ class BackendRegistry:
                                        is_explorer=is_explorer)
             else:
                 from backend.tools.lib.backends.docker_backend import DockerBackend
-                backend = DockerBackend(session_id, agent_id=agent_id, workspace=workspace,
-                                        is_subagent=is_subagent,
-                                        is_explorer=is_explorer)
+                parent_session_id = ((agent_context or {}).get('_sandbox_parent_session_id')
+                                     if is_explorer else None)
+                parent_workspace = ((agent_context or {}).get('_sandbox_parent_workspace')
+                                    if parent_session_id else None)
+                backend = DockerBackend(
+                    session_id, agent_id=agent_id, workspace=workspace,
+                    is_subagent=is_subagent, is_explorer=is_explorer,
+                    container_session_id=parent_session_id,
+                    container_workspace=parent_workspace,
+                )
         else:
             from backend.tools.lib.backends.local_backend import LocalBackend
             run_as_user = (agent_context or {}).get('run_as_user') or None

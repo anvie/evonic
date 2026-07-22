@@ -443,7 +443,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
 </div>
 
 <script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=59"></script>
-<script src="{{ url_for('static', filename='js/agent-state.js') }}?v=4"></script>
+<script src="{{ url_for('static', filename='js/agent-state.js') }}?v=5"></script>
 <script>
 let allSessions = [];
 let currentSessionId = null;
@@ -835,6 +835,8 @@ async function selectSession(sessionId) {
     _pollThinkingId = null;
     _pollInFlight = false;
     _pendingSlashResponse = null;
+    _pendingReplyText = null;
+    _pendingFileUpload = false;
     renderSessionList();
 
     const res = await fetch(`/api/sessions/${sessionId}`);
@@ -918,7 +920,7 @@ async function selectSession(sessionId) {
         } catch (e) {
             console.error('[selectSession] JSONL fetch/parse error, falling back to SQLite:', e);
             // Clear any partial render before falling back to SQLite
-            container.innerHTML = '';
+            chatUI.clear();
             _pollThinkingId = null;
             _renderSqliteMessages(messages, container);
         }
@@ -948,12 +950,14 @@ async function selectSession(sessionId) {
     // between this fetch and the moment the SSE subscription is registered.
     let resumeSeq = 0;
     if (currentAgentId) {
+        const selectedAgentId = currentAgentId;
+        let restoredReasoning = false;
         try {
-            const r = await fetch(`/api/agents/${encodeURIComponent(currentAgentId)}/chat/events?session_id=${encodeURIComponent(sessionId)}&after=0`);
-            if (_selectGeneration !== gen) return;  // stale — another selectSession started
+            const r = await fetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/chat/events?session_id=${encodeURIComponent(sessionId)}&after=0`);
+            if (_selectGeneration !== gen || currentSessionId !== sessionId || currentAgentId !== selectedAgentId) return;
             if (r.ok) {
                 const body = await r.json();
-                if (_selectGeneration !== gen) return;
+                if (_selectGeneration !== gen || currentSessionId !== sessionId || currentAgentId !== selectedAgentId) return;
                 const events = body.events || [];
                 console.log('[selectSession] event-buffer replay: got', events.length, 'events, types:', events.map(e=>e.event).join(','));
                 // Only replay the current in-progress turn: skip everything up to the last 'done'
@@ -965,12 +969,37 @@ async function selectSession(sessionId) {
                         if (ev.seq > resumeSeq) resumeSeq = ev.seq;
                         dispatchSessionEvent(ev.event, ev.data, sessionId);
                     }
+                    restoredReasoning = true;
+                    saveReasoningState(sessionId, resumeSeq);
                     chatUI.scrollToBottom();
-                } else {
-                    clearReasoningState();
                 }
             }
-        } catch (_) {}
+
+            // An immediate refresh can beat the first buffered SSE event. In that
+            // empty-buffer window, restore a placeholder only when this exact
+            // session is still the agent's active turn.
+            if (!restoredReasoning) {
+                const busyRes = await fetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/busy`);
+                if (_selectGeneration !== gen || currentSessionId !== sessionId || currentAgentId !== selectedAgentId) return;
+                if (busyRes.ok) {
+                    const busyState = await busyRes.json();
+                    if (_selectGeneration !== gen || currentSessionId !== sessionId || currentAgentId !== selectedAgentId) return;
+                    if (busyState.busy && busyState.session_id === sessionId) {
+                        const userMessages = container.querySelectorAll('[data-msg-role="user"]');
+                        const userMsgEl = userMessages.length ? userMessages[userMessages.length - 1] : null;
+                        _sseThinkingId = chatUI.showThinkingIndicator(null, userMsgEl);
+                        showStopBtn(true);
+                        saveReasoningState(sessionId, resumeSeq);
+                        restoredReasoning = true;
+                        chatUI.scrollToBottom();
+                    }
+                }
+            }
+        } catch (_) {
+            // Treat failed recovery checks as stale state; live SSE can still
+            // create a fresh bubble when a subsequent event arrives.
+        }
+        if (!restoredReasoning) clearReasoningState();
     }
 
     // Connect SSE for real-time thinking events, then start polling.
@@ -1141,6 +1170,7 @@ function connectSessionStream(sessionId, afterSeq = 0) {
             return;
         }
         if (seq) _lastSeq = seq;
+        saveReasoningState(sessionId, _lastSeq);
         // LOG-B: count and log every event actually dispatched
         _dispatchCount++;
         console.log(`[sse] dispatch #${_dispatchCount} ${evtName} seq=${seq} _lastSeq=${_lastSeq} sseId=${!!_sseThinkingId}`);
@@ -1382,6 +1412,12 @@ function _isFileAccepted(file) {
         if (!file) return;
         if (!currentSessionId) {
             if (typeof showToast === 'function') showToast('Select a session first', true);
+            return;
+        }
+        if (!currentAttachmentsEnabled) {
+            if (typeof showToast === 'function') {
+                showToast('This agent does not support file attachments. Enable attachments in Agent Settings to upload files.', true);
+            }
             return;
         }
         if (!_isFileAccepted(file)) {

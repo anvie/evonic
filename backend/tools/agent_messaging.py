@@ -618,53 +618,112 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
 def _exec_escalate_to_user(args: dict, agent_context: dict) -> dict:
     agent_id = agent_context.get('id', '')
     current_user_id = agent_context.get('user_id', '')
+    requesting_session_id = agent_context.get('session_id', '')
     message = args.get('message', '').strip()
 
     if not message:
         return {'error': 'message is required.'}
-
     if not current_user_id.startswith('__agent__'):
         _logger.debug("Agent '%s' already in user session — escalate skipped.", agent_id)
         return {'error': 'Already in a user session — use send_agent_message or reply directly.'}
 
-    # Priority 1: send to the primary session (prefers channel sessions like Telegram)
-    primary_session = db.get_latest_human_session(agent_id)
-    if not primary_session:
-        _logger.warning("Escalate failed: no human session found for agent '%s'.", agent_id)
-        return {'error': 'No active human user session found for this agent.'}
+    sender_id = current_user_id[len(_AGENT_MSG_PREFIX):]
+    # Runtime copies the exact originating route from the request that started
+    # this turn. Fall back to durable message metadata for older/in-flight turns.
+    request_meta = {
+        'session_id': agent_context.get('origin_session_id'),
+        'report_to_id': agent_context.get('origin_report_to_id'),
+        'report_to_channel_id': agent_context.get('origin_report_to_channel_id'),
+        'reply_to_id': agent_context.get('origin_reply_to_id'),
+        'agent_message_depth': agent_context.get('agent_message_depth', 0),
+    }
+    if not request_meta.get('report_to_id'):
+        request_meta = db.get_latest_agent_request_metadata(
+            requesting_session_id,
+            agent_id=agent_context.get('_db_agent_id') or agent_id,
+            sender_agent_id=sender_id,
+        ) or {}
+    origin_session_id = request_meta.get('session_id')
+    origin_user_id = request_meta.get('report_to_id')
+    origin_channel_id = request_meta.get('report_to_channel_id') or None
+    if not origin_user_id:
+        _logger.warning(
+            "Escalate failed: originating human route metadata is missing for "
+            "agent '%s' session '%s'.", agent_id, requesting_session_id,
+        )
+        return {'error': 'No originating human user session found for this request.'}
+    if not origin_session_id:
+        origin_session_id = db.get_session_id(
+            sender_id, origin_user_id, origin_channel_id,
+        )
+    if not origin_session_id:
+        return {'error': 'No originating human user session found for this request.'}
+
+    origin_session = db.get_session_with_details(origin_session_id)
+    if (not origin_session
+            or origin_session.get('agent_id') != sender_id
+            or origin_session.get('external_user_id') != origin_user_id):
+        return {'error': 'The originating human session is unavailable or no longer valid.'}
+
+    escalation_id = str(uuid.uuid4())
+    delivery_meta = {
+        'escalated_from_agent_session': True,
+        'escalation_id': escalation_id,
+        'requesting_agent_id': agent_id,
+        'requesting_session_id': requesting_session_id,
+    }
+    try:
+        db.create_user_escalation(
+            escalation_id=escalation_id,
+            requesting_agent_id=agent_id,
+            requesting_session_id=requesting_session_id,
+            originating_agent_id=sender_id,
+            originating_session_id=origin_session_id,
+            delivery_session_id=origin_session_id,
+            external_user_id=origin_user_id,
+            channel_id=origin_channel_id,
+            metadata={
+                'agent_message_depth': request_meta.get('agent_message_depth', 0),
+                'reply_to_id': request_meta.get('reply_to_id'),
+            },
+        )
+    except Exception:
+        _logger.exception("Failed to persist escalation correlation '%s'.", escalation_id)
+        return {'success': False, 'error': 'Reply routing could not be registered.'}
 
     from backend.agent_runtime.notifier import notify_agent
-
-    def _deliver(session: dict) -> None:
-        notify_agent(
-            agent_id=agent_id,
-            tag='SYSTEM',
-            message=message,
-            external_user_id=session['external_user_id'],
-            channel_id=session.get('channel_id'),
-            dedup=False,
-            trigger_llm=False,
-            metadata={'escalated_from_agent_session': True},
-        )
-
-    _deliver(primary_session)
-    _logger.info("Agent '%s' escalated message to primary session '%s' (channel=%s).",
-                 agent_id, primary_session['external_user_id'], primary_session.get('channel_id'))
-
-    # Priority 2: also deliver to a web fallback session (no channel),
-    # so the user can see the message in the web UI too.
-    secondary = db.get_web_fallback_session(
-        agent_id,
-        exclude_session_id=primary_session.get('id'),
+    result = notify_agent(
+        agent_id=sender_id,
+        tag=f'ESCALATION/{agent_context.get("name", agent_id)}',
+        message=message,
+        session_id=origin_session_id,
+        dedup=False,
+        trigger_llm=False,
+        deliver_external=True,
+        metadata=delivery_meta,
     )
-    if secondary:
-        _deliver(secondary)
-        _logger.info("Agent '%s' also escalated message to web session '%s'.",
-                     agent_id, secondary['external_user_id'])
+    if not result.get('success'):
+        db.cancel_user_escalation(escalation_id)
+        reason = result.get('reason', 'unknown')
+        return {
+            'success': False,
+            'error': f'Escalation delivery failed: {reason}.',
+            'detail': result,
+        }
+    if not db.mark_user_escalation_delivered(escalation_id):
+        return {
+            'success': False,
+            'error': 'The request was delivered, but reply routing could not be activated.',
+            'partial_success': True,
+            'detail': result,
+        }
 
     return {
         'success': True,
-        'message': 'Message forwarded to user session.',
+        'message': 'Escalation delivered to the originating user session.',
+        'escalation_id': escalation_id,
+        'session_id': result['session_id'],
+        'delivery': result.get('delivery'),
     }
 
 
@@ -740,73 +799,34 @@ def _on_final_answer(data: dict) -> None:
     except Exception:
         pass
 
-    # Find the original message metadata from A
+    # Find the newest routable request metadata from A. This targeted lookup
+    # considers user requests only, so tool and assistant traffic cannot hide
+    # the originating delegation.
     try:
-        messages = db.get_session_messages(session_id, limit=20, agent_id=_db_agent_id)
+        meta = db.get_latest_agent_request_metadata(
+            session_id, agent_id=_db_agent_id, sender_agent_id=sender_id,
+        )
     except Exception as e:
         _logger.warning(
-            "Auto-forward: could not fetch session messages for '%s' (agent_b=%s): %s",
+            "Auto-forward: agent-request metadata lookup failed for '%s' (agent_b=%s): %s",
             session_id, agent_b_id, e,
         )
         return
 
-    report_to_id = None
-    report_to_channel_id = None
-    session_id_from_meta = None
-    original_depth = 0
-    subagent_user_direct = False
-    reply_to_id = None
-    skip_auto_forward = False
-    for msg in reversed(messages):
-        meta = msg.get('metadata') or {}
-        if isinstance(meta, str):
-            try:
-                import json
-                meta = json.loads(meta)
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
-        if meta.get('from_agent_id') == sender_id:
-            report_to_id = meta.get('report_to_id')
-            report_to_channel_id = meta.get('report_to_channel_id') or None
-            session_id_from_meta = meta.get('session_id')
-            original_depth = meta.get('agent_message_depth', 0)
-            subagent_user_direct = meta.get('subagent_user_direct', False)
-            reply_to_id = meta.get('reply_to_id')
-            skip_auto_forward = meta.get('skip_auto_forward', False)
-            break
-
-    if not report_to_id:
-        # The originating message may be older than the recent-message window
-        # (e.g. when B executed many tool calls).  Fall back to a targeted DB
-        # query that finds the first agent-request message in the session.
-        _logger.debug(
-            "Auto-forward: report_to_id not found in recent %d messages for '%s' "
-            "in session '%s' — falling back to latest-agent-request lookup.",
-            len(messages), sender_id, session_id,
-        )
-        try:
-            latest_meta = db.get_latest_agent_request_metadata(
-                session_id, agent_id=_db_agent_id, sender_agent_id=sender_id,
-            )
-        except Exception as e:
-            _logger.warning("Auto-forward: latest-agent-request fallback failed for '%s': %s", session_id, e)
-            latest_meta = None
-        if latest_meta and latest_meta.get('from_agent_id') == sender_id:
-            report_to_id = latest_meta.get('report_to_id')
-            report_to_channel_id = latest_meta.get('report_to_channel_id') or None
-            session_id_from_meta = latest_meta.get('session_id')
-            original_depth = latest_meta.get('agent_message_depth', 0)
-            subagent_user_direct = latest_meta.get('subagent_user_direct', False)
-            reply_to_id = latest_meta.get('reply_to_id')
-            skip_auto_forward = latest_meta.get('skip_auto_forward', False)
-
-    if not report_to_id:
+    if not meta or meta.get('from_agent_id') != sender_id or not meta.get('report_to_id'):
         _logger.warning(
-            "Auto-forward skip: no report_to_id found for sender '%s' in session '%s' "
-            "(searched %d messages + first-message fallback).",
-            sender_id, session_id, len(messages),
+            "Auto-forward skip: no routable request metadata found for sender '%s' in session '%s'.",
+            sender_id, session_id,
         )
         return
+
+    report_to_id = meta['report_to_id']
+    report_to_channel_id = meta.get('report_to_channel_id') or None
+    session_id_from_meta = meta.get('session_id')
+    original_depth = meta.get('agent_message_depth', 0)
+    subagent_user_direct = meta.get('subagent_user_direct', False)
+    reply_to_id = meta.get('reply_to_id')
+    skip_auto_forward = meta.get('skip_auto_forward', False)
 
     if skip_auto_forward:
         _logger.info(

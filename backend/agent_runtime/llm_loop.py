@@ -18,13 +18,19 @@ import queue
 import re
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Dict, Any, List, Optional
+
+from config import AGENT_PARALLEL_TOOL_WAIT_TIMEOUT
 
 _logger = logging.getLogger(__name__)
 
 # Compiled regex constants (module-level to avoid re-compilation on every call)
 _TRIVIAL_RESPONSE_RE = re.compile(r'^[\s>|#\-\.\\/<>!]+$')
+
+# Short polling keeps /stop responsive while parallel tool workers are running.
+# The total wait remains bounded by AGENT_PARALLEL_TOOL_WAIT_TIMEOUT.
+_PARALLEL_TOOL_POLL_INTERVAL_SECONDS = 0.1
 
 # ── Import from split modules ───────────────────────────────────────────────
 
@@ -71,6 +77,108 @@ def _count_tokens(text: str) -> int:
         return len(_tiktoken_enc.encode(text))
     except Exception:
         return len(text) // 4
+
+
+def _shutdown_parallel_pool(pool, futures) -> None:
+    """Cancel pending parallel work and release the pool without waiting.
+
+    Python cannot terminate a thread that is already executing. Non-blocking
+    shutdown deliberately abandons such workers so a stuck backend cannot hold
+    the agent loop hostage.
+    """
+    for future in futures:
+        future.cancel()
+    try:
+        pool.shutdown(wait=False, cancel_futures=True)
+    except TypeError:  # Python < 3.9 compatibility
+        pool.shutdown(wait=False)
+
+
+def _collect_parallel_tool_results(parallel_jobs, pool, stop_event):
+    """Collect submitted parallel tools with shared, submission-time deadlines.
+
+    ``parallel_jobs`` maps tool-call indices to either a guard result or a
+    ``(Future, monotonic_deadline)`` tuple. Results are returned under the same
+    indices, allowing the caller to emit them in original API tool-call order.
+    Each future expires against its own deadline; completed results are retained.
+    """
+    results = {}
+    pending = {
+        index: job for index, job in parallel_jobs.items()
+        if isinstance(job, tuple) and isinstance(job[0], Future)
+    }
+    for index, job in parallel_jobs.items():
+        if index not in pending:
+            results[index] = job
+
+    try:
+        while pending:
+            # Harvest every completed worker before considering stop/timeout so
+            # successful results are retained even if completion order differs.
+            for index, (future, _deadline) in list(pending.items()):
+                if not future.done():
+                    continue
+                try:
+                    results[index] = future.result()
+                except Exception:
+                    _logger.exception(
+                        "Failed to retrieve completed parallel tool result at index %d",
+                        index)
+                    results[index] = {
+                        'error': 'Parallel tool execution failed while retrieving its result.'}
+                del pending[index]
+
+            if not pending:
+                break
+
+            if stop_event.is_set():
+                for index, (future, _deadline) in pending.items():
+                    future.cancel()
+                    results[index] = {'error': 'Execution stopped by user'}
+                pending.clear()
+                break
+
+            now = time.monotonic()
+            expired = [
+                index for index, (_future, deadline) in pending.items()
+                if now >= deadline
+            ]
+            if expired:
+                # Expire each job against its own submission-time deadline. Do
+                # not give later calls a fresh timeout merely because earlier
+                # calls were collected first.
+                for index in expired:
+                    future, _deadline = pending.pop(index)
+                    future.cancel()
+                    results[index] = {
+                        'error': (
+                            'Parallel tool execution timed out after '
+                            f'{AGENT_PARALLEL_TOOL_WAIT_TIMEOUT} seconds.')}
+                continue
+
+            # Poll one future briefly. FutureTimeoutError here only means the
+            # polling interval elapsed; exceptions raised by the worker are
+            # retrieved above after the future becomes done.
+            first_index = min(pending)
+            future, deadline = pending[first_index]
+            poll_timeout = min(
+                _PARALLEL_TOOL_POLL_INTERVAL_SECONDS,
+                max(0.0, deadline - now),
+            )
+            try:
+                future.result(timeout=poll_timeout)
+            except FutureTimeoutError:
+                pass
+            except Exception:
+                # The worker exception remains attached to a completed future;
+                # the next harvest converts it to a safe synthetic result.
+                pass
+    finally:
+        _shutdown_parallel_pool(
+            pool, [job[0] for job in parallel_jobs.values()
+                   if isinstance(job, tuple) and isinstance(job[0], Future)])
+
+    return results
 
 
 def _sanitize_tool_call_pairs(messages: List[Dict[str, Any]]) -> bool:
@@ -210,7 +318,11 @@ def _persist_context_usage(session_id, agent_id, usage):
 from backend.tools import tool_registry
 from config import (AGENT_MAX_TOOL_ITERATIONS as MAX_TOOL_ITERATIONS,
                     AGENT_MAX_TOOL_RESULT_CHARS as MAX_TOOL_RESULT_CHARS,
-                    AGENT_TIMEOUT_RETRIES as MAX_TIMEOUT_RETRIES)
+                    AGENT_TIMEOUT_RETRIES as MAX_TIMEOUT_RETRIES,
+                    ACTIVE_CONTEXT_MODE,
+                    ACTIVE_CONTEXT_SOFT_TOKENS,
+                    ACTIVE_CONTEXT_RECENT_GROUPS,
+                    ACTIVE_CONTEXT_RECEIPT_MAX_CHARS)
 
 # RTK token compressor — lazy-init, do NOT load on module import
 _rtk_registry = None
@@ -773,6 +885,47 @@ def run_tool_loop(agent: Dict[str, Any],
         if _sanitize_tool_call_pairs(messages):
             _logger.warning("Repaired orphaned tool_call/tool pairs before LLM call (session=%s)", session_id)
 
+        # Build the bounded same-turn projection before every provider request.
+        # Phase 1 is deliberately shadow-only: even when ACTIVE_CONTEXT_MODE is
+        # "enforced", canonical messages remain authoritative on the wire until
+        # replay/provider compatibility gates approve enforcement.
+        from backend.agent_runtime.active_context import (
+            ActiveContextProjection, project_active_context)
+        try:
+            _active_projection = project_active_context(
+                messages,
+                tools,
+                mode=ACTIVE_CONTEXT_MODE,
+                recent_completed_groups=ACTIVE_CONTEXT_RECENT_GROUPS,
+                receipt_max_chars=ACTIVE_CONTEXT_RECEIPT_MAX_CHARS,
+                soft_token_threshold=ACTIVE_CONTEXT_SOFT_TOKENS,
+            )
+        except Exception as _active_exc:
+            # Telemetry/projection must never prevent the canonical provider call.
+            _active_projection = ActiveContextProjection(
+                messages=messages, mode=ACTIVE_CONTEXT_MODE, applied=False,
+                failed_open=True,
+                error=f"{type(_active_exc).__name__}: {_active_exc}",
+                canonical_tokens=0, projected_tokens=0, receipt_tokens=0,
+                completed_groups=0, compacted_groups=0, retained_groups=0,
+            )
+        if _active_projection.failed_open:
+            _logger.warning(
+                "active_context fail-open session=%s error=%s",
+                session_id, _active_projection.error)
+        elif _active_projection.applied:
+            _logger.info(
+                "active_context shadow session=%s canonical=%d projected=%d saved=%d groups=%d",
+                session_id, _active_projection.canonical_tokens,
+                _active_projection.projected_tokens, _active_projection.saved_tokens,
+                _active_projection.compacted_groups)
+        event_stream.emit('active_context_projection', {
+            'agent_id': agent_id,
+            'session_id': session_id,
+            **_active_projection.metrics(),
+        })
+        _request_messages = messages
+
         # LOCK ORDERING: Main path — llm_lock only. No other locks held here.
         # Keep thinking enabled unless the thinking budget was exceeded, in which
         # case we disable thinking to force the model to commit without deliberating.
@@ -781,7 +934,7 @@ def run_tool_loop(agent: Dict[str, Any],
         with llm_lock:
             # _logger.info("[LOCK] _llm_lock - ACQUIRED (session=%s, main LLM call)", session_id)
             result = llm.chat_completion(
-                messages=messages,
+                messages=_request_messages,
                 tools=tools if tools else None,
                 temperature=None,
                 enable_thinking=_enable_thinking_this_call,
@@ -1279,6 +1432,7 @@ def run_tool_loop(agent: Dict[str, Any],
                     'total_tokens': result.get('total_tokens') or (_cu_prompt + _cu_completion),
                     'model': (result.get('request_payload') or {}).get('model'),
                     'estimated': _cu_estimated,
+                    'active_context': _active_projection.metrics(),
                     'ts': int(time.time()),
                 })
             except Exception:
@@ -1733,25 +1887,42 @@ def run_tool_loop(agent: Dict[str, Any],
             if fn_name in _READ_ONLY_TOOLS and fn_name not in _ALWAYS_SERIAL_TOOLS:
                 _parallel_indices.add(tc_idx)
 
-        # Phase 2: Submit parallel batch for all read-only tools (if enabled).
-        _parallel_futures = {}  # tc_idx -> Future or guard-rejection dict
-        _pool = None
+        # Phase 2: Submit and boundedly collect read-only tools (if enabled).
+        _parallel_results = {}  # tc_idx -> real or synthetic result
         if _parallel_indices and not agent_context.get('disable_parallel_tool_execution', 0):
             from backend.plugin_manager import check_tool_guards as _guard_p2
             _pool = ThreadPoolExecutor(
                 max_workers=min(len(_parallel_indices), _MAX_PARALLEL_TOOL_WORKERS),
                 thread_name_prefix='tool-parallel')
-            for p_idx in _parallel_indices:
-                _tc_p, _fn_p, _args_p, _pt_p = _tool_records[p_idx]
-                _gr = _guard_p2(agent_id, _fn_p, _args_p)
-                if _gr:
-                    _parallel_futures[p_idx] = {
-                        'error': _gr.get('error', 'Blocked by plugin guard'),
-                        'blocked_by': 'tool_guard'}
-                else:
-                    _parallel_futures[p_idx] = _pool.submit(
-                        _execute_tool_core, _fn_p, _args_p,
-                        builtin_exec, real_exec)
+            _parallel_jobs = {}
+            try:
+                for p_idx in sorted(_parallel_indices):
+                    _tc_p, _fn_p, _args_p, _pt_p = _tool_records[p_idx]
+                    _gr = _guard_p2(agent_id, _fn_p, _args_p)
+                    if _gr:
+                        _parallel_jobs[p_idx] = {
+                            'error': _gr.get('error', 'Blocked by plugin guard'),
+                            'blocked_by': 'tool_guard'}
+                    else:
+                        _future = _pool.submit(
+                            _execute_tool_core, _fn_p, _args_p,
+                            builtin_exec, real_exec)
+                        # Record the deadline at submission, not when collection
+                        # reaches this call, so ordering cannot extend its budget.
+                        _parallel_jobs[p_idx] = (
+                            _future,
+                            time.monotonic() + AGENT_PARALLEL_TOOL_WAIT_TIMEOUT,
+                        )
+                _parallel_results = _collect_parallel_tool_results(
+                    _parallel_jobs, _pool, stop_event)
+            except Exception:
+                _logger.exception("Parallel tool batch setup or collection failed")
+                _shutdown_parallel_pool(
+                    _pool, [job[0] for job in _parallel_jobs.values()
+                            if isinstance(job, tuple) and isinstance(job[0], Future)])
+                for p_idx in _parallel_indices:
+                    _parallel_results.setdefault(p_idx, {
+                        'error': 'Parallel tool execution failed while collecting results.'})
 
         # Phase 3: Process each tool in original order.
         for i, (_tc, fn_name, args, _pt) in enumerate(_tool_records):
@@ -1760,7 +1931,8 @@ def run_tool_loop(agent: Dict[str, Any],
             # Emit a synthetic "stopped" result for each so the assistant's
             # tool_calls stay paired with tool responses (provider requires it);
             # Check B after this loop then ends the turn cleanly.
-            if stop_event.is_set() and i not in _parse_failed:
+            if (stop_event.is_set() and i not in _parse_failed
+                    and i not in _parallel_results):
                 result_str = json.dumps({'error': 'Execution stopped by user'})
                 db.add_chat_message(session_id, 'tool', result_str,
                                     tool_call_id=_tc['id'], agent_id=db_agent_id)
@@ -1807,12 +1979,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 continue
 
             # --- Obtain tool_result ---
-            if i in _parallel_futures:
-                _pr = _parallel_futures[i]
-                if isinstance(_pr, Future):
-                    tool_result = _pr.result()
-                else:
-                    tool_result = _pr  # guard-rejection dict
+            if i in _parallel_results:
+                tool_result = _parallel_results[i]
             else:
                 from backend.plugin_manager import check_tool_guards
                 guard_result = check_tool_guards(agent_id, fn_name, args)
@@ -2311,9 +2479,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 _any_force_stop_injected = True
                 _post_force_stop_tool_count = 1
 
-        # Shut down parallel execution pool (no-op if no parallel tools were used)
-        if _pool is not None:
-            _pool.shutdown(wait=False)
+        # The parallel pool is always cleaned up by the bounded collector.
 
         # Count this as one tool iteration (what the user sees as "iterations")
         _iteration += 1

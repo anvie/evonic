@@ -91,7 +91,7 @@ def test_archived_paths_render_title_only():
     ms = _session()
     ms.cmp['paths']['A1']['status'] = 'archived'
     section = render_cmp_section(ms.cmp)
-    assert 'Archived paths (title only' in section
+    assert 'Archived paths (title + tags' in section
     assert '- A1 Perusahaan A [archived]' in section
     assert 'laporan mingguan selesai' not in section   # outcome offloaded
 

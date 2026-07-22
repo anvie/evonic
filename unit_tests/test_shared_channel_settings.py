@@ -156,7 +156,28 @@ def test_routes_add_and_remove(client, chan_id, agent_a):
 
     assert client.delete(
         f'/api/shared-channels/{chan_id}/routes/62812345').status_code == 200
-    assert db.get_channel(chan_id)['config']['routes'] == {}
+    config = db.get_channel(chan_id)['config']
+    assert config['routes'] == {}
+    assert config['user_names'] == {}
+
+
+def test_route_removal_cleans_orphaned_names(client, chan_id, agent_a):
+    db.update_channel(chan_id, {'config': {
+        'mode': 'open',
+        'routes': {'628111': agent_a, '628222': agent_a},
+        'user_names': {
+            '628111': 'Removed Contact',
+            '628222': 'Active Contact',
+            'status': 'Legacy Orphan',
+        },
+    }})
+
+    resp = client.delete(f'/api/shared-channels/{chan_id}/routes/628111')
+
+    assert resp.status_code == 200
+    config = db.get_channel(chan_id)['config']
+    assert config['routes'] == {'628222': agent_a}
+    assert config['user_names'] == {'628222': 'Active Contact'}
 
 
 def test_inbox_assign_routes_both_identifiers(client, chan_id, agent_a):

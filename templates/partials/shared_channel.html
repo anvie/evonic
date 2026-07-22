@@ -1,8 +1,18 @@
 <div>
     <!-- Header -->
     <div class="settings-pane-head">
-        <h2 class="settings-pane-title">Shared Channels</h2>
-        <p class="settings-pane-desc">Manage multiple shared WhatsApp numbers, each running concurrently. A number can represent a different brand/company and serves multiple agents via its own routing. Pick a number below to connect it and manage its senders and routes.</p>
+        <div class="flex items-start justify-between gap-4">
+            <div>
+                <h2 class="settings-pane-title">Shared Channels</h2>
+                <p class="settings-pane-desc">Manage multiple shared WhatsApp numbers, each running concurrently. A number can represent a different brand/company and serves multiple agents via its own routing. Pick a number below to connect it and manage its senders and routes.</p>
+            </div>
+            <button onclick="sharedChannel.debugListener.open()"
+                class="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title="Real-time WhatsApp message debugger">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/></svg>
+                Debug Listener
+            </button>
+        </div>
     </div>
 
     <!-- Connection -->
@@ -30,29 +40,74 @@
     </section>
 
     <!-- Routes -->
-    <section id="sc-routes-section" class="setting-group hidden">
+    <section id="sc-routes-section" class="setting-group hidden" aria-labelledby="sc-routes-heading">
         <div class="setting-group-head">
             <i data-lucide="git-fork"></i>
-            <h3>User &rarr; Agent Routes</h3>
+            <h3 id="sc-routes-heading">User &rarr; Agent Routes</h3>
+            <span id="sc-routes-count" class="text-[11px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-2 py-0.5 rounded-full empty:hidden"></span>
         </div>
-        <div class="setting-group-body">
-            <div id="sc-routes-list" class="divide-y divide-gray-100 dark:divide-gray-700/60">
-                <p class="text-xs text-gray-400 text-center py-4">No routes configured.</p>
+        <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-xs text-gray-400 dark:text-gray-500">Each sender is directed to the assigned agent.</p>
+            <div class="w-full sm:w-56">
+                <label for="sc-routes-filter" class="sr-only">Filter routes</label>
+                <div class="relative">
+                    <svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="search" id="sc-routes-filter" autocomplete="off" placeholder="Search routes"
+                        oninput="sharedChannel.filterRoutes(this.value)"
+                        class="w-full rounded-md border border-gray-300 py-1.5 pl-8 pr-3 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
+                </div>
             </div>
+        </div>
+        <div class="setting-group-body overflow-hidden">
+            <!-- One compact table at every viewport; narrow screens can scroll horizontally. -->
+            <div id="sc-routes-table-wrap" class="overflow-x-auto">
+                <table class="w-full min-w-[640px] table-fixed text-left text-xs">
+                    <caption class="sr-only">Configured sender-to-agent routes</caption>
+                    <thead>
+                        <tr class="border-b border-gray-200 bg-gray-50/80 text-[10px] uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-400">
+                            <th scope="col" class="w-[28%] px-3 py-2 font-semibold">Contact</th>
+                            <th scope="col" class="w-[27%] px-3 py-2 font-semibold">Identifier</th>
+                            <th scope="col" class="w-[31%] px-3 py-2 font-semibold">Assigned Agent</th>
+                            <th scope="col" class="w-[14%] px-3 py-2 text-right font-semibold">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sc-routes-list" class="divide-y divide-gray-100 dark:divide-gray-700/60">
+                        <tr><td colspan="4" class="px-3 py-8 text-center text-xs text-gray-400 dark:text-gray-500">No routes configured.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <nav id="sc-routes-pagination" class="hidden flex-col gap-2 border-t border-gray-200 px-3 py-2.5 dark:border-gray-700 sm:flex-row sm:items-center sm:justify-between" aria-label="Routes pagination">
+                <p id="sc-routes-page-summary" class="text-center text-[11px] text-gray-500 dark:text-gray-400 sm:text-left" aria-live="polite"></p>
+                <div class="grid grid-cols-2 gap-1.5 sm:flex">
+                    <button type="button" id="sc-routes-prev" onclick="sharedChannel.goRoutesPage(sharedChannel.routesPage - 1)"
+                        class="rounded-md border border-gray-300 px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                        Previous
+                    </button>
+                    <button type="button" id="sc-routes-next" onclick="sharedChannel.goRoutesPage(sharedChannel.routesPage + 1)"
+                        class="rounded-md border border-gray-300 px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                        Next
+                    </button>
+                </div>
+            </nav>
+
             <!-- Add route (manual pre-authorization) -->
-            <div class="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30">
-                <div class="flex gap-2 flex-wrap">
-                    <input type="text" id="sc-route-user-input" placeholder="Phone number, e.g. 62812345678"
-                        class="flex-1 min-w-[180px] px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600">
-                    <input type="text" id="sc-route-name-input" placeholder="Name (optional)"
-                        class="w-36 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600">
+            <div class="border-t border-gray-200 bg-gray-50/60 px-4 py-4 dark:border-gray-700 dark:bg-gray-900/30">
+                <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    <label for="sc-route-user-input" class="sr-only">Phone number</label>
+                    <input type="text" id="sc-route-user-input" inputmode="tel" autocomplete="tel" placeholder="Phone number, e.g. 62812345678"
+                        class="min-w-0 flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 sm:min-w-[180px]">
+                    <label for="sc-route-name-input" class="sr-only">Contact name (optional)</label>
+                    <input type="text" id="sc-route-name-input" autocomplete="name" placeholder="Name (optional)"
+                        class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 sm:w-40">
+                    <label for="sc-route-agent-select" class="sr-only">Assigned agent</label>
                     <select id="sc-route-agent-select"
-                        class="w-40 px-2 py-1.5 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600"></select>
-                    <button onclick="sharedChannel.addRoute()" class="btn-primary flex-shrink-0" style="padding:6px 14px">
+                        class="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 sm:w-44"></select>
+                    <button type="button" onclick="sharedChannel.addRoute()" class="btn-primary flex-shrink-0 justify-center" style="padding:6px 14px">
                         <i data-lucide="plus"></i>Add Route
                     </button>
                 </div>
-                <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1.5">Manual entry is a fallback for pre-authorizing known phone numbers — normally senders appear above after their first message and you assign them there.</p>
+                <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">Manual entry is a fallback for pre-authorizing known phone numbers — normally senders appear above after their first message and you assign them there.</p>
             </div>
         </div>
     </section>
@@ -78,12 +133,45 @@
     </div>
 </div>
 
+<!-- Debug Listener modal -->
+<div id="sc-debug-modal" class="modal" onclick="if(event.target===this) sharedChannel.debugListener.close()">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col" style="max-height:85vh" onclick="event.stopPropagation()">
+        <!-- Modal header -->
+        <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 dark:border-gray-700 flex-shrink-0">
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">WhatsApp Debug Listener</h3>
+                <p id="sc-debug-status" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                    <span class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1.5"></span>Disconnected
+                </p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="sharedChannel.debugListener.clear()"
+                    class="px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+                    Clear
+                </button>
+                <button onclick="sharedChannel.debugListener.close()"
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xl leading-none">&times;</button>
+            </div>
+        </div>
+        <!-- Log area -->
+        <div id="sc-debug-log" class="flex-1 overflow-y-auto px-6 py-4 space-y-2 bg-gray-50 dark:bg-gray-900/50" style="min-height:300px"></div>
+        <!-- Footer -->
+        <div class="px-6 py-3 border-t border-gray-100 dark:border-gray-700 flex-shrink-0 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
+            <span id="sc-debug-count">0 messages</span>
+            <span>Max 500 &middot; newest first</span>
+        </div>
+    </div>
+</div>
+
 <script>
 (function() {
     window.sharedChannel = {
         channels: [],       // all shared channels
         activeId: null,     // id of the channel currently shown in the detail
         agentsById: {},
+        routesPage: 1,
+        routesPageSize: 10,
+        routesFilter: '',
         _pollTimer: null,
         _qrTimer: null,
         // Render signatures — polls skip re-rendering when nothing changed,
@@ -159,12 +247,16 @@
 
         load: function() {
             fetch('/api/shared-channels').then(function(r) { return r.json(); }).then(function(data) {
+                var previousActiveId = sharedChannel.activeId;
                 sharedChannel.channels = data.channels || [];
                 // Keep the current selection if it still exists; otherwise fall
                 // back to the first channel (or none).
                 var stillThere = sharedChannel.active();
                 if (!stillThere) {
                     sharedChannel.activeId = sharedChannel.channels.length ? sharedChannel.channels[0].id : null;
+                }
+                if (sharedChannel.activeId !== previousActiveId) {
+                    sharedChannel.resetRoutesView();
                 }
                 sharedChannel.renderSwitcher();
                 sharedChannel.renderChannel();
@@ -227,9 +319,18 @@
             if (i) { i.value = ''; i.focus(); }
         },
 
+        resetRoutesView: function() {
+            sharedChannel.routesPage = 1;
+            sharedChannel.routesFilter = '';
+            var routesFilter = document.getElementById('sc-routes-filter');
+            if (routesFilter) routesFilter.value = '';
+            sharedChannel._routesSig = null;
+        },
+
         selectChannel: function(id) {
             if (id === sharedChannel.activeId) return;
             sharedChannel.activeId = id;
+            sharedChannel.resetRoutesView();
             // A different channel's detail must render fresh (and its QR poller reset).
             if (sharedChannel._qrTimer) { clearInterval(sharedChannel._qrTimer); sharedChannel._qrTimer = null; }
             sharedChannel._chanSig = null;
@@ -461,33 +562,96 @@
                 });
         },
 
+        formatRouteIdentifier: function(value) {
+            var digits = String(value || '');
+            if (/^62\d{8,13}$/.test(digits)) {
+                return '+62 ' + digits.slice(2).replace(/\B(?=(\d{4})+(?!\d))/g, ' ');
+            }
+            return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        },
+
+        filterRoutes: function(value) {
+            sharedChannel.routesFilter = String(value || '').trim().toLowerCase();
+            sharedChannel.routesPage = 1;
+            sharedChannel._routesSig = null;
+            sharedChannel.renderRoutes();
+        },
+
+        goRoutesPage: function(page) {
+            sharedChannel.routesPage = Math.max(1, Number(page) || 1);
+            sharedChannel._routesSig = null;
+            sharedChannel.renderRoutes();
+        },
+
         renderRoutes: function() {
             var ch = sharedChannel.active();
             var config = (ch && ch.config) || {};
             var routes = config.routes || {};
             var names = config.user_names || {};
             var list = document.getElementById('sc-routes-list');
-            var sig = JSON.stringify([sharedChannel.activeId, routes, names]);
+            var count = document.getElementById('sc-routes-count');
+            var pagination = document.getElementById('sc-routes-pagination');
+            var summary = document.getElementById('sc-routes-page-summary');
+            var previous = document.getElementById('sc-routes-prev');
+            var next = document.getElementById('sc-routes-next');
+            var sig = JSON.stringify([sharedChannel.activeId, routes, names, sharedChannel.agentsById, sharedChannel.routesFilter, sharedChannel.routesPage]);
             if (sig === sharedChannel._routesSig) return;
-            sharedChannel._routesSig = sig;
-            var ids = Object.keys(routes);
-            if (ids.length === 0) {
-                list.innerHTML = '<p class="text-xs text-gray-400 text-center py-4">No routes configured.</p>';
+
+            function routeData(userId) {
+                var name = String(names[userId] || '').trim();
+                return {
+                    userId: userId,
+                    formattedId: sharedChannel.formatRouteIdentifier(userId),
+                    name: name,
+                    agentName: sharedChannel.agentsById[routes[userId]] || '(unknown agent)'
+                };
+            }
+
+            var allRows = Object.keys(routes).map(routeData);
+            var query = sharedChannel.routesFilter;
+            var filteredRows = query ? allRows.filter(function(route) {
+                return [route.name, route.userId, route.formattedId, route.agentName].some(function(value) {
+                    return String(value).toLowerCase().indexOf(query) !== -1;
+                });
+            }) : allRows;
+            var totalPages = Math.max(1, Math.ceil(filteredRows.length / sharedChannel.routesPageSize));
+            sharedChannel.routesPage = Math.min(sharedChannel.routesPage, totalPages);
+            var start = (sharedChannel.routesPage - 1) * sharedChannel.routesPageSize;
+            var rows = filteredRows.slice(start, start + sharedChannel.routesPageSize);
+            sharedChannel._routesSig = JSON.stringify([sharedChannel.activeId, routes, names, sharedChannel.agentsById, sharedChannel.routesFilter, sharedChannel.routesPage]);
+
+            count.textContent = allRows.length ? allRows.length + (allRows.length === 1 ? ' route' : ' routes') : '';
+            pagination.classList.toggle('hidden', totalPages <= 1);
+            pagination.classList.toggle('flex', totalPages > 1);
+            previous.disabled = sharedChannel.routesPage === 1;
+            next.disabled = sharedChannel.routesPage === totalPages;
+            summary.textContent = filteredRows.length
+                ? 'Showing ' + (start + 1) + '\u2013' + (start + rows.length) + ' of ' + filteredRows.length + ' routes \u00b7 Page ' + sharedChannel.routesPage + ' of ' + totalPages
+                : 'No matching routes';
+
+            if (allRows.length === 0 || filteredRows.length === 0) {
+                var emptyMessage = allRows.length === 0 ? 'No routes configured.' : 'No routes match your filter.';
+                list.innerHTML = '<tr><td colspan="4" class="px-3 py-8 text-center text-xs text-gray-400 dark:text-gray-500">' + emptyMessage + '</td></tr>';
                 return;
             }
-            list.innerHTML = ids.map(function(u) {
-                var name = names[u] ? '<span class="text-xs text-gray-600 dark:text-gray-400 truncate">' + sharedChannel.esc(names[u]) + '</span>' : '';
-                var agentName = sharedChannel.agentsById[routes[u]] || '(unknown agent)';
-                return '<div class="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors">' +
-                    '<div class="flex items-center gap-3 min-w-0">' +
-                    '<span class="text-xs text-gray-700 dark:text-gray-300 font-mono flex-shrink-0">' + sharedChannel.esc(u) + '</span>' +
-                    name +
-                    '<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800 flex-shrink-0">' +
-                    '<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>' +
-                    sharedChannel.esc(agentName) + '</span>' +
-                    '</div>' +
-                    '<button onclick="sharedChannel.removeRoute(\'' + sharedChannel.escAttr(u) + '\')" class="text-xs font-medium text-gray-400 hover:text-red-600 dark:hover:text-red-400 flex-shrink-0 transition-colors">Remove</button>' +
-                    '</div>';
+
+            list.innerHTML = rows.map(function(route, index) {
+                var name = route.name
+                    ? '<span class="block truncate font-medium text-gray-900 dark:text-gray-100" title="' + sharedChannel.escAttr(route.name) + '">' + sharedChannel.esc(route.name) + '</span>'
+                    : '<span class="text-[11px] italic text-gray-400 dark:text-gray-500">Name not provided</span>';
+                var removeLabel = 'Remove route for ' + (route.name || route.userId);
+                return '<tr class="transition-colors hover:bg-indigo-50/40 dark:hover:bg-indigo-900/10 ' + (index % 2 ? 'bg-gray-50/40 dark:bg-gray-900/20' : '') + '">' +
+                    '<td class="px-3 py-2">' + name + '</td>' +
+                    '<td class="px-3 py-2">' +
+                        '<span class="block truncate whitespace-nowrap font-mono text-[11px] text-gray-600 dark:text-gray-300" title="' + sharedChannel.escAttr(route.userId) + '">' + sharedChannel.esc(route.formattedId) + '</span>' +
+                    '</td>' +
+                    '<td class="px-3 py-2">' +
+                        '<span class="block truncate font-medium text-gray-700 dark:text-gray-200" title="' + sharedChannel.escAttr(route.agentName) + '">' + sharedChannel.esc(route.agentName) + '</span>' +
+                    '</td>' +
+                    '<td class="px-3 py-2 text-right">' +
+                        '<button type="button" onclick="sharedChannel.removeRoute(\'' + sharedChannel.escAttr(route.userId) + '\')" aria-label="' + sharedChannel.escAttr(removeLabel) + '" class="rounded px-2 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:text-gray-400 dark:hover:bg-red-900/20 dark:hover:text-red-400">Remove</button>' +
+                    '</td>' +
+                '</tr>';
             }).join('');
         },
 
@@ -521,6 +685,173 @@
                     sharedChannel.resetSigs();
                     sharedChannel.load();
                 });
+        },
+
+        // -------------------------------------------------------------------
+        // Debug Listener — real-time WhatsApp inbound monitor
+        // -------------------------------------------------------------------
+        debugListener: {
+            _es: null,
+            _messages: [],
+            _maxMessages: 500,
+
+            open: function() {
+                var dl = sharedChannel.debugListener;
+                var modal = document.getElementById('sc-debug-modal');
+                modal.classList.add('active');
+                dl._connect();
+            },
+
+            close: function() {
+                var dl = sharedChannel.debugListener;
+                var modal = document.getElementById('sc-debug-modal');
+                modal.classList.remove('active');
+                dl._disconnect();
+            },
+
+            clear: function() {
+                var dl = sharedChannel.debugListener;
+                dl._messages = [];
+                document.getElementById('sc-debug-log').innerHTML = '';
+                document.getElementById('sc-debug-count').textContent = '0 messages';
+            },
+
+            _connect: function() {
+                var dl = sharedChannel.debugListener;
+                if (dl._es) dl._disconnect();
+
+                dl._setStatus('connecting');
+                dl._es = new EventSource('/api/shared-channels/debug/listen');
+
+                dl._es.addEventListener('connected', function(e) {
+                    dl._setStatus('connected');
+                    dl._addLogEntry({
+                        _system: true,
+                        text: 'Connected to debug stream — listening for WhatsApp inbound messages...'
+                    });
+                });
+
+                dl._es.addEventListener('whatsapp_inbound', function(e) {
+                    try {
+                        var data = JSON.parse(e.data);
+                        dl._addLogEntry(data);
+                    } catch (err) {
+                        // ignore malformed events
+                    }
+                });
+
+                dl._es.onerror = function() {
+                    dl._setStatus('disconnected');
+                    dl._disconnect();
+                    // Auto-reconnect after 3s if modal is still open
+                    setTimeout(function() {
+                        var modal = document.getElementById('sc-debug-modal');
+                        if (modal && modal.classList.contains('active')) {
+                            dl._connect();
+                        }
+                    }, 3000);
+                };
+            },
+
+            _disconnect: function() {
+                var dl = sharedChannel.debugListener;
+                if (dl._es) {
+                    dl._es.close();
+                    dl._es = null;
+                }
+            },
+
+            _setStatus: function(state) {
+                var el = document.getElementById('sc-debug-status');
+                if (!el) return;
+                if (state === 'connected') {
+                    el.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1.5" style="animation:pulse 2s infinite"></span>Listening...';
+                } else if (state === 'connecting') {
+                    el.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5"></span>Connecting...';
+                } else {
+                    el.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1.5"></span>Disconnected';
+                }
+            },
+
+            _addLogEntry: function(data) {
+                var dl = sharedChannel.debugListener;
+                var log = document.getElementById('sc-debug-log');
+                if (!log) return;
+
+                var isSystem = !!data._system;
+                var now = new Date();
+                var time = now.toTimeString().slice(0, 8);
+                var type = data.type || 'text';
+                var typeColors = {
+                    text: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+                    image: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+                    audio: 'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300',
+                    video: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+                    document: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300',
+                    sticker: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
+                    location: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
+                };
+                var typeBadge = typeColors[type] || 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400';
+
+                var card = document.createElement('div');
+                card.className = 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm p-3 text-sm';
+
+                if (isSystem) {
+                    card.className += ' border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30';
+                    card.innerHTML =
+                        '<div class="flex items-center gap-2 text-green-700 dark:text-green-400">' +
+                            '<span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">' + sharedChannel.esc(time) + '</span>' +
+                            '<span class="text-green-500">&#10003;</span>' +
+                            '<span>' + sharedChannel.esc(data.text) + '</span>' +
+                        '</div>';
+                } else {
+                    var parts = [];
+                    // Row 1: timestamp + type badge + channel
+                    parts.push(
+                        '<div class="flex items-center gap-2 mb-1.5 flex-wrap">' +
+                            '<span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">' + sharedChannel.esc(time) + '</span>' +
+                            '<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded ' + typeBadge + '">' + sharedChannel.esc(type) + '</span>' +
+                            '<span class="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded">' + sharedChannel.esc(data.channel_name || data.channel_id || '') + '</span>' +
+                        '</div>'
+                    );
+                    // Row 2: sender info
+                    var senderInfo = [];
+                    senderInfo.push('<span class="font-semibold text-gray-800 dark:text-gray-200">' + sharedChannel.esc(data.sender || '?') + '</span>');
+                    if (data.push_name) senderInfo.push('<span class="text-gray-500 dark:text-gray-400">(' + sharedChannel.esc(data.push_name) + ')</span>');
+                    if (data.jid && data.jid !== data.sender) senderInfo.push('<span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">JID: ' + sharedChannel.esc(data.jid) + '</span>');
+                    parts.push('<div class="flex items-center gap-1.5 mb-1 text-xs">' + senderInfo.join(' ') + '</div>');
+                    // Row 3: group info (if applicable)
+                    if (data.is_group) {
+                        parts.push(
+                            '<div class="text-[11px] text-gray-400 dark:text-gray-500 mb-1">' +
+                                '<span class="font-medium">Group:</span> ' + sharedChannel.esc(data.group_name || '(unnamed)') + ' &middot; <span class="font-mono">' + sharedChannel.esc(data.jid || '?') + '</span>' +
+                            '</div>'
+                        );
+                    }
+                    // Row 4: message text
+                    if (data.text) {
+                        parts.push(
+                            '<div class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed">' +
+                                sharedChannel.esc(data.text) +
+                            '</div>'
+                        );
+                    } else {
+                        parts.push(
+                            '<div class="text-gray-400 dark:text-gray-500 italic">[No text — ' + sharedChannel.esc(type) + ' only]</div>'
+                        );
+                    }
+                    card.innerHTML = parts.join('');
+                }
+
+                // Prepend (newest first), enforce max
+                log.insertBefore(card, log.firstChild);
+                dl._messages.unshift(data);
+                if (dl._messages.length > dl._maxMessages) {
+                    dl._messages.pop();
+                    if (log.lastChild) log.removeChild(log.lastChild);
+                }
+                document.getElementById('sc-debug-count').textContent = dl._messages.length + ' message' + (dl._messages.length !== 1 ? 's' : '');
+            }
         },
 
         esc: function(s) {

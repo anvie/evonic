@@ -7,7 +7,9 @@ guard, host-side file I/O round-trips, and registry selection via the
 SANDBOX_BACKEND config.
 """
 
+import io
 import os
+import subprocess
 import sys
 import time
 
@@ -27,9 +29,10 @@ def clean_keeper_pool():
 
 
 class FakeProc:
-    def __init__(self, pid=1000, returncode=None):
+    def __init__(self, pid=1000, returncode=None, stderr=''):
         self.pid = pid
         self.returncode = returncode
+        self.stderr = io.StringIO(stderr)
 
     def poll(self):
         return self.returncode
@@ -102,6 +105,37 @@ def test_file_io_round_trip(tmp_path):
     assert not (tmp_path / 'a.txt').exists()
 
 
+def test_scratch_file_io_routes_through_sandbox(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path), agent_id='agent_s')
+    path = f"{scratch_dir('agent_s')}/attachments/session_a/report.txt"
+    calls = []
+
+    def fake_run_python(code, timeout, env):
+        calls.append(code)
+        if "op = 'write_bytes'" in code:
+            return {'stdout': '{"ok": true}', 'exit_code': 0}
+        if "op = 'stat'" in code:
+            return {'stdout': '{"exists": true, "size": 4, "is_binary": false}', 'exit_code': 0}
+        if "op = 'read_bytes'" in code:
+            return {'stdout': '{"data": "ZGF0YQ=="}', 'exit_code': 0}
+        return {'stdout': 'true', 'exit_code': 0}
+
+    monkeypatch.setattr(b, 'run_python', fake_run_python)
+
+    assert b.write_file_bytes(path, b'data') == {'ok': True}
+    assert b.file_stat(path) == {'exists': True, 'size': 4, 'is_binary': False}
+    assert b.cat_file_bytes(path) == {'bytes': b'data'}
+    assert not (tmp_path / 'attachments').exists()
+    assert all(scratch_dir('agent_s') in call for call in calls)
+
+
+def test_non_agent_scratch_path_uses_existing_host_file_io(tmp_path):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path), agent_id='agent_s')
+    path = tmp_path / 'other-scratch' / 'file.txt'
+    assert b.write_file(str(path), 'host') == {'ok': True}
+    assert path.read_text() == 'host'
+
+
 # ---------------------------------------------------------------------------
 # _bwrap_argv
 # ---------------------------------------------------------------------------
@@ -117,9 +151,44 @@ def test_bwrap_argv_core_flags(tmp_path):
     ws_bind = argv.index('--bind')
     assert argv[ws_bind + 1:ws_bind + 3] == [ws, '/workspace']
     assert os.path.join(ws, '.home') in argv and '/home/agent' in argv
-    assert bwrap_backend._HELPERS_DIR in argv
+    helper_source = argv[argv.index(bwrap_backend._HELPERS_MOUNT) - 1]
+    assert helper_source.startswith(bwrap_backend._HELPERS_RUNTIME_ROOT + os.sep)
+    assert bwrap_backend._HELPERS_DIR not in argv
     # workdir is set per-exec by the nsenter trampoline, not on the keeper
     assert '--chdir' not in argv
+
+
+def test_stage_helpers_works_below_private_parent(tmp_path):
+    private = tmp_path / 'private'
+    source = private / 'helpers'
+    runtime = tmp_path / 'runtime' / 'helpers'
+    (source / 'bin').mkdir(parents=True)
+    (source / '__init__.py').write_text('value = 1\n')
+    executable = source / 'bin' / 'rg'
+    executable.write_text('#!/bin/sh\n')
+    executable.chmod(0o755)
+    private.chmod(0o700)
+
+    staged = bwrap_backend._stage_helpers(str(source), str(runtime))
+
+    assert staged.startswith(str(runtime) + os.sep)
+    assert open(os.path.join(staged, '__init__.py')).read() == 'value = 1\n'
+    assert os.stat(runtime.parent).st_mode & 0o777 == 0o755
+    assert os.stat(runtime).st_mode & 0o777 == 0o755
+    assert os.stat(os.path.join(staged, 'bin', 'rg')).st_mode & 0o111
+
+
+def test_stage_helpers_is_content_addressed(tmp_path):
+    source = tmp_path / 'source'
+    runtime = tmp_path / 'runtime' / 'helpers'
+    source.mkdir()
+    helper = source / 'display.py'
+    helper.write_text('first\n')
+    first = bwrap_backend._stage_helpers(str(source), str(runtime))
+    assert bwrap_backend._stage_helpers(str(source), str(runtime)) == first
+    helper.write_text('second\n')
+    second = bwrap_backend._stage_helpers(str(source), str(runtime))
+    assert second != first and open(os.path.join(second, 'display.py')).read() == 'second\n'
 
 
 def test_workdir_subagent(tmp_path):
@@ -174,6 +243,63 @@ def test_run_bash_returns_error_when_unavailable(tmp_path, monkeypatch):
     assert result == {'error': 'bwrap missing', 'exit_code': -1, 'execution_time': 0}
     result = b.run_python('print(1)', timeout=5, env={})
     assert result['error'] == 'bwrap missing'
+
+
+def _probe(returncode, stderr=''):
+    return subprocess.CompletedProcess([], returncode, '', stderr)
+
+
+def test_nsenter_readiness_retries_transient_startup_failure(monkeypatch):
+    results = [
+        _probe(1, 'nsenter: failed to execute /usr/bin/bash: No such file or directory'),
+        _probe(0),
+    ]
+    calls = []
+    monkeypatch.setattr(bwrap_backend.subprocess, 'run',
+                        lambda *args, **kwargs: calls.append(args) or results.pop(0))
+    monkeypatch.setattr(bwrap_backend.time, 'sleep', lambda _: None)
+
+    probe, failure = bwrap_backend._wait_for_nsenter_ready(4242, timeout=1)
+
+    assert probe.returncode == 0 and failure is None and len(calls) == 2
+
+
+def test_nsenter_readiness_exhaustion_has_initialization_diagnostic(monkeypatch):
+    result = _probe(1, 'nsenter: failed to execute /usr/bin/bash: No such file or directory')
+    clock = iter((0.0, 0.0, 0.2, 1.1))
+    monkeypatch.setattr(bwrap_backend.subprocess, 'run', lambda *args, **kwargs: result)
+    monkeypatch.setattr(bwrap_backend.time, 'monotonic', lambda: next(clock))
+    monkeypatch.setattr(bwrap_backend.time, 'sleep', lambda _: None)
+
+    probe, failure = bwrap_backend._wait_for_nsenter_ready(4242, timeout=1)
+    message = bwrap_backend._nsenter_failure_message(probe, failure)
+
+    assert failure == 'readiness' and 'did not finish initializing' in message
+    assert 'WSL2' not in message and 'incompatible' not in message
+
+
+def test_nsenter_readiness_does_not_retry_permission_failure(monkeypatch):
+    calls = []
+    result = _probe(1, 'nsenter: reassociate to namespace ns/user failed: Operation not permitted')
+    monkeypatch.setattr(bwrap_backend.subprocess, 'run',
+                        lambda *args, **kwargs: calls.append(args) or result)
+
+    probe, failure = bwrap_backend._wait_for_nsenter_ready(4242, timeout=1)
+    message = bwrap_backend._nsenter_failure_message(probe, failure)
+
+    assert len(calls) == 1 and failure is None
+    assert 'cannot join' in message and 'WSL2' in message
+
+
+def test_nsenter_other_failure_avoids_compatibility_claim(monkeypatch):
+    result = _probe(1, 'nsenter: failed to execute /usr/bin/bash: Input/output error')
+    monkeypatch.setattr(bwrap_backend.subprocess, 'run', lambda *args, **kwargs: result)
+
+    probe, failure = bwrap_backend._wait_for_nsenter_ready(4242, timeout=1)
+    message = bwrap_backend._nsenter_failure_message(probe, failure)
+
+    assert failure is None and 'failed while checking' in message
+    assert 'WSL2' not in message and 'incompatible' not in message
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +395,72 @@ def test_read_child_pid_parses_json():
         assert bwrap_backend._read_child_pid(r, FakeProc(returncode=1), timeout=2) is None
     finally:
         os.close(r); os.close(w)
+
+
+def _mock_keeper_spawn(monkeypatch, proc, probe, failure='readiness'):
+    r_fd, w_fd = os.pipe()
+    monkeypatch.setattr(bwrap_backend.os, 'pipe', lambda: (r_fd, w_fd))
+    monkeypatch.setattr(bwrap_backend.subprocess, 'Popen', lambda *args, **kwargs: proc)
+    monkeypatch.setattr(bwrap_backend, '_read_child_pid', lambda fd, child: 4242)
+    monkeypatch.setattr(bwrap_backend, '_wait_for_nsenter_ready',
+                        lambda pid: (probe, failure))
+    destroyed = []
+    monkeypatch.setattr(bwrap_backend, '_destroy_probe',
+                        lambda child, fd: destroyed.append((child, fd)))
+    return r_fd, destroyed
+
+
+def test_spawn_keeper_readiness_failure_cleans_up(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='sess-1', workspace=str(tmp_path))
+    proc = FakeProc(pid=1000)
+    failed_probe = _probe(1, 'nsenter: failed to execute /usr/bin/bash: No such file or directory')
+    r_fd, destroyed = _mock_keeper_spawn(monkeypatch, proc, failed_probe)
+
+    info, error = b._spawn_keeper()
+
+    assert info is None and 'failed readiness check' in error
+    assert destroyed == [(proc, r_fd)]
+    os.close(r_fd)
+
+
+def test_spawn_keeper_prefers_bwrap_stderr_after_early_exit(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='sess-1', workspace=str(tmp_path))
+    proc = FakeProc(pid=1000, returncode=1,
+                    stderr='bwrap: setup failed for a primary reason\n')
+    failed_probe = _probe(1, 'nsenter: cannot open /proc/4242/ns/user: No such file or directory')
+    r_fd, destroyed = _mock_keeper_spawn(monkeypatch, proc, failed_probe, failure=None)
+
+    info, error = b._spawn_keeper()
+
+    assert info is None and 'setup failed for a primary reason' in error
+    assert 'nsenter' not in error and destroyed == [(proc, r_fd)]
+    os.close(r_fd)
+
+
+def test_spawn_keeper_helper_permission_error_is_actionable(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='sess-1', workspace=str(tmp_path))
+    helper = '/srv/private/evonic/runpy_helpers'
+    proc = FakeProc(pid=1000, returncode=1,
+                    stderr=f"bwrap: Can't find source path {helper}: Permission denied\n")
+    failed_probe = _probe(1, 'nsenter: cannot open /proc/4242/ns/user: No such file or directory')
+    r_fd, destroyed = _mock_keeper_spawn(monkeypatch, proc, failed_probe, failure=None)
+
+    info, error = b._spawn_keeper()
+
+    assert info is None and helper in error and 'execute/traverse permission' in error
+    assert 'every parent directory' in error and 'mode 0700' in error
+    assert 'Do not weaken filesystem permissions automatically' in error
+    assert 'WSL2' not in error and 'incompatible' not in error
+    assert destroyed == [(proc, r_fd)]
+    os.close(r_fd)
+
+
+def test_exited_process_stderr_does_not_block_for_live_keeper():
+    class LiveProc(FakeProc):
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired('bwrap', timeout)
+
+    assert bwrap_backend._exited_process_stderr(LiveProc(stderr='unavailable')) == ''
 
 
 def test_keeper_pool_reuse_and_workspace_change(tmp_path, monkeypatch):

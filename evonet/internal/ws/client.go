@@ -2,11 +2,13 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -21,33 +23,40 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Heartbeat tuning. The active heartbeat only runs while one or more requests
-// are in flight, so an idle fleet of connectors produces no ping traffic.
+// Connection liveness tuning. WebSocket pings prevent otherwise idle sessions
+// from being discarded by intermediaries, while the pong timeout detects a
+// silently broken link and lets Run reconnect it.
 const (
-	heartbeatInterval = 10 * time.Second
-	heartbeatTimeout  = 25 * time.Second // ~2 missed pings → declare the link dead
+	heartbeatInterval = 30 * time.Second
+	heartbeatTimeout  = 75 * time.Second
+	tcpKeepAlive      = 30 * time.Second
+	writeTimeout      = 10 * time.Second
 )
 
 // Client manages the WebSocket connection to the Evonic connector relay.
 type Client struct {
-	cfg            *config.Config
-	exec           *executor.Executor
-	conn           *websocket.Conn
-	mu             sync.Mutex
-	running        atomic.Bool
-	stopCh         chan struct{}
-	stopOnce       sync.Once
-	inflight       atomic.Int64 // requests currently executing / awaiting reply
-	lastRecv       atomic.Int64 // unixnano of the last frame received
-	OnConnected    func()       // called after successful connect (from Run's goroutine)
-	OnDisconnected func()       // called when message loop ends while still running (retrying)
+	cfg               *config.Config
+	exec              *executor.Executor
+	conn              *websocket.Conn
+	mu                sync.Mutex
+	running           atomic.Bool
+	stopCh            chan struct{}
+	stopOnce          sync.Once
+	inflight          atomic.Int64 // requests currently executing / awaiting reply
+	lastRecv          atomic.Int64 // unixnano of the last frame received
+	heartbeatInterval time.Duration
+	heartbeatTimeout  time.Duration
+	OnConnected       func() // called after successful connect (from Run's goroutine)
+	OnDisconnected    func() // called when message loop ends while still running (retrying)
 }
 
 func New(cfg *config.Config, exec *executor.Executor) *Client {
 	return &Client{
-		cfg:    cfg,
-		exec:   exec,
-		stopCh: make(chan struct{}),
+		cfg:               cfg,
+		exec:              exec,
+		stopCh:            make(chan struct{}),
+		heartbeatInterval: heartbeatInterval,
+		heartbeatTimeout:  heartbeatTimeout,
 	}
 }
 
@@ -122,6 +131,18 @@ func (c *Client) wsURL() string {
 	return server + "/ws/connector"
 }
 
+func newDialer() *websocket.Dialer {
+	netDialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: tcpKeepAlive,
+	}
+	dialer := *websocket.DefaultDialer
+	dialer.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return netDialer.DialContext(ctx, network, address)
+	}
+	return &dialer
+}
+
 func (c *Client) connect() error {
 	url := c.wsURL()
 	header := http.Header{}
@@ -136,7 +157,7 @@ func (c *Client) connect() error {
 	// safely re-send an in-flight request after a reconnect (exactly-once).
 	header.Set("X-Evonet-Caps", "idempotent-replay")
 
-	conn, _, err := websocket.DefaultDialer.Dial(url, header)
+	conn, _, err := newDialer().Dial(url, header)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", url, err)
 	}
@@ -152,15 +173,17 @@ func (c *Client) messageLoop() error {
 	conn := c.conn
 	c.mu.Unlock()
 
-	// Ping/pong keepalive
+	// Reply to server pings and extend the liveness deadline for both WebSocket
+	// and application-level pong frames.
 	conn.SetPingHandler(func(data string) error {
 		return c.safeWrite(conn, websocket.PongMessage, []byte(data))
 	})
+	conn.SetPongHandler(func(string) error {
+		c.recordReceive(conn)
+		return nil
+	})
 
-	// Active heartbeat: while requests are in flight, proactively ping and force
-	// a reconnect if the link goes silent (detects half-open TCP fast so the
-	// server can replay the request well inside its disconnect grace window).
-	c.lastRecv.Store(time.Now().UnixNano())
+	c.recordReceive(conn)
 	stopHB := make(chan struct{})
 	defer close(stopHB)
 	go c.heartbeat(conn, stopHB)
@@ -170,7 +193,7 @@ func (c *Client) messageLoop() error {
 		if err != nil {
 			return err
 		}
-		c.lastRecv.Store(time.Now().UnixNano())
+		c.recordReceive(conn)
 
 		// Control frames ({"type":"ping"|"pong"}) are valid JSON that would also
 		// unmarshal into an empty executor.Request, so detect them explicitly
@@ -219,31 +242,34 @@ func (c *Client) messageLoop() error {
 	}
 }
 
-// heartbeat runs for the lifetime of one connection. It only does work while
-// requests are in flight: it pings the server and, if no frame has been received
-// within heartbeatTimeout, closes the connection to force a reconnect. When idle
-// it stays completely silent, so a large fleet of connectors generates no traffic.
+// recordReceive records liveness and moves the read deadline forward. The
+// connection-specific check prevents a late handler from an old connection from
+// changing the deadline state used by a replacement connection.
+func (c *Client) recordReceive(conn *websocket.Conn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn != conn {
+		return
+	}
+	c.lastRecv.Store(time.Now().UnixNano())
+	_ = conn.SetReadDeadline(time.Now().Add(c.heartbeatTimeout))
+}
+
+// heartbeat sends WebSocket control pings for the lifetime of one connection,
+// including while no requests are in flight. Missing pong traffic causes the read
+// deadline to expire, which returns messageLoop to Run's existing reconnect path.
 func (c *Client) heartbeat(conn *websocket.Conn, stop <-chan struct{}) {
-	ticker := time.NewTicker(heartbeatInterval)
+	ticker := time.NewTicker(c.heartbeatInterval)
 	defer ticker.Stop()
-	ping, _ := json.Marshal(map[string]string{"type": "ping"})
 	for {
 		select {
 		case <-stop:
 			return
 		case <-ticker.C:
-			if c.inflight.Load() == 0 {
-				continue // no in-flight work → no pinging
-			}
-			if since := time.Since(time.Unix(0, c.lastRecv.Load())); since > heartbeatTimeout {
-				log.Printf("[evonet] link silent for %.0fs with %d in-flight; forcing reconnect",
-					since.Seconds(), c.inflight.Load())
-				conn.Close() // unblocks ReadMessage → messageLoop returns → reconnect
-				return
-			}
-			if err := c.safeWrite(conn, websocket.TextMessage, ping); err != nil {
+			deadline := time.Now().Add(writeTimeout)
+			if err := c.safeWriteControl(conn, websocket.PingMessage, nil, deadline); err != nil {
 				conn.Close()
-				return // connection replaced or write failed; this heartbeat is done
+				return
 			}
 		}
 	}
@@ -258,5 +284,18 @@ func (c *Client) safeWrite(conn *websocket.Conn, messageType int, data []byte) e
 	if c.conn != conn {
 		return errors.New("connection superseded")
 	}
+	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return err
+	}
+	defer conn.SetWriteDeadline(time.Time{})
 	return conn.WriteMessage(messageType, data)
+}
+
+func (c *Client) safeWriteControl(conn *websocket.Conn, messageType int, data []byte, deadline time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn != conn {
+		return errors.New("connection superseded")
+	}
+	return conn.WriteControl(messageType, data, deadline)
 }

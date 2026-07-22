@@ -59,7 +59,9 @@ def _render_cards_for_llm(cmp: dict, ms=None, recent_tail: str = '') -> tuple:
         if pid == cmp['active_id']:
             marker = f" (ACTIVE{dep_note})"
         elif path_status(p) == 'archived':
-            lines.append(f"- {pid}: {p.get('title')} (archived{dep_note})")
+            tags = ', '.join((p.get('tags') or [])[:6])
+            tag_note = f" · tags: {tags}" if tags else ''
+            lines.append(f"- {pid}: {p.get('title')} (archived{dep_note}){tag_note}")
             continue
         else:
             marker = f" ({path_status(p)}{dep_note})"
@@ -96,6 +98,12 @@ def _render_cards_for_llm(cmp: dict, ms=None, recent_tail: str = '') -> tuple:
     return map_text, active, others or '(none)'
 
 
+# Typographic quotes some models (e.g. Gemma) emit instead of ASCII quotes,
+# which would otherwise make the JSON envelope unparseable.
+_SMART_QUOTES = str.maketrans({'“': '"', '”': '"', '„': '"',
+                               '‘': "'", '’': "'", '′': "'"})
+
+
 def _parse_envelope(content: str) -> dict | None:
     """Normalize the LLM's JSON op envelope. Returns None when no usable
     object is present (caller falls back to continue).
@@ -106,7 +114,11 @@ def _parse_envelope(content: str) -> dict | None:
     freshness, losing the route would mis-file the whole turn."""
     from backend.agent_runtime.llm_json import (complete_truncated_json,
                                                 extract_first_json)
-    env = extract_first_json(content)
+    content = content.translate(_SMART_QUOTES)
+    # Prefer the object that actually carries the route, so a distractor JSON
+    # in the model's prose (an example, or a nested new_path/card object the
+    # model emitted first) does not shadow the real envelope.
+    env = extract_first_json(content, require_key='route')
     # No dict, or a dict without a route (a truncated envelope's first
     # COMPLETE object is a nested one, e.g. new_path) → try tail repair.
     if not isinstance(env, dict) or 'route' not in env:
@@ -122,8 +134,10 @@ def _parse_envelope(content: str) -> dict | None:
         return None
     new_path = env.get('new_path') if isinstance(env.get('new_path'), dict) else None
     card = env.get('card') if isinstance(env.get('card'), dict) else None
+    pin_raw = env.get('pin') if isinstance(env.get('pin'), list) else []
+    pin = [str(x).strip().upper() for x in pin_raw if str(x or '').strip()][:5]
     return {'route': route, 'target': target, 'new_path': new_path,
-            'card_delta': card}
+            'card_delta': card, 'pin': pin}
 
 
 def _call_turn_llm(cmp: dict, ms, text: str, recent_tail: str,
@@ -139,16 +153,24 @@ def _call_turn_llm(cmp: dict, ms, text: str, recent_tail: str,
         dialogue_block=dialogue_block, user_text=text[:4000],
         init_note=prompts.TURN_INIT_NOTE if initializing else "")
     client = _get_classifier_client('cmp_model_id')
+    # Assistant prefill: force the reply to begin with the envelope. Some
+    # instruction-tuned models (e.g. Gemma) otherwise emit an unbounded
+    # step-by-step CoT into reasoning_content and exhaust the token budget
+    # before producing any JSON (finish_reason=length, empty content). The
+    # prefill skips the CoT and constrains output to the op envelope; OpenAI-
+    # compatible servers (llama.cpp) echo it back so parsing is unchanged.
+    _PREFILL = '{"route":'
     messages = [{"role": "system", "content": prompts.TURN_SYSTEM},
-                {"role": "user", "content": user_prompt}]
+                {"role": "user", "content": user_prompt},
+                {"role": "assistant", "content": _PREFILL}]
     import time as _time
     _t0 = _time.time()
     content = ''
-    # Two budgets: reasoning-heavy models sometimes burn the whole budget on
-    # implicit CoT and cut the envelope mid-object (finish_reason=length with
-    # partial content — passes through as success). Repair usually recovers
-    # the route; when even repair fails, one retry at a doubled budget.
-    for budget in (1024, 2048):
+    # Start at 2048 (the prefill keeps the envelope small, so this succeeds on
+    # the first try in the common case — 1024 was too tight and forced frequent
+    # length-truncation retries, spiking latency). One exponential retry at 2x
+    # (4096) covers the rare over-long envelope; max 2 tries.
+    for budget in (2048, 4096):
         response = classifier_chat(client, messages, max_tokens=budget,
                                    log_label="CMP turn",
                                    source="cmp", archive_category="turn")
@@ -162,6 +184,11 @@ def _call_turn_llm(cmp: dict, ms, text: str, recent_tail: str,
         choice = (response.get('response', {}).get('choices') or [{}])[0]
         msg = choice.get('message', {})
         content = (msg.get('content') or msg.get('reasoning_content') or '').strip()
+        # If the server returns only the continuation (does not echo the
+        # prefill), restore it so the envelope is complete for parsing.
+        if content and not content.lstrip().startswith(('{', '```')) \
+                and '"route"' not in content[:12]:
+            content = _PREFILL + content
         env = _parse_envelope(content)
         if env is not None:
             _logger.info("CMP turn verdict: %s%s (model=%s, %.1fs, delta=%s, named=%s)",
@@ -169,7 +196,7 @@ def _call_turn_llm(cmp: dict, ms, text: str, recent_tail: str,
                          getattr(client, 'model', None), _dur,
                          bool(env['card_delta']), bool(env['new_path']))
             return env
-        if choice.get('finish_reason') != 'length' or budget != 1024:
+        if choice.get('finish_reason') != 'length' or budget == 4096:
             break
         _logger.info("CMP turn envelope truncated beyond repair at "
                      "max_tokens=%d — retrying with a doubled budget", budget)
@@ -197,13 +224,13 @@ def detect(cmp: dict, ms, user_text: str, recent_tail: str = '',
     """
     text = (user_text or '').strip()
 
-    def _done(decision, target, layer, reason, new_path=None, card_delta=None):
+    def _done(decision, target, layer, reason, new_path=None, card_delta=None, pin=None):
         _logger.info("CMP detect [%s]: %s%s — %s | active=%s | msg: %.80s",
                      layer, decision, f" -> {target}" if target else '',
                      reason, cmp.get('active_id'), text)
         return {'decision': decision, 'target': target, 'layer': layer,
                 'reason': reason, 'new_path': new_path,
-                'card_delta': card_delta}
+                'card_delta': card_delta, 'pin': pin or []}
 
     if not text:
         return _done('continue', None, 'guard', 'empty message')
@@ -236,7 +263,7 @@ def detect(cmp: dict, ms, user_text: str, recent_tail: str = '',
         return _done('continue', None, 'LLM', 'LLM failure/unparseable — default')
 
     decision, target = env['route'], env['target']
-    new_path, card_delta = env['new_path'], env['card_delta']
+    new_path, card_delta, pin = env['new_path'], env['card_delta'], env.get('pin')
     if initializing:
         # Routing is moot on the first message; only the naming is used.
         return _done('continue', None, 'LLM', 'init naming pass',
@@ -254,4 +281,4 @@ def detect(cmp: dict, ms, user_text: str, recent_tail: str = '',
                      f'LLM said dep_branch:{target} but target unknown — downgraded',
                      new_path=new_path, card_delta=card_delta)
     return _done(decision, target, 'LLM', 'LLM verdict',
-                 new_path=new_path, card_delta=card_delta)
+                 new_path=new_path, card_delta=card_delta, pin=pin)

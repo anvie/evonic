@@ -13,13 +13,13 @@ import re
 import time
 
 CMP_VERSION = 1
-MAX_PATHS = 20
+MAX_PATHS = 100
 
 # Count-based preserved cap + wall-clock archived decay (evaluated at turn
 # boundaries): each state strictly reduces a path's context cost — active
 # (full card), preserved (snippet, max MAX_PRESERVED), archived (map-node
 # title only), pruned (record removed).
-MAX_PRESERVED = 3                          # per-cap, oldest preserved archived
+MAX_PRESERVED = 100                        # per-cap, oldest preserved archived
 ARCHIVED_TTL_MS = 3 * 24 * 3600 * 1000    # archived  > 3 days → pruned
 RESTORE_MAX_HOPS = 3                       # lineage auto-restore depth
 
@@ -90,6 +90,144 @@ def apply_card_delta(path: dict, delta: dict) -> None:
             if text and text not in items:
                 items.append(text)
         path[field] = items[-cap:]
+    # refresh searchable tags so `recall` can find this path by keyword
+    path["tags"] = compute_tags(path)
+
+
+# ── keyword tags + in-session search (recall over the path graph) ───────────
+_STOPWORDS = frozenset((
+    "the a an and or but for to of in on at by with from into as is are was were "
+    "be been being this that these those it its they them their we you your i me my "
+    "do does did done make made create created add added want wants need needs "
+    "please help user agent task new back again then now here there what which who "
+    "how when where why can could would should will just also only about only".split()
+))
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]{1,}")
+
+
+def _tokenize(text: str) -> set:
+    """Lowercased content tokens ≥3 chars, stopwords dropped; identifier-like
+    tokens (filenames, snake_case, CamelCase) are preserved as-is too so
+    'tasks.json' / 'convert_heading' / 'llm_usage' remain matchable."""
+    out = set()
+    for tok in _TOKEN_RE.findall(text or ""):
+        low = tok.lower()
+        if len(low) >= 3 and low not in _STOPWORDS:
+            out.add(low)
+    return out
+
+
+def compute_tags(path: dict, cap: int = 12) -> list:
+    """Salient keyword tags for a path, derived from its title/goal/facts/
+    artifacts. Deterministic — no LLM. Title/fact/artifact tokens rank first."""
+    strong = _tokenize(path.get("title") or "")
+    for f in path.get("key_facts") or []:
+        strong |= _tokenize(str(f))
+    for a in path.get("artifacts") or []:
+        strong |= _tokenize(str(a))
+    weak = _tokenize(path.get("goal") or "") | _tokenize(path.get("outcome") or "")
+    ordered = sorted(strong) + sorted(weak - strong)
+    return ordered[:cap]
+
+
+def _path_search_tokens(path: dict) -> tuple:
+    """(strong_tokens, all_tokens) for scoring a query against a path."""
+    strong = set(path.get("tags") or []) or set(compute_tags(path))
+    strong |= _tokenize(path.get("title") or "")
+    allt = set(strong)
+    for f in path.get("key_facts") or []:
+        allt |= _tokenize(str(f))
+    allt |= _tokenize(path.get("goal") or "") | _tokenize(path.get("outcome") or "")
+    for a in path.get("artifacts") or []:
+        allt |= _tokenize(str(a))
+    return strong, allt
+
+
+def _stem(tok: str) -> str:
+    """Suffix-strip stemmer for recall matching ('graduated'~'graduate',
+    'degrees'~'degree'). Deterministic, English-lite; only used for transcript
+    search where exact-token overlap is too brittle."""
+    for suf in ('ing', 'ed', 'es', 's'):
+        if len(tok) > 4 and tok.endswith(suf):
+            tok = tok[:-len(suf)]
+            break
+    return tok[:-1] if len(tok) > 4 and tok.endswith('e') else tok
+
+
+def search_cmp_transcripts(cmp: dict, chatlog, query: str, limit: int = 3,
+                           exclude_active: bool = True) -> list:
+    """Lexical recall over each path's RAW transcript segments — the fallback
+    layer beneath card search, for facts the compactor never lifted into
+    key_facts (cards are lossy by design). Stemmed token overlap, no LLM.
+    Returns [{id, score, excerpts}] where excerpts are the best-matching
+    transcript lines (the actual text holding the fact)."""
+    q = {_stem(t) for t in _tokenize(query)}
+    if not q or not cmp or not cmp.get('paths'):
+        return []
+    from backend.agent_runtime.cmp.compactor import collect_path_entries
+    scored = []
+    for pid, path in cmp['paths'].items():
+        if exclude_active and pid == cmp.get('active_id'):
+            continue
+        lines, user_lines = [], []
+        for e in collect_path_entries(chatlog, path):
+            if e.get('type') not in ('user', 'final', 'intermediate'):
+                continue
+            content = e.get('content') or ''
+            s = len(q & {_stem(t) for t in _tokenize(content)})
+            if s > 0:
+                item = (s, content.strip()[:300])
+                lines.append(item)
+                if e.get('type') == 'user':
+                    user_lines.append(item)
+        if lines:
+            # User-authored matches are the strongest evidence for personal
+            # memory queries. Assistant boilerplate often repeats query words
+            # ("store", "returns") across unrelated sessions and otherwise
+            # crowds the actual user facts out of a small recall limit.
+            evidence = user_lines or lines
+            evidence.sort(key=lambda t: -t[0])
+            score = max(s for s, _ in evidence)
+            total = sum(s for s, _ in evidence)
+            scored.append((bool(user_lines), score, total, pid,
+                           [ln for _, ln in evidence[:3]]))
+    scored.sort(key=lambda t: (-t[0], -t[1], -t[2], t[3]))
+    return [{'id': pid, 'score': score, 'excerpts': ex}
+            for _, score, _, pid, ex in scored[:limit]]
+
+
+def search_cmp_paths(cmp: dict, query: str, limit: int = 5,
+                     exclude_active: bool = True) -> list:
+    """Rank the session's paths by keyword overlap with the query. Lets the
+    agent's `recall` tool retrieve facts from offloaded/archived paths that the
+    per-turn detector did not pin. Returns [{id,title,status,key_facts,score}]."""
+    q = _tokenize(query)
+    if not q or not cmp or not cmp.get("paths"):
+        return []
+    scored = []
+    for pid, path in cmp["paths"].items():
+        if exclude_active and pid == cmp.get("active_id"):
+            continue
+        strong, allt = _path_search_tokens(path)
+        score = 2 * len(q & strong) + len(q & (allt - strong))
+        if score > 0:
+            scored.append((score, pid, path))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+
+    def _snippet(path):
+        # what the match is grounded in — key_facts first, then goal/outcome,
+        # since some facts (a lunch venue, a time) live only in the raw goal.
+        parts = list(path.get("key_facts") or [])
+        if path.get("outcome"):
+            parts.append(f"outcome: {path['outcome']}")
+        if path.get("goal"):
+            parts.append(f"goal: {path['goal']}")
+        return " | ".join(parts)[:600]
+
+    return [{"id": pid, "title": path.get("title"),
+             "status": path_status(path), "snippet": _snippet(path),
+             "key_facts": path.get("key_facts") or [], "score": score}
+            for score, pid, path in scored[:limit]]
 
 
 def path_status(path: dict) -> str:
@@ -218,11 +356,12 @@ def valid_targets(cmp: dict) -> list:
 
 
 def create_path(cmp: dict, ms, title: str, goal: str = "",
-                depends_on: list = None, now_ts: int = None) -> dict:
-    """Create a new path, switch to it (branch semantics: the new path
-    starts a fresh plan cycle — mode plan, no plan_file, no atg).
+                depends_on: list = None, now_ts: int = None,
+                trivial: bool = False) -> dict:
+    """Create and switch to a new path with task-appropriate mode.
 
-    Returns the new path record. Raises ValueError on invalid depends_on.
+    Trivial paths start executable immediately; complex paths start a fresh
+    plan cycle. Returns the record and raises ValueError on invalid depends_on.
     """
     depends_on = list(depends_on or [])
     unknown = [d for d in depends_on if d not in cmp["paths"]]
@@ -238,10 +377,10 @@ def create_path(cmp: dict, ms, title: str, goal: str = "",
     cmp["paths"][pid] = record
     cmp["active_id"] = pid
 
-    # Fresh plan cycle on ms (the maybe_rearm_atg mutations)
-    ms.mode = "plan"
+    # Start trivial tasks executable; complex tasks enter a fresh plan cycle.
+    ms.mode = "execute" if trivial else "plan"
     ms.plan_file = None
-    ms.auto_trivial = False
+    ms.auto_trivial = trivial
     ms.atg = None
 
     cmp["stats"]["branches"] = cmp["stats"].get("branches", 0) + 1
@@ -329,6 +468,30 @@ def restore_lineage(cmp: dict, active_id: str, now_ts: int) -> list:
     return promoted
 
 
+def promote_pinned(cmp: dict, pinned_ids: list, now_ts: int) -> list:
+    """Persistent, cap-respecting promotion for detector-referenced paths.
+
+    When the boundary detector flags that the current turn needs information
+    from a NON-active path (a recap / cross-path summary), that path is
+    promoted archived -> preserved so its card stays in context across the
+    follow-up turns, not only the turn it was named. Already-preserved pins are
+    just touched as recently-active so the count-cap keeps them while pinned.
+    tick_lifecycle then enforces MAX_PRESERVED, archiving the OLDEST preserved
+    instead — so the 10-cap holds and the least-recently-referenced card decays
+    out. Returns the ids that were promoted from archived."""
+    promoted = []
+    for pid in pinned_ids:
+        path = cmp["paths"].get(pid)
+        if not path or pid == cmp.get("active_id"):
+            continue
+        if path_status(path) == "archived":
+            _set_status(path, "preserved", now_ts)
+            promoted.append(pid)
+        elif path_status(path) == "preserved":
+            path["state_since"] = now_ts  # keep fresh so the cap won't archive it while pinned
+    return promoted
+
+
 def tick_lifecycle(cmp: dict, now_ts: int = None) -> dict:
     """Lifecycle decay evaluated at turn boundaries.
 
@@ -356,7 +519,12 @@ def tick_lifecycle(cmp: dict, now_ts: int = None) -> dict:
     preserved_unprotected.sort(key=lambda t: _state_since(t[1]))
 
     overflow = len(preserved_unprotected) - MAX_PRESERVED
-    for pid, path in preserved_unprotected[:overflow]:
+    # Guard: a negative overflow must archive NOTHING. A bare slice
+    # preserved_unprotected[:overflow] with overflow < 0 means "all but the
+    # last |overflow|" (Python negative indexing), which wrongly archives a
+    # path whenever the preserved count sits just under the cap (e.g. 2 < 3
+    # archives 1, collapsing the map to a single preserved node).
+    for pid, path in preserved_unprotected[:max(0, overflow)]:
         _set_status(path, "archived", now_ts)
         path["atg"] = None  # heavy snapshot never survives archiving
         archived.append(pid)

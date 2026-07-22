@@ -20,12 +20,16 @@ def routing_env(monkeypatch):
     registry_stub = types.ModuleType("backend.channels.registry")
     registry_stub.channel_manager = channel_manager
 
+    send_guard_stub = types.ModuleType("backend.tools.channel_send_guard")
+    send_guard_stub.wait_for_send_slot = mock.MagicMock()
+
     event_stream = mock.MagicMock()
     event_stream_stub = types.ModuleType("backend.event_stream")
     event_stream_stub.event_stream = event_stream
 
     monkeypatch.setattr(notifier, "db", fake_db)
     monkeypatch.setitem(__import__("sys").modules, "backend.channels.registry", registry_stub)
+    monkeypatch.setitem(__import__("sys").modules, "backend.tools.channel_send_guard", send_guard_stub)
     monkeypatch.setitem(__import__("sys").modules, "backend.event_stream", event_stream_stub)
 
     return fake_db, channel_manager, event_stream
@@ -100,6 +104,7 @@ def test_inactive_external_session_falls_back_to_owned_web_session(
         "reason": None,
         "route": "web_fallback",
         "fallback_reason": "inactive_channel",
+        "delivery": "web",
     }
     fake_db.add_chat_message.assert_called_once()
     assert fake_db.add_chat_message.call_args.args[0] == "web-session"
@@ -176,6 +181,53 @@ def test_channel_owned_by_another_agent_is_not_available(routing_env):
     assert result["reason"] == "inactive_channel_no_fallback"
     channel_manager.is_running.assert_not_called()
     event_stream.emit.assert_not_called()
+
+
+def test_external_delivery_sends_through_active_channel(routing_env):
+    fake_db, channel_manager, event_stream = routing_env
+    fake_db.get_session_with_details.return_value = {
+        "id": "external-session", "agent_id": "target_agent",
+        "external_user_id": "external-user", "channel_id": "channel-1",
+    }
+    fake_db.get_channel.return_value = {
+        "id": "channel-1", "agent_id": "target_agent",
+        "type": "telegram", "enabled": True,
+    }
+    channel_manager.is_running.return_value = True
+    instance = mock.MagicMock(is_running=True)
+    instance.has_send_error.return_value = False
+    channel_manager.get_channel_instance.return_value = instance
+
+    result = _notify(session_id="external-session", deliver_external=True)
+
+    assert result["success"] is True
+    assert result["delivery"] == "external_channel"
+    instance.send_message.assert_called_once_with(
+        "external-user", "[AGENT/Sender] Finished",
+    )
+    assert event_stream.emit.call_args.args[1]["session_id"] == "external-session"
+
+
+def test_external_send_failure_is_reported(routing_env):
+    fake_db, channel_manager, _ = routing_env
+    fake_db.get_session_with_details.return_value = {
+        "id": "external-session", "agent_id": "target_agent",
+        "external_user_id": "external-user", "channel_id": "channel-1",
+    }
+    fake_db.get_channel.return_value = {
+        "id": "channel-1", "agent_id": "target_agent",
+        "type": "telegram", "enabled": True,
+    }
+    channel_manager.is_running.return_value = True
+    instance = mock.MagicMock(is_running=True)
+    instance.has_send_error.return_value = True
+    channel_manager.get_channel_instance.return_value = instance
+
+    result = _notify(session_id="external-session", deliver_external=True)
+
+    assert result["success"] is False
+    assert result["reason"] == "channel_send_failed"
+    assert result["delivery"] == "database_only"
 
 
 def test_active_external_session_remains_direct(routing_env):

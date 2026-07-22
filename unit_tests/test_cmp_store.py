@@ -60,6 +60,20 @@ def test_create_path_branches_and_resets_task_state():
     assert ms.auto_trivial is False
 
 
+def test_create_trivial_path_starts_execute_and_round_trips_state():
+    ms = _init(_ms(mode='plan', plan_file='plan/old.md'), ts=1000)
+    record = store.create_path(ms.cmp, ms, 'push dev', now_ts=2000,
+                               trivial=True)
+    assert ms.mode == 'execute' and ms.auto_trivial is True
+    assert ms.plan_file is None and ms.atg is None
+
+    store.switch_to(ms.cmp, ms, 'A1', now_ts=3000)
+    assert ms.mode == 'plan' and ms.auto_trivial is False
+    assert ms.plan_file == 'plan/old.md'
+    store.switch_to(ms.cmp, ms, record['id'], now_ts=4000)
+    assert ms.mode == 'execute' and ms.auto_trivial is True
+
+
 def test_create_path_unknown_dependency_raises():
     ms = _init()
     with pytest.raises(ValueError):
@@ -117,18 +131,17 @@ def test_preserved_archives_when_over_max_cap():
     """When more than MAX_PRESERVED paths are preserved, the oldest ones
     (by state_since) get archived — the cap is strictly enforced."""
     ms = _init(ts=1000)
-    store.create_path(ms.cmp, ms, 'second', now_ts=2000)    # suspends A1 @2000
-    store.create_path(ms.cmp, ms, 'third', now_ts=3000)     # suspends A2 @3000
-    store.create_path(ms.cmp, ms, 'fourth', now_ts=4000)    # suspends A3 @4000
-    store.create_path(ms.cmp, ms, 'fifth', now_ts=5000)     # suspends A4 @5000
-    # 4 preserved: A1(2000), A2(3000), A3(4000), A4(5000) → oldest A1 must archive
-    result = store.tick_lifecycle(ms.cmp, now_ts=6000)
+    # Create MAX_PRESERVED more independent paths → MAX_PRESERVED preserved + 1 active
+    for i in range(2, store.MAX_PRESERVED + 3):
+        store.create_path(ms.cmp, ms, f'path{i}', now_ts=i * 1000)
+    # MAX_PRESERVED+1 preserved > cap → oldest A1 must archive
+    last_id = f'A{store.MAX_PRESERVED + 2}'
+    result = store.tick_lifecycle(ms.cmp, now_ts=(store.MAX_PRESERVED + 3) * 1000)
     assert result == {'archived': ['A1'], 'pruned': []}
     assert ms.cmp['paths']['A1']['status'] == 'archived'
-    assert ms.cmp['paths']['A2']['status'] == 'preserved'
-    assert ms.cmp['paths']['A3']['status'] == 'preserved'
-    assert ms.cmp['paths']['A4']['status'] == 'preserved'
-    assert ms.cmp['paths']['A5']['status'] == 'active'
+    for i in range(2, store.MAX_PRESERVED + 2):
+        assert ms.cmp['paths'][f'A{i}']['status'] == 'preserved'
+    assert ms.cmp['paths'][last_id]['status'] == 'active'
     # atg snapshot cleared on archive
     assert ms.cmp['paths']['A1']['atg'] is None
 
@@ -163,21 +176,21 @@ def test_prune_blocked_while_a_living_path_depends_on_it():
 
 def test_reactivation_resets_the_lifecycle_clock():
     ms = _init(ts=1000)
-    store.create_path(ms.cmp, ms, 'second', now_ts=2000)     # A1 preserved @2000
-    store.create_path(ms.cmp, ms, 'third', now_ts=3000)      # A2 preserved @3000
-    store.create_path(ms.cmp, ms, 'fourth', now_ts=4000)     # A3 preserved @4000
-    store.create_path(ms.cmp, ms, 'fifth', now_ts=5000)      # A4 preserved @5000
-    # 4 preserved: A1(2000), A2(3000), A3(4000), A4(5000) → A1 archived
-    store.tick_lifecycle(ms.cmp, now_ts=5100)
+    N = store.MAX_PRESERVED
+    # Create N more paths → N preserved exactly at cap (none archived)
+    for i in range(2, N + 2):
+        store.create_path(ms.cmp, ms, f'path{i}', now_ts=i * 1000)
+    # Manually archive A1 to simulate lifecycle action
+    store._set_status(ms.cmp['paths']['A1'], 'archived', (N + 1) * 1000)
     assert ms.cmp['paths']['A1']['status'] == 'archived'
 
     store.switch_to(ms.cmp, ms, 'A1', now_ts=5200)           # reactivate
     p1 = ms.cmp['paths']['A1']
     assert p1['status'] == 'active' and p1['state_since'] == 5200
 
-    store.switch_to(ms.cmp, ms, 'A5', now_ts=5300)           # suspend again
+    store.create_path(ms.cmp, ms, 'extra', now_ts=5300)      # suspend A1 again
     assert p1['status'] == 'preserved'                       # NOT archived (fresh clock)
-    # A1 state_since=5300, A2=3000, A3=4000, A4=5000 → A2 is now oldest → archived
+    # A1(5300) freshest, A2(2000) oldest → A2 archived
     result = store.tick_lifecycle(ms.cmp, now_ts=5400)
     assert result == {'archived': ['A2'], 'pruned': []}
     assert p1['status'] == 'preserved'  # A1 still preserved (fresh clock)
@@ -204,16 +217,14 @@ def test_active_lineage_is_exempt_from_archiving():
     ms = _init(ts=1000)
     store.create_path(ms.cmp, ms, 'child', depends_on=['A1'], now_ts=2000)
     # B1 active @2000, A1 preserved @2000 (B1's parent → protected)
-    store.create_path(ms.cmp, ms, 'z1', now_ts=3000)    # B1→preserved, A2 active
-    store.create_path(ms.cmp, ms, 'z2', now_ts=4000)    # A2→preserved, A3 active
-    store.create_path(ms.cmp, ms, 'z3', now_ts=5000)    # A3→preserved, A4 active
-    store.create_path(ms.cmp, ms, 'z4', now_ts=6000)    # A4→preserved, A5 active
+    N = store.MAX_PRESERVED
+    for i in range(1, N + 2):
+        store.create_path(ms.cmp, ms, f'z{i}', now_ts=3000 + i * 1000)
 
     # Switch back to B1 (which depends on A1) → A1 is a protected ancestor
-    store.switch_to(ms.cmp, ms, 'B1', now_ts=6100)
-    # B1 active, protected={A1}. Preserved: A2(4000), A3(5000), A4(6000), A5(6100)
-    # Unprotected = 4 > 3 → A2 (oldest) archived; A1 exempt
-    result = store.tick_lifecycle(ms.cmp, now_ts=6200)
+    store.switch_to(ms.cmp, ms, 'B1', now_ts=(N + 3) * 1000 + 100)
+    # B1 active, protected={A1}. Unprotected preserved = A2..A{N+2} = N+1 > cap → oldest A2 archived
+    result = store.tick_lifecycle(ms.cmp, now_ts=(N + 3) * 1000 + 200)
     assert 'A1' not in result['archived']
     assert result['archived'] == ['A2']
     assert ms.cmp['paths']['A1']['status'] == 'preserved'
@@ -221,21 +232,21 @@ def test_active_lineage_is_exempt_from_archiving():
 
 def test_legacy_dormant_status_normalizes():
     ms = _init(ts=1000)
-    store.create_path(ms.cmp, ms, 'second', now_ts=2000)
-    store.create_path(ms.cmp, ms, 'third', now_ts=3000)
-    store.create_path(ms.cmp, ms, 'fourth', now_ts=4000)
-    # 3 preserved: A1(2000), A2(3000), A3(4000) — exactly at cap, no archiving
+    N = store.MAX_PRESERVED
+    for i in range(2, N + 2):
+        store.create_path(ms.cmp, ms, f'path{i}', now_ts=i * 1000)
+    # N preserved, exactly at cap — no archiving
     p1 = ms.cmp['paths']['A1']
     p1['status'] = 'dormant'                                   # pre-lifecycle data
     del p1['state_since']
     assert store.path_status(p1) == 'preserved'
     # ticks treat it as preserved, with last_active as the clock fallback
-    result = store.tick_lifecycle(ms.cmp, now_ts=4100)
+    result = store.tick_lifecycle(ms.cmp, now_ts=(N + 1) * 1000 + 100)
     assert result['archived'] == []
 
     # Create one more to push over cap → A1 (oldest, with last_active fallback) archived
-    store.create_path(ms.cmp, ms, 'fifth', now_ts=5000)
-    result = store.tick_lifecycle(ms.cmp, now_ts=5100)
+    store.create_path(ms.cmp, ms, 'extra', now_ts=(N + 2) * 1000)
+    result = store.tick_lifecycle(ms.cmp, now_ts=(N + 2) * 1000 + 100)
     assert result['archived'] == ['A1']
     assert p1['status'] == 'archived'
 
@@ -336,3 +347,27 @@ def test_apply_card_delta_clamps_and_survives_garbage():
     assert p1['artifacts'] == []
     store.apply_card_delta(p1, None)          # non-dict deltas are no-ops
     store.apply_card_delta(p1, 'garbage')
+
+
+def test_transcript_search_prioritizes_user_evidence_and_cumulative_overlap(monkeypatch):
+    cmp = {'active_id': 'A4', 'paths': {
+        'A1': {'id': 'A1'}, 'A2': {'id': 'A2'},
+        'A3': {'id': 'A3'}, 'A4': {'id': 'A4'},
+    }}
+    entries = {
+        'A1': [{'type': 'final', 'content': 'store clothing return pickup items'}],
+        'A2': [{'type': 'user', 'content': 'pick up dry cleaning from the store'}],
+        'A3': [
+            {'type': 'user', 'content': 'return boots to the store'},
+            {'type': 'user', 'content': 'pick up replacement clothing'},
+        ],
+    }
+    monkeypatch.setattr('backend.agent_runtime.cmp.compactor.collect_path_entries',
+                        lambda _, path: entries.get(path['id'], []))
+
+    hits = store.search_cmp_transcripts(
+        cmp, object(), 'How many clothing items do I pick up or return from a store?')
+
+    assert [h['id'] for h in hits] == ['A3', 'A2', 'A1']
+    assert hits[0]['excerpts'] == ['return boots to the store',
+                                    'pick up replacement clothing']

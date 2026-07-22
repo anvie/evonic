@@ -36,6 +36,8 @@ or `kernel.apparmor_restrict_unprivileged_userns` (Ubuntu 24.04+).
 """
 
 import atexit
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -46,6 +48,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -69,8 +72,12 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Directory containing the evonic helper package (bound into the sandbox).
+# Directory containing the evonic helper package. Bubblewrap cannot bind this
+# path when an ancestor (commonly the service user's home) is mode 0700, so a
+# content-addressed copy is staged under a traversable runtime directory first.
 _HELPERS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'runpy_helpers'))
+_HELPERS_RUNTIME_ROOT = os.path.join(tempfile.gettempdir(), f'evonic-bwrap-{os.getuid()}', 'helpers')
+_helpers_stage_lock = threading.Lock()
 # Helpers are bound at a top-level path: mount points inside read-only binds
 # (/usr, /opt, …) cannot be created by bwrap, but the sandbox root is a tmpfs
 # where top-level directories can.
@@ -97,11 +104,139 @@ _USERNS_HINT = (
 )
 
 
+_NSENTER_READY_TIMEOUT = 1.0
+_NSENTER_READY_INTERVAL = 0.01
+_NSENTER_EXEC_NOT_READY = 'failed to execute /usr/bin/bash: No such file or directory'
+
+
+def _helpers_digest(source: str) -> str:
+    digest = hashlib.sha256()
+    for root, dirs, files in os.walk(source):
+        dirs[:] = sorted(d for d in dirs if d != '__pycache__')
+        for name in sorted(files):
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, source).encode()
+            digest.update(rel + b'\0')
+            with open(path, 'rb') as handle:
+                for chunk in iter(lambda: handle.read(65536), b''):
+                    digest.update(chunk)
+    return digest.hexdigest()[:16]
+
+
+def _stage_helpers(source: str = _HELPERS_DIR, runtime_root: str = _HELPERS_RUNTIME_ROOT) -> str:
+    """Copy helpers to a traversable, immutable-by-convention bind source."""
+    digest = _helpers_digest(source)
+    destination = os.path.join(runtime_root, digest)
+    with _helpers_stage_lock:
+        os.makedirs(runtime_root, mode=0o755, exist_ok=True)
+        os.chmod(os.path.dirname(runtime_root), 0o755)
+        os.chmod(runtime_root, 0o755)
+        if not os.path.isdir(destination):
+            staging = tempfile.mkdtemp(prefix=f'.{digest}-', dir=runtime_root)
+            try:
+                shutil.copytree(source, staging, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+                for root, dirs, files in os.walk(staging):
+                    os.chmod(root, 0o755)
+                    for name in files:
+                        path = os.path.join(root, name)
+                        os.chmod(path, 0o755 if os.access(path, os.X_OK) else 0o644)
+                try:
+                    os.rename(staging, destination)
+                except FileExistsError:
+                    shutil.rmtree(staging)
+            except Exception:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+    return destination
+
+
 def _nsenter_probe_argv(inner_pid: int) -> list:
     """Build a minimal nsenter probe command — same namespace flags as _nsenter_argv."""
     return ['nsenter', '--preserve-credentials', '-U', '-m', '-u', '-i', '-p',
             '-t', str(inner_pid), '--',
             '/usr/bin/bash', '-c', 'exit 0']
+
+
+def _wait_for_nsenter_ready(inner_pid: int, timeout: float = _NSENTER_READY_TIMEOUT,
+                            interval: float = _NSENTER_READY_INTERVAL):
+    """Return ``(probe, failure)`` once a new bwrap child is nsenter-ready.
+
+    Bubblewrap can report its child PID just before its mount setup is visible.
+    Retry only that narrow startup signature; all other failures are final.
+    """
+    deadline = time.monotonic() + timeout
+    probe = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return probe, 'readiness'
+        try:
+            probe = subprocess.run(
+                _nsenter_probe_argv(inner_pid), capture_output=True, text=True,
+                timeout=max(0.001, remaining),
+            )
+        except subprocess.TimeoutExpired:
+            return None, 'timeout'
+        if probe.returncode == 0:
+            return probe, None
+        stderr = (probe.stderr or '').strip()
+        if _NSENTER_EXEC_NOT_READY.lower() not in stderr.lower():
+            return probe, None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return probe, 'readiness'
+        time.sleep(min(interval, remaining))
+
+
+def _nsenter_failure_message(probe, failure: str | None) -> str | None:
+    if failure == 'timeout':
+        return 'nsenter probe timed out — the bwrap sandbox may not be responding.'
+    if probe is None or probe.returncode == 0:
+        return None
+    stderr = (probe.stderr or '').strip()
+    if failure == 'readiness':
+        return (f'The bwrap sandbox did not finish initializing before the nsenter readiness deadline. '
+                f'Details: {stderr or "sandbox executable not ready"}.')
+    lowered = stderr.lower()
+    if any(phrase in lowered for phrase in ('operation not permitted', 'permission denied',
+                                              'reassociate to namespace')):
+        return (f'nsenter cannot join the bwrap sandbox namespaces on this host. '
+                f'Details: {stderr or "permission denied"}. '
+                f'The bwrap backend is incompatible with this environment '
+                f'(e.g. WSL2 has known namespace limitations).')
+    return (f'nsenter failed while checking bwrap sandbox readiness. '
+            f'Details: {stderr or "unknown nsenter failure"}.')
+
+
+def _exited_process_stderr(proc, wait_timeout: float = 0.1) -> str:
+    """Return stderr only when a process has exited (or exits promptly)."""
+    try:
+        if proc.poll() is None:
+            proc.wait(timeout=wait_timeout)
+        if proc.poll() is None:
+            return ''
+        return (proc.stderr.read() or '').strip()
+    except (AttributeError, OSError, ValueError, subprocess.TimeoutExpired):
+        return ''
+
+
+def _bwrap_startup_failure_message(stderr: str) -> str:
+    """Explain a primary bwrap startup failure without blaming nsenter."""
+    stderr = (stderr or '').strip()
+    match = re.search(r"Can't find source path (.+?): Permission denied(?:\n|$)", stderr,
+                      flags=re.IGNORECASE)
+    if match:
+        source = match.group(1).strip()
+        return (f'Bubblewrap could not access bind source {source}: permission denied. '
+                f'Check that the Evonic service user has execute/traverse permission on every '
+                f'parent directory leading to this source. A private parent directory (for '
+                f'example, a home directory with mode 0700) can make the source inaccessible '
+                f'after Bubblewrap enters its user namespace. Do not weaken filesystem '
+                f'permissions automatically; move or stage the bind source under a suitably '
+                f'traversable directory, or adjust permissions according to your security policy. '
+                f'Bubblewrap details: {stderr}')
+    return f'Bubblewrap keeper exited during startup. Details: {stderr or "no error output"}.'
 
 
 def _check_nsenter_capability() -> str | None:
@@ -136,35 +271,9 @@ def _check_nsenter_capability() -> str | None:
         _destroy_probe(proc, r_fd)
         return None       # bwrap failed — not a nsenter-compatibility issue
 
-    # Probe: can nsenter join all namespaces?
-    # Retry with exponential backoff — the bwrap mount namespace may not
-    # be fully settled immediately (race condition, ~50ms typical).
-    delay_ms = 0
-    probe = None
-    for _ in range(3):
-        if delay_ms > 0:
-            time.sleep(delay_ms / 1000.0)
-        try:
-            probe = subprocess.run(
-                _nsenter_probe_argv(inner_pid),
-                capture_output=True, text=True, timeout=5,
-            )
-        except subprocess.TimeoutExpired:
-            _destroy_probe(proc, r_fd)
-            return 'nsenter probe timed out — the bwrap sandbox may not be responding.'
-        if probe.returncode == 0:
-            break
-        delay_ms = 50 if delay_ms == 0 else delay_ms * 2
-
+    probe, failure = _wait_for_nsenter_ready(inner_pid)
     _destroy_probe(proc, r_fd)
-
-    if probe is not None and probe.returncode != 0:
-        stderr = (probe.stderr or '').strip()
-        return (f'nsenter cannot join the bwrap sandbox namespaces on this host. '
-                f'Details: {stderr or "permission denied"}. '
-                f'The bwrap backend is incompatible with this environment '
-                f'(e.g. WSL2 has known namespace limitations).')
-    return None
+    return _nsenter_failure_message(probe, failure)
 
 
 def _destroy_probe(proc, r_fd):
@@ -419,6 +528,7 @@ class BwrapBackend(LocalBackend):
 
     def _bwrap_argv(self) -> list:
         ws = self._cwd()
+        helpers_dir = _stage_helpers()
         argv = [
             'bwrap',
             '--ro-bind', '/usr', '/usr',
@@ -444,7 +554,7 @@ class BwrapBackend(LocalBackend):
             '--tmpfs', '/tmp',
             '--bind', ws, '/workspace',
             '--bind', os.path.join(ws, _HOME_SUBDIR), _HOME_MOUNT,
-            '--ro-bind', _HELPERS_DIR, _HELPERS_MOUNT,
+            '--ro-bind', helpers_dir, _HELPERS_MOUNT,
             '--unshare-pid', '--unshare-uts', '--unshare-ipc', '--unshare-user',
             '--hostname', self._hostname,
             '--die-with-parent',
@@ -511,85 +621,21 @@ class BwrapBackend(LocalBackend):
         os.close(w_fd)  # our copy; bwrap holds its own
         inner_pid = _read_child_pid(r_fd, proc)
         if inner_pid is None:
-            stderr = ''
-            if proc.poll() is not None:
-                try:
-                    stderr = (proc.stderr.read() or '').strip()
-                except Exception:
-                    pass
-            try:
-                os.close(r_fd)
-            except OSError:
-                pass
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
-            msg = f'bwrap keeper failed to start: {stderr or "no child-pid reported"}'
-            if 'bwrap:' in stderr:
-                msg += _USERNS_HINT
-            return None, msg
-
-        # The bwrap mount/PID namespaces may not be fully settled yet
-        # (race condition, ~50ms typical).  Worse, bwrap itself may crash
-        # shortly after reporting the child PID — since it is PID 1 in the
-        # PID namespace, the kernel kills all children when it exits.
-        # Retry with exponential backoff: wait, verify both are alive,
-        # and confirm nsenter can actually join.
-        delay_ms = 0
-        keeper_ready = False
-        for _ in range(3):
-            if delay_ms > 0:
-                time.sleep(delay_ms / 1000.0)
-            # Check that the inner child is still running.
-            bwrap_alive = proc is not None and proc.poll() is None
-            child_alive = _pid_alive(inner_pid)
-            if bwrap_alive and child_alive:
-                # Quick probe: can nsenter join the namespace right now?
-                try:
-                    probe = subprocess.run(
-                        _nsenter_probe_argv(inner_pid),
-                        capture_output=True, text=True, timeout=5,
-                    )
-                except subprocess.TimeoutExpired:
-                    continue
-                if probe.returncode == 0:
-                    keeper_ready = True
-                    break
-            elif not bwrap_alive:
-                # bwrap crashed — read its stderr for diagnostics.
-                stderr = ''
-                try:
-                    stderr = (proc.stderr.read() or '').strip()
-                except Exception:
-                    pass
-                try:
-                    os.close(r_fd)
-                except OSError:
-                    pass
-                msg = f'bwrap keeper crashed after reporting child PID {inner_pid}: {stderr or "unknown reason"}'
-                if 'bwrap:' in stderr:
-                    msg += _USERNS_HINT
-                return None, msg
-            delay_ms = 50 if delay_ms == 0 else delay_ms * 2
-
-        if not keeper_ready:
-            # All retries exhausted — clean up and report.
-            try:
-                os.close(r_fd)
-            except OSError:
-                pass
-            if proc is not None and proc.poll() is None:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait(timeout=2)
-                except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
-                    pass
-            return None, (
-                f'bwrap keeper child (PID {inner_pid}) vanished or is not reachable '
-                f'via nsenter after 150ms — the sandbox may be unstable on this host.'
-            )
-
+            stderr = _exited_process_stderr(proc)
+            _destroy_probe(proc, r_fd)
+            if stderr:
+                return None, f'bwrap keeper failed to start: {_bwrap_startup_failure_message(stderr)}'
+            return None, 'bwrap keeper failed to start: no child-pid reported'
+        probe, failure = _wait_for_nsenter_ready(inner_pid)
+        readiness_error = _nsenter_failure_message(probe, failure)
+        if readiness_error:
+            # bwrap may report its child PID and then fail while mounting sources.
+            # Its stderr is the primary cause; nsenter only sees the vanished child.
+            stderr = _exited_process_stderr(proc)
+            _destroy_probe(proc, r_fd)
+            if stderr:
+                return None, f'bwrap keeper failed to start: {_bwrap_startup_failure_message(stderr)}'
+            return None, f'bwrap keeper failed readiness check: {readiness_error}'
         now = time.time()
         # Keep r_fd open in the pool entry (closed in _destroy_keeper) so
         # bwrap never hits a broken pipe when writing its exit-status line.
@@ -745,29 +791,90 @@ class BwrapBackend(LocalBackend):
             return os.path.join(ws, _HOME_SUBDIR) + path[len(_HOME_MOUNT):]
         return path
 
+    def _is_scratch_path(self, path: str) -> bool:
+        root = scratch_dir(self._agent_id)
+        return path == root or path.startswith(root + '/')
+
+    def _scratch_python(self, code: str) -> dict:
+        result = self.run_python(code, 30, {})
+        if result.get('error') or result.get('exit_code', 0) != 0:
+            return {'error': result.get('error') or result.get('stderr', 'sandbox file operation failed')}
+        try:
+            return json.loads(result.get('stdout', '{}'))
+        except (TypeError, ValueError):
+            return {'error': 'Invalid response from sandbox file operation'}
+
+    @staticmethod
+    def _scratch_operation(path: str, operation: str, **values) -> str:
+        return (
+            'import base64, json, os\n'
+            f'p = {path!r}\n'
+            f'op = {operation!r}\n'
+            f'values = {values!r}\n'
+            'try:\n'
+            "    if op == 'exists': result = os.path.exists(p)\n"
+            "    elif op == 'stat':\n"
+            "        exists = os.path.isfile(p)\n"
+            "        chunk = open(p, 'rb').read(8192) if exists else b''\n"
+            "        result = {'exists': exists, 'size': os.path.getsize(p) if exists else 0, 'is_binary': b'\\x00' in chunk}\n"
+            "    elif op == 'read':\n"
+            "        with open(p, encoding='utf-8') as f: result = {'content': f.read()}\n"
+            "    elif op == 'mkdir': os.makedirs(p, exist_ok=True); result = {'ok': True}\n"
+            "    elif op == 'delete': os.remove(p); result = {'ok': True}\n"
+            "    elif op == 'read_bytes':\n"
+            "        with open(p, 'rb') as f: result = {'data': base64.b64encode(f.read()).decode('ascii')}\n"
+            "    elif op == 'write_bytes':\n"
+            "        if values['create_dirs']: os.makedirs(os.path.dirname(p), exist_ok=True)\n"
+            "        with open(p, 'wb') as f: f.write(base64.b64decode(values['data']))\n"
+            "        result = {'ok': True}\n"
+            "    print(json.dumps(result))\n"
+            'except Exception as e: print(json.dumps({\'error\': str(e)}))\n'
+        )
+
     def file_exists(self, path: str) -> bool:
-        return super().file_exists(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().file_exists(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'exists')) is True
 
     def file_stat(self, path: str) -> dict:
-        return super().file_stat(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().file_stat(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'stat'))
 
     def read_file(self, path: str) -> dict:
-        return super().read_file(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().read_file(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'read'))
 
     def write_file(self, path: str, content: str, create_dirs: bool = True) -> dict:
-        return super().write_file(self._to_host(path), content, create_dirs)
+        if not self._is_scratch_path(path):
+            return super().write_file(self._to_host(path), content, create_dirs)
+        return self.write_file_bytes(path, content.encode('utf-8'), create_dirs)
 
     def make_dirs(self, path: str) -> dict:
-        return super().make_dirs(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().make_dirs(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'mkdir'))
 
     def cat_file_bytes(self, path: str) -> dict:
-        return super().cat_file_bytes(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().cat_file_bytes(self._to_host(path))
+        result = self._scratch_python(self._scratch_operation(path, 'read_bytes'))
+        if 'data' in result:
+            return {'bytes': base64.b64decode(result['data'])}
+        return result
 
     def delete_file(self, path: str) -> dict:
-        return super().delete_file(self._to_host(path))
+        if not self._is_scratch_path(path):
+            return super().delete_file(self._to_host(path))
+        return self._scratch_python(self._scratch_operation(path, 'delete'))
 
     def write_file_bytes(self, path: str, data: bytes, create_dirs: bool = True) -> dict:
-        return super().write_file_bytes(self._to_host(path), data, create_dirs)
+        if not self._is_scratch_path(path):
+            return super().write_file_bytes(self._to_host(path), data, create_dirs)
+        return self._scratch_python(self._scratch_operation(
+            path, 'write_bytes', data=base64.b64encode(data).decode('ascii'), create_dirs=create_dirs,
+        ))
 
     # ------------------------------------------------------------------
     # Lifecycle

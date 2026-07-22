@@ -74,6 +74,21 @@ class TestChatBufferReplay(unittest.TestCase):
         items = _run_producer('replaytest-empty')
         self.assertEqual(items, [])
 
+    def test_message_received_forwarded_with_seq(self):
+        sid = 'replaytest-message-received'
+        event_stream.emit('message_received', {
+            'session_id': sid,
+            'message': '[ESCALATION/Agent B] Please choose.',
+            'metadata': {'escalated_from_agent_session': True},
+        })
+
+        items = _run_producer(sid)
+        received = [p for (name, p) in items if name == 'message_received']
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]['message'], '[ESCALATION/Agent B] Please choose.')
+        self.assertTrue(received[0]['metadata']['escalated_from_agent_session'])
+        self.assertIsNotNone(received[0]['seq'])
+
     def test_state_changed_forwarded_with_seq(self):
         """'evonic:agent-state-changed' is a chat-forwarded event: it gets a
         contiguous chat seq (so the client's gap detector can recover one

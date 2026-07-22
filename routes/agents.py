@@ -1879,7 +1879,7 @@ def api_chat_agent_state(agent_id):
                     card = {k: p.get(k) for k in
                             ('id', 'title', 'status', 'action', 'goal', 'outcome',
                              'key_facts', 'artifacts', 'depends_on', 'last_active',
-                             'state_since')}
+                             'state_since', 'tags')}
                     card['tokens'] = path_token_estimate(_cmp_chatlog, p)
                     card['llm_tokens'] = path_llm_token_estimate(_cmp_chatlog, p)
                     card['card_tokens'] = card_token_estimate(p)
@@ -2298,6 +2298,10 @@ def api_chat_stream(agent_id):
             'content': d.get('content', ''),
             'count': d.get('count', 1),
         }),
+        'message_received': ('message_received', lambda d: {
+            'message': d.get('message', ''),
+            'metadata': d.get('metadata', {}),
+        }),
         'session_clear': ('session_clear', lambda d: {
             'session_id': d.get('session_id', ''),
             'agent_id': d.get('agent_id', ''),
@@ -2546,6 +2550,7 @@ def api_chat_events(agent_id):
         'llm_retry':         ('retry',             lambda d: {'retry_count': d.get('retry_count', 0), 'max_retries': d.get('max_retries', 0), 'error_type': d.get('error_type', ''), 'message': d.get('user_message', '')}),
         'message_injected':  ('message_injected',  lambda d: {'message': d.get('message', '')}),
         'message_injection_applied': ('message_injection_applied', lambda d: {'content': d.get('content', ''), 'count': d.get('count', 1)}),
+        'message_received':  ('message_received', lambda d: {'message': d.get('message', ''), 'metadata': d.get('metadata', {})}),
         'session_clear':     ('session_clear',     lambda d: {'session_id': d.get('session_id', ''), 'agent_id': d.get('agent_id', '')}),
         'turn_split':        ('turn_split',        lambda d: {}),
         'evonic:agent-state-changed': ('state_changed', lambda d: {'agent_id': d.get('agent_id', ''), 'session_id': d.get('session_id', '')}),

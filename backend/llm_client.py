@@ -416,6 +416,20 @@ class LLMClient:
         usage = result["response"].get("usage") or {}
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
+        total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
+
+        # Codex bypasses the standard completion path below, so emit the same
+        # generic usage event here for consumers such as the Token Monitor.
+        from backend.llm_usage_events import record_llm_usage
+        record_llm_usage(
+            model=result["response"].get("model") or self.model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            duration_ms=duration_ms,
+            messages=messages,
+            response_text=response_text,
+        )
 
         return {
             "response": result["response"],
@@ -424,8 +438,7 @@ class LLMClient:
             "duration_ms": duration_ms,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "total_tokens": usage.get("total_tokens",
-                                      prompt_tokens + completion_tokens),
+            "total_tokens": total_tokens,
             "success": True,
         }
 
