@@ -342,8 +342,8 @@ html.dark .agent-tab.active {
         <button class="agent-tab tab-btn" onclick="showTab('general')" data-tab="general"><i data-lucide="sliders-horizontal"></i><span>Settings</span></button>
         <button class="agent-tab tab-btn" onclick="showTab('knowledge')" data-tab="knowledge"><i data-lucide="book-open"></i><span>Knowledge</span></button>
         <button class="agent-tab tab-btn" onclick="showTab('tools')" data-tab="tools"><i data-lucide="wrench"></i><span>Tools</span></button>
-        {# Always rendered (hidden for super) so softSwitchAgent can toggle without a full reload #}
-        <button class="agent-tab tab-btn{{ ' hidden' if agent.is_super else '' }}" onclick="showTab('skills')" data-tab="skills"><i data-lucide="sparkles"></i><span>Skills</span></button>
+        {# Always rendered so softSwitchAgent can toggle without a full reload #}
+        <button class="agent-tab tab-btn" onclick="showTab('skills')" data-tab="skills"><i data-lucide="sparkles"></i><span>Skills</span></button>
         <button class="agent-tab tab-btn" onclick="showTab('channels')" data-tab="channels"><i data-lucide="radio"></i><span>Channels</span></button>
         <button class="agent-tab tab-btn" onclick="showTab('portals')" data-tab="portals"><i data-lucide="folder-symlink"></i><span>Portals</span></button>
         {% if agent.artifacts_enabled %}
@@ -7431,7 +7431,7 @@ window.softSwitchAgent = async function (newId, opts = {}) {
     if (nameEl) nameEl.textContent = data.name || newId;
     // Toggle super-only structural elements (always present in the DOM now)
     const isSuper = !!data.is_super;
-    ['#agent-header-id-badge', '#gear-dropdown-wrap', '[data-tab="skills"]'].forEach(function (sel) {
+    ['#agent-header-id-badge', '#gear-dropdown-wrap'].forEach(function (sel) {
         const el = document.querySelector(sel);
         if (el) el.classList.toggle('hidden', isSuper); // shown for regular, hidden for super
     });
