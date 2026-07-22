@@ -46,51 +46,46 @@
             <h3 id="sc-routes-heading">User &rarr; Agent Routes</h3>
             <span id="sc-routes-count" class="text-[11px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-2 py-0.5 rounded-full empty:hidden"></span>
         </div>
-        <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <p class="text-xs text-gray-400 dark:text-gray-500">Each sender is directed to the assigned agent. Contact names remain visible on every screen size.</p>
-            <div class="w-full sm:w-64">
+        <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-xs text-gray-400 dark:text-gray-500">Each sender is directed to the assigned agent.</p>
+            <div class="w-full sm:w-56">
                 <label for="sc-routes-filter" class="sr-only">Filter routes</label>
                 <div class="relative">
-                    <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                    <input type="search" id="sc-routes-filter" autocomplete="off" placeholder="Filter routes"
+                    <svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="search" id="sc-routes-filter" autocomplete="off" placeholder="Search routes"
                         oninput="sharedChannel.filterRoutes(this.value)"
-                        class="w-full rounded-md border border-gray-300 py-1.5 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
+                        class="w-full rounded-md border border-gray-300 py-1.5 pl-8 pr-3 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
                 </div>
             </div>
         </div>
         <div class="setting-group-body overflow-hidden">
-            <!-- Mobile route cards -->
-            <div id="sc-routes-mobile" class="divide-y divide-gray-100 dark:divide-gray-700/60 sm:hidden">
-                <p class="px-4 py-8 text-center text-xs text-gray-400 dark:text-gray-500">No routes configured.</p>
-            </div>
-
-            <!-- Desktop route table -->
-            <div class="hidden overflow-x-auto sm:block">
-                <table class="w-full text-left text-sm">
+            <!-- One compact table at every viewport; narrow screens can scroll horizontally. -->
+            <div id="sc-routes-table-wrap" class="overflow-x-auto">
+                <table class="w-full min-w-[640px] table-fixed text-left text-xs">
                     <caption class="sr-only">Configured sender-to-agent routes</caption>
                     <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50/80 text-[11px] uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-400">
-                            <th scope="col" class="px-4 py-3 font-semibold">Contact</th>
-                            <th scope="col" class="px-4 py-3 font-semibold">Identifier</th>
-                            <th scope="col" class="px-4 py-3 font-semibold">Assigned Agent</th>
-                            <th scope="col" class="px-4 py-3 text-right font-semibold">Action</th>
+                        <tr class="border-b border-gray-200 bg-gray-50/80 text-[10px] uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-400">
+                            <th scope="col" class="w-[28%] px-3 py-2 font-semibold">Contact</th>
+                            <th scope="col" class="w-[27%] px-3 py-2 font-semibold">Identifier</th>
+                            <th scope="col" class="w-[31%] px-3 py-2 font-semibold">Assigned Agent</th>
+                            <th scope="col" class="w-[14%] px-3 py-2 text-right font-semibold">Action</th>
                         </tr>
                     </thead>
                     <tbody id="sc-routes-list" class="divide-y divide-gray-100 dark:divide-gray-700/60">
-                        <tr><td colspan="4" class="px-4 py-10 text-center text-xs text-gray-400 dark:text-gray-500">No routes configured.</td></tr>
+                        <tr><td colspan="4" class="px-3 py-8 text-center text-xs text-gray-400 dark:text-gray-500">No routes configured.</td></tr>
                     </tbody>
                 </table>
             </div>
 
-            <nav id="sc-routes-pagination" class="hidden flex-col gap-3 border-t border-gray-200 px-4 py-3 dark:border-gray-700 sm:flex-row sm:items-center sm:justify-between" aria-label="Routes pagination">
-                <p id="sc-routes-page-summary" class="text-center text-xs text-gray-500 dark:text-gray-400 sm:text-left" aria-live="polite"></p>
-                <div class="grid grid-cols-2 gap-2 sm:flex">
+            <nav id="sc-routes-pagination" class="hidden flex-col gap-2 border-t border-gray-200 px-3 py-2.5 dark:border-gray-700 sm:flex-row sm:items-center sm:justify-between" aria-label="Routes pagination">
+                <p id="sc-routes-page-summary" class="text-center text-[11px] text-gray-500 dark:text-gray-400 sm:text-left" aria-live="polite"></p>
+                <div class="grid grid-cols-2 gap-1.5 sm:flex">
                     <button type="button" id="sc-routes-prev" onclick="sharedChannel.goRoutesPage(sharedChannel.routesPage - 1)"
-                        class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                        class="rounded-md border border-gray-300 px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
                         Previous
                     </button>
                     <button type="button" id="sc-routes-next" onclick="sharedChannel.goRoutesPage(sharedChannel.routesPage + 1)"
-                        class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                        class="rounded-md border border-gray-300 px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
                         Next
                     </button>
                 </div>
@@ -594,7 +589,6 @@
             var routes = config.routes || {};
             var names = config.user_names || {};
             var list = document.getElementById('sc-routes-list');
-            var mobileList = document.getElementById('sc-routes-mobile');
             var count = document.getElementById('sc-routes-count');
             var pagination = document.getElementById('sc-routes-pagination');
             var summary = document.getElementById('sc-routes-page-summary');
@@ -637,53 +631,27 @@
 
             if (allRows.length === 0 || filteredRows.length === 0) {
                 var emptyMessage = allRows.length === 0 ? 'No routes configured.' : 'No routes match your filter.';
-                list.innerHTML = '<tr><td colspan="4" class="px-4 py-10 text-center text-xs text-gray-400 dark:text-gray-500">' + emptyMessage + '</td></tr>';
-                mobileList.innerHTML = '<p class="px-4 py-8 text-center text-xs text-gray-400 dark:text-gray-500">' + emptyMessage + '</p>';
+                list.innerHTML = '<tr><td colspan="4" class="px-3 py-8 text-center text-xs text-gray-400 dark:text-gray-500">' + emptyMessage + '</td></tr>';
                 return;
             }
 
             list.innerHTML = rows.map(function(route, index) {
                 var name = route.name
-                    ? '<span class="font-medium text-gray-900 dark:text-gray-100">' + sharedChannel.esc(route.name) + '</span>'
-                    : '<span class="text-xs italic text-gray-400 dark:text-gray-500">Name not provided</span>';
+                    ? '<span class="block truncate font-medium text-gray-900 dark:text-gray-100" title="' + sharedChannel.escAttr(route.name) + '">' + sharedChannel.esc(route.name) + '</span>'
+                    : '<span class="text-[11px] italic text-gray-400 dark:text-gray-500">Name not provided</span>';
                 var removeLabel = 'Remove route for ' + (route.name || route.userId);
                 return '<tr class="transition-colors hover:bg-indigo-50/40 dark:hover:bg-indigo-900/10 ' + (index % 2 ? 'bg-gray-50/40 dark:bg-gray-900/20' : '') + '">' +
-                    '<td class="px-4 py-3.5">' + name + '</td>' +
-                    '<td class="px-4 py-3.5">' +
-                        '<span class="whitespace-nowrap font-mono text-xs text-gray-600 dark:text-gray-300" title="' + sharedChannel.escAttr(route.userId) + '">' + sharedChannel.esc(route.formattedId) + '</span>' +
+                    '<td class="px-3 py-2">' + name + '</td>' +
+                    '<td class="px-3 py-2">' +
+                        '<span class="block truncate whitespace-nowrap font-mono text-[11px] text-gray-600 dark:text-gray-300" title="' + sharedChannel.escAttr(route.userId) + '">' + sharedChannel.esc(route.formattedId) + '</span>' +
                     '</td>' +
-                    '<td class="px-4 py-3.5">' +
-                        '<span class="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">' +
-                            '<svg class="h-3 w-3" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>' +
-                            sharedChannel.esc(route.agentName) +
-                        '</span>' +
+                    '<td class="px-3 py-2">' +
+                        '<span class="block truncate font-medium text-gray-700 dark:text-gray-200" title="' + sharedChannel.escAttr(route.agentName) + '">' + sharedChannel.esc(route.agentName) + '</span>' +
                     '</td>' +
-                    '<td class="px-4 py-3.5 text-right">' +
-                        '<button type="button" onclick="sharedChannel.removeRoute(\'' + sharedChannel.escAttr(route.userId) + '\')" aria-label="' + sharedChannel.escAttr(removeLabel) + '" class="rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:text-gray-400 dark:hover:bg-red-900/20 dark:hover:text-red-400">Remove</button>' +
+                    '<td class="px-3 py-2 text-right">' +
+                        '<button type="button" onclick="sharedChannel.removeRoute(\'' + sharedChannel.escAttr(route.userId) + '\')" aria-label="' + sharedChannel.escAttr(removeLabel) + '" class="rounded px-2 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:text-gray-400 dark:hover:bg-red-900/20 dark:hover:text-red-400">Remove</button>' +
                     '</td>' +
                 '</tr>';
-            }).join('');
-
-            mobileList.innerHTML = rows.map(function(route) {
-                var name = route.name
-                    ? '<h4 class="truncate font-semibold text-gray-900 dark:text-gray-100">' + sharedChannel.esc(route.name) + '</h4>'
-                    : '<h4 class="text-sm italic text-gray-400 dark:text-gray-500">Name not provided</h4>';
-                var removeLabel = 'Remove route for ' + (route.name || route.userId);
-                return '<article class="px-4 py-4">' +
-                    '<div class="flex items-start justify-between gap-3">' +
-                        '<div class="min-w-0">' + name +
-                            '<p class="mt-1 whitespace-nowrap font-mono text-xs text-gray-500 dark:text-gray-400" title="' + sharedChannel.escAttr(route.userId) + '">' + sharedChannel.esc(route.formattedId) + '</p>' +
-                        '</div>' +
-                        '<button type="button" onclick="sharedChannel.removeRoute(\'' + sharedChannel.escAttr(route.userId) + '\')" aria-label="' + sharedChannel.escAttr(removeLabel) + '" class="flex-shrink-0 rounded-md px-2 py-1 text-xs font-medium text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:hover:bg-red-900/20 dark:hover:text-red-400">Remove</button>' +
-                    '</div>' +
-                    '<div class="mt-3 flex items-center justify-between gap-2">' +
-                        '<span class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Assigned agent</span>' +
-                        '<span class="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300">' +
-                            '<svg class="h-3 w-3" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>' +
-                            sharedChannel.esc(route.agentName) +
-                        '</span>' +
-                    '</div>' +
-                '</article>';
             }).join('');
         },
 

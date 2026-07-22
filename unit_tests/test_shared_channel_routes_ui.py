@@ -9,12 +9,18 @@ TEMPLATE = (
 )
 
 
-def test_routes_use_responsive_cards_and_desktop_table():
+def test_routes_use_one_compact_table_at_every_viewport():
     markup = TEMPLATE.read_text(encoding="utf-8")
 
-    assert 'id="sc-routes-mobile"' in markup
-    assert 'class="hidden overflow-x-auto sm:block"' in markup
+    assert 'id="sc-routes-table-wrap" class="overflow-x-auto"' in markup
+    assert 'class="w-full min-w-[640px] table-fixed text-left text-xs"' in markup
     assert '<caption class="sr-only">Configured sender-to-agent routes</caption>' in markup
+    assert '<th scope="col" class="w-[28%] px-3 py-2 font-semibold">Contact</th>' in markup
+    assert '<th scope="col" class="w-[27%] px-3 py-2 font-semibold">Identifier</th>' in markup
+    assert '<th scope="col" class="w-[31%] px-3 py-2 font-semibold">Assigned Agent</th>' in markup
+    assert '<th scope="col" class="w-[14%] px-3 py-2 text-right font-semibold">Action</th>' in markup
+    assert 'id="sc-routes-mobile"' not in markup
+    assert "mobileList" not in markup
     assert 'id="sc-routes-count"' in markup
 
 
@@ -46,7 +52,9 @@ def test_routes_have_accessible_responsive_pagination_controls():
     assert 'id="sc-routes-next"' in markup
     assert "previous.disabled = sharedChannel.routesPage === 1;" in markup
     assert "next.disabled = sharedChannel.routesPage === totalPages;" in markup
-    assert "grid grid-cols-2 gap-2 sm:flex" in markup
+    assert "pagination.classList.toggle('hidden', totalPages <= 1);" in markup
+    assert "pagination.classList.toggle('flex', totalPages > 1);" in markup
+    assert "grid grid-cols-2 gap-1.5 sm:flex" in markup
 
 
 def test_route_pagination_filters_resets_and_clamps_data_changes():
