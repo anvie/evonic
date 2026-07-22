@@ -210,6 +210,9 @@ Every agent is configured through a set of properties stored in the `agents` dat
 | `send_intermediate_responses`   | Stream partial updates during tool execution                            |
 | `inject_agent_id` / `inject_datetime` | Add agent ID / current time to context                              |
 | `enable_agent_state`            | Activate plugin state handlers (kanban, etc.)                           |
+| `enable_cmp`                    | Enable Context Memory Path — session-path tracking for multi-task sessions |
+| `enable_atg`                    | Enable Atomic Task Graph — compile complex tasks into dependency graphs |
+| `always_execute`                | Force agent to stay in execute mode — disables plan mode while keeping CMP/ATG |
 | `primary_channel_id`            | Primary communication channel for this agent                            |
 | `avatar_path`                   | Path to the agent's avatar image                                        |
 

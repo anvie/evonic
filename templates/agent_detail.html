@@ -576,6 +576,24 @@ html.dark .agent-tab.active {
                     </div>
                     <div>
                         <label class="flex items-center gap-3 cursor-pointer select-none">
+                            {{ toggle_widget(id='agent-always-execute', checked=agent.always_execute) }}
+                            <div>
+                                <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Always Execute</span>
+                                <p class="text-xs text-gray-400 mt-0.5">Force agent to stay in execute mode — bypasses plan/execute blocking. Write tools are always available while CMP and ATG remain active. Requires Agent State.</p>
+                            </div>
+                        </label>
+                    </div>
+                    <div>
+                        <label class="flex items-center gap-3 cursor-pointer select-none">
+                            {{ toggle_widget(id='agent-always-execute', checked=agent.always_execute) }}
+                            <div>
+                                <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Always Execute</span>
+                                <p class="text-xs text-gray-400 mt-0.5">Force agent to always stay in execute mode (no plan/approval cycle). Use for public-facing agents that need CMP but not plan mode.</p>
+                            </div>
+                        </label>
+                    </div>
+                    <div>
+                        <label class="flex items-center gap-3 cursor-pointer select-none">
                             {{ toggle_widget(id='agent-parallel-exec', checked=(agent.disable_parallel_tool_execution if agent.disable_parallel_tool_execution is not none else False)) }}
                             <div>
                                 <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Disable Parallel Tool Execution</span>
@@ -2262,6 +2280,7 @@ const AgentAutoSave = {
         { id: 'agent-state-enabled', key: 'enable_agent_state', type: 'bool' },
         { id: 'agent-atg-enabled', key: 'enable_atg', type: 'bool' },
         { id: 'agent-cmp-enabled', key: 'enable_cmp', type: 'bool' },
+        { id: 'agent-always-execute', key: 'always_execute', type: 'bool' },
         { id: 'agent-parallel-exec', key: 'disable_parallel_tool_execution', type: 'bool' },
         { id: 'agent-prefetch', key: 'disable_turn_prefetch', type: 'bool' },
         { id: 'agent-messaging-enabled', key: 'agent_messaging_enabled', type: 'bool' },

@@ -2072,9 +2072,9 @@ class AgentRuntime:
                             _user_text = _c
                         break
                 if classify_task(_user_text) == "trivial":
-                    ms = AgentState(mode="execute", auto_trivial=True)
+                    ms = AgentState(mode="execute", auto_trivial=True, always_execute=bool(agent.get('always_execute')))
                 else:
-                    ms = AgentState()
+                    ms = AgentState(always_execute=bool(agent.get('always_execute')))
             # Hybrid approval: only check if state was restored (agent already presented a plan).
             # Skip for new sessions so the first user message never auto-approves a non-existent plan.
             if not is_new_session and ms.mode == 'plan':
@@ -2094,7 +2094,7 @@ class AgentRuntime:
                         # System-triggered task (e.g. from a plugin): reset to fresh plan mode
                         # so the agent can start a new plan cycle for this task
                         # instead of being stuck in a stale plan from a previous task.
-                        ms = AgentState()
+                        ms = AgentState(always_execute=bool(agent.get('always_execute')))
             # Cross-task boundary handling. CMP (when enabled) owns it: the
             # detector routes the turn (continue/return/branch) and a branch
             # IS the ATG re-arm — a fresh plan cycle on its own path. Agents

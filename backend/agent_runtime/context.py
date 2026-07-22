@@ -823,6 +823,7 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         'workplace_id': agent.get('workplace_id'),
         'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
         'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
+        'always_execute': bool(agent.get('always_execute')),
     }
     if agent.get('builtin_tools_enabled', True):
         tools.extend(tool_registry.get_builtin_tools(agent_context))
