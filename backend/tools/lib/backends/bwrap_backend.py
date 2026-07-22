@@ -529,6 +529,67 @@ class BwrapBackend(LocalBackend):
             if 'bwrap:' in stderr:
                 msg += _USERNS_HINT
             return None, msg
+
+        # The bwrap mount/PID namespaces may not be fully settled yet
+        # (race condition, ~50ms typical).  Worse, bwrap itself may crash
+        # shortly after reporting the child PID — since it is PID 1 in the
+        # PID namespace, the kernel kills all children when it exits.
+        # Retry with exponential backoff: wait, verify both are alive,
+        # and confirm nsenter can actually join.
+        delay_ms = 0
+        keeper_ready = False
+        for _ in range(3):
+            if delay_ms > 0:
+                time.sleep(delay_ms / 1000.0)
+            # Check that the inner child is still running.
+            bwrap_alive = proc is not None and proc.poll() is None
+            child_alive = _pid_alive(inner_pid)
+            if bwrap_alive and child_alive:
+                # Quick probe: can nsenter join the namespace right now?
+                try:
+                    probe = subprocess.run(
+                        _nsenter_probe_argv(inner_pid),
+                        capture_output=True, text=True, timeout=5,
+                    )
+                except subprocess.TimeoutExpired:
+                    continue
+                if probe.returncode == 0:
+                    keeper_ready = True
+                    break
+            elif not bwrap_alive:
+                # bwrap crashed — read its stderr for diagnostics.
+                stderr = ''
+                try:
+                    stderr = (proc.stderr.read() or '').strip()
+                except Exception:
+                    pass
+                try:
+                    os.close(r_fd)
+                except OSError:
+                    pass
+                msg = f'bwrap keeper crashed after reporting child PID {inner_pid}: {stderr or "unknown reason"}'
+                if 'bwrap:' in stderr:
+                    msg += _USERNS_HINT
+                return None, msg
+            delay_ms = 50 if delay_ms == 0 else delay_ms * 2
+
+        if not keeper_ready:
+            # All retries exhausted — clean up and report.
+            try:
+                os.close(r_fd)
+            except OSError:
+                pass
+            if proc is not None and proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait(timeout=2)
+                except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
+                    pass
+            return None, (
+                f'bwrap keeper child (PID {inner_pid}) vanished or is not reachable '
+                f'via nsenter after 150ms — the sandbox may be unstable on this host.'
+            )
+
         now = time.time()
         # Keep r_fd open in the pool entry (closed in _destroy_keeper) so
         # bwrap never hits a broken pipe when writing its exit-status line.
