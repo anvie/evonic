@@ -3373,6 +3373,61 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False):
     except Exception as e:
         results.append(_fail(f"Orphaned tool check failed: {e}"))
 
+    # ── 10b. Super Agent Core Skills Migration ──
+    _section("10b. Super Agent Core Skills Migration")
+
+    try:
+        from models.db import db
+
+        agents = db.get_agents()
+        super_agents = [a for a in agents if a.get("is_super")]
+        core_skills = ["direxplorer", "explorer"]
+
+        if not super_agents:
+            results.append(_ok("No super agents found — nothing to migrate"))
+        else:
+            migrated = 0
+            needs_fix = 0
+
+            for a in super_agents:
+                aid = a.get("id", "?")
+                aname = a.get("name", aid)
+                current_skills = db.get_agent_skills(aid)
+                missing = [s for s in core_skills if s not in current_skills]
+
+                if not missing:
+                    continue
+
+                needs_fix += 1
+                if fix:
+                    merged = current_skills + missing
+                    db.set_agent_skills(aid, merged)
+                    results.append(_ok(
+                        f"Super agent '{aname}' ({aid}): added missing "
+                        f"core skills: {', '.join(missing)}"
+                    ))
+                    fixes_applied.append(
+                        f"Added core skills {', '.join(missing)} to "
+                        f"super agent '{aname}' ({aid})"
+                    )
+                    migrated += 1
+                else:
+                    results.append(_warn(
+                        f"Super agent '{aname}' ({aid}) is missing core "
+                        f"skills: {', '.join(missing)}. Run "
+                        f"`evonic doctor --fix` to auto-add them."
+                    ))
+
+            if migrated > 0:
+                results.append(_ok(
+                    f"Migrated {migrated} super agent(s) with missing core skills"
+                ))
+            elif needs_fix == 0:
+                results.append(_ok("All super agents have required core skills"))
+
+    except Exception as e:
+        results.append(_fail(f"Super agent core skills migration check failed: {e}"))
+
     # ── 11. Evomem Memory Engine Check ──────────────────────────────────────
     _section("11. Evomem Memory Engine Check")
 
