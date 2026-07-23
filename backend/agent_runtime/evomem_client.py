@@ -200,17 +200,19 @@ def capture(agent_id: str, text: str, category: str = "general") -> dict:
 
 
 def search(agent_id: str, query: str, limit: int = 8,
-           mode: str = "balanced", timeout: int = None) -> dict:
+           mode: str = "balanced", min_score: float = 0.03,
+           timeout: int = None) -> dict:
     """Search the agent's evomem with hybrid retrieval.
 
-    mode is one of 'conservative' | 'balanced' | 'tokenmax'.
+    mode is one of 'conservative' | 'balanced' | 'tokenmax'. Results below
+    min_score are excluded by evomem before token-budget processing.
     Returns the full JSON response (with 'hits' array) or None on failure.
     """
     brain_dir = _get_evomem_dir(agent_id)
     if not os.path.isdir(brain_dir) or not os.path.exists(os.path.join(brain_dir, ".evomem.db")):
         return None
-    return _run(brain_dir, ["search", "--mode", mode, "--limit", str(limit), query],
-                timeout=timeout)
+    return _run(brain_dir, ["search", "--mode", mode, "--limit", str(limit),
+                            "--min-score", str(min_score), query], timeout=timeout)
 
 
 def think(agent_id: str, query: str, mode: str = "balanced",

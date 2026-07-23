@@ -1,0 +1,139 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "list_mailboxes",
+      "description": "List all configured mailboxes. Returns their addresses plus read/write capability flags.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_emails",
+      "description": "List emails with optional filters. Use mailbox to scope to a specific address, unread_only to only return unread messages, search for content-based filtering, and limit to control result count.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mailbox": {
+            "type": "string",
+            "description": "Filter by mailbox address (e.g. 'robin@evonic.dev'). Leave empty to list across all mailboxes."
+          },
+          "unread_only": {
+            "type": "boolean",
+            "description": "When true, only return unread emails."
+          },
+          "search": {
+            "type": "string",
+            "description": "Search term to filter emails by subject or body content."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results to return. Default 20, max 100."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_email",
+      "description": "Fetch a single email by its ID. Returns full content including headers, body, and attachments metadata.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email_id": {
+            "type": "string",
+            "description": "The unique ID of the email to retrieve."
+          }
+        },
+        "required": ["email_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_email",
+      "description": "Send a new email from one of your configured mailboxes. Supports plain text or HTML body, plus CC and BCC recipients.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "from_mailbox": {
+            "type": "string",
+            "description": "The mailbox address to send from (e.g. 'robin@evonic.dev'). Must be a configured mailbox with write capability."
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient email address (single address)."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject line."
+          },
+          "body": {
+            "type": "string",
+            "description": "Email body content. Can be plain text or HTML."
+          },
+          "cc": {
+            "type": "string",
+            "description": "CC recipient email address (optional, single address)."
+          },
+          "bcc": {
+            "type": "string",
+            "description": "BCC recipient email address (optional, single address)."
+          }
+        },
+        "required": ["from_mailbox", "to", "subject", "body"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "reply_email",
+      "description": "Reply to an existing email. The reply will be threaded to the original message using the in-reply-to header.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email_id": {
+            "type": "string",
+            "description": "The ID of the email to reply to."
+          },
+          "body": {
+            "type": "string",
+            "description": "Reply body content. Can be plain text or HTML."
+          },
+          "reply_all": {
+            "type": "boolean",
+            "description": "When true, reply to all recipients (Reply-All). When false or omitted, reply only to the sender."
+          }
+        },
+        "required": ["email_id", "body"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_email",
+      "description": "Move an email to the trash. This is a soft delete — the email is not permanently removed immediately.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email_id": {
+            "type": "string",
+            "description": "The ID of the email to delete."
+          }
+        },
+        "required": ["email_id"]
+      }
+    }
+  }
+]

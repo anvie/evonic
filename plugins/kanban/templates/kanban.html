@@ -418,18 +418,24 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
 </div>
 
 <!-- Trigger Agent Selection Modal (Task #36) -->
-<div class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center" id="kb-trigger-modal">
+<div class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center" id="kb-trigger-modal" role="dialog" aria-modal="true" aria-labelledby="trigger-modal-title">
     <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 p-6">
         <div class="flex items-center justify-between mb-4">
-             <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Select Agent</h2>
-            <button onclick="closeTriggerModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xl leading-none">&times;</button>
+            <h2 id="trigger-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Select Agent</h2>
+            <button type="button" onclick="closeTriggerModal()" aria-label="Close agent selection" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xl leading-none">&times;</button>
         </div>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Choose an agent to trigger for this task:</p>
+        <div id="trigger-agent-search-wrap" class="hidden relative mb-4">
+            <label for="trigger-agent-search" class="sr-only">Search agents</label>
+            <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
+            <input type="search" id="trigger-agent-search" autocomplete="off" placeholder="Search agents..." class="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-indigo-500 dark:focus:ring-indigo-500">
+        </div>
         <div id="trigger-loading" class="text-sm text-gray-400 dark:text-gray-500 text-center py-4">Loading agents...</div>
         <div id="trigger-no-agents" class="hidden text-sm text-gray-500 dark:text-gray-400 text-center py-4">No agents available.</div>
-        <div id="trigger-agent-list" class="hidden grid grid-cols-3 gap-3 max-h-80 overflow-y-auto"></div>
+        <div id="trigger-no-results" class="hidden text-sm text-gray-500 dark:text-gray-400 text-center py-4" role="status">No agents match your search.</div>
+        <div id="trigger-agent-list" class="hidden grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-80 overflow-y-auto" aria-live="polite"></div>
         <div id="trigger-actions" class="hidden flex justify-center gap-2 mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
-            <button onclick="closeTriggerModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">Close</button>
+            <button type="button" onclick="closeTriggerModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">Close</button>
         </div>
     </div>
 </div>
@@ -1563,46 +1569,58 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
     }
 
     function openTriggerModal() {
+        const $search = $('#trigger-agent-search');
         $('#kb-trigger-modal').removeClass('hidden').addClass('flex');
         $('#trigger-loading').show();
-        $('#trigger-agent-list, #trigger-actions, #trigger-no-agents').addClass('hidden');
+        $search.val('');
+        $('#trigger-agent-search-wrap, #trigger-agent-list, #trigger-actions, #trigger-no-agents, #trigger-no-results').addClass('hidden');
 
         // Always fetch eligible agents (separate from main agent cache)
         $.get('/api/kanban/eligible-agents', function(data) {
             _triggerAgents = (data.agents || []).map(a => ({id: a.id, name: a.name || a.id, avatar_path: a.avatar_path}));
             _renderTriggerAgents();
+            if (_triggerAgents.length && !$('#kb-trigger-modal').hasClass('hidden')) {
+                $search.trigger('focus');
+            }
         }).fail(function() {
             _triggerAgents = [];
             _renderTriggerAgents();
         });
     }
 
-    function _renderTriggerAgents() {
+    function _renderTriggerAgents(query) {
+        const normalizedQuery = String(query || '').trim().toLocaleLowerCase();
+        const filteredAgents = (_triggerAgents || []).filter(function(agent) {
+            return !normalizedQuery || `${agent.name} ${agent.id}`.toLocaleLowerCase().includes(normalizedQuery);
+        });
+
         $('#trigger-loading').hide();
+        $('#trigger-no-agents, #trigger-no-results').addClass('hidden');
         if (!_triggerAgents || !_triggerAgents.length) {
+            $('#trigger-agent-list, #trigger-agent-search-wrap, #trigger-actions').addClass('hidden');
             $('#trigger-no-agents').removeClass('hidden');
             return;
         }
 
-        const html = _triggerAgents.map(function(agent) {
+        const html = filteredAgents.map(function(agent) {
             const initials = esc(agent.name).split(/[\s._-]+/).filter(Boolean).map(s => s[0].toUpperCase()).slice(0, 2).join('');
             const hasAvatar = !!(agent.avatar_path);
             const avatarHtml = hasAvatar
                 ? `<img src="/api/agents/${esc(agent.id)}/avatar" alt="${esc(agent.name)}" class="w-12 h-12 rounded-full object-cover bg-indigo-50 dark:bg-indigo-900/20" onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.style.display='inline-flex'"><span class="hidden items-center justify-center w-12 h-12 rounded-full text-sm font-semibold bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300">${initials}</span>`
                 : `<span class="inline-flex items-center justify-center w-12 h-12 rounded-full text-sm font-semibold bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300">${initials}</span>`;
-            return `<button onclick="selectTriggerAgent('${esc(agent.id)}')" class="flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 hover:bg-orange-50 hover:border-orange-200 dark:hover:bg-gray-600 dark:hover:border-orange-400 transition ${_triggerAgent === agent.id ? 'bg-orange-100 border-orange-400 dark:bg-orange-900 dark:border-orange-400' : ''}">${avatarHtml}<span class="text-xs text-gray-700 dark:text-gray-200 font-medium break-words text-center leading-tight">${esc(agent.name)}</span></button>`;
+            return `<button type="button" data-agent-id="${esc(agent.id)}" class="trigger-agent-option flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 hover:bg-orange-50 hover:border-orange-200 dark:hover:bg-gray-600 dark:hover:border-orange-400 transition ${_triggerAgent === agent.id ? 'bg-orange-100 border-orange-400 dark:bg-orange-900 dark:border-orange-400' : ''}">${avatarHtml}<span class="text-xs text-gray-700 dark:text-gray-200 font-medium break-words text-center leading-tight">${esc(agent.name)}</span></button>`;
         }).join('');
 
-        $('#trigger-agent-list').html(html);
-        $('#trigger-agent-list, #trigger-actions').removeClass('hidden');
+        $('#trigger-agent-list').html(html).toggleClass('hidden', !filteredAgents.length);
+        $('#trigger-no-results').toggleClass('hidden', !!filteredAgents.length);
+        $('#trigger-agent-search-wrap, #trigger-actions').removeClass('hidden');
     }
 
     function selectTriggerAgent(agentId) {
         _triggerAgent = agentId;
         $('#trigger-agent-list button').each(function() {
             const $btn = $(this);
-            const onclickId = ($btn.attr('onclick') || '').match(/selectTriggerAgent\('([^']+)'\)/);
-            if (onclickId && onclickId[1] === agentId) {
+            if ($btn.attr('data-agent-id') === agentId) {
                 $btn.addClass('bg-orange-100 border-orange-400 dark:bg-orange-900 dark:border-orange-400');
             } else {
                 $btn.removeClass('bg-orange-100 border-orange-400 dark:bg-orange-900 dark:border-orange-400');
@@ -1612,8 +1630,18 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         confirmTrigger();
     }
 
+    $('#trigger-agent-search').on('input', function() {
+        _renderTriggerAgents(this.value);
+    });
+
+    $('#trigger-agent-list').on('click', '.trigger-agent-option', function() {
+        selectTriggerAgent($(this).attr('data-agent-id'));
+    });
+
     function closeTriggerModal() {
         $('#kb-trigger-modal').removeClass('flex').addClass('hidden');
+        $('#trigger-agent-search').val('');
+        $('#trigger-no-results').addClass('hidden');
         _triggerTaskId = null;
         _triggerAgent = null;
     }

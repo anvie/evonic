@@ -676,10 +676,17 @@
             });
         },
 
-        removeRoute: function(userId) {
+        removeRoute: async function(userId) {
             var ch = sharedChannel.active();
             if (!ch) return;
-            if (!confirm('Remove the route for ' + userId + '?')) return;
+            var confirmed = await showConfirm({
+                title: 'Remove Route',
+                message: 'Remove the route for ' + userId + '?',
+                confirmText: 'Remove',
+                cancelText: 'Cancel',
+                danger: true
+            });
+            if (!confirmed) return;
             fetch('/api/shared-channels/' + ch.id + '/routes/' + encodeURIComponent(userId), { method: 'DELETE' })
                 .then(function(r) { return r.json(); }).then(function() {
                     sharedChannel.resetSigs();
