@@ -96,6 +96,11 @@ let sawReplaced = false;
 // hammering WhatsApp with invalid credentials. A successful connection resets it.
 let consecutive401Count = 0;
 const MAX_CONSECUTIVE_401 = 3;
+// Consecutive degraded-start counter. If init queries (fetchProps/executeInitQueries)
+// fail N times in a row after connection, the auth session is likely corrupt—clear
+// credentials and force a fresh QR scan. Reset on first successful init.
+let consecutiveDegradedCount = 0;
+const MAX_CONSECUTIVE_DEGRADED = 3;
 const BASE_RECONNECT_MS = 3000;
 const MAX_RECONNECT_MS = 60000;
 
@@ -237,11 +242,44 @@ async function startBaileys() {
                     const hasUserId = !!(botId && botId.includes('@'));
                     if (hasSignalRepo && hasUserId) {
                         initQueriesOk = true;
+                        consecutiveDegradedCount = 0;
                         console.log('[whatsapp-bridge] Init queries verified OK (botId=%s, signalRepository=ok)', botId);
                     } else {
                         initQueriesOk = false;
-                        console.error('[whatsapp-bridge] Init queries FAILED — socket degraded (botId=%s, signalRepository=%s)',
-                            botId || '(empty)', hasSignalRepo ? 'ok' : 'MISSING');
+                        consecutiveDegradedCount += 1;
+                        console.error('[whatsapp-bridge] Init queries FAILED — socket degraded (botId=%s, signalRepository=%s, degradedCount=%d/%d)',
+                            botId || '(empty)', hasSignalRepo ? 'ok' : 'MISSING',
+                            consecutiveDegradedCount, MAX_CONSECUTIVE_DEGRADED);
+                        // Auto-recover: close the degraded socket so the 'close'
+                        // handler reconnects with a fresh socket, giving init
+                        // queries another chance. After N consecutive failures,
+                        // clear auth and force a fresh QR scan.
+                        if (consecutiveDegradedCount > MAX_CONSECUTIVE_DEGRADED) {
+                            console.log('[whatsapp-bridge] %d consecutive degraded starts — clearing credentials for fresh QR',
+                                consecutiveDegradedCount);
+                            try {
+                                for (const entry of fs.readdirSync(AUTH_DIR)) {
+                                    fs.rmSync(path.join(AUTH_DIR, entry), { force: true });
+                                }
+                            } catch (err) {
+                                console.error('[whatsapp-bridge] Failed to clear auth dir:', err.message);
+                            }
+                            consecutiveDegradedCount = 0;
+                            consecutive401Count = 0;
+                            reconnectAttempts = 0;
+                            currentQR = null;
+                            pushStatus();
+                            // startBaileys() tears down the old socket internally
+                            // (removing listeners first, so no close-handler race).
+                            startBaileys().catch((e) =>
+                                console.error('[whatsapp-bridge] Restart after init-query give-up error:', e));
+                        } else {
+                            // Close this degraded socket — the 'close' handler
+                            // will schedule a restart with backoff.
+                            console.log('[whatsapp-bridge] Closing degraded socket to trigger reconnect (attempt %d/%d)',
+                                consecutiveDegradedCount, MAX_CONSECUTIVE_DEGRADED);
+                            try { sock.end(undefined); } catch (_) {}
+                        }
                     }
                 }, 3000);
             }
