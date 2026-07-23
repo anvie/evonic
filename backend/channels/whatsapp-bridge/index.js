@@ -30,12 +30,10 @@ let pendingCredsSave = Promise.resolve();
 let ownerAcquired = false;
 let httpServer = null;
 
-// Init-query health tracking. Baileys v7 internal init queries (fetchProps,
-// executeInitQueries) can silently time out, leaving the socket in a "zombie
-// connected" state where typing indicators work (lightweight WebSocket stanza)
-// but encrypted messages silently fail (missing session encryption state).
-let initQueriesOk = false;
-let initCheckScheduled = false;
+// Message readiness follows Baileys' authenticated connection state. Internal
+// init queries such as fetchProps are optional metadata queries; their timeout
+// does not mean Signal encryption state is unavailable.
+let messageSendReady = false;
 
 function pidIsAlive(pid) {
     if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -91,16 +89,6 @@ let reconnectTimer = null;
 // Set when WhatsApp reports connectionReplaced (440). A 401 arriving right after
 // a replace is conflict fallout — NOT a genuine logout — so we must not wipe on it.
 let sawReplaced = false;
-// Consecutive 401 (loggedOut) counter. After MAX_CONSECUTIVE_401 genuine 401s
-// (not conflict fallout), the bridge gives up and stays disconnected instead of
-// hammering WhatsApp with invalid credentials. A successful connection resets it.
-let consecutive401Count = 0;
-const MAX_CONSECUTIVE_401 = 3;
-// Consecutive degraded-start counter. If init queries (fetchProps/executeInitQueries)
-// fail N times in a row after connection, the auth session is likely corrupt—clear
-// credentials and force a fresh QR scan. Reset on first successful init.
-let consecutiveDegradedCount = 0;
-const MAX_CONSECUTIVE_DEGRADED = 3;
 const BASE_RECONNECT_MS = 3000;
 const MAX_RECONNECT_MS = 60000;
 
@@ -220,74 +208,22 @@ async function startBaileys() {
             connectionStatus = 'connected';
             reconnectAttempts = 0;
             sawReplaced = false;
-            consecutive401Count = 0;
             botId = sock.user?.id || '';
             // Baileys v7 sometimes omits lid from sock.user — fall back to creds.
             botLid = sock.user?.lid || state.creds?.me?.lid || '';
             console.log('[whatsapp-bridge] Connected to WhatsApp (id=%s, lid=%s)', botId, botLid);
 
-            // Init-query health check: after connection opens, wait briefly
-            // for async init queries (fetchProps/executeInitQueries) to complete,
-            // then verify the socket is functional. signalRepository (populated
-            // by executeInitQueries) is the key indicator — without it the socket
-            // is in a "zombie connected" state where typing indicators work but
-            // encrypted messages silently fail.
-            initCheckScheduled = false; // reset from any prior check
-            if (!initCheckScheduled) {
-                initCheckScheduled = true;
-                setTimeout(() => {
-                    initCheckScheduled = false;
-                    if (!sock || connectionStatus !== 'connected') return;
-                    const hasSignalRepo = !!sock?.signalRepository?.lidMapping;
-                    const hasUserId = !!(botId && botId.includes('@'));
-                    if (hasSignalRepo && hasUserId) {
-                        initQueriesOk = true;
-                        consecutiveDegradedCount = 0;
-                        console.log('[whatsapp-bridge] Init queries verified OK (botId=%s, signalRepository=ok)', botId);
-                    } else {
-                        initQueriesOk = false;
-                        consecutiveDegradedCount += 1;
-                        console.error('[whatsapp-bridge] Init queries FAILED — socket degraded (botId=%s, signalRepository=%s, degradedCount=%d/%d)',
-                            botId || '(empty)', hasSignalRepo ? 'ok' : 'MISSING',
-                            consecutiveDegradedCount, MAX_CONSECUTIVE_DEGRADED);
-                        // Auto-recover: close the degraded socket so the 'close'
-                        // handler reconnects with a fresh socket, giving init
-                        // queries another chance. After N consecutive failures,
-                        // clear auth and force a fresh QR scan.
-                        if (consecutiveDegradedCount > MAX_CONSECUTIVE_DEGRADED) {
-                            console.log('[whatsapp-bridge] %d consecutive degraded starts — clearing credentials for fresh QR',
-                                consecutiveDegradedCount);
-                            try {
-                                for (const entry of fs.readdirSync(AUTH_DIR)) {
-                                    fs.rmSync(path.join(AUTH_DIR, entry), { force: true });
-                                }
-                            } catch (err) {
-                                console.error('[whatsapp-bridge] Failed to clear auth dir:', err.message);
-                            }
-                            consecutiveDegradedCount = 0;
-                            consecutive401Count = 0;
-                            reconnectAttempts = 0;
-                            currentQR = null;
-                            pushStatus();
-                            // startBaileys() tears down the old socket internally
-                            // (removing listeners first, so no close-handler race).
-                            startBaileys().catch((e) =>
-                                console.error('[whatsapp-bridge] Restart after init-query give-up error:', e));
-                        } else {
-                            // Close this degraded socket — the 'close' handler
-                            // will schedule a restart with backoff.
-                            console.log('[whatsapp-bridge] Closing degraded socket to trigger reconnect (attempt %d/%d)',
-                                consecutiveDegradedCount, MAX_CONSECUTIVE_DEGRADED);
-                            try { sock.end(undefined); } catch (_) {}
-                        }
-                    }
-                }, 3000);
-            }
+            // A Baileys `open` event completes authentication and makes the
+            // socket ready for encrypted sends. Its background init queries
+            // fetch account metadata and may time out independently; they do not
+            // populate signalRepository and must not block message delivery.
+            messageSendReady = !!(botId && botId.includes('@'));
+            console.log('[whatsapp-bridge] Message delivery ready (botId=%s)', botId || '(empty)');
         }
 
         if (connection === 'close') {
             connectionStatus = 'disconnected';
-            initQueriesOk = false;  // reset — next connection re-verifies
+            messageSendReady = false;
             if (isShuttingDown) { pushStatus(); return; }
 
             const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -305,40 +241,11 @@ async function startBaileys() {
 
             switch (statusCode) {
                 case DisconnectReason.loggedOut: // 401
-                    // A 401 immediately after a connectionReplaced is conflict
-                    // fallout, not a real logout — reconnect instead of wiping.
-                    if (sawReplaced) {
-                        console.log('[whatsapp-bridge] 401 after replace — treating as conflict, keeping creds');
-                        sawReplaced = false;
-                        consecutive401Count = 0;
-                        scheduleRestart();
-                    } else {
-                        consecutive401Count += 1;
-                        if (consecutive401Count > MAX_CONSECUTIVE_401) {
-                            console.log(
-                                '[whatsapp-bridge] %d consecutive 401 errors — clearing credentials and restarting for fresh QR',
-                                consecutive401Count);
-                            // Clear the dead credentials so Baileys generates a fresh QR
-                            // instead of retrying with the same invalid session.
-                            try {
-                                for (const entry of fs.readdirSync(AUTH_DIR)) {
-                                    fs.rmSync(path.join(AUTH_DIR, entry), { force: true });
-                                }
-                            } catch (err) {
-                                console.error('[whatsapp-bridge] Failed to clear auth dir:', err.message);
-                            }
-                            consecutive401Count = 0;
-                            reconnectAttempts = 0;
-                            currentQR = null;
-                            pushStatus();
-                            startBaileys().catch((e) =>
-                                console.error('[whatsapp-bridge] Restart after 401 give-up error:', e));
-                        } else {
-                            console.log('[whatsapp-bridge] 401 logged out (%d/%d) — preserving credentials, reconnecting',
-                                consecutive401Count, MAX_CONSECUTIVE_401);
-                            scheduleRestart();
-                        }
-                    }
+                    // Preserve the linked-device credentials. A 401 can follow a
+                    // transient socket conflict; unlinking must remain an explicit
+                    // user action through /logout.
+                    sawReplaced = false;
+                    requestRepair('Logged out');
                     break;
 
                 case DisconnectReason.badSession: // 500 — auth files corrupt
@@ -567,9 +474,8 @@ app.post('/send', async (req, res) => {
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'Not connected to WhatsApp' });
     }
-    if (!initQueriesOk) {
-        console.error('[whatsapp-bridge] /send refused — socket degraded (init queries incomplete)');
-        return res.status(503).json({ error: 'Socket degraded — init queries incomplete; try again after reconnect' });
+    if (!messageSendReady) {
+        return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
     const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
     const msgId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
