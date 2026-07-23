@@ -8,8 +8,13 @@ main LLM. The vision model is selected via a configurable priority chain:
   3. agent's current model (if vision_supported)
   4. all enabled models with `vision_supported = 1` in `llm_models`
 
-On connection errors, the tool automatically falls back to the next
-vision-capable model in priority order.
+On any error (connection, auth, timeout, rate-limit, API error), the tool
+automatically falls back to the next vision-capable model in priority order.
+
+If all primary models fail, a secondary fallback model can be configured via
+environment variables (VISION_FALLBACK_BASE_URL, VISION_FALLBACK_API_KEY,
+VISION_FALLBACK_MODEL, VISION_FALLBACK_ENABLED), providing an independently
+configured backup provider.
 
 The `vision_enabled` flag on the agent gates access to this tool entirely:
 when `vision_enabled = 0`, the tool returns an error.
@@ -23,7 +28,12 @@ import mimetypes
 import os
 from typing import Any, Dict, Optional
 
+import logging
+
+import config
 from backend.llm_client import LLMClient
+
+_logger = logging.getLogger(__name__)
 
 # Image MIME types the tool supports
 _SUPPORTED_IMAGE_TYPES = frozenset({
@@ -38,7 +48,7 @@ _SUPPORTED_IMAGE_TYPES = frozenset({
 def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
     """Resolve vision models to use for image description, ordered by priority.
 
-    Returns a list so the caller can fallback to the next model on connection errors.
+    Returns a list so the caller can fallback to the next model on any error.
 
     Priority:
       1. Agent-level vision_model_id (from agent_context)
@@ -252,9 +262,13 @@ def execute(agent: dict, args: dict) -> Any:
         },
     ]
 
-    # --- Call vision models with fallback on connection errors ---
+    # --- Call vision models with fallback to next model on any error ---
+    # Every failure (connection, auth, timeout, rate-limit, API error, or
+    # unknown exception) triggers a fallback to the next primary model.
+    # If all primary models fail, the secondary fallback (env-var-configured)
+    # will be tried next.
     result = None
-    connection_failures = 0
+    failures = 0
     last_error = None
 
     for vision_model in vision_models:
@@ -270,32 +284,99 @@ def execute(agent: dict, args: dict) -> Any:
                 enable_thinking=False,  # No need for reasoning on vision task
             )
         except Exception as e:
-            # Unexpected exception — treat as connection failure and try next
-            connection_failures += 1
+            # Unexpected exception — treat as failure and try next model
+            _logger.warning(
+                "Primary vision model '%s' raised exception: %s", model_name, e
+            )
+            failures += 1
             last_error = str(e)
             continue
 
         if result.get("success"):
             break  # Success — use this result
 
-        # Check if this is a connection error we should fallback from
-        error_type = result.get("error_type", "")
+        # Any error — connection, auth, timeout, rate-limit, API error —
+        # should fall through to the next model and eventually the secondary
+        # fallback instead of failing immediately.
+        error_type = result.get("error_type", "unknown")
         error_detail = result.get("error_detail", "")
-        if error_type == "connection_error":
-            connection_failures += 1
-            last_error = error_detail or f"connection to {model_name}"
-            continue  # Try next model
-
-        # Non-connection error — fail immediately (auth, rate limit, API error, etc.)
-        return f"Error: Vision model call failed ({error_type}): {error_detail}"
+        _logger.warning(
+            "Primary vision model '%s' failed (%s): %s",
+            model_name, error_type, error_detail or "(no detail)",
+        )
+        failures += 1
+        last_error = error_detail or f"{error_type} on {model_name}"
+        continue  # Try next primary model
 
     if result is None or not result.get("success"):
-        if connection_failures >= len(vision_models):
-            return (
-                "Error: All vision-capable models failed with connection errors. "
-                "Please check your network and LLM server status."
+        # --- Secondary fallback: try independently-configured backup vision model ---
+        if not config.VISION_FALLBACK_ENABLED:
+            if failures >= len(vision_models):
+                return (
+                    "Error: All vision-capable models failed. "
+                    "No vision model is currently available.\n\n"
+                    "Tip: You can set VISION_FALLBACK_ENABLED=1 in your .env file "
+                    "along with VISION_FALLBACK_BASE_URL, VISION_FALLBACK_API_KEY, "
+                    "and VISION_FALLBACK_MODEL to enable a secondary fallback vision model."
+                )
+            return f"Error: Vision model call failed: {last_error or 'unknown error'}"
+
+        _logger.info(
+            "Primary vision models failed (%d attempts). Trying secondary fallback.",
+            len(vision_models),
+        )
+
+        # Build a fallback client from environment variables
+        fallback_config = {
+            "base_url": config.VISION_FALLBACK_BASE_URL,
+            "api_key": config.VISION_FALLBACK_API_KEY,
+            "model_name": config.VISION_FALLBACK_MODEL,
+            "timeout": config.VISION_FALLBACK_TIMEOUT,
+        }
+
+        fallback_result = None
+        fallback_error = None
+        try:
+            fallback_client = LLMClient(model_config=fallback_config)
+            fallback_result = fallback_client.chat_completion(
+                messages=messages,
+                enable_thinking=False,
             )
-        return f"Error: Vision model call failed: {last_error or 'unknown error'}"
+        except Exception as e:
+            _logger.error("Secondary fallback vision model raised exception: %s", e)
+            fallback_error = str(e)
+
+        if fallback_result and fallback_result.get("success"):
+            _logger.info("Secondary fallback vision model succeeded.")
+            result = fallback_result
+        else:
+            fb_error_type = (
+                fallback_result.get("error_type", "unknown")
+                if fallback_result
+                else "exception"
+            )
+            fb_error_detail = (
+                fallback_result.get("error_detail", fallback_error or "no detail")
+                if fallback_result
+                else fallback_error or "unknown error"
+            )
+            _logger.error(
+                "Secondary fallback vision model also failed (%s): %s",
+                fb_error_type,
+                fb_error_detail,
+            )
+            return (
+                "Error: No vision model is available. "
+                "Both the primary vision model(s) and the secondary fallback model failed.\n\n"
+                "To enable image analysis, you need at least one working vision model:\n"
+                "  1. Primary: Configure a vision-capable model in System Settings → Models & Routing "
+                "→ Vision Model (requires vision_supported=1).\n"
+                "  2. Fallback: Set VISION_FALLBACK_ENABLED=1 in your .env file and provide "
+                "VISION_FALLBACK_BASE_URL, VISION_FALLBACK_API_KEY, and VISION_FALLBACK_MODEL "
+                "pointing to a working vision-capable provider.\n\n"
+                f"Primary error: {last_error or 'all models failed'}\n"
+                f"Fallback error: {fb_error_detail}"
+            )
 
     # Extract text content from the nested API response.
     # result["response"] is the raw API dict: {"choices": [{"message": {"content": "..."}}]}
