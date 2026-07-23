@@ -8,6 +8,7 @@ Uses a lightweight LLM call (no tools, no thinking) with an optional
 heuristic fast-path to skip the LLM entirely for obvious cases.
 """
 
+import json
 import logging
 import re
 import time
@@ -60,6 +61,25 @@ COMPLEX: Requires research, reading existing code, multi-step changes, or design
 
 When in doubt, classify as COMPLEX.
 Respond with exactly one word: TRIVIAL or COMPLEX"""
+
+_OPERATION_CLASSIFIER_SYSTEM = """You classify whether an agent's current operation is TRIVIAL or COMPLEX.
+
+TRIVIAL: Simple mechanical tasks requiring no code changes or planning. Examples:
+- git push/pull/fetch/status
+- restarting a service or process
+- reading/displaying a file
+- running a simple one-line command
+- checking logs or status
+
+COMPLEX: Any task that involves writing, editing, creating, or modifying files, or requires research and multi-step planning.
+
+Respond with exactly one word: TRIVIAL or COMPLEX"""
+
+# Metadata flags that mark non-conversation messages to be excluded
+_UI_ONLY_META_FLAGS = {
+    "busy_ack", "busy_rejection", "bash_exec", "slash_command",
+    "evonet_offline", "stop_injection", "free_notification",
+}
 
 
 _CONTINUATION_SYSTEM = """You decide whether a user's new message starts a NEW task or CONTINUES the previous one, for an AI coding agent.
@@ -220,6 +240,95 @@ def _heuristic_classify(text: str) -> Optional[str]:
         return "complex"
 
     return None  # uncertain, need LLM
+
+
+def _is_ui_only(msg: dict) -> bool:
+    """Check if a message has metadata flags marking it as UI/internal only."""
+    meta = msg.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+    return bool(_UI_ONLY_META_FLAGS & set(meta.keys()))
+
+
+def _is_final_response(msg: dict) -> bool:
+    """True if the message is a final user/assistant response (not tool call/result, not internal)."""
+    if _is_ui_only(msg):
+        return False
+    role = msg.get("role", "")
+    content = (msg.get("content") or "").strip()
+    if role == "user":
+        return bool(content)
+    if role == "assistant":
+        # Must have text content AND no tool_calls
+        return bool(content) and not msg.get("tool_calls")
+    return False
+
+
+def _get_last_n_final_responses(session_id: str, agent_id: str, n: int = 3):
+    """Retrieve the last N final-response messages from a session."""
+    from models.db import db
+    msgs = db.get_session_messages(session_id, limit=n * 4, agent_id=agent_id) or []
+    final = [m for m in msgs if _is_final_response(m)]
+    return final[-n:] if len(final) >= n else final
+
+
+def classify_operation_trivial(session_id: str, agent_id: str) -> str:
+    """Classify whether the agent's current operation is trivial.
+
+    Uses the last 3 final responses (user/assistant text) from the session.
+    Returns 'trivial' or 'complex'. Defaults to 'complex' on any error.
+    """
+    if not _is_enabled():
+        return "complex"
+
+    try:
+        final_msgs = _get_last_n_final_responses(session_id, agent_id, n=3)
+        if not final_msgs:
+            _logger.info("Operation classifier: no final responses found, defaulting to complex")
+            return "complex"
+
+        combined = []
+        for m in final_msgs:
+            role = m.get("role", "unknown")
+            content = (m.get("content") or "").strip()
+            combined.append(f"[{role}]: {content}")
+        text = "\n".join(combined)
+
+        if not text.strip():
+            return "complex"
+
+        client = _get_classifier_client()
+        _t0 = time.time()
+        messages = [
+            {"role": "system", "content": _OPERATION_CLASSIFIER_SYSTEM},
+            {"role": "user", "content": text},
+        ]
+        response = classifier_chat(client, messages, max_tokens=128,
+                                   log_label="operation classifier")
+        if not response.get("success"):
+            _logger.warning("Operation classifier LLM call failed [%s] (%.1fs) — defaulting to complex",
+                            response.get("error_type"), time.time() - _t0)
+            return "complex"
+        choices = response.get("response", {}).get("choices", [])
+        if not choices:
+            return "complex"
+        msg = choices[0].get("message", {})
+        content = msg.get("content", "").strip().upper()
+        reasoning = msg.get("reasoning_content", "").strip().upper()
+        if not content and reasoning:
+            content = reasoning
+        if "TRIVIAL" in content:
+            _logger.info("Operation classified as trivial (LLM, %.1fs)", time.time() - _t0)
+            return "trivial"
+        _logger.info("Operation classified as complex (LLM: %s, %.1fs)",
+                     content[:30] if content else "empty/missing", time.time() - _t0)
+        return "complex"
+    except Exception as e:
+        _logger.warning("Operation classifier failed, defaulting to complex: %s", e)
+        return "complex"
 
 
 def classify_task(user_message: str) -> str:
