@@ -2820,6 +2820,19 @@ function autoGrowKBTextarea(el) {
     el.style.overflowY = el.scrollHeight > window.innerHeight * 0.65 ? 'auto' : 'hidden';
 }
 
+function setSaveLoading(btnId, loading) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    if (loading) {
+        btn.dataset.origText = btn.textContent;
+        btn.textContent = "Saving...";
+        btn.disabled = true;
+    } else {
+        btn.textContent = btn.dataset.origText || "Save";
+        btn.disabled = false;
+    }
+}
+
 function closeEditor() {
     document.getElementById('kb-editor-modal').classList.add('hidden');
     currentEditFile = null;
