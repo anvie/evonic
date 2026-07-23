@@ -595,7 +595,10 @@ def run_tool_loop(agent: Dict[str, Any],
     if not agent_model_config:
         try:
             from backend.agent_runtime import explorer as _explorer
-            model = _explorer.primary_model(agent) or db.get_agent_model(agent_id)
+            agent_model_id = agent.get('model_id') if agent else None
+            model = (_explorer.primary_model(agent)
+                     or (db.get_model_by_id(agent_model_id) if agent_model_id else None)
+                     or db.get_agent_model(agent_id))
             if model:
                 agent_model_config = _build_model_config(model)
                 _logger.info("%s using model: %s (%s)", agent_id, model.get('name'), model.get('model_name'))
