@@ -553,7 +553,12 @@ def _builtin_set_mode_factory(agent_context: dict):
         ms = agent_context.get('agent_state')
         if ms is None:
             return {"error": "Agent state is not enabled for this agent."}
-        return ms.set_mode(arguments.get('mode', ''), reason=arguments.get('reason'))
+        return ms.set_mode(
+            arguments.get('mode', ''),
+            reason=arguments.get('reason'),
+            session_id=agent_context.get('session_id'),
+            agent_id=agent_context.get('id'),
+        )
 
     return tool_def, executor
 

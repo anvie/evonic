@@ -173,7 +173,8 @@ class AgentState:
 
     # ── Mode transitions ────────────────────────────────────────────────────
 
-    def set_mode(self, new_mode: str, reason: str = None) -> dict:
+    def set_mode(self, new_mode: str, reason: str = None,
+                 session_id: str = None, agent_id: str = None) -> dict:
         """Transition to a new mode. Returns a result dict for the LLM."""
         if new_mode not in VALID_MODES:
             return {"error": f"Invalid mode '{new_mode}'. Valid modes: {sorted(VALID_MODES)}"}
@@ -182,6 +183,15 @@ class AgentState:
                 return {"result": f"Agent is configured with always_execute; staying in execute mode", "mode": "execute"}
             return {"result": f"Mode is execute", "mode": "execute"}
         if new_mode == "execute" and not self.plan_file:
+            if session_id and agent_id:
+                from backend.task_classifier import classify_operation_trivial
+                if classify_operation_trivial(session_id, agent_id) == "trivial":
+                    self.auto_trivial = True
+                    self.mode = new_mode
+                    msg = f"Mode changed: plan → execute (trivial operation, no plan required)"
+                    if reason:
+                        msg += f" ({reason})"
+                    return {"result": msg, "mode": new_mode}
             return {
                 "error": (
                     "Cannot switch to execute mode without a plan file. "
