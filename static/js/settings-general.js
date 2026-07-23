@@ -14,19 +14,17 @@ window.settingsGeneral = {
         this._updateThemeButtons(localStorage.getItem("evonic-theme") || "system");
 
         try {
-            const [general, models, defaultModel, classifier, cmpModel, visionFallback] = await Promise.all([
+            const [general, models, defaultModel, classifier, cmpModel] = await Promise.all([
                 apiGet("/api/settings/general"),
                 ModelsCache.get(),
                 apiGet("/api/settings/default-model").catch(() => null),
                 apiGet("/api/settings/task-classifier").catch(() => null),
                 apiGet("/api/settings/cmp-model").catch(() => null),
-                apiGet("/api/settings/vision-fallback").catch(() => null),
             ]);
             if (!general || general.error) {
                 throw new Error((general && general.error) || "Failed to load settings");
             }
             this._fill(general);
-            this._fillVisionFallback(visionFallback);
             this._populateModelSelects(models, {
                 defaultModelId: defaultModel && defaultModel.model ? defaultModel.model.id : "",
                 visionModelId: general.vision_model_id || "",
@@ -78,26 +76,6 @@ window.settingsGeneral = {
         check("public-history-toggle", s.public_history);
         check("long-running-guard-toggle", s.long_running_guard_enabled);
         check("message-wrapper-toggle", s.message_wrapper_enabled);
-    },
-
-    _fillVisionFallback(vf) {
-        if (!vf) return;
-        const set = (id, v) => {
-            const el = document.getElementById(id);
-            if (el) {
-                el.value = v != null ? v : "";
-                el._lastSaved = v != null ? v : "";
-            }
-        };
-        const check = (id, v) => {
-            const el = document.getElementById(id);
-            if (el) el.checked = !!v;
-        };
-        check("vision-fallback-toggle", vf.enabled);
-        set("vision-fallback-base-url", vf.base_url);
-        set("vision-fallback-api-key", vf.api_key);
-        set("vision-fallback-model", vf.model);
-        set("vision-fallback-timeout", vf.timeout);
     },
 
     _currentSelectValues() {
@@ -199,26 +177,6 @@ window.settingsGeneral = {
                 throw new Error((res && res.error) || "Save failed");
             }
         });
-
-        // Vision fallback: composite PUT — send all fields together
-        const saveVisionFallback = async () => {
-            const toggle = document.getElementById("vision-fallback-toggle");
-            const res = await apiPut("/api/settings/vision-fallback", {
-                enabled: toggle ? toggle.checked : false,
-                base_url: document.getElementById("vision-fallback-base-url")?.value || null,
-                api_key: document.getElementById("vision-fallback-api-key")?.value || null,
-                model: document.getElementById("vision-fallback-model")?.value || null,
-                timeout: parseInt(document.getElementById("vision-fallback-timeout")?.value, 10) || 120,
-            });
-            if (!res || !res.success) {
-                throw new Error((res && res.error) || "Save failed");
-            }
-        };
-        AutoSave.registerHandler("vision_fallback_enabled", saveVisionFallback);
-        AutoSave.registerHandler("vision_fallback_base_url", saveVisionFallback);
-        AutoSave.registerHandler("vision_fallback_api_key", saveVisionFallback);
-        AutoSave.registerHandler("vision_fallback_model", saveVisionFallback);
-        AutoSave.registerHandler("vision_fallback_timeout", saveVisionFallback);
 
         // Public history: guarded by an explicit confirm modal when enabling
         AutoSave.registerGuard("public_history", (enabling) => {
