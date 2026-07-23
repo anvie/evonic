@@ -163,6 +163,9 @@
     </div>
 </div>
 
+<!-- Toast container for shared channel notifications -->
+<div id="sc-toast-container" class="fixed top-5 right-5 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+
 <script>
 (function() {
     window.sharedChannel = {
@@ -207,6 +210,35 @@
                     ? (status === 'qr_pending' ? 'Waiting for QR scan' : 'Connecting...')
                     : 'Not connected');
             return { status: status, connected: connected, connecting: connecting, label: label };
+        },
+
+        showToast: function(message, type) {
+            type = type || 'success';
+            var container = document.getElementById('sc-toast-container');
+            if (!container) return;
+            var toast = document.createElement('div');
+            var colors = {
+                success: 'bg-green-600',
+                error: 'bg-red-600',
+                info: 'bg-blue-600'
+            };
+            toast.className = 'pointer-events-auto px-4 py-2.5 rounded-lg shadow-lg text-white font-medium text-sm transition-all duration-300 ' +
+                (colors[type] || colors.info);
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(20px)';
+            toast.textContent = message;
+            container.appendChild(toast);
+            // Animate in
+            requestAnimationFrame(function() {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateX(0)';
+            });
+            // Auto-remove after 3s
+            setTimeout(function() {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(20px)';
+                setTimeout(function() { toast.remove(); }, 300);
+            }, 3000);
         },
 
         init: function() {
@@ -546,7 +578,9 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ agent_id: agentId, name: name })
             }).then(function(r) { return r.json(); }).then(function(data) {
-                if (data.error) { alert(data.error); return; }
+                if (data.error) { sharedChannel.showToast(data.error, 'error'); return; }
+                if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+                sharedChannel.showToast('Route assigned successfully!', 'success');
                 sharedChannel.resetSigs();
                 sharedChannel.load();
             });
@@ -557,6 +591,8 @@
             if (!ch) return;
             fetch('/api/shared-channels/' + ch.id + '/inbox/' + entryId, { method: 'DELETE' })
                 .then(function(r) { return r.json(); }).then(function() {
+                    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+                    sharedChannel.showToast('Sender dismissed.', 'info');
                     sharedChannel._inboxSig = null;
                     sharedChannel.loadInbox();
                 });
