@@ -842,6 +842,7 @@ def api_get_general_settings():
         'agent_sidebar_limit': int(db.get_setting('agent_sidebar_limit', str(config.AGENT_SIDEBAR_LIMIT))),
         'theme': db.get_setting('theme', 'system'),
         'vision_model_id': db.get_setting('vision_model_id', ''),
+        'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
     })
 
@@ -1014,6 +1015,22 @@ def api_batch_save():
             # Allow clearing the setting
             db.set_setting('vision_model_id', '')
             results['vision_model_id'] = ''
+
+    # Vision Fallback Model
+    if 'vision_fallback_model_id' in settings:
+        fallback_model_id = settings['vision_fallback_model_id']
+        if fallback_model_id:
+            model = db.get_model_by_id(fallback_model_id)
+            if model and model.get('vision_supported'):
+                db.set_setting('vision_fallback_model_id', model['id'])
+                results['vision_fallback_model_id'] = model['id']
+            elif model:
+                errors.append('vision_fallback_model_id: Model does not support vision')
+            else:
+                errors.append('vision_fallback_model_id: Model not found')
+        else:
+            db.set_setting('vision_fallback_model_id', '')
+            results['vision_fallback_model_id'] = ''
 
     # KB Organizer Model — global default for the KB organizer background sub-agent
     if 'kb_organizer_model_id' in settings:

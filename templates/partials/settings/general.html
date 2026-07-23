@@ -97,6 +97,22 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
+        <div class="setting-row stacked" data-search="vision fallback model secondary backup describe image">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Vision Fallback Model</div>
+                <div class="setting-row-desc">
+                    Secondary vision-capable model used when the primary vision model
+                    fails. Leave unset to use the standard fallback priority chain.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <select id="vision-fallback-model-select" class="setting-select"
+                        data-setting-key="vision_fallback_model_id">
+                    <option value="">Loading models…</option>
+                </select>
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
         <div class="setting-row stacked" data-search="kb organizer model knowledge base memory vault background sub-agent">
             <div class="setting-row-text">
                 <div class="setting-row-title">KB Organizer Model</div>
