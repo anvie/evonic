@@ -27,6 +27,7 @@ Usage:
     )
 """
 
+import os
 import logging
 import json
 import time
@@ -47,7 +48,8 @@ log = logging.getLogger(__name__)
 
 class Scheduler:
     def __init__(self):
-        self._scheduler = BackgroundScheduler(daemon=True)
+        self._timezone = os.getenv("EVONIC_TIMEZONE", "Asia/Jakarta")
+        self._scheduler = BackgroundScheduler(daemon=True, timezone=self._timezone)
         self._started = False
         self._lock = threading.Lock()
 
@@ -68,7 +70,7 @@ class Scheduler:
         try:
             self._scheduler.add_job(
                 self._cleanup_expired_attachments,
-                CronTrigger(hour=3, minute=0),
+                CronTrigger(hour=3, minute=0, timezone=self._timezone),
                 id='builtin:attachments_cleanup',
                 replace_existing=True,
                 misfire_grace_time=3600,
@@ -79,7 +81,7 @@ class Scheduler:
         try:
             self._scheduler.add_job(
                 self._sefton_tidy_all,
-                CronTrigger(hour=3, minute=0),
+                CronTrigger(hour=3, minute=0, timezone=self._timezone),
                 id='builtin:sefton_tidy',
                 replace_existing=True,
                 misfire_grace_time=3600,
