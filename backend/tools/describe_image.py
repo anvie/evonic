@@ -12,7 +12,8 @@ On any error (connection, auth, timeout, rate-limit, API error), the tool
 automatically falls back to the next vision-capable model in priority order.
 
 If all primary models fail, a secondary fallback model can be configured via
-environment variables (VISION_FALLBACK_BASE_URL, VISION_FALLBACK_API_KEY,
+System Settings → General → Vision Fallback in the Web UI, or via environment
+variables (VISION_FALLBACK_BASE_URL, VISION_FALLBACK_API_KEY,
 VISION_FALLBACK_MODEL, VISION_FALLBACK_ENABLED), providing an independently
 configured backup provider.
 
@@ -105,6 +106,37 @@ def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
         "No vision-capable model is available. "
         "Please configure a vision model in System Settings (requires vision_supported=1)."
     )
+
+
+def _resolve_vision_fallback_config() -> dict:
+    """Resolve secondary vision fallback configuration.
+
+    Checks database settings first (set via Web UI → System Settings →
+    General → Vision Fallback), then falls back to environment variables.
+
+    Returns a dict with keys: enabled, base_url, api_key, model, timeout.
+    """
+    from models.db import db as _db
+
+    # Check DB settings first (Web UI takes precedence)
+    db_enabled = _db.get_setting("vision_fallback_enabled", None)
+    if db_enabled is not None:
+        return {
+            "enabled": db_enabled == "1",
+            "base_url": _db.get_setting("vision_fallback_base_url", "") or config.VISION_FALLBACK_BASE_URL,
+            "api_key": _db.get_setting("vision_fallback_api_key", "") or config.VISION_FALLBACK_API_KEY,
+            "model": _db.get_setting("vision_fallback_model", "") or config.VISION_FALLBACK_MODEL,
+            "timeout": int(_db.get_setting("vision_fallback_timeout", str(config.VISION_FALLBACK_TIMEOUT))),
+        }
+
+    # Fall back to environment variables only
+    return {
+        "enabled": config.VISION_FALLBACK_ENABLED,
+        "base_url": config.VISION_FALLBACK_BASE_URL,
+        "api_key": config.VISION_FALLBACK_API_KEY,
+        "model": config.VISION_FALLBACK_MODEL,
+        "timeout": config.VISION_FALLBACK_TIMEOUT,
+    }
 
 
 def _find_closest_attachment(agent_id: str, orig_path: str) -> Optional[str]:
@@ -310,14 +342,16 @@ def execute(agent: dict, args: dict) -> Any:
 
     if result is None or not result.get("success"):
         # --- Secondary fallback: try independently-configured backup vision model ---
-        if not config.VISION_FALLBACK_ENABLED:
+        fallback_cfg = _resolve_vision_fallback_config()
+        if not fallback_cfg["enabled"]:
             if failures >= len(vision_models):
                 return (
                     "Error: All vision-capable models failed. "
                     "No vision model is currently available.\n\n"
-                    "Tip: You can set VISION_FALLBACK_ENABLED=1 in your .env file "
-                    "along with VISION_FALLBACK_BASE_URL, VISION_FALLBACK_API_KEY, "
-                    "and VISION_FALLBACK_MODEL to enable a secondary fallback vision model."
+                    "Tip: Enable the secondary fallback in System Settings \u2192 General "
+                    "\u2192 Vision Fallback, or set VISION_FALLBACK_ENABLED=1 in your "
+                    ".env file along with VISION_FALLBACK_BASE_URL, "
+                    "VISION_FALLBACK_API_KEY, and VISION_FALLBACK_MODEL."
                 )
             return f"Error: Vision model call failed: {last_error or 'unknown error'}"
 
@@ -326,12 +360,12 @@ def execute(agent: dict, args: dict) -> Any:
             len(vision_models),
         )
 
-        # Build a fallback client from environment variables
+        # Build a fallback client from environment variables or DB settings
         fallback_config = {
-            "base_url": config.VISION_FALLBACK_BASE_URL,
-            "api_key": config.VISION_FALLBACK_API_KEY,
-            "model_name": config.VISION_FALLBACK_MODEL,
-            "timeout": config.VISION_FALLBACK_TIMEOUT,
+            "base_url": fallback_cfg["base_url"],
+            "api_key": fallback_cfg["api_key"],
+            "model_name": fallback_cfg["model"],
+            "timeout": fallback_cfg["timeout"],
         }
 
         fallback_result = None
@@ -371,7 +405,8 @@ def execute(agent: dict, args: dict) -> Any:
                 "To enable image analysis, you need at least one working vision model:\n"
                 "  1. Primary: Configure a vision-capable model in System Settings → Models & Routing "
                 "→ Vision Model (requires vision_supported=1).\n"
-                "  2. Fallback: Set VISION_FALLBACK_ENABLED=1 in your .env file and provide "
+                "  2. Fallback: Enable it in System Settings → General → Vision Fallback, "
+                "or set VISION_FALLBACK_ENABLED=1 in your .env file and provide "
                 "VISION_FALLBACK_BASE_URL, VISION_FALLBACK_API_KEY, and VISION_FALLBACK_MODEL "
                 "pointing to a working vision-capable provider.\n\n"
                 f"Primary error: {last_error or 'all models failed'}\n"
