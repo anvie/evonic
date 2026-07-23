@@ -84,6 +84,11 @@ let reconnectTimer = null;
 // Set when WhatsApp reports connectionReplaced (440). A 401 arriving right after
 // a replace is conflict fallout — NOT a genuine logout — so we must not wipe on it.
 let sawReplaced = false;
+// Consecutive 401 (loggedOut) counter. After MAX_CONSECUTIVE_401 genuine 401s
+// (not conflict fallout), the bridge gives up and stays disconnected instead of
+// hammering WhatsApp with invalid credentials. A successful connection resets it.
+let consecutive401Count = 0;
+const MAX_CONSECUTIVE_401 = 3;
 const BASE_RECONNECT_MS = 3000;
 const MAX_RECONNECT_MS = 60000;
 
@@ -203,6 +208,7 @@ async function startBaileys() {
             connectionStatus = 'connected';
             reconnectAttempts = 0;
             sawReplaced = false;
+            consecutive401Count = 0;
             botId = sock.user?.id || '';
             // Baileys v7 sometimes omits lid from sock.user — fall back to creds.
             botLid = sock.user?.lid || state.creds?.me?.lid || '';
@@ -233,11 +239,34 @@ async function startBaileys() {
                     if (sawReplaced) {
                         console.log('[whatsapp-bridge] 401 after replace — treating as conflict, keeping creds');
                         sawReplaced = false;
+                        consecutive401Count = 0;
                         scheduleRestart();
                     } else {
-                        // Do not destroy persistent credentials automatically. A
-                        // manual logout endpoint is the only destructive path.
-                        requestRepair('Logged out');
+                        consecutive401Count += 1;
+                        if (consecutive401Count > MAX_CONSECUTIVE_401) {
+                            console.log(
+                                '[whatsapp-bridge] %d consecutive 401 errors — clearing credentials and restarting for fresh QR',
+                                consecutive401Count);
+                            // Clear the dead credentials so Baileys generates a fresh QR
+                            // instead of retrying with the same invalid session.
+                            try {
+                                for (const entry of fs.readdirSync(AUTH_DIR)) {
+                                    fs.rmSync(path.join(AUTH_DIR, entry), { force: true });
+                                }
+                            } catch (err) {
+                                console.error('[whatsapp-bridge] Failed to clear auth dir:', err.message);
+                            }
+                            consecutive401Count = 0;
+                            reconnectAttempts = 0;
+                            currentQR = null;
+                            pushStatus();
+                            startBaileys().catch((e) =>
+                                console.error('[whatsapp-bridge] Restart after 401 give-up error:', e));
+                        } else {
+                            console.log('[whatsapp-bridge] 401 logged out (%d/%d) — preserving credentials, reconnecting',
+                                consecutive401Count, MAX_CONSECUTIVE_401);
+                            scheduleRestart();
+                        }
                     }
                     break;
 

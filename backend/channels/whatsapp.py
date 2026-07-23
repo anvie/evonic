@@ -407,6 +407,15 @@ class WhatsAppChannel(BaseChannel):
                     # Routed to logs/baileys.log via the 'baileys' logger.
                     _bridge_logger.info("[%s] %s", self.channel_id[:8], line.decode().rstrip())
 
+                # Reap the child process to prevent zombie accumulation.
+                # The process may be already dead (stdout pipe closed) or
+                # still alive if we broke out due to _running=False.
+                try:
+                    self._process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # Still alive — deliberate stop path; kill via stop() later
+                    pass
+
                 # If _running is False, this was a deliberate stop — exit cleanly
                 if not self._running:
                     return
