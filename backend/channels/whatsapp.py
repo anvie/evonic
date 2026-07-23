@@ -518,18 +518,22 @@ class WhatsAppChannel(BaseChannel):
         quoted_sender = payload.get('quoted_sender') or ''
         quoted_sender_name = payload.get('quoted_sender_name') or ''
 
-        # Reply to the JID the message came from, in its native addressing. For
-        # a LID-addressed chat that is the @lid JID: Baileys v7 stores the
-        # per-contact tctoken keyed by LID and resolves it on send, so replying
-        # to @lid is what lets the message get delivered. (The ack-463 failures
-        # were a MISSING tctoken — fixed by the Baileys v7 upgrade — not the
-        # address; replying to the phone JID would force an extra PN->LID token
-        # lookup that can miss.)
-        if sender and jid:
-            self._jid_map[sender] = jid
+        # Reply target. WhatsApp REJECTS replies sent to a bare @lid JID for a
+        # 1:1 chat with ack error 463 (message accepted by the socket but never
+        # delivered). When the chat is LID-addressed the server gives us the
+        # phone-number JID in senderPn (alt_jid); prefer it so replies actually
+        # arrive. Groups always reply to the group JID, so only apply for DMs.
+        alt_jid = payload.get('alt_jid') or ''
+        alt_sender = payload.get('alt_sender') or ''
+        reply_jid = jid
+        if not is_group and alt_jid.endswith('@s.whatsapp.net') and alt_sender:
+            reply_jid = f"{alt_sender}@s.whatsapp.net"
+        if sender and reply_jid:
+            self._jid_map[sender] = reply_jid
         if not is_group and jid.endswith('@lid'):
-            _logger.info("WhatsApp LID DM reply target: sender=%s jid=%s alt_jid=%s",
-                         sender, jid, payload.get('alt_jid') or '(none)')
+            _logger.info(
+                "WhatsApp LID DM: sender=%s lid_jid=%s alt_jid=%s -> reply_jid=%s",
+                sender, jid, alt_jid or '(none)', reply_jid)
         text = strip_system_tags(payload.get('text', ''))
         image_data = payload.get('image')
         audio_data = payload.get('audio')

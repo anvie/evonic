@@ -30,6 +30,13 @@ let pendingCredsSave = Promise.resolve();
 let ownerAcquired = false;
 let httpServer = null;
 
+// Init-query health tracking. Baileys v7 internal init queries (fetchProps,
+// executeInitQueries) can silently time out, leaving the socket in a "zombie
+// connected" state where typing indicators work (lightweight WebSocket stanza)
+// but encrypted messages silently fail (missing session encryption state).
+let initQueriesOk = false;
+let initCheckScheduled = false;
+
 function pidIsAlive(pid) {
     if (!Number.isInteger(pid) || pid <= 0) return false;
     try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
@@ -213,10 +220,36 @@ async function startBaileys() {
             // Baileys v7 sometimes omits lid from sock.user — fall back to creds.
             botLid = sock.user?.lid || state.creds?.me?.lid || '';
             console.log('[whatsapp-bridge] Connected to WhatsApp (id=%s, lid=%s)', botId, botLid);
+
+            // Init-query health check: after connection opens, wait briefly
+            // for async init queries (fetchProps/executeInitQueries) to complete,
+            // then verify the socket is functional. signalRepository (populated
+            // by executeInitQueries) is the key indicator — without it the socket
+            // is in a "zombie connected" state where typing indicators work but
+            // encrypted messages silently fail.
+            initCheckScheduled = false; // reset from any prior check
+            if (!initCheckScheduled) {
+                initCheckScheduled = true;
+                setTimeout(() => {
+                    initCheckScheduled = false;
+                    if (!sock || connectionStatus !== 'connected') return;
+                    const hasSignalRepo = !!sock?.signalRepository?.lidMapping;
+                    const hasUserId = !!(botId && botId.includes('@'));
+                    if (hasSignalRepo && hasUserId) {
+                        initQueriesOk = true;
+                        console.log('[whatsapp-bridge] Init queries verified OK (botId=%s, signalRepository=ok)', botId);
+                    } else {
+                        initQueriesOk = false;
+                        console.error('[whatsapp-bridge] Init queries FAILED — socket degraded (botId=%s, signalRepository=%s)',
+                            botId || '(empty)', hasSignalRepo ? 'ok' : 'MISSING');
+                    }
+                }, 3000);
+            }
         }
 
         if (connection === 'close') {
             connectionStatus = 'disconnected';
+            initQueriesOk = false;  // reset — next connection re-verifies
             if (isShuttingDown) { pushStatus(); return; }
 
             const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -496,10 +529,21 @@ app.post('/send', async (req, res) => {
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'Not connected to WhatsApp' });
     }
-    // Use @lid JIDs as-is — they are valid routable identifiers in Baileys
+    if (!initQueriesOk) {
+        console.error('[whatsapp-bridge] /send refused — socket degraded (init queries incomplete)');
+        return res.status(503).json({ error: 'Socket degraded — init queries incomplete; try again after reconnect' });
+    }
     const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-    await sock.sendMessage(jid, { text });
-    res.json({ success: true });
+    const msgId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    console.log('[whatsapp-bridge] SEND msgId=%s to=%s jid=%s len=%d', msgId, to, jid, text.length);
+    try {
+        const result = await sock.sendMessage(jid, { text });
+        console.log('[whatsapp-bridge] SEND OK msgId=%s resultKey=%j', msgId, result?.key);
+        res.json({ success: true, message_id: msgId });
+    } catch (e) {
+        console.error('[whatsapp-bridge] SEND FAIL msgId=%s to=%s error=%s', msgId, jid, e.message);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.post('/send-buttons', async (req, res) => {
