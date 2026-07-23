@@ -1979,20 +1979,21 @@ class AgentRuntime:
                     if _skill_id in assigned_skill_ids and _tid not in _existing:
                         assigned_tool_ids.append(_tid)
 
-            # Auto-assign save_artifact to all agents so they can save files.
-            # No DB assignment needed — every agent can create and store artifacts.
-            if 'save_artifact' not in assigned_tool_ids:
-                assigned_tool_ids.append('save_artifact')
+            # Auto-assign artifact tools (save_artifact, list_artifacts, fetch_artifact)
+            # only when artifacts_enabled is True for the agent.
+            if agent.get('artifacts_enabled', True):
+                if 'save_artifact' not in assigned_tool_ids:
+                    assigned_tool_ids.append('save_artifact')
 
-            # Agents with save_artifact automatically get list_artifacts.
-            # fetch_artifact is only auto-assigned for agents with workplace or sandbox;
-            # local agents can access artifacts directly via bash/runpy.
-            if 'save_artifact' in assigned_tool_ids:
-                if 'list_artifacts' not in assigned_tool_ids:
-                    assigned_tool_ids.append('list_artifacts')
-                if agent.get('workplace_id') or agent.get('sandbox_enabled', 0):
-                    if 'fetch_artifact' not in assigned_tool_ids:
-                        assigned_tool_ids.append('fetch_artifact')
+                # Agents with save_artifact automatically get list_artifacts.
+                # fetch_artifact is only auto-assigned for agents with workplace or sandbox;
+                # local agents can access artifacts directly via bash/runpy.
+                if 'save_artifact' in assigned_tool_ids:
+                    if 'list_artifacts' not in assigned_tool_ids:
+                        assigned_tool_ids.append('list_artifacts')
+                    if agent.get('workplace_id') or agent.get('sandbox_enabled', 0):
+                        if 'fetch_artifact' not in assigned_tool_ids:
+                            assigned_tool_ids.append('fetch_artifact')
 
             # Auto-assign send_file to all agents so they can send files via channels.
             # No DB assignment needed — every agent can send file attachments.
