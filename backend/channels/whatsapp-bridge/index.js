@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
+const { OutboundLifecycle } = require('./outbound-lifecycle');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const CALLBACK_URL = process.env.CALLBACK_URL || '';
@@ -29,6 +30,25 @@ let saveCredsNow = null;
 let pendingCredsSave = Promise.resolve();
 let ownerAcquired = false;
 let httpServer = null;
+
+// Kept outside startBaileys() so correlation and retry state survive reconnects.
+const outboundLifecycle = new OutboundLifecycle({
+    send: (jid, content) => {
+        if (!sock || connectionStatus !== 'connected' || !messageSendReady) {
+            throw new Error('WhatsApp message transport is not ready');
+        }
+        return sock.sendMessage(jid, content);
+    },
+    emit: (payload) => {
+        const level = payload.status === 'failed' ? 'error' : 'log';
+        console[level](
+            '[whatsapp-bridge] OUTBOUND correlationId=%s status=%s jid=%s retry=%d reason=%s',
+            payload.correlation_id, payload.status, payload.jid,
+            payload.retry_count, payload.reason || '');
+        if (CALLBACK_URL) postCallback(payload);
+    },
+    maxRetries: 1,
+});
 
 // Message readiness follows Baileys' authenticated connection state. Internal
 // init queries such as fetchProps are optional metadata queries; their timeout
@@ -196,6 +216,15 @@ async function startBaileys() {
         });
     });
 
+    sock.ev.on('messages.update', (updates) => {
+        outboundLifecycle.onMessageUpdates(updates).catch((e) => {
+            console.error('[whatsapp-bridge] outbound message update handling failed:', e.message);
+        });
+    });
+    sock.ev.on('message-receipt.update', (updates) => {
+        outboundLifecycle.onReceipts(updates);
+    });
+
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
             currentQR = qr;
@@ -219,14 +248,23 @@ async function startBaileys() {
             // populate signalRepository and must not block message delivery.
             messageSendReady = !!(botId && botId.includes('@'));
             console.log('[whatsapp-bridge] Message delivery ready (botId=%s)', botId || '(empty)');
+            outboundLifecycle.onConnection('connected').catch((e) => {
+                console.error('[whatsapp-bridge] pending outbound retry failed:', e.message);
+            });
         }
 
         if (connection === 'close') {
             connectionStatus = 'disconnected';
             messageSendReady = false;
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const terminal = statusCode === DisconnectReason.loggedOut
+                || statusCode === DisconnectReason.badSession
+                || statusCode === DisconnectReason.connectionReplaced;
+            outboundLifecycle.onConnection('disconnected', { terminal }).catch((e) => {
+                console.error('[whatsapp-bridge] outbound disconnect handling failed:', e.message);
+            });
             if (isShuttingDown) { pushStatus(); return; }
 
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
             const reasonName = Object.keys(DisconnectReason)
                 .find((k) => DisconnectReason[k] === statusCode) || 'unknown';
             console.log('[whatsapp-bridge] Connection closed (statusCode=%s reason=%s)',
@@ -469,24 +507,26 @@ app.get('/qr', async (req, res) => {
 });
 
 app.post('/send', async (req, res) => {
-    const { to, text } = req.body || {};
+    const { to, text, correlation_id: requestedCorrelationId, retry_eligible: retryEligible } = req.body || {};
     if (!to || !text) return res.status(400).json({ error: 'to and text required' });
-    if (!sock || connectionStatus !== 'connected') {
-        return res.status(503).json({ error: 'Not connected to WhatsApp' });
-    }
-    if (!messageSendReady) {
+    if (!sock || connectionStatus !== 'connected' || !messageSendReady) {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
     const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-    const msgId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    console.log('[whatsapp-bridge] SEND msgId=%s to=%s jid=%s len=%d', msgId, to, jid, text.length);
+    const correlationId = requestedCorrelationId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    console.log('[whatsapp-bridge] SEND accepted correlationId=%s to=%s jid=%s len=%d', correlationId, to, jid, text.length);
     try {
-        const result = await sock.sendMessage(jid, { text });
-        console.log('[whatsapp-bridge] SEND OK msgId=%s resultKey=%j', msgId, result?.key);
-        res.json({ success: true, message_id: msgId });
+        const result = await outboundLifecycle.accept({
+            correlationId,
+            jid,
+            content: { text },
+            retryEligible: Boolean(retryEligible),
+        });
+        res.json({ success: true, status: result.status, correlation_id: correlationId,
+            message_id: result.message_id, retry_count: result.retry_count });
     } catch (e) {
-        console.error('[whatsapp-bridge] SEND FAIL msgId=%s to=%s error=%s', msgId, jid, e.message);
-        res.status(500).json({ error: e.message });
+        console.error('[whatsapp-bridge] SEND FAIL correlationId=%s to=%s error=%s', correlationId, jid, e.message);
+        res.status(500).json({ error: e.message, correlation_id: correlationId });
     }
 });
 

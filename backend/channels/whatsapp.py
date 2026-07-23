@@ -8,6 +8,7 @@ import secrets
 import subprocess
 import time
 import threading
+import uuid
 import requests
 from typing import Dict, Any, Optional
 from backend.channels.base import BaseChannel, strip_system_tags
@@ -114,6 +115,9 @@ class WhatsAppChannel(BaseChannel):
         self._last_bridge_status: Optional[str] = None
         # Maps external_user_id (bare number) → full WhatsApp JID for reliable replies
         self._jid_map: Dict[str, str] = {}
+        # DMs received on a LID and resolved to a phone JID are the only sends
+        # eligible for bridge-managed recovery after an asynchronous NACK.
+        self._resolved_lid_dm_targets = set()
         # Debounce state for llm_thinking typing indicator
         self._typing_timer: Dict[str, threading.Timer] = {}
         self._typing_lock = threading.Lock()
@@ -498,6 +502,20 @@ class WhatsAppChannel(BaseChannel):
             })
             return
 
+        if payload.get('event') == 'outbound_status':
+            status = payload.get('status') or 'unknown'
+            _logger.info(
+                'WhatsApp outbound status: correlation_id=%s status=%s retry=%s reason=%s',
+                payload.get('correlation_id'), status,
+                payload.get('retry_count', 0), payload.get('reason', ''),
+            )
+            event_stream.emit('whatsapp_outbound_status', {
+                'agent_id': self.agent_id,
+                'channel_id': self.channel_id,
+                **payload,
+            })
+            return
+
         # Handle button reply (approval flow)
         button_id = payload.get('button_id', '')
         if button_id:
@@ -530,6 +548,9 @@ class WhatsAppChannel(BaseChannel):
             reply_jid = f"{alt_sender}@s.whatsapp.net"
         if sender and reply_jid:
             self._jid_map[sender] = reply_jid
+        if (not is_group and jid.endswith('@lid')
+                and alt_jid.endswith('@s.whatsapp.net') and alt_sender):
+            self._resolved_lid_dm_targets.add(sender)
         if not is_group and jid.endswith('@lid'):
             _logger.info(
                 "WhatsApp LID DM: sender=%s lid_jid=%s alt_jid=%s -> reply_jid=%s",
@@ -925,7 +946,13 @@ class WhatsAppChannel(BaseChannel):
         # clear typing state so no phantom indicator survives the send.
         self._clear_typing(external_user_id)
         for chunk in _split_message(text):
-            if self._bridge_send_retry({'to': to, 'text': chunk}, external_user_id):
+            payload = {
+                'to': to,
+                'text': chunk,
+                'correlation_id': uuid.uuid4().hex,
+                'retry_eligible': external_user_id in self._resolved_lid_dm_targets,
+            }
+            if self._bridge_send_retry(payload, external_user_id):
                 _logger.info("WhatsApp message sent to %s (channel %s)", external_user_id, self.channel_id)
         # Actively clear any lingering composing presence on the recipient
         self.send_typing(external_user_id, state='paused')
