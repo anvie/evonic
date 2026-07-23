@@ -37,6 +37,7 @@ def test_resolved_lid_dm_uses_phone_jid_and_enables_recovery_retry():
 
     assert sent[0]["to"] == "628111@s.whatsapp.net"
     assert sent[0]["retry_eligible"] is True
+    assert sent[0]["retry_jid"] == "lid-user@lid"
     assert sent[0]["correlation_id"]
 
 

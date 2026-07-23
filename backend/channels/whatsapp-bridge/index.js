@@ -507,21 +507,38 @@ app.get('/qr', async (req, res) => {
 });
 
 app.post('/send', async (req, res) => {
-    const { to, text, correlation_id: requestedCorrelationId, retry_eligible: retryEligible } = req.body || {};
+    const {
+        to, text, retry_jid: requestedRetryJid,
+        correlation_id: requestedCorrelationId,
+        retry_eligible: retryEligible,
+    } = req.body || {};
     if (!to || !text) return res.status(400).json({ error: 'to and text required' });
-    if (!sock || connectionStatus !== 'connected' || !messageSendReady) {
+    if (!sock || connectionStatus !== 'connected') {
+        return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
+    }
+    if (!messageSendReady) {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
     const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+    const retryJid = requestedRetryJid?.endsWith('@lid') ? requestedRetryJid : null;
     const correlationId = requestedCorrelationId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    console.log('[whatsapp-bridge] SEND accepted correlationId=%s to=%s jid=%s len=%d', correlationId, to, jid, text.length);
+    console.log('[whatsapp-bridge] SEND requested correlationId=%s to=%s jid=%s len=%d', correlationId, to, jid, text.length);
     try {
         const result = await outboundLifecycle.accept({
             correlationId,
             jid,
+            retryJid,
             content: { text },
-            retryEligible: Boolean(retryEligible),
+            retryEligible: Boolean(retryEligible && retryJid),
         });
+        if (result.status === 'failed') {
+            return res.status(500).json({
+                success: false,
+                status: result.status,
+                correlation_id: correlationId,
+                retry_count: result.retry_count,
+            });
+        }
         res.json({ success: true, status: result.status, correlation_id: correlationId,
             message_id: result.message_id, retry_count: result.retry_count });
     } catch (e) {
