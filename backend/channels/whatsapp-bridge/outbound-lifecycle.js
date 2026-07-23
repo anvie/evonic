@@ -118,6 +118,43 @@ class OutboundLifecycle {
         }
     }
 
+    // handleBadAck is called from the pino logger hook when Baileys logs
+    // "received error in ack". This bypasses the EventBuffer entirely, so it
+    // catches ACK 463 even when the corresponding messages.update event is
+    // lost due to socket churn or buffer timing.
+    async handleBadAck(messageId, errorCode) {
+        console.log('[whatsapp-bridge] handleBadAck called messageId=%s errorCode=%s',
+            messageId, errorCode);
+        this.prune();
+        if (!messageId) return;
+        const entry = this.byKey.get(messageId);
+        if (!entry) {
+            // Buffer the NACK for replay when the key becomes known (same
+            // path that onMessageUpdates uses for early updates).
+            if (this.pendingUpdates.size >= this.maxPendingUpdates
+                    && !this.pendingUpdates.has(messageId)) {
+                this.pendingUpdates.delete(this.pendingUpdates.keys().next().value);
+            }
+            const buffered = this.pendingUpdates.get(messageId)
+                || { createdAt: Date.now(), updates: [] };
+            if (buffered.updates.length < 4) {
+                buffered.updates.push({
+                    key: { id: messageId },
+                    update: {
+                        status: FAILED_STATUS,
+                        messageStubParameters: [String(errorCode)],
+                    },
+                });
+            }
+            this.pendingUpdates.set(messageId, buffered);
+            return;
+        }
+        if (entry.status === 'delivered' || entry.status === 'failed') return;
+        const code = String(errorCode || '');
+        const reason = code ? `Message rejected (${code})` : 'Message rejected';
+        await this.fail(entry, reason, true, code === '463');
+    }
+
     async fail(entry, reason, asynchronous, retryable = false) {
         if (entry.status === 'delivered' || entry.status === 'failed') return;
         const canRetry = asynchronous && retryable && entry.retryEligible

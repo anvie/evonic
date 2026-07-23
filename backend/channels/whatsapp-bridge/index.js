@@ -50,6 +50,35 @@ const outboundLifecycle = new OutboundLifecycle({
     maxRetries: 1,
 });
 
+// Hook Baileys' internal pino logger so ACK 463 (and other bad-ack errors)
+// bypass the EventBuffer entirely.
+//
+// Baileys 6.x / early 7.x:
+//   logger.warn({ attrs: { id, error } }, 'received error in ack')
+//
+// Baileys 7.x (463-specific branch):
+//   logger.warn({ msgId: id, from }, 'error 463: account restricted ...')
+//
+// Both emit messages.update afterwards, but the pino hook is synchronous
+// and fires first — it is our most reliable signal.
+{
+    const rawWarn = logger.warn.bind(logger);
+    logger.warn = (obj, msg) => {
+        if (typeof obj === 'object') {
+            // Format A: { attrs: { id, error } }  (generic NACK, Baileys 6.x / 7.x else-branch)
+            // Format B: { msgId, from }           (463-specific branch, Baileys 7.x)
+            const msgId = obj?.attrs?.id || obj?.msgId || '';
+            const code = obj?.attrs?.error || '';
+            if (msgId && code) {
+                console.log('[whatsapp-bridge] logger.warn hook: msgId=%s code=%s msg=%s', msgId, code, msg);
+                outboundLifecycle.handleBadAck(msgId, code).catch(
+                    (e) => console.error('[whatsapp-bridge] Bad ACK handler error:', e.message));
+            }
+        }
+        return rawWarn(obj, msg);
+    };
+}
+
 // Message readiness follows Baileys' authenticated connection state. Internal
 // init queries such as fetchProps are optional metadata queries; their timeout
 // does not mean Signal encryption state is unavailable.
