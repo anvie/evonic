@@ -915,8 +915,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 session_id, _active_projection.error)
         elif _active_projection.applied:
             _logger.info(
-                "active_context shadow session=%s canonical=%d projected=%d saved=%d groups=%d",
-                session_id, _active_projection.canonical_tokens,
+                "active_context applied session=%s mode=%s canonical=%d projected=%d saved=%d groups=%d",
+                session_id, _active_projection.mode, _active_projection.canonical_tokens,
                 _active_projection.projected_tokens, _active_projection.saved_tokens,
                 _active_projection.compacted_groups)
         event_stream.emit('active_context_projection', {
@@ -924,7 +924,15 @@ def run_tool_loop(agent: Dict[str, Any],
             'session_id': session_id,
             **_active_projection.metrics(),
         })
-        _request_messages = messages
+        # Use the projected (compacted) messages when the active context projection
+        # was successfully applied, otherwise fall back to canonical messages.
+        # This replaces completed informational tool groups with compact receipt
+        # lines, reducing token waste on repeated tool outputs.
+        _request_messages = (
+            _active_projection.messages
+            if _active_projection.applied and not _active_projection.failed_open
+            else messages
+        )
 
         # LOCK ORDERING: Main path — llm_lock only. No other locks held here.
         # Keep thinking enabled unless the thinking budget was exceeded, in which
