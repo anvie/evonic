@@ -448,6 +448,8 @@ def run_tool_loop(agent: Dict[str, Any],
 
     # Restore persisted skill state for this session (survives across turns until unload or clear)
     _skill_system_mds: dict = dict(session_skill_mds.get(session_id, {}))
+    # Track which skill SYSTEM.md have been fully injected this loop (for compact receipts)
+    _injected_skills: set = set()
     _loaded_lazy_skills: dict = {
         sk_id: [td.get('function', {}).get('name', '') for td in tds]
         for sk_id, tds in session_skill_tools.get(session_id, {}).items()
@@ -468,6 +470,31 @@ def run_tool_loop(agent: Dict[str, Any],
     }
     _available_tool_names.discard('')  # remove empty strings if any
     _logger.debug("Available tools: %d names", len(_available_tool_names))
+
+    # --- Tool pruning: track how many times each tool has been called in this loop ---
+    _tool_call_counts: Dict[str, int] = {}
+    _TOOL_PRUNE_THRESHOLD = 3  # prune zero-call tools after this many iterations
+    _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch'}
+
+    def _prune_tools(tools_list: List[dict], iteration: int) -> List[dict]:
+        """Prune zero-call tools after the threshold iteration.
+        
+        After _TOOL_PRUNE_THRESHOLD iterations, tools that have never been called
+        (call count == 0) are removed from the list sent to the LLM — except for
+        essential tools that the agent may always need.
+        """
+        if iteration < _TOOL_PRUNE_THRESHOLD:
+            return tools_list
+        pruned = []
+        for t in tools_list:
+            fn_name = t.get('function', {}).get('name', '')
+            if fn_name in _ESSENTIAL_TOOLS or _tool_call_counts.get(fn_name, 0) > 0:
+                pruned.append(t)
+        if len(pruned) < len(tools_list):
+            _logger.debug(
+                "Tool pruning: %d -> %d tools (iteration %d >= threshold %d)",
+                len(tools_list), len(pruned), iteration, _TOOL_PRUNE_THRESHOLD)
+        return pruned
 
     # Add restored skill tool IDs to assigned_tool_ids for authorization guard
     _assigned = agent_context.get('assigned_tool_ids')
@@ -779,6 +806,9 @@ def run_tool_loop(agent: Dict[str, Any],
         if _llm_call_count > _max_llm_calls:
             _logger.error("Maximum LLM calls reached (%d) without finishing — aborting", _max_llm_calls)
             break
+        # Prune zero-call tools after threshold iterations to reduce token waste
+        # from schema definitions of tools the agent never uses in this session.
+        _effective_tools = _prune_tools(tools, _iteration)
         # Drain injected user messages from mid-loop injection queue.
         # Multiple queued messages are merged into one to avoid consecutive user turns.
         if inject_queue is not None:
@@ -836,10 +866,19 @@ def run_tool_loop(agent: Dict[str, Any],
                 messages.insert(1, state_msg)
 
         # Inject / update persistent skill SYSTEM.md as system messages (re-injected each iteration
-        # so skill instructions survive summarization in long conversations)
+        # so skill instructions survive summarization in long conversations).
+        # On subsequent iterations skills already injected get a compact receipt instead
+        # of the full SYSTEM.md to save tokens.
         for sk_id, sk_content in _skill_system_mds.items():
             marker = f'## Skill Context: {sk_id}'
-            sk_msg = {"role": "system", "content": f"{marker}\n\n{sk_content}"}
+            if sk_id in _injected_skills:
+                sk_msg = {
+                    "role": "system",
+                    "content": f'{marker}\n\n[Skill "{sk_id}" is loaded. Refer to earlier system message for full instructions.]'
+                }
+            else:
+                sk_msg = {"role": "system", "content": f"{marker}\n\n{sk_content}"}
+                _injected_skills.add(sk_id)
             sk_idx = next(
                 (i for i, m in enumerate(messages)
                  if m.get('role') == 'system' and marker in m.get('content', '')),
@@ -943,7 +982,7 @@ def run_tool_loop(agent: Dict[str, Any],
             # _logger.info("[LOCK] _llm_lock - ACQUIRED (session=%s, main LLM call)", session_id)
             result = llm.chat_completion(
                 messages=_request_messages,
-                tools=tools if tools else None,
+                tools=_prune_tools(tools, _iteration) if tools else None,
                 temperature=None,
                 enable_thinking=_enable_thinking_this_call,
                 max_tokens=None,
@@ -1217,7 +1256,7 @@ def run_tool_loop(agent: Dict[str, Any],
                     with llm_lock:
                         result = llm.chat_completion(
                             messages=messages,
-                            tools=tools if tools else None,
+                            tools=_prune_tools(tools, _iteration) if tools else None,
                             temperature=None,
                             enable_thinking=_enable_thinking_this_call,
                             max_tokens=None,
@@ -1299,7 +1338,7 @@ def run_tool_loop(agent: Dict[str, Any],
                     with llm_lock:
                         _fallback_result = _fallback_llm.chat_completion(
                             messages=messages,
-                            tools=tools if tools else None,
+                            tools=_prune_tools(tools, _iteration) if tools else None,
                             temperature=None,
                             enable_thinking=_enable_thinking_this_call,
                             max_tokens=None,
@@ -1890,6 +1929,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 'external_user_id': external_user_id, 'channel_id': channel_id,
                 'tool_name': fn_name, 'tool_args': args, 'param_types': pt,
             })
+            _tool_call_counts[fn_name] = _tool_call_counts.get(fn_name, 0) + 1
             _tool_records.append((tc, fn_name, args, pt))
 
             if fn_name in _READ_ONLY_TOOLS and fn_name not in _ALWAYS_SERIAL_TOOLS:
