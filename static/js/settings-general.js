@@ -28,6 +28,7 @@ window.settingsGeneral = {
             this._populateModelSelects(models, {
                 defaultModelId: defaultModel && defaultModel.model ? defaultModel.model.id : "",
                 visionModelId: general.vision_model_id || "",
+                visionFallbackModelId: general.vision_fallback_model_id || "",
                 kbOrganizerModelId: general.kb_organizer_model_id || "",
                 classifierModelId: classifier ? classifier.model_id || "" : "",
                 cmpModelId: cmpModel ? cmpModel.model_id || "" : "",
@@ -86,6 +87,7 @@ window.settingsGeneral = {
         return {
             defaultModelId: val("default-model-select"),
             visionModelId: val("vision-model-select"),
+            visionFallbackModelId: val("vision-fallback-model-select"),
             kbOrganizerModelId: val("kb-organizer-model-select"),
             classifierModelId: val("task-classifier-model-select"),
             cmpModelId: val("cmp-model-select"),
@@ -130,6 +132,12 @@ window.settingsGeneral = {
             enabled.filter((m) => m.vision_supported),
             current.visionModelId,
             "Auto-detect (first vision-capable model)",
+        );
+        fill(
+            "vision-fallback-model-select",
+            enabled.filter((m) => m.vision_supported),
+            current.visionFallbackModelId,
+            "No fallback",
         );
         fill(
             "kb-organizer-model-select",
