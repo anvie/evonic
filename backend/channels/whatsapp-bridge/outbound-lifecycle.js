@@ -100,8 +100,15 @@ class OutboundLifecycle {
             if (isDelivery) {
                 this.deliver(entry, messageId);
             } else if (isFailure && messageId === entry.activeKey) {
+                // 463 = missing privacy token (tctoken). Baileys 7.x fires an
+                // async issuePrivacyTokens recovery in the background.
+                // Retrying counts as another "reach out" and worsens the
+                // restriction per Baileys source (messages-recv.js L1518).
+                // Let the fire-and-forget token recovery complete; the next
+                // message from the user will carry the stored tctoken.
                 const code = failureCode(update);
-                await this.fail(entry, failureReason(update), true, code === '463');
+                const retryable = code !== '463';
+                await this.fail(entry, failureReason(update), true, retryable);
             }
         }
     }
@@ -152,7 +159,8 @@ class OutboundLifecycle {
         if (entry.status === 'delivered' || entry.status === 'failed') return;
         const code = String(errorCode || '');
         const reason = code ? `Message rejected (${code})` : 'Message rejected';
-        await this.fail(entry, reason, true, code === '463');
+        // 463 = tctoken missing; retrying worsens restriction (see above).
+        await this.fail(entry, reason, true, code !== '463');
     }
 
     async fail(entry, reason, asynchronous, retryable = false) {

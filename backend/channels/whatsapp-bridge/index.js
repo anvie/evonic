@@ -68,7 +68,11 @@ const outboundLifecycle = new OutboundLifecycle({
             // Format A: { attrs: { id, error } }  (generic NACK, Baileys 6.x / 7.x else-branch)
             // Format B: { msgId, from }           (463-specific branch, Baileys 7.x)
             const msgId = obj?.attrs?.id || obj?.msgId || '';
-            const code = obj?.attrs?.error || '';
+            // Format A carries error in attrs.error; Format B carries it in the message text.
+            // Fall back to msg text when attrs.error is absent (e.g. "error 463: ...")
+            const codeA = obj?.attrs?.error || '';
+            const codeB = typeof msg === 'string' && msg.startsWith('error ') ? msg.split(' ')[1].replace(/[^0-9]/g, '') : '';
+            const code = codeA || codeB;
             if (msgId && code) {
                 console.log('[whatsapp-bridge] logger.warn hook: msgId=%s code=%s msg=%s', msgId, code, msg);
                 outboundLifecycle.handleBadAck(msgId, code).catch(
