@@ -204,19 +204,6 @@ CONNECTOR_PING_INTERVAL = _get_env_int("CONNECTOR_PING_INTERVAL", 30, min_val=5,
 CONNECTOR_PING_TIMEOUT = _get_env_int("CONNECTOR_PING_TIMEOUT", 10, min_val=1, max_val=60)
 CONNECTOR_PAIRING_CODE_TTL = _get_env_int("CONNECTOR_PAIRING_CODE_TTL", 300, min_val=60, max_val=3600)  # seconds
 
-# Secondary vision model fallback for describe_image tool.
-# When enabled and all primary vision models fail (connection error, auth failure,
-# timeout, or any other API error), the tool will attempt a last-resort call to a
-# separately-configured vision model endpoint.
-# Set VISION_FALLBACK_ENABLED=1 (or true/yes/on) and provide the remaining vars
-# to activate the fallback.  The fallback is provider-agnostic: any OpenAI-
-# compatible vision model endpoint works.
-VISION_FALLBACK_ENABLED = _get_env_bool("VISION_FALLBACK_ENABLED", False)
-VISION_FALLBACK_BASE_URL = os.getenv("VISION_FALLBACK_BASE_URL", "")
-VISION_FALLBACK_API_KEY = os.getenv("VISION_FALLBACK_API_KEY", "")
-VISION_FALLBACK_MODEL = os.getenv("VISION_FALLBACK_MODEL", "")
-VISION_FALLBACK_TIMEOUT = _get_env_int("VISION_FALLBACK_TIMEOUT", 120, min_val=1, max_val=300)
-
 AGENT_MAX_TOOL_ITERATIONS = _get_env_int("AGENT_MAX_TOOL_ITERATIONS", 100, min_val=1, max_val=1000)
 EVAL_MAX_TOOL_ITERATIONS = _get_env_int("EVAL_MAX_TOOL_ITERATIONS", 30, min_val=1, max_val=500)
 AGENT_MAX_TOOL_RESULT_CHARS = _get_env_int("AGENT_MAX_TOOL_RESULT_CHARS", 8000, min_val=1, max_val=1_048_576)
