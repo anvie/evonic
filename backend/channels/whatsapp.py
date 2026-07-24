@@ -569,6 +569,9 @@ class WhatsAppChannel(BaseChannel):
                 'channel_id': self.channel_id,
                 **payload,
             })
+            if (status == 'failed' and payload.get('terminal')
+                    and payload.get('reachout_timelocked')):
+                self._record_reachout_restriction(payload, db, event_stream)
             return
 
         # Handle button reply (approval flow)
@@ -831,7 +834,7 @@ class WhatsAppChannel(BaseChannel):
                     self.send_typing(sender)
 
             for chunk in _split_message(response):
-                self._do_send(sender, chunk)
+                self._do_send(sender, chunk, session_id=session_id)
         else:
             # No message will follow — actively clear any composing presence
             # shown during the thinking phase.
@@ -999,7 +1002,8 @@ class WhatsAppChannel(BaseChannel):
         except Exception:
             return {'status': 'disconnected'}
 
-    def _do_send(self, external_user_id: str, text: str):
+    def _do_send(self, external_user_id: str, text: str,
+                 session_id: Optional[str] = None):
         # Prefer the exact inbound JID, including @lid. Persisted routes restore
         # this mapping for delayed agent/tool sends after a process restart.
         to = self._jid_map.get(external_user_id, external_user_id)
@@ -1021,6 +1025,8 @@ class WhatsAppChannel(BaseChannel):
                 'text': chunk,
                 'correlation_id': correlation_id,
             }
+            if session_id:
+                payload['session_id'] = session_id
             if self._bridge_send_retry(payload, external_user_id):
                 _logger.info(
                     "WhatsApp outbound accepted: correlation_id=%s channel=%s",
@@ -1126,6 +1132,57 @@ class WhatsAppChannel(BaseChannel):
                 _logger.error("WhatsApp send failed to %s: %s", external_user_id, e)
                 return False
         return False
+
+    def _record_reachout_restriction(self, payload: dict, db, event_stream) -> None:
+        """Persist a deduplicated restriction warning in the originating session."""
+        session_id = payload.get('session_id')
+        if not session_id or self.get_channel_type() not in ('whatsapp', 'whatsapp_shared'):
+            return
+        session = db.get_session_with_details(session_id)
+        if not session:
+            _logger.warning('Ignoring WhatsApp restriction callback for unknown session %s', session_id)
+            return
+        if session.get('channel_id') != self.channel_id:
+            _logger.warning('Ignoring WhatsApp restriction callback for channel mismatch: %s', session_id)
+            return
+        session_agent_id = session.get('agent_id')
+        if (self.get_channel_type() == 'whatsapp'
+                and session_agent_id != self.agent_id):
+            _logger.warning('Ignoring WhatsApp restriction callback for agent mismatch: %s', session_id)
+            return
+        if not session_agent_id:
+            _logger.warning('Ignoring WhatsApp restriction callback without session agent: %s', session_id)
+            return
+        enforcement_type = payload.get('reachout_enforcement_type') or 'unknown enforcement'
+        ends = payload.get('reachout_enforcement_ends') or 'an unknown time'
+        restriction_key = f'{enforcement_type}|{ends}'
+        content = (
+            '[SYSTEM/whatsapp-restriction] WhatsApp sending is temporarily restricted '
+            f'for this account ({enforcement_type}). Sending may resume after {ends}.'
+        )
+        for message in db.get_session_messages(session_id, limit=100, agent_id=session_agent_id):
+            metadata = message.get('metadata') or {}
+            if metadata.get('whatsapp_restriction_key') == restriction_key:
+                return
+        metadata = {
+            'whatsapp_restriction_key': restriction_key,
+            'reachout_enforcement_type': enforcement_type,
+            'reachout_enforcement_ends': ends,
+            'correlation_id': payload.get('correlation_id'),
+        }
+        db.add_chat_message(session_id, 'system', content, agent_id=session_agent_id,
+                            metadata=metadata)
+        _logger.warning(
+            'WhatsApp reach-out restriction in session %s: type=%s ends=%s',
+            session_id, enforcement_type, ends,
+        )
+        event_stream.emit('whatsapp_restriction_warning', {
+            'agent_id': session_agent_id,
+            'channel_id': self.channel_id,
+            'session_id': session_id,
+            'content': content,
+            'metadata': metadata,
+        })
 
     def _bridge_post(self, path: str, payload: dict):
         resp = requests.post(

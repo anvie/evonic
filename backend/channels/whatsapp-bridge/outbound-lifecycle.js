@@ -39,13 +39,13 @@ class OutboundLifecycle {
         this.maxPendingUpdates = 1000;
     }
 
-    async accept({ correlationId, jid, content }) {
+    async accept({ correlationId, jid, content, metadata = {} }) {
         this.prune();
         if (this.byCorrelation.has(correlationId)) {
             return this.snapshot(this.byCorrelation.get(correlationId));
         }
         const entry = {
-            correlationId, jid, content,
+            correlationId, jid, content, metadata,
             status: 'sending', keys: new Set(), activeKey: null,
             createdAt: Date.now(),
         };
@@ -199,6 +199,7 @@ class OutboundLifecycle {
             status,
             jid: entry.jid,
             retry_count: 0,
+            ...entry.metadata,
             ...extra,
         });
     }

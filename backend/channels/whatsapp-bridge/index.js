@@ -574,7 +574,7 @@ app.get('/qr', async (req, res) => {
 });
 
 app.post('/send', async (req, res) => {
-    const { to, text, correlation_id: requestedCorrelationId } = req.body || {};
+    const { to, text, correlation_id: requestedCorrelationId, session_id: sessionId } = req.body || {};
     if (!to || !text) return res.status(400).json({ error: 'to and text required' });
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
@@ -590,6 +590,7 @@ app.post('/send', async (req, res) => {
             correlationId,
             jid,
             content: { text },
+            metadata: sessionId ? { session_id: sessionId } : {},
         });
         if (result.status === 'failed') {
             return res.status(500).json({
