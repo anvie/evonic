@@ -184,6 +184,12 @@ SANDBOX_CPU_LIMIT = os.getenv("SANDBOX_CPU_LIMIT", "1")
 SANDBOX_NETWORK = os.getenv("SANDBOX_NETWORK", "bridge")  # 'none' or 'bridge'
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "evonic-sandbox:latest")
 SANDBOX_MAX_CONTAINERS = _get_env_int("SANDBOX_MAX_CONTAINERS", 10, min_val=1, max_val=100)
+# When True (default), the main agent's Docker sandbox container is keyed by
+# agent_id instead of session_id, runs with --restart=unless-stopped, and is
+# stopped (not removed) on `evonic stop` so installed packages and state survive
+# across sessions. Subagents and explorer sub-workspaces remain session-scoped.
+SANDBOX_PERSISTENT_CONTAINER_ENABLED = _get_env_bool(
+    "SANDBOX_PERSISTENT_CONTAINER_ENABLED", True)
 
 # Sandbox backend selector: 'docker' (default) or 'bwrap' (Linux-only, bubblewrap).
 # 'bwrap' runs each command in a lightweight namespace sandbox (no daemon/image) —

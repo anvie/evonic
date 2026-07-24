@@ -230,15 +230,26 @@ class BackendRegistry:
                                        is_explorer=is_explorer)
             else:
                 from backend.tools.lib.backends.docker_backend import DockerBackend
+                from config import SANDBOX_PERSISTENT_CONTAINER_ENABLED
                 parent_session_id = ((agent_context or {}).get('_sandbox_parent_session_id')
                                      if is_explorer else None)
                 parent_workspace = ((agent_context or {}).get('_sandbox_parent_workspace')
                                     if parent_session_id else None)
+                # Main agent (not a sub-agent, not an explorer) gets a persistent
+                # container keyed by agent_id, so installed packages survive
+                # across sessions and across `evonic` restarts. Sub-agents and
+                # explorers share their parent agent's container.
+                persistent = (
+                    SANDBOX_PERSISTENT_CONTAINER_ENABLED
+                    and not is_subagent
+                    and not is_explorer
+                )
                 backend = DockerBackend(
                     session_id, agent_id=agent_id, workspace=workspace,
                     is_subagent=is_subagent, is_explorer=is_explorer,
                     container_session_id=parent_session_id,
                     container_workspace=parent_workspace,
+                    persistent=persistent,
                 )
         else:
             from backend.tools.lib.backends.local_backend import LocalBackend
