@@ -381,7 +381,14 @@ async function startBaileys() {
             }
             const altSender = altJid.includes('@') ? altJid.split('@')[0].split(':')[0] : altJid;
             const messageId = msg.key.id || '';
-            const content = unwrapMessage(msg.message);
+            const rawMessage = msg.message || {};
+            const content = unwrapMessage(rawMessage);
+            const wrapperTypes = Object.keys(rawMessage).filter((key) =>
+                key === 'ephemeralMessage' || key === 'viewOnceMessage'
+                || key === 'viewOnceMessageV2' || key === 'documentWithCaptionMessage');
+            const payloadKeys = Object.keys(content || {});
+            const contentType = payloadKeys[0] || 'unknown';
+            const messageTimestamp = Number(msg.messageTimestamp || 0) || null;
 
             // Remember display names of group members so quoted authors resolve
             if (isGroup && msg.pushName && sender) {
@@ -478,6 +485,10 @@ async function startBaileys() {
 
             postCallback({
                 from: sender, jid, message_id: messageId, text, image,
+                message_timestamp: messageTimestamp,
+                content_type: contentType,
+                wrapper_types: wrapperTypes,
+                payload_keys: payloadKeys,
                 alt_sender: altSender,
                 alt_jid: altJid,
                 // quoted_text remains for older channel consumers; quoted_message
@@ -553,7 +564,9 @@ app.post('/send', async (req, res) => {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
     const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-    const retryJid = requestedRetryJid?.endsWith('@lid') ? requestedRetryJid : null;
+    const retryJid = requestedRetryJid?.includes('@') && requestedRetryJid !== jid
+        ? requestedRetryJid
+        : null;
     const correlationId = requestedCorrelationId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     console.log('[whatsapp-bridge] SEND requested correlationId=%s to=%s jid=%s len=%d', correlationId, to, jid, text.length);
     try {
