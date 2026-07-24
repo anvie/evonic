@@ -8,6 +8,7 @@ import secrets
 import subprocess
 import time
 import threading
+import uuid
 import requests
 from typing import Dict, Any, Optional
 from backend.channels.base import BaseChannel, strip_system_tags
@@ -114,6 +115,12 @@ class WhatsAppChannel(BaseChannel):
         self._last_bridge_status: Optional[str] = None
         # Maps external_user_id (bare number) → full WhatsApp JID for reliable replies
         self._jid_map: Dict[str, str] = {}
+        # DMs received on a LID and resolved to a phone JID are the only sends
+        # eligible for bridge-managed recovery after an asynchronous NACK. Keep
+        # the original LID so ACK 463 recovery can switch away from the rejected
+        # phone JID without changing normal or group routing.
+        self._resolved_lid_dm_targets = set()
+        self._lid_retry_jids: Dict[str, str] = {}
         # Debounce state for llm_thinking typing indicator
         self._typing_timer: Dict[str, threading.Timer] = {}
         self._typing_lock = threading.Lock()
@@ -407,6 +414,15 @@ class WhatsAppChannel(BaseChannel):
                     # Routed to logs/baileys.log via the 'baileys' logger.
                     _bridge_logger.info("[%s] %s", self.channel_id[:8], line.decode().rstrip())
 
+                # Reap the child process to prevent zombie accumulation.
+                # The process may be already dead (stdout pipe closed) or
+                # still alive if we broke out due to _running=False.
+                try:
+                    self._process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # Still alive — deliberate stop path; kill via stop() later
+                    pass
+
                 # If _running is False, this was a deliberate stop — exit cleanly
                 if not self._running:
                     return
@@ -489,6 +505,20 @@ class WhatsAppChannel(BaseChannel):
             })
             return
 
+        if payload.get('event') == 'outbound_status':
+            status = payload.get('status') or 'unknown'
+            _logger.info(
+                'WhatsApp outbound status: correlation_id=%s status=%s retry=%s reason=%s',
+                payload.get('correlation_id'), status,
+                payload.get('retry_count', 0), payload.get('reason', ''),
+            )
+            event_stream.emit('whatsapp_outbound_status', {
+                'agent_id': self.agent_id,
+                'channel_id': self.channel_id,
+                **payload,
+            })
+            return
+
         # Handle button reply (approval flow)
         button_id = payload.get('button_id', '')
         if button_id:
@@ -509,18 +539,25 @@ class WhatsAppChannel(BaseChannel):
         quoted_sender = payload.get('quoted_sender') or ''
         quoted_sender_name = payload.get('quoted_sender_name') or ''
 
-        # Reply to the JID the message came from, in its native addressing. For
-        # a LID-addressed chat that is the @lid JID: Baileys v7 stores the
-        # per-contact tctoken keyed by LID and resolves it on send, so replying
-        # to @lid is what lets the message get delivered. (The ack-463 failures
-        # were a MISSING tctoken — fixed by the Baileys v7 upgrade — not the
-        # address; replying to the phone JID would force an extra PN->LID token
-        # lookup that can miss.)
-        if sender and jid:
-            self._jid_map[sender] = jid
+        # Keep the established phone-JID reply target for LID-addressed DMs, but
+        # retain the original LID as a bounded ACK-463 recovery route. Different
+        # account migrations can reject either namespace; groups always retain
+        # their group JID and never use this fallback.
+        alt_jid = payload.get('alt_jid') or ''
+        alt_sender = payload.get('alt_sender') or ''
+        reply_jid = jid
+        if not is_group and alt_jid.endswith('@s.whatsapp.net') and alt_sender:
+            reply_jid = f"{alt_sender}@s.whatsapp.net"
+        if sender and reply_jid:
+            self._jid_map[sender] = reply_jid
+        if (not is_group and jid.endswith('@lid')
+                and alt_jid.endswith('@s.whatsapp.net') and alt_sender):
+            self._resolved_lid_dm_targets.add(sender)
+            self._lid_retry_jids[sender] = jid
         if not is_group and jid.endswith('@lid'):
-            _logger.info("WhatsApp LID DM reply target: sender=%s jid=%s alt_jid=%s",
-                         sender, jid, payload.get('alt_jid') or '(none)')
+            _logger.info(
+                "WhatsApp LID DM: sender=%s lid_jid=%s alt_jid=%s -> reply_jid=%s",
+                sender, jid, alt_jid or '(none)', reply_jid)
         text = strip_system_tags(payload.get('text', ''))
         image_data = payload.get('image')
         audio_data = payload.get('audio')
@@ -912,7 +949,15 @@ class WhatsAppChannel(BaseChannel):
         # clear typing state so no phantom indicator survives the send.
         self._clear_typing(external_user_id)
         for chunk in _split_message(text):
-            if self._bridge_send_retry({'to': to, 'text': chunk}, external_user_id):
+            retry_jid = self._lid_retry_jids.get(external_user_id)
+            payload = {
+                'to': to,
+                'text': chunk,
+                'correlation_id': uuid.uuid4().hex,
+                'retry_eligible': bool(retry_jid),
+                'retry_jid': retry_jid,
+            }
+            if self._bridge_send_retry(payload, external_user_id):
                 _logger.info("WhatsApp message sent to %s (channel %s)", external_user_id, self.channel_id)
         # Actively clear any lingering composing presence on the recipient
         self.send_typing(external_user_id, state='paused')

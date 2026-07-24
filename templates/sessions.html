@@ -1625,6 +1625,18 @@ async function doSendReply() {
     if (_sseThinkingId) chatUI.markLastUserBubbleQueued($msgEl);
     // Clear input and file preview immediately so the UI feels responsive
     $input.val('');
+    // Reset textarea height — jQuery val('') doesn't fire the oninput handler
+    var textarea = $input[0];
+    textarea.style.height = 'auto';
+    textarea.style.overflowY = 'hidden';
+    // Re-apply after reflow so a stale scrollHeight from the oninput handler
+    // (which fires async) doesn't lock the height again.
+    requestAnimationFrame(function() {
+        if (textarea.value === '') {
+            textarea.style.height = 'auto';
+            textarea.style.overflowY = 'hidden';
+        }
+    });
     if (file) clearFileInput();
     requestAnimationFrame(function () { chatUI.scrollToBottom(); });
     _pendingReplyText = null; // Will be set after we know the final text from backend

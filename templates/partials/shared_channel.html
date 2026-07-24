@@ -52,9 +52,9 @@
                 <label for="sc-routes-filter" class="sr-only">Filter routes</label>
                 <div class="relative">
                     <svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                    <input type="search" id="sc-routes-filter" autocomplete="off" placeholder="Search routes"
+                    <input type="text" id="sc-routes-filter" autocomplete="off" placeholder="Search routes"
                         oninput="sharedChannel.filterRoutes(this.value)"
-                        class="w-full rounded-md border border-gray-300 py-1.5 pl-9 pr-3 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
+                        class="w-full rounded-md border border-gray-300 py-1.5 pl-10 pr-3 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
                 </div>
             </div>
         </div>
@@ -163,6 +163,9 @@
     </div>
 </div>
 
+<!-- Toast container for shared channel notifications -->
+<div id="sc-toast-container" class="fixed top-5 right-5 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+
 <script>
 (function() {
     window.sharedChannel = {
@@ -207,6 +210,35 @@
                     ? (status === 'qr_pending' ? 'Waiting for QR scan' : 'Connecting...')
                     : 'Not connected');
             return { status: status, connected: connected, connecting: connecting, label: label };
+        },
+
+        showToast: function(message, type) {
+            type = type || 'success';
+            var container = document.getElementById('sc-toast-container');
+            if (!container) return;
+            var toast = document.createElement('div');
+            var colors = {
+                success: 'bg-green-600',
+                error: 'bg-red-600',
+                info: 'bg-blue-600'
+            };
+            toast.className = 'pointer-events-auto px-4 py-2.5 rounded-lg shadow-lg text-white font-medium text-sm transition-all duration-300 ' +
+                (colors[type] || colors.info);
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(20px)';
+            toast.textContent = message;
+            container.appendChild(toast);
+            // Animate in
+            requestAnimationFrame(function() {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateX(0)';
+            });
+            // Auto-remove after 3s
+            setTimeout(function() {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(20px)';
+                setTimeout(function() { toast.remove(); }, 300);
+            }, 3000);
         },
 
         init: function() {
@@ -546,7 +578,9 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ agent_id: agentId, name: name })
             }).then(function(r) { return r.json(); }).then(function(data) {
-                if (data.error) { alert(data.error); return; }
+                if (data.error) { sharedChannel.showToast(data.error, 'error'); return; }
+                if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+                sharedChannel.showToast('Route assigned successfully!', 'success');
                 sharedChannel.resetSigs();
                 sharedChannel.load();
             });
@@ -557,6 +591,8 @@
             if (!ch) return;
             fetch('/api/shared-channels/' + ch.id + '/inbox/' + entryId, { method: 'DELETE' })
                 .then(function(r) { return r.json(); }).then(function() {
+                    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+                    sharedChannel.showToast('Sender dismissed.', 'info');
                     sharedChannel._inboxSig = null;
                     sharedChannel.loadInbox();
                 });

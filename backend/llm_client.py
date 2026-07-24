@@ -33,6 +33,7 @@ _LLM_ERROR_MESSAGES = {
     "provider_error": "The LLM provider is experiencing issues. Please try again shortly.",
     "llm_error": "The LLM returned an error. Please try again.",
     "unknown_error": "An unexpected error occurred with the LLM service.",
+    "parse_error": "The LLM provider returned an invalid response. Check the provider configuration.",
 }
 
 
@@ -1037,6 +1038,28 @@ class LLMClient:
                     time.sleep(2)
                     continue
                 return last_error_result
+
+            except json.JSONDecodeError:
+                elapsed_ms = (
+                    int((time.time() - start_time) * 1000)
+                    if "start_time" in locals()
+                    else 0
+                )
+                raw_snippet = getattr(response, "text", "(no response)")[:500]
+                log_api_call(
+                    messages,
+                    None,
+                    elapsed_ms,
+                    error=f"JSON decode failed. Raw response: {raw_snippet}",
+                    log_file=log_file,
+                )
+                return {
+                    "response": {"error": _format_llm_error("parse_error")},
+                    "duration_ms": elapsed_ms,
+                    "success": False,
+                    "error_type": "parse_error",
+                    "error_detail": f"Received invalid (non-JSON) response from LLM server. Raw response: {raw_snippet}",
+                }
 
             except Exception as e:
                 elapsed_ms = (

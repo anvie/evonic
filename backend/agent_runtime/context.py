@@ -860,6 +860,8 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
             continue
         if fn_name not in BUILTIN_TOOL_IDS:
             continue
+        if fn_name == 'save_artifact' and not agent.get('artifacts_enabled', True):
+            continue
         if fn_name in seen_fn_names:
             continue
         seen_fn_names.add(fn_name)
