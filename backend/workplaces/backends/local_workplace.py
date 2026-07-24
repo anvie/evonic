@@ -38,12 +38,20 @@ class LocalWorkplaceBackend(ExecutionBackend):
                 agent_name='workplace',
             )
             return self._inner
-        # Docker backend: use a stable session key so the container is reused across calls
+        # Docker backend: use a stable session key so the container is reused across calls.
+        # Workplace sandboxes are owned by a single "workplace" agent and should be
+        # persistent (keyed by that agent_id) so installed packages and changes
+        # survive across sessions and across `evonic` restarts.
         from backend.tools.lib.backends.docker_backend import DockerBackend
+        try:
+            from config import SANDBOX_PERSISTENT_CONTAINER_ENABLED
+        except ImportError:
+            SANDBOX_PERSISTENT_CONTAINER_ENABLED = True
         self._inner = DockerBackend(
             session_id=f'workplace-local-{id(self)}',
             agent_id='workplace',
             workspace=self._workspace,
+            persistent=SANDBOX_PERSISTENT_CONTAINER_ENABLED,
         )
         return self._inner
 

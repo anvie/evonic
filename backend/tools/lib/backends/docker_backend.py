@@ -33,6 +33,7 @@ try:
         SANDBOX_NETWORK,
         SANDBOX_IMAGE,
         SANDBOX_MAX_CONTAINERS,
+        SANDBOX_PERSISTENT_CONTAINER_ENABLED,
     )
 except ImportError:
     SANDBOX_WORKSPACE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
@@ -42,6 +43,7 @@ except ImportError:
     SANDBOX_NETWORK = 'bridge'
     SANDBOX_IMAGE = 'evonic-sandbox:latest'
     SANDBOX_MAX_CONTAINERS = 10
+    SANDBOX_PERSISTENT_CONTAINER_ENABLED = True
 
 # Directory containing the evonic helper package (mounted into the container)
 _HELPERS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'runpy_helpers'))
@@ -124,7 +126,11 @@ def get_pool_status() -> dict:
     """Return current pool state for monitoring/debugging."""
     with _pool_lock:
         containers = []
+        persistent_count = 0
         for sid, info in _containers.items():
+            is_persistent = bool(info.get('persistent'))
+            if is_persistent:
+                persistent_count += 1
             containers.append({
                 'session_id': sid[:12],
                 'container_id': info['container_id'][:12],
@@ -133,49 +139,148 @@ def get_pool_status() -> dict:
                 'created_at': info['created_at'],
                 'last_used': info['last_used'],
                 'workspace': info.get('workspace'),
-                'first_call': info.get('first_call', False)
+                'first_call': info.get('first_call', False),
+                'persistent': is_persistent,
             })
         return {
             'pool_size': len(_containers),
             'max_containers': SANDBOX_MAX_CONTAINERS,
             'idle_timeout': SANDBOX_IDLE_TIMEOUT,
-            'containers': containers
+            'persistent_count': persistent_count,
+            'persistent_enabled': SANDBOX_PERSISTENT_CONTAINER_ENABLED,
+            'containers': containers,
         }
 
 
+def _list_persistent_stopped_containers() -> list:
+    """Return names of evonic-managed persistent containers that are stopped.
+
+    These were left behind by a previous `evonic` process and can be restarted
+    transparently to preserve the agent's installed tools.
+    """
+    ps = _docker('ps', '-a',
+                 '--filter', 'label=evonic.managed=1',
+                 '--filter', 'label=evonic.persistent=1',
+                 '--format', '{{.Names}} {{.State}}')
+    if ps.returncode != 0:
+        return []
+    out = []
+    for line in ps.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[1].lower().startswith('exited'):
+            out.append(parts[0])
+    return out
+
+
+def _restart_persistent_container(name: str) -> str:
+    """Start a persistent container by name; return new container_id or ''."""
+    res = _docker('start', name)
+    if res.returncode != 0:
+        logger.warning(f'Failed to start persistent container {name}: {res.stderr.strip()}')
+        return ''
+    return res.stdout.strip()
+
+
 def _startup_sweep() -> None:
-    """Destroy evonic containers left over from previous (crashed) processes."""
-    result = _docker('ps', '--filter', 'label=evonic.managed=1', '--format', '{{.Names}}')
+    """Sweep state left over from previous (crashed) processes.
+
+    - Restart stopped persistent containers so their installed tools survive
+      across `evonic` restarts.
+    - Destroy non-persistent orphans (containers not in the in-memory pool).
+    """
+    # 1. Restart persistent stopped containers.
+    for name in _list_persistent_stopped_containers():
+        logger.info(f'Startup sweep — restarting persistent container {name}')
+        new_id = _restart_persistent_container(name)
+        if not new_id:
+            continue
+        # Adopt the container into the pool so subsequent calls hit it without
+        # having to recreate. The pool key is the agent_id (matches the
+        # persistent-key contract in _get_or_create_container); we don't know
+        # agent_id here, but we can set it later from the DockerBackend that
+        # actually uses it. For now, key by container_name.
+        # (Adoption is best-effort: if no DockerBackend picks it up on first
+        # call, _get_or_create_container will re-create it.)
+        with _pool_lock:
+            # Don't clobber an existing pool entry.
+            exists = any(info.get('container_name') == name for info in _containers.values())
+            if not exists:
+                _containers[name] = {
+                    'container_id': new_id,
+                    'container_name': name,
+                    'agent_id': '',
+                    'last_used': time.time(),
+                    'created_at': time.time(),
+                    'first_call': False,
+                    'workspace': None,
+                    'persistent': True,
+                    'pool_key': name,
+                }
+                logger.info(f'Startup sweep — adopted persistent container {name} into pool')
+
+    # 2. Destroy non-persistent orphans (only).
+    result = _docker('ps', '-a',
+                     '--filter', 'label=evonic.managed=1',
+                     '--format', '{{.Names}} {{.State}}')
     if result.returncode != 0:
-        return
-    live_names = {n.strip() for n in result.stdout.splitlines() if n.strip()}
-    if not live_names:
         return
     with _pool_lock:
         known_names = {info['container_name'] for info in _containers.values()}
-    orphans = live_names - known_names
-    for name in orphans:
-        logger.info(f'Startup sweep — destroying orphan container {name}')
-        _docker('rm', '-f', name)
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        name, state = parts
+        if name in known_names:
+            continue
+        if state.lower() == 'running':
+            # Non-persistent running container: kill it.
+            logger.info(f'Startup sweep — destroying orphan running container {name}')
+            _docker('rm', '-f', name)
+        elif state.lower().startswith('exited'):
+            # Non-persistent exited container: remove silently.
+            logger.info(f'Startup sweep — removing exited orphan container {name}')
+            _docker('rm', name)
 
 
 def _reconcile_with_docker() -> None:
-    """Cross-check pool against live Docker state; fix divergence in both directions."""
-    result = _docker('ps', '--filter', 'label=evonic.managed=1', '--format', '{{.Names}}')
+    """Cross-check pool against live Docker state; fix divergence in both directions.
+
+    - Orphans that are non-persistent: destroy.
+    - Orphans that are persistent: leave alone (they'll be restarted by
+      _startup_sweep on next process boot, or by manual intervention).
+    - Phantoms (in pool but not in Docker): remove from pool.
+    """
+    result = _docker('ps', '-a',
+                     '--filter', 'label=evonic.managed=1',
+                     '--format', '{{.Names}} {{.Labels}}')
     if result.returncode != 0:
         return
-    live_names = {n.strip() for n in result.stdout.splitlines() if n.strip()}
+    live_names = {}
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        name, labels = parts
+        is_persistent = 'evonic.persistent=1' in labels
+        live_names[name] = is_persistent
     with _pool_lock:
-        pool_snapshot = [(sid, info['container_name']) for sid, info in _containers.items()]
-    pool_names = {name for _, name in pool_snapshot}
+        pool_snapshot = [(sid, info['container_name'], bool(info.get('persistent')))
+                         for sid, info in _containers.items()]
+    pool_names = {name for _, name, _ in pool_snapshot}
 
-    # Orphans: in Docker but not in pool → destroy (leftover from a previous crash)
-    for name in live_names - pool_names:
+    # Orphans: in Docker but not in pool → destroy if non-persistent.
+    for name in live_names:
+        if name in pool_names:
+            continue
+        if live_names[name]:
+            logger.warning(f'Reconcile — persistent orphan container {name} not in pool, leaving for startup')
+            continue
         logger.warning(f'Reconcile — orphan container {name} not in pool, destroying')
         _docker('rm', '-f', name)
 
-    # Phantoms: in pool but not in Docker → remove from pool (killed externally)
-    for sid, name in pool_snapshot:
+    # Phantoms: in pool but not in Docker → remove from pool (killed externally).
+    for sid, name, _ in pool_snapshot:
         if name not in live_names:
             logger.warning(f'Reconcile — container {name} vanished externally, removing from pool')
             with _pool_lock:
@@ -191,6 +296,8 @@ def _reaper_loop() -> None:
             stale = []
             with _pool_lock:
                 for sid, info in list(_containers.items()):
+                    if info.get('persistent'):
+                        continue
                     if info['last_used'] < deadline:
                         stale.append(sid)
             for sid in stale:
@@ -207,9 +314,28 @@ def _reaper_loop() -> None:
 
 @atexit.register
 def _cleanup_all() -> None:
+    # 1. Stop persistent containers (do NOT remove) so they survive process exit.
+    with _pool_lock:
+        persistent_entries = [(sid, info) for sid, info in _containers.items()
+                              if info.get('persistent')]
+    for sid, info in persistent_entries:
+        try:
+            _docker('stop', info['container_id'])
+        except Exception:
+            pass
+
+    # 2. Destroy all containers from the pool and remove them. Persistent ones
+    #    are skipped so that `--restart=unless-stopped` left them stopped but
+    #    present on disk, ready for the next `evonic start` to find and start.
     with _pool_lock:
         sids = list(_containers.keys())
     for sid in sids:
+        with _pool_lock:
+            info = _containers.get(sid)
+        if info and info.get('persistent'):
+            logger.info(f'Persistent container for {sid[:12]} kept on disk (stopped, not removed)')
+            _containers.pop(sid, None)
+            continue
         _destroy_container(sid)
 
 
@@ -249,41 +375,64 @@ def _evict_lru() -> None:
     with _pool_lock:
         if not _containers:
             return
-        lru_sid = min(_containers, key=lambda s: _containers[s]['last_used'])
-    logger.warning(f'Max containers reached — evicting LRU session {lru_sid[:12]}')
+        # Prefer evicting non-persistent entries first; persistent ones only evicted if no choice.
+        non_persistent = [s for s, i in _containers.items() if not i.get('persistent')]
+        if non_persistent:
+            lru_sid = min(non_persistent, key=lambda s: _containers[s]['last_used'])
+            is_persistent = False
+        else:
+            lru_sid = min(_containers, key=lambda s: _containers[s]['last_used'])
+            is_persistent = True
+        logger.warning(
+            f'Max containers reached — evicting LRU session {lru_sid[:12]} '
+            f'({"persistent" if is_persistent else "non-persistent"})'
+        )
     _destroy_container(lru_sid)
 
 
-def _get_or_create_container(session_id: str, agent_id: str = '', workspace: str = None) -> tuple:
-    """Return (container_id, None) or (None, error_string)."""
+def _get_or_create_container(
+    session_id: str,
+    agent_id: str = '',
+    workspace: str = None,
+    persistent: bool = False,
+) -> tuple:
+    """Return (container_id, None) or (None, error_string).
+
+    When ``persistent`` is True, the container is keyed by ``agent_id`` (not
+    ``session_id``) so every session of the same main agent reuses it,
+    configured with ``--restart=unless-stopped`` and without ``--rm`` so
+    it survives ``evonic`` restarts with all installed state preserved.
+    """
     effective_workspace = os.path.abspath(workspace if workspace else SANDBOX_WORKSPACE)
     needs_destroy = False
+    pool_key = (agent_id or session_id) if persistent else session_id
     with _pool_lock:
-        if session_id in _containers:
-            info = _containers[session_id]
+        if pool_key in _containers:
+            info = _containers[pool_key]
             if info.get('workspace') != effective_workspace:
-                logger.info(f'Workspace changed for session {session_id[:12]} — recreating container')
+                logger.info(f'Workspace changed for {("persistent " if persistent else "")}session {pool_key[:12]} — recreating container')
                 needs_destroy = True
             else:
                 info['last_used'] = time.time()
                 return info['container_id'], None
 
     if needs_destroy:
-        _destroy_container(session_id)
+        _destroy_container(pool_key)
 
     with _pool_lock:
         count = len(_containers)
     if count >= SANDBOX_MAX_CONTAINERS:
         _evict_lru()
 
-    name = _container_name(session_id, agent_id)
+    name = _container_name(pool_key, agent_id if persistent else '')
     effective_workspace = os.path.abspath(workspace if workspace else SANDBOX_WORKSPACE)
     scratch = scratch_dir(agent_id)
     created_at = time.time()
 
     cmd = [
         'run', '-d',
-        '--rm',
+        *(('--rm',) if not persistent else ()),
+        '--restart=unless-stopped' if persistent else '--restart=no',
         '--name', name,
         f'--memory={SANDBOX_MEMORY_LIMIT}',
         f'--cpus={SANDBOX_CPU_LIMIT}',
@@ -295,6 +444,7 @@ def _get_or_create_container(session_id: str, agent_id: str = '', workspace: str
         '--label', 'evonic.managed=1',
         '--label', f'evonic.pid={os.getpid()}',
         '--label', f'evonic.created_at={created_at:.0f}',
+        '--label', f'evonic.persistent={1 if persistent else 0}',
         '-v', f'{effective_workspace}:/workspace:rw',
         '-v', f'{_HELPERS_DIR}:{_HELPERS_MOUNT}:ro',
         '-w', '/workspace',
@@ -319,7 +469,7 @@ def _get_or_create_container(session_id: str, agent_id: str = '', workspace: str
 
     container_id = result.stdout.strip()
     with _pool_lock:
-        _containers[session_id] = {
+        _containers[pool_key] = {
             'container_id': container_id,
             'container_name': name,
             'agent_id': agent_id,
@@ -327,6 +477,8 @@ def _get_or_create_container(session_id: str, agent_id: str = '', workspace: str
             'created_at': created_at,
             'first_call': True,
             'workspace': effective_workspace,
+            'persistent': persistent,
+            'pool_key': pool_key,
         }
     _ensure_reaper_running()
     _ensure_monitor_running()
@@ -396,11 +548,13 @@ class DockerBackend(ExecutionBackend):
 
     def __init__(self, session_id: str, agent_id: str = '', workspace: str = None,
                  is_subagent: bool = False, is_explorer: bool = False,
-                 container_session_id: str = None, container_workspace: str = None):
+                 container_session_id: str = None, container_workspace: str = None,
+                 persistent: bool = False):
         self._session_id = session_id
         self._container_session_id = container_session_id or session_id
         self._owns_container = not bool(container_session_id)
         self._agent_id = agent_id
+        self._persistent = persistent
         self._workspace = workspace
         self._container_workspace = container_workspace or workspace
         # Normal sub-agents run with cwd = their scratchpad so their relative-path
@@ -436,6 +590,7 @@ class DockerBackend(ExecutionBackend):
         container_id, err = _get_or_create_container(
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
+            persistent=self._persistent,
         )
         if err:
             return {'error': err}
@@ -486,6 +641,7 @@ class DockerBackend(ExecutionBackend):
         container_id, err = _get_or_create_container(
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
+            persistent=self._persistent,
         )
         if err:
             return {'error': err}
@@ -505,6 +661,7 @@ class DockerBackend(ExecutionBackend):
             container_id, err = _get_or_create_container(
                 self._container_session_id, agent_id=self._agent_id,
                 workspace=self._container_workspace,
+                persistent=self._persistent,
             )
             if err:
                 return {'error': err}
@@ -612,6 +769,7 @@ class DockerBackend(ExecutionBackend):
         container_id, err = _get_or_create_container(
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
+            persistent=self._persistent,
         )
         if err:
             return {'error': err}
@@ -834,6 +992,7 @@ class DockerBackend(ExecutionBackend):
         container_id, err = _get_or_create_container(
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
+            persistent=self._persistent,
         )
         if err:
             return {'error': err}
@@ -848,6 +1007,7 @@ class DockerBackend(ExecutionBackend):
         container_id, err = _get_or_create_container(
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
+            persistent=self._persistent,
         )
         if err:
             return {'error': err}
