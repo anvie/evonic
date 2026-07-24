@@ -60,3 +60,19 @@ class SettingsMixin:
             )
             conn.commit()
         self._settings_cache[key] = value
+
+    def consume_setting(self, key: str, default: str = None) -> Optional[str]:
+        """Atomically return a setting value and clear it."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM app_settings WHERE key = ?", (key,)
+            ).fetchone()
+            value = row[0] if row else default
+            if row:
+                conn.execute(
+                    "UPDATE app_settings SET value = '' WHERE key = ?", (key,)
+                )
+            conn.commit()
+        self._settings_cache[key] = '' if row else default
+        return value

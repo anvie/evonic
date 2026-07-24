@@ -119,6 +119,24 @@ SUBAGENT_EXECUTE_DIRECTIVE = (
 )
 
 
+def _apply_restart_origin_guard(agent_context: dict, assigned_tool_ids: list,
+                                tools: list, metadata: dict) -> tuple:
+    """Remove restart authorization from an automatic post-restart turn."""
+    if not isinstance(metadata, dict) or not metadata.get('restart_origin'):
+        return assigned_tool_ids, tools
+    agent_context['restart_origin'] = True
+    assigned_tool_ids = [
+        tool_id for tool_id in assigned_tool_ids
+        if tool_id != 'restart' and not tool_id.endswith(':restart')
+    ]
+    tools = [
+        tool for tool in tools
+        if tool.get('function', {}).get('name') != 'restart'
+    ]
+    agent_context['assigned_tool_ids'] = assigned_tool_ids
+    return assigned_tool_ids, tools
+
+
 def _should_wrap_user_message(agent: dict) -> bool:
     """Check if message wrapper is enabled for this agent.
 
@@ -1944,8 +1962,8 @@ class AgentRuntime:
 
         # Build tool definitions (use prefetched if available)
         if _used_prefetch:
-            tools = _tools_prebuilt
-            assigned_tool_ids = _agent_ctx_prebuilt.get('assigned_tool_ids', [])
+            tools = list(_tools_prebuilt)
+            assigned_tool_ids = list(_agent_ctx_prebuilt.get('assigned_tool_ids', []))
             agent_context = dict(_agent_ctx_prebuilt)  # shallow copy to allow mutations
         else:
             tools = _ctx.build_tools(agent)
@@ -2065,6 +2083,12 @@ class AgentRuntime:
                 'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
                 'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
             }
+        _last_user = chatlog.get_last_entry(types=frozenset({'user'}))
+        assigned_tool_ids, tools = _apply_restart_origin_guard(
+            agent_context, assigned_tool_ids, tools,
+            (_last_user or {}).get('metadata') or {},
+        )
+
         # Propagate agent_message_depth and from_agent_id from incoming message metadata
         if ctx.external_user_id.startswith("__agent__"):
             _last_user = chatlog.get_last_entry(types=frozenset({'user'}))

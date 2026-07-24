@@ -713,6 +713,12 @@ def _exec_restart(args: dict, agent_context: dict = None) -> dict:
     else:
         agent_id = channel_id = external_user_id = session_id = None
 
+    if agent_context and agent_context.get('restart_origin'):
+        return {
+            'error': 'Restart is disabled for restart-origin turns.',
+            'blocked': True,
+        }
+
     # ── Inter-agent restart guard ──────────────────────────────────────
     # When a regular agent messages the super agent asking for a restart,
     # the super agent should NOT auto-execute it — require user approval first.
@@ -760,64 +766,12 @@ def _exec_restart(args: dict, agent_context: dict = None) -> dict:
             },
         }
 
-    # Persist caller info so the new process can notify them after boot
-    recent_context = ''
-    try:
-        summary_data = db.get_summary(session_id, agent_id=agent_id) if session_id else None
-        summary_text = summary_data.get('summary', '') if summary_data else ''
-
-        last_messages = db.get_session_messages(session_id, limit=12, agent_id=agent_id) if session_id else []
-
-        parts = []
-        if summary_text:
-            parts.append('=== CONVERSATION SUMMARY ===')
-            parts.append(summary_text)
-
-        if last_messages:
-            parts.append('=== LAST MESSAGES ===')
-            # Pre-pass: find indices of restart tool calls + their triggering user messages
-            _restart_idx = set()
-            for _i, _m in enumerate(last_messages):
-                _tcs = _m.get('tool_calls') or []
-                if _m.get('role') == 'assistant' and any(
-                    isinstance(_tc, dict) and _tc.get('function', {}).get('name') == 'restart'
-                    for _tc in (_tcs if isinstance(_tcs, list) else [])
-                ):
-                    _restart_idx.add(_i)
-                    if _i > 0:
-                        _restart_idx.add(_i - 1)
-            for _i, msg in enumerate(last_messages):
-                if _i in _restart_idx:
-                    continue
-                role = msg.get('role', 'unknown')
-                if role == 'tool':
-                    continue
-                if role == 'assistant' and msg.get('tool_calls') and not (msg.get('content') or '').strip():
-                    continue
-                content = msg.get('content', '') or ''
-                # Skip user slash commands to prevent the LLM from re-issuing them
-                if role == 'user' and content.startswith('/'):
-                    continue
-                # Skip assistant responses to slash commands (metadata.slash_command)
-                if role == 'assistant' and msg.get('metadata', {}).get('slash_command'):
-                    continue
-                if content:
-                    parts.append(f'[{role}]: {content}')
-
-        recent_context = '\n\n'.join(parts)
-        if len(recent_context) > 3000:
-            recent_context = recent_context[:3000] + '\n...(truncated)'
-
-        _logger.info("Captured %d chars context from DB (summary + last_messages)", len(recent_context))
-    except Exception as _e:
-        _logger.error("Failed to read context from DB: %s", _e, exc_info=True)
-        recent_context = ''
-
+    # Persist routing only. The existing session history remains available after
+    # boot, so replaying it inside a new user message is both redundant and unsafe.
     db.set_setting('restart_greeting_needed', _json.dumps({
         'channel_id': channel_id,
         'external_user_id': external_user_id,
         'session_id': session_id,
-        'context': recent_context,
     }))
 
     from backend.restart import restart_service
