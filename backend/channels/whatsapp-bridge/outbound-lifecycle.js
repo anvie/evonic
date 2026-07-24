@@ -24,13 +24,12 @@ function failureReason(update) {
 }
 
 class OutboundLifecycle {
-    constructor({ send, emit, maxRetries = 1, ttlMs = 60 * 60 * 1000 }) {
+    constructor({ send, emit, diagnoseFailure = null, ttlMs = 60 * 60 * 1000 }) {
         this.send = send;
         this.emit = emit;
-        this.maxRetries = maxRetries;
+        this.diagnoseFailure = diagnoseFailure;
         this.ttlMs = ttlMs;
         this.connected = false;
-        this.retryBlocked = false;
         this.byCorrelation = new Map();
         this.byKey = new Map();
         // A NACK can arrive before sock.sendMessage() resolves and exposes its key.
@@ -40,15 +39,15 @@ class OutboundLifecycle {
         this.maxPendingUpdates = 1000;
     }
 
-    async accept({ correlationId, jid, content, retryEligible = false, retryJid = null }) {
+    async accept({ correlationId, jid, content }) {
         this.prune();
         if (this.byCorrelation.has(correlationId)) {
             return this.snapshot(this.byCorrelation.get(correlationId));
         }
         const entry = {
-            correlationId, jid, retryJid, content, retryEligible,
-            retries: 0, status: 'sending', keys: new Set(), activeKey: null,
-            createdAt: Date.now(), pendingRetry: false,
+            correlationId, jid, content,
+            status: 'sending', keys: new Set(), activeKey: null,
+            createdAt: Date.now(),
         };
         this.byCorrelation.set(correlationId, entry);
         await this.sendAttempt(entry);
@@ -57,16 +56,14 @@ class OutboundLifecycle {
 
     async sendAttempt(entry) {
         try {
-            const targetJid = entry.retries > 0 && entry.retryJid ? entry.retryJid : entry.jid;
-            const result = await this.send(targetJid, entry.content);
+            const result = await this.send(entry.jid, entry.content);
             const id = keyId(result?.key);
             if (!id) throw new Error('Baileys returned no message key');
             entry.keys.add(id);
             entry.activeKey = id;
             this.byKey.set(id, entry);
             entry.status = 'accepted';
-            entry.pendingRetry = false;
-            this.emitStatus(entry, 'accepted', { baileys_message_id: id, jid: targetJid });
+            this.emitStatus(entry, 'accepted', { baileys_message_id: id, jid: entry.jid });
             const pending = this.pendingUpdates.get(id);
             this.pendingUpdates.delete(id);
             if (pending) await this.onMessageUpdates(pending.updates);
@@ -101,10 +98,7 @@ class OutboundLifecycle {
                 this.deliver(entry, messageId);
             } else if (isFailure && messageId === entry.activeKey) {
                 const code = failureCode(update);
-                // A 463 can be specific to the attempted PN/LID namespace. Only
-                // switch to the pre-resolved alternate once; never resend to the
-                // same JID or enter an unbounded privacy-token retry loop.
-                await this.fail(entry, failureReason(update), true, code === '463');
+                await this.fail(entry, failureReason(update), code);
             }
         }
     }
@@ -155,25 +149,33 @@ class OutboundLifecycle {
         if (entry.status === 'delivered' || entry.status === 'failed') return;
         const code = String(errorCode || '');
         const reason = code ? `Message rejected (${code})` : 'Message rejected';
-        await this.fail(entry, reason, true, code === '463');
+        await this.fail(entry, reason, code);
     }
 
-    async fail(entry, reason, asynchronous, retryable = false) {
-        if (entry.status === 'delivered' || entry.status === 'failed') return;
-        const canRetry = asynchronous && retryable && entry.retryEligible
-            && entry.retries < this.maxRetries;
-        if (canRetry) {
-            entry.retries += 1;
-            entry.status = 'retrying';
-            entry.activeKey = null;
-            this.emitStatus(entry, 'retrying', {
-                reason, retry: entry.retries, jid: this.targetJid(entry) });
-            if (!this.connected || this.retryBlocked) {
-                entry.pendingRetry = true;
+    async fail(entry, reason, code = '') {
+        if (entry.status === 'delivered' || entry.status === 'failed'
+                || entry.status === 'diagnosing_463') return;
+        if (code === '463' && this.diagnoseFailure) {
+            entry.status = 'diagnosing_463';
+            try {
+                const diagnostic = await this.diagnoseFailure(entry.jid);
+                entry.status = 'failed';
+                this.emitStatus(entry, 'failed', {
+                    reason,
+                    terminal: true,
+                    jid: this.targetJid(entry),
+                    ...diagnostic,
+                });
+                return;
+            } catch (error) {
+                entry.status = 'failed';
+                this.emitStatus(entry, 'failed', {
+                    reason: `${reason}; reach-out diagnostic failed: ${error?.message || error}`,
+                    terminal: true,
+                    jid: this.targetJid(entry),
+                });
                 return;
             }
-            await this.sendAttempt(entry);
-            return;
         }
         entry.status = 'failed';
         this.emitStatus(entry, 'failed', {
@@ -182,23 +184,12 @@ class OutboundLifecycle {
 
     deliver(entry, messageId) {
         entry.status = 'delivered';
-        entry.pendingRetry = false;
         this.emitStatus(entry, 'delivered', {
-            baileys_message_id: messageId, jid: this.targetJid(entry) });
+            baileys_message_id: messageId, jid: entry.jid });
     }
 
-    targetJid(entry) {
-        return entry.retries > 0 && entry.retryJid ? entry.retryJid : entry.jid;
-    }
-
-    async onConnection(status, { terminal = false } = {}) {
+    async onConnection(status) {
         this.connected = status === 'connected';
-        this.retryBlocked = terminal && !this.connected;
-        if (!this.connected) return;
-        this.retryBlocked = false;
-        const pending = [...this.byCorrelation.values()]
-            .filter((entry) => entry.pendingRetry && entry.status !== 'delivered');
-        for (const entry of pending) await this.sendAttempt(entry);
     }
 
     emitStatus(entry, status, extra = {}) {
@@ -207,7 +198,7 @@ class OutboundLifecycle {
             correlation_id: entry.correlationId,
             status,
             jid: entry.jid,
-            retry_count: entry.retries,
+            retry_count: 0,
             ...extra,
         });
     }
@@ -216,7 +207,7 @@ class OutboundLifecycle {
         return {
             correlation_id: entry.correlationId,
             status: entry.status,
-            retry_count: entry.retries,
+            retry_count: 0,
             message_id: [...entry.keys].at(-1) || null,
         };
     }

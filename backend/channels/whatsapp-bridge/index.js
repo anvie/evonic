@@ -40,6 +40,7 @@ const outboundLifecycle = new OutboundLifecycle({
         }
         return sock.sendMessage(jid, content);
     },
+    diagnoseFailure: diagnoseReachoutTimelock,
     emit: (payload) => {
         const level = payload.status === 'failed' ? 'error' : 'log';
         console[level](
@@ -48,7 +49,6 @@ const outboundLifecycle = new OutboundLifecycle({
             payload.retry_count, payload.reason || '');
         if (CALLBACK_URL) postCallback(payload);
     },
-    maxRetries: 1,
 });
 
 // Hook Baileys' internal pino logger so ACK 463 (and other bad-ack errors)
@@ -132,6 +132,28 @@ function queueCredsSave(saveCreds) {
 async function flushCreds() {
     if (saveCredsNow) await queueCredsSave(saveCredsNow);
     await pendingCredsSave;
+}
+
+async function diagnoseReachoutTimelock() {
+    if (!sock?.fetchAccountReachoutTimelock) return {};
+    try {
+        const state = await sock.fetchAccountReachoutTimelock();
+        const ends = state?.timeEnforcementEnds;
+        const diagnostic = {
+            reachout_timelocked: Boolean(state?.isActive),
+            reachout_enforcement_type: state?.enforcementType || '',
+            reachout_enforcement_ends: ends instanceof Date ? ends.toISOString() : '',
+        };
+        console.error(
+            '[whatsapp-bridge] ACK 463 reachout_timelocked=%s enforcement=%s ends=%s',
+            diagnostic.reachout_timelocked, diagnostic.reachout_enforcement_type,
+            diagnostic.reachout_enforcement_ends);
+        return diagnostic;
+    } catch (error) {
+        console.error('[whatsapp-bridge] ACK 463 reachout timelock lookup failed: %s',
+            error?.message || error);
+        return { reachout_timelock_lookup_failed: true };
+    }
 }
 
 // Reconnect control — a single-socket guard prevents overlapping sockets from
@@ -552,11 +574,7 @@ app.get('/qr', async (req, res) => {
 });
 
 app.post('/send', async (req, res) => {
-    const {
-        to, text, retry_jid: requestedRetryJid,
-        correlation_id: requestedCorrelationId,
-        retry_eligible: retryEligible,
-    } = req.body || {};
+    const { to, text, correlation_id: requestedCorrelationId } = req.body || {};
     if (!to || !text) return res.status(400).json({ error: 'to and text required' });
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
@@ -565,19 +583,13 @@ app.post('/send', async (req, res) => {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
     const jid = normalizeRecipientJid(to);
-    const normalizedRetryJid = normalizeRecipientJid(requestedRetryJid);
-    const retryJid = requestedRetryJid?.includes('@') && normalizedRetryJid !== jid
-        ? normalizedRetryJid
-        : null;
     const correlationId = requestedCorrelationId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     console.log('[whatsapp-bridge] SEND requested correlationId=%s to=%s jid=%s len=%d', correlationId, to, jid, text.length);
     try {
         const result = await outboundLifecycle.accept({
             correlationId,
             jid,
-            retryJid,
             content: { text },
-            retryEligible: Boolean(retryEligible && retryJid),
         });
         if (result.status === 'failed') {
             return res.status(500).json({

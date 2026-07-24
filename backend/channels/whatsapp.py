@@ -115,7 +115,7 @@ class WhatsAppChannel(BaseChannel):
         self._last_bridge_status: Optional[str] = None
         # Maps session-facing external_user_id values to the exact inbound JID.
         # The alternate map retains the other WhatsApp identity namespace (PN or
-        # LID) for a single bridge-managed recovery attempt after ACK 463.
+        # LID) for diagnostics without changing the canonical reply target.
         self._jid_map: Dict[str, str] = {}
         self._alternate_jids: Dict[str, str] = {}
         self._load_persisted_jid_routes(config)
@@ -593,7 +593,7 @@ class WhatsAppChannel(BaseChannel):
 
         # Reply through the exact namespace used by the inbound conversation.
         # Baileys may also resolve the peer's alternate PN/LID identity; retain it
-        # only as a bounded recovery target and persist both across restarts.
+        # for diagnostics and persist both identities across restarts.
         alt_jid = payload.get('alt_jid') or ''
         alt_sender = payload.get('alt_sender') or ''
         if is_group:
@@ -1020,8 +1020,6 @@ class WhatsAppChannel(BaseChannel):
                 'to': to,
                 'text': chunk,
                 'correlation_id': correlation_id,
-                'retry_eligible': bool(alternate_jid),
-                'retry_jid': alternate_jid,
             }
             if self._bridge_send_retry(payload, external_user_id):
                 _logger.info(
