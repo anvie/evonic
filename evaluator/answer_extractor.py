@@ -210,7 +210,7 @@ Rules:
 5. If the output is a number, return just the number
 
 Your answer (output only):""",
-        "expected_format": "text"
+        "expected_format": "code_output"
     },
 
     "health": {
@@ -650,6 +650,28 @@ class AnswerExtractor:
             if cleaned:
                 return {"valid": True, "cleaned": cleaned, "error": ""}
             return {"valid": False, "cleaned": raw, "error": f"Expected text answer, got empty"}
+
+        elif expected_format == "code_output":
+            # Program output — may be multi-word ("4 50"), multi-line, or
+            # case-sensitive ("aisenodnI"). Do NOT lowercase and do NOT truncate
+            # to the first word (that turned valid outputs into "the"/"4").
+            cleaned = raw.strip()
+            # Strip a leading fenced code block wrapper if the extractor kept one.
+            fence = re.match(r"^```[a-zA-Z]*\n?(.*?)\n?```$", cleaned, re.DOTALL)
+            if fence:
+                cleaned = fence.group(1).strip()
+            # Drop a leading explanatory phrase ("The output is:", "Output:",
+            # "Hasil:", "The program prints") the extractor sometimes prepends.
+            cleaned = re.sub(
+                r"^(the\s+)?(program\s+)?(final\s+)?(output|result|answer|hasil|jawaban)"
+                r"(\s+(is|would be|adalah|prints?|akan mencetak))?\s*[:=]?\s*",
+                "", cleaned, flags=re.IGNORECASE).strip()
+            # Strip surrounding quotes/backticks left after the above.
+            if len(cleaned) >= 2 and cleaned[0] in "\"'`" and cleaned[-1] == cleaned[0]:
+                cleaned = cleaned[1:-1].strip()
+            if cleaned:
+                return {"valid": True, "cleaned": cleaned, "error": ""}
+            return {"valid": False, "cleaned": raw, "error": "Expected code output, got empty"}
         
         elif expected_format == "health":
             # Health answers can be numeric, boolean, or structured text (BMI + category)

@@ -215,9 +215,8 @@ AGENT_PARALLEL_TOOL_WAIT_TIMEOUT = _get_env_int(
 
 # Same-turn context projection. Shadow mode computes the bounded model-facing
 # projection and emits attribution, while the provider still receives canonical
-# messages. "enforced" is parsed for forward-compatible rollout controls but this
-# release deliberately remains shadow-only in run_tool_loop.
-ACTIVE_CONTEXT_MODE = os.getenv("ACTIVE_CONTEXT_MODE", "shadow").strip().lower()
+# messages.
+ACTIVE_CONTEXT_MODE = os.getenv("ACTIVE_CONTEXT_MODE", "enforced").strip().lower()
 if ACTIVE_CONTEXT_MODE not in ("off", "shadow", "enforced"):
     _logger.warning("Invalid ACTIVE_CONTEXT_MODE=%r, using off", ACTIVE_CONTEXT_MODE)
     ACTIVE_CONTEXT_MODE = "off"

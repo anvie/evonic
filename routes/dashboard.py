@@ -119,7 +119,7 @@ def api_setup():
             'skill:scheduler:cancel_schedule',
             'skill:scheduler:list_schedules',
         ])
-        db.set_agent_skills(agent_id, ['scheduler'])
+        db.set_agent_skills(agent_id, ['explorer', 'scheduler'])
         return jsonify({'success': True, 'agent_id': agent_id})
     except Exception as e:
         return jsonify({'error': str(e)}), 500

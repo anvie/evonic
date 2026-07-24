@@ -393,6 +393,12 @@ class SchemaMixin:
                 except sqlite3.OperationalError:
                     pass
 
+            # Migration: add always_execute to decouple CMP from plan/execute mode.
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN always_execute BOOLEAN DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+
             # Migration: add artifacts_enabled (default ON for all agents)
             try:
                 cursor.execute("ALTER TABLE agents ADD COLUMN artifacts_enabled BOOLEAN DEFAULT 1")

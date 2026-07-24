@@ -264,7 +264,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
                 </div>
                 <div class="flex gap-2">
                     <input type="file" id="file-input" class="hidden"
-                           accept="image/*,.pdf,.txt,.md,.log,.json,.yaml,.yml,.xml,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.rb,.php,.html,.css,.sql,.sh,.toml,.ini,.zip"
+                           accept="image/*,.pdf,.txt,.md,.log,.json,.yaml,.yml,.xml,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.rb,.php,.html,.css,.sql,.sh,.toml,.ini,.zip,.docx,.xlsx,.pptx,.odt,.ods,.odp,.rtf,.epub"
                            onchange="onFileSelected(this)">
                     <button type="button" id="attach-btn" onclick="document.getElementById('file-input').click()"
                             class="hidden p-2.5 text-gray-400 hover:text-indigo-500 transition-colors flex-shrink-0" title="Attach file">
@@ -1366,6 +1366,38 @@ function clearFileInput() {
     if (previewImg.src) { URL.revokeObjectURL(previewImg.src); previewImg.src = ''; }
 }
 
+// ==================== Image Paste ====================
+
+(function initChatImagePaste() {
+    const input = document.getElementById('reply-input');
+    if (!input) return;
+    input.addEventListener('paste', function(event) {
+        const items = event.clipboardData?.items;
+        if (!items) return;
+        const images = Array.from(items)
+            .filter(item => item.type.startsWith('image/'))
+            .map(item => item.getAsFile())
+            .filter(Boolean);
+        if (!images.length) return;
+        event.preventDefault();
+
+        if (!currentAttachmentsEnabled) {
+            if (typeof showToast === 'function') {
+                showToast('This agent does not support file attachments. Enable attachments in Agent Settings to upload files.', true);
+            }
+            return;
+        }
+
+        // Sessions page supports a single file attachment; use the first pasted image.
+        const file = images[0];
+        const fileInput = document.getElementById('file-input');
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        fileInput.files = dt.files;
+        onFileSelected(fileInput);
+    });
+})();
+
 // ==================== Drag & Drop File Upload ====================
 
 let _dragCounter = 0;
@@ -1593,6 +1625,18 @@ async function doSendReply() {
     if (_sseThinkingId) chatUI.markLastUserBubbleQueued($msgEl);
     // Clear input and file preview immediately so the UI feels responsive
     $input.val('');
+    // Reset textarea height — jQuery val('') doesn't fire the oninput handler
+    var textarea = $input[0];
+    textarea.style.height = 'auto';
+    textarea.style.overflowY = 'hidden';
+    // Re-apply after reflow so a stale scrollHeight from the oninput handler
+    // (which fires async) doesn't lock the height again.
+    requestAnimationFrame(function() {
+        if (textarea.value === '') {
+            textarea.style.height = 'auto';
+            textarea.style.overflowY = 'hidden';
+        }
+    });
     if (file) clearFileInput();
     requestAnimationFrame(function () { chatUI.scrollToBottom(); });
     _pendingReplyText = null; // Will be set after we know the final text from backend

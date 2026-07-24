@@ -100,8 +100,11 @@ class AgentState:
                  plan_file: str = None, states: dict = None,
                  focus: bool = False, focus_reason: str = None,
                  auto_trivial: bool = False, atg: dict = None,
-                 cmp: dict = None):
+                 cmp: dict = None, always_execute: bool = False):
         self.mode = mode
+        self.always_execute: bool = always_execute
+        if self.always_execute:
+            self.mode = "execute"
         self.tasks: list[dict] = tasks or []
         self._next_task_id = next_task_id
         self.plan_file: str | None = plan_file  # relative path e.g. "plan/my-plan.md"
@@ -127,6 +130,8 @@ class AgentState:
 
     def is_blocked(self, tool_name: str) -> Union[bool, str]:
         """Return True (mode block) or a string message (state block) if the tool is blocked."""
+        if self.always_execute:
+            return self.is_blocked_by_state(tool_name)
         if self.mode == "plan" and tool_name in GUARDED_TOOLS:
             return True
         return self.is_blocked_by_state(tool_name)
@@ -172,6 +177,10 @@ class AgentState:
         """Transition to a new mode. Returns a result dict for the LLM."""
         if new_mode not in VALID_MODES:
             return {"error": f"Invalid mode '{new_mode}'. Valid modes: {sorted(VALID_MODES)}"}
+        if self.always_execute:
+            if new_mode == "plan":
+                return {"result": f"Agent is configured with always_execute; staying in execute mode", "mode": "execute"}
+            return {"result": f"Mode is execute", "mode": "execute"}
         if new_mode == "execute" and not self.plan_file:
             return {
                 "error": (
@@ -276,7 +285,9 @@ class AgentState:
             cmp_enabled: When True and cmp state exists, render the session
                       path map + cards section.
         """
-        if self.mode == "plan":
+        if self.always_execute:
+            mode_note = "execute — write tools are **allowed** (always_execute is on)"
+        elif self.mode == "plan":
             if atg_enabled:
                 mode_note = (
                     "plan — write tools are **blocked** until user approves. "
@@ -316,7 +327,7 @@ class AgentState:
                 lines.append("")
                 lines.append("### Active Plan")
                 lines.append(plan_content)
-        else:
+        elif not self.always_execute:
             lines.append("**Plan file**: _none — use save_plan(filename, content) to create one_")
 
         if self.atg:
@@ -446,6 +457,7 @@ class AgentState:
             "auto_trivial": self.auto_trivial,
             "atg": self.atg,
             "cmp": self.cmp,
+            "always_execute": self.always_execute,
         })
 
     @classmethod
@@ -464,6 +476,7 @@ class AgentState:
                 auto_trivial=obj.get("auto_trivial", False),
                 atg=obj.get("atg"),
                 cmp=obj.get("cmp"),
+                always_execute=obj.get("always_execute", False),
             )
         except (json.JSONDecodeError, TypeError, AttributeError):
             return cls()

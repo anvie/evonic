@@ -1,0 +1,26 @@
+{
+  "id": "agentic_inbox",
+  "name": "Cloudflare Agentic Inbox",
+  "version": "1.0.0",
+  "description": "Email management via the Cloudflare Agentic Inbox REST API. Provides tools to list mailboxes, read/send/reply/delete emails.",
+  "brief": "You can manage emails via the Cloudflare Agentic Inbox using the `agentic_inbox` skill. Load it with `use_skill('agentic_inbox')` to list mailboxes, read emails, send replies, and more.",
+  "author": "Evonic",
+  "tools_file": "tools.json",
+  "lazy_tools": true,
+  "variables": [
+    {
+      "name": "WORKER_URL",
+      "label": "Worker URL",
+      "type": "string",
+      "default": "",
+      "description": "Base URL of the deployed Cloudflare Agentic Inbox Worker (e.g. https://inbox.evonic.dev). Do NOT include a trailing slash."
+    },
+    {
+      "name": "ACCESS_TOKEN",
+      "label": "Access Token",
+      "type": "secret",
+      "default": "",
+      "description": "Cloudflare Access JWT (from CF_Authorization cookie after browser login, or a service-token-derived JWT). Sent as the cf-access-jwt-assertion header to authenticate against the Worker."
+    }
+  ]
+}

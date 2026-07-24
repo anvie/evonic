@@ -520,6 +520,9 @@ def run_setup(
             agent_id, ["bash", "runpy", "patch", "write_file", "read_file"]
         )
 
+        # 5.5 Assign default skills (core built-in skills pre-assigned for super agent)
+        db.set_agent_skills(agent_id, ["explorer"])
+
         # 6. Store settings
         db.set_setting("super_agent_id", agent_id)
         db.set_setting("agent_language", language)

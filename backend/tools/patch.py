@@ -108,7 +108,9 @@ def parse_hunks(patch_text: str) -> list:
         elif line.startswith(' '):
             current_hunk['lines'].append((' ', line[1:], False))
         else:
-            current_hunk['lines'].append((' ', line, False))
+            # Lines that do not start with a valid hunk prefix (e.g. LLM
+            # appended garbage like "*** End Patch") are silently discarded.
+            continue
 
     if current_hunk is not None:
         hunks.append(current_hunk)

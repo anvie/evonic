@@ -844,6 +844,7 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         'workplace_id': agent.get('workplace_id'),
         'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
         'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
+        'always_execute': bool(agent.get('always_execute')),
     }
     if agent.get('builtin_tools_enabled', True):
         tools.extend(tool_registry.get_builtin_tools(agent_context))
@@ -871,22 +872,6 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     if agent.get('is_super'):
         from backend.tools.super_agent_tools import get_super_agent_tool_defs
         tools.extend(get_super_agent_tool_defs())
-
-    # Super agent gets ALL skill tools automatically — no per-skill assignment needed
-    if agent.get('is_super'):
-        seen_fn_names = {t['function']['name'] for t in tools if t.get('function', {}).get('name')}
-        for tool_def in tool_registry.get_all_tool_defs():
-            tool_id = tool_def.get('id', '')
-            fn_name = tool_def.get('function', {}).get('name', '')
-            if not tool_id.startswith('skill:') or not fn_name:
-                continue
-            if fn_name in seen_fn_names:
-                continue
-            seen_fn_names.add(fn_name)
-            tools.append({
-                "type": "function",
-                "function": tool_def['function']
-            })
 
     # Agent messaging tools — available to super agent and agents with messaging enabled
     if agent.get('is_super') or agent.get('agent_messaging_enabled') != 0:
@@ -942,31 +927,30 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     # This ensures that when an agent has a skill assigned in agent_skills and that skill
     # is eagerly loaded (no lazy_tools=true), the tools are available without manual
     # tool assignment in agent_tools.
-    if not agent.get('is_super'):
-        assigned_skill_ids = set(db.get_agent_skills(eid))
-        if assigned_skill_ids:
-            for skill in skills_manager.list_skills():
-                skill_id = skill.get('id', '')
-                if skill_id not in assigned_skill_ids:
+    assigned_skill_ids = set(db.get_agent_skills(eid))
+    if assigned_skill_ids:
+        for skill in skills_manager.list_skills():
+            skill_id = skill.get('id', '')
+            if skill_id not in assigned_skill_ids:
+                continue
+            # Skip lazy-loaded skills — their tools are injected via use_skill
+            if skill.get('lazy_tools', False):
+                continue
+            # Skip super_only skills for non-super agents
+            if skill.get('super_only', False) and not agent.get('is_super'):
+                continue
+            defs = skills_manager.get_skill_tool_defs(skill_id)
+            for tool_def in defs:
+                fn_name = tool_def.get('function', {}).get('name', '')
+                if not fn_name:
                     continue
-                # Skip lazy-loaded skills — their tools are injected via use_skill
-                if skill.get('lazy_tools', False):
+                # Avoid duplicates
+                if any(t['function']['name'] == fn_name for t in tools):
                     continue
-                # Skip super_only skills for non-super agents
-                if skill.get('super_only', False):
-                    continue
-                defs = skills_manager.get_skill_tool_defs(skill_id)
-                for tool_def in defs:
-                    fn_name = tool_def.get('function', {}).get('name', '')
-                    if not fn_name:
-                        continue
-                    # Avoid duplicates
-                    if any(t['function']['name'] == fn_name for t in tools):
-                        continue
-                    tools.append({
-                        "type": "function",
-                        "function": tool_def['function']
-                    })
+                tools.append({
+                    "type": "function",
+                    "function": tool_def['function']
+                })
 
     # ── Patch /workspace and Docker/container references for non-sandbox agents ──
     # Tool JSON definitions contain /workspace paths and Docker/container

@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
+const { OutboundLifecycle } = require('./outbound-lifecycle');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const CALLBACK_URL = process.env.CALLBACK_URL || '';
@@ -29,6 +30,63 @@ let saveCredsNow = null;
 let pendingCredsSave = Promise.resolve();
 let ownerAcquired = false;
 let httpServer = null;
+
+// Kept outside startBaileys() so correlation and retry state survive reconnects.
+const outboundLifecycle = new OutboundLifecycle({
+    send: (jid, content) => {
+        if (!sock || connectionStatus !== 'connected' || !messageSendReady) {
+            throw new Error('WhatsApp message transport is not ready');
+        }
+        return sock.sendMessage(jid, content);
+    },
+    emit: (payload) => {
+        const level = payload.status === 'failed' ? 'error' : 'log';
+        console[level](
+            '[whatsapp-bridge] OUTBOUND correlationId=%s status=%s jid=%s retry=%d reason=%s',
+            payload.correlation_id, payload.status, payload.jid,
+            payload.retry_count, payload.reason || '');
+        if (CALLBACK_URL) postCallback(payload);
+    },
+    maxRetries: 1,
+});
+
+// Hook Baileys' internal pino logger so ACK 463 (and other bad-ack errors)
+// bypass the EventBuffer entirely.
+//
+// Baileys 6.x / early 7.x:
+//   logger.warn({ attrs: { id, error } }, 'received error in ack')
+//
+// Baileys 7.x (463-specific branch):
+//   logger.warn({ msgId: id, from }, 'error 463: account restricted ...')
+//
+// Both emit messages.update afterwards, but the pino hook is synchronous
+// and fires first — it is our most reliable signal.
+{
+    const rawWarn = logger.warn.bind(logger);
+    logger.warn = (obj, msg) => {
+        if (typeof obj === 'object') {
+            // Format A: { attrs: { id, error } }  (generic NACK, Baileys 6.x / 7.x else-branch)
+            // Format B: { msgId, from }           (463-specific branch, Baileys 7.x)
+            const msgId = obj?.attrs?.id || obj?.msgId || '';
+            // Format A carries error in attrs.error; Format B carries it in the message text.
+            // Fall back to msg text when attrs.error is absent (e.g. "error 463: ...")
+            const codeA = obj?.attrs?.error || '';
+            const codeB = typeof msg === 'string' && msg.startsWith('error ') ? msg.split(' ')[1].replace(/[^0-9]/g, '') : '';
+            const code = codeA || codeB;
+            if (msgId && code) {
+                console.log('[whatsapp-bridge] logger.warn hook: msgId=%s code=%s msg=%s', msgId, code, msg);
+                outboundLifecycle.handleBadAck(msgId, code).catch(
+                    (e) => console.error('[whatsapp-bridge] Bad ACK handler error:', e.message));
+            }
+        }
+        return rawWarn(obj, msg);
+    };
+}
+
+// Message readiness follows Baileys' authenticated connection state. Internal
+// init queries such as fetchProps are optional metadata queries; their timeout
+// does not mean Signal encryption state is unavailable.
+let messageSendReady = false;
 
 function pidIsAlive(pid) {
     if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -191,6 +249,15 @@ async function startBaileys() {
         });
     });
 
+    sock.ev.on('messages.update', (updates) => {
+        outboundLifecycle.onMessageUpdates(updates).catch((e) => {
+            console.error('[whatsapp-bridge] outbound message update handling failed:', e.message);
+        });
+    });
+    sock.ev.on('message-receipt.update', (updates) => {
+        outboundLifecycle.onReceipts(updates);
+    });
+
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
             currentQR = qr;
@@ -207,13 +274,30 @@ async function startBaileys() {
             // Baileys v7 sometimes omits lid from sock.user — fall back to creds.
             botLid = sock.user?.lid || state.creds?.me?.lid || '';
             console.log('[whatsapp-bridge] Connected to WhatsApp (id=%s, lid=%s)', botId, botLid);
+
+            // A Baileys `open` event completes authentication and makes the
+            // socket ready for encrypted sends. Its background init queries
+            // fetch account metadata and may time out independently; they do not
+            // populate signalRepository and must not block message delivery.
+            messageSendReady = !!(botId && botId.includes('@'));
+            console.log('[whatsapp-bridge] Message delivery ready (botId=%s)', botId || '(empty)');
+            outboundLifecycle.onConnection('connected').catch((e) => {
+                console.error('[whatsapp-bridge] pending outbound retry failed:', e.message);
+            });
         }
 
         if (connection === 'close') {
             connectionStatus = 'disconnected';
+            messageSendReady = false;
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const terminal = statusCode === DisconnectReason.loggedOut
+                || statusCode === DisconnectReason.badSession
+                || statusCode === DisconnectReason.connectionReplaced;
+            outboundLifecycle.onConnection('disconnected', { terminal }).catch((e) => {
+                console.error('[whatsapp-bridge] outbound disconnect handling failed:', e.message);
+            });
             if (isShuttingDown) { pushStatus(); return; }
 
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
             const reasonName = Object.keys(DisconnectReason)
                 .find((k) => DisconnectReason[k] === statusCode) || 'unknown';
             console.log('[whatsapp-bridge] Connection closed (statusCode=%s reason=%s)',
@@ -228,17 +312,11 @@ async function startBaileys() {
 
             switch (statusCode) {
                 case DisconnectReason.loggedOut: // 401
-                    // A 401 immediately after a connectionReplaced is conflict
-                    // fallout, not a real logout — reconnect instead of wiping.
-                    if (sawReplaced) {
-                        console.log('[whatsapp-bridge] 401 after replace — treating as conflict, keeping creds');
-                        sawReplaced = false;
-                        scheduleRestart();
-                    } else {
-                        // Do not destroy persistent credentials automatically. A
-                        // manual logout endpoint is the only destructive path.
-                        requestRepair('Logged out');
-                    }
+                    // Preserve the linked-device credentials. A 401 can follow a
+                    // transient socket conflict; unlinking must remain an explicit
+                    // user action through /logout.
+                    sawReplaced = false;
+                    requestRepair('Logged out');
                     break;
 
                 case DisconnectReason.badSession: // 500 — auth files corrupt
@@ -462,15 +540,44 @@ app.get('/qr', async (req, res) => {
 });
 
 app.post('/send', async (req, res) => {
-    const { to, text } = req.body || {};
+    const {
+        to, text, retry_jid: requestedRetryJid,
+        correlation_id: requestedCorrelationId,
+        retry_eligible: retryEligible,
+    } = req.body || {};
     if (!to || !text) return res.status(400).json({ error: 'to and text required' });
     if (!sock || connectionStatus !== 'connected') {
-        return res.status(503).json({ error: 'Not connected to WhatsApp' });
+        return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
-    // Use @lid JIDs as-is — they are valid routable identifiers in Baileys
+    if (!messageSendReady) {
+        return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
+    }
     const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-    await sock.sendMessage(jid, { text });
-    res.json({ success: true });
+    const retryJid = requestedRetryJid?.endsWith('@lid') ? requestedRetryJid : null;
+    const correlationId = requestedCorrelationId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    console.log('[whatsapp-bridge] SEND requested correlationId=%s to=%s jid=%s len=%d', correlationId, to, jid, text.length);
+    try {
+        const result = await outboundLifecycle.accept({
+            correlationId,
+            jid,
+            retryJid,
+            content: { text },
+            retryEligible: Boolean(retryEligible && retryJid),
+        });
+        if (result.status === 'failed') {
+            return res.status(500).json({
+                success: false,
+                status: result.status,
+                correlation_id: correlationId,
+                retry_count: result.retry_count,
+            });
+        }
+        res.json({ success: true, status: result.status, correlation_id: correlationId,
+            message_id: result.message_id, retry_count: result.retry_count });
+    } catch (e) {
+        console.error('[whatsapp-bridge] SEND FAIL correlationId=%s to=%s error=%s', correlationId, jid, e.message);
+        res.status(500).json({ error: e.message, correlation_id: correlationId });
+    }
 });
 
 app.post('/send-buttons', async (req, res) => {

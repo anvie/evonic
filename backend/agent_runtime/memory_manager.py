@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 # precision; explicit recall favours maximum recall from the weak hash embedder.
 _PASSIVE_SEARCH_MODE = os.environ.get("EVOMEM_SEARCH_MODE_PASSIVE", "conservative")
 _RECALL_SEARCH_MODE = os.environ.get("EVOMEM_SEARCH_MODE_RECALL", "tokenmax")
+_RECALL_MIN_SCORE = float(os.environ.get("EVOMEM_RECALL_MIN_SCORE", "0.03"))
 
 # Cross-session entity coreference uses one LLM call PER extracted entity to
 # decide if a variant name ("Andi") is the same as an existing page ("Andi
@@ -2124,7 +2125,8 @@ def search_memories(agent_id: str, query: str, limit: int = 6) -> dict:
         engine = get_engine()
         if engine == "evomem":
             evomem_result = evomem_search(agent_id, query, limit,
-                                              mode=_RECALL_SEARCH_MODE)
+                                          mode=_RECALL_SEARCH_MODE,
+                                          min_score=_RECALL_MIN_SCORE)
             if evomem_result and isinstance(evomem_result.get("hits"), list):
                 hits = evomem_result["hits"][:limit]
                 if hits:
