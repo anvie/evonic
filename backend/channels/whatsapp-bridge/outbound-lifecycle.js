@@ -163,7 +163,7 @@ class OutboundLifecycle {
                 this.emitStatus(entry, 'failed', {
                     reason,
                     terminal: true,
-                    jid: this.targetJid(entry),
+                    jid: entry.jid,
                     ...diagnostic,
                 });
                 return;
@@ -172,14 +172,14 @@ class OutboundLifecycle {
                 this.emitStatus(entry, 'failed', {
                     reason: `${reason}; reach-out diagnostic failed: ${error?.message || error}`,
                     terminal: true,
-                    jid: this.targetJid(entry),
+                    jid: entry.jid,
                 });
                 return;
             }
         }
         entry.status = 'failed';
         this.emitStatus(entry, 'failed', {
-            reason, terminal: true, jid: this.targetJid(entry) });
+            reason, terminal: true, jid: entry.jid });
     }
 
     deliver(entry, messageId) {

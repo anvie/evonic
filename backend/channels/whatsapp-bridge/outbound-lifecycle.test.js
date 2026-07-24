@@ -22,8 +22,8 @@ function harness(options = {}) {
 test('post-send ACK 463 is terminal and reports reach-out diagnostics', async () => {
     const diagnostics = [];
     const { lifecycle, sent, events } = harness({
-        diagnoseFailure: async (code, jid) => {
-            diagnostics.push({ code, jid });
+        diagnoseFailure: async (jid) => {
+            diagnostics.push({ code: '463', jid });
             return {
                 reachout_timelocked: true,
                 reachout_enforcement_type: 'WEB_COMPANION_ONLY',
@@ -179,15 +179,13 @@ test('normal group send reports failure without retrying', async () => {
     assert.equal(events.at(-1).status, 'failed');
 });
 
-test('terminal disconnect blocks pending retry until connection is restored', async () => {
+test('ACK 463 remains terminal across a disconnect and reconnect', async () => {
     const { lifecycle, sent, events } = harness();
     await lifecycle.onConnection('connected');
     await lifecycle.accept({
         correlationId: 'correlation-3',
         jid: '628333@s.whatsapp.net',
-        retryJid: '131902740668594@lid',
         content: { text: 'hello' },
-        retryEligible: true,
     });
     await lifecycle.onConnection('disconnected', { terminal: true });
     await lifecycle.onMessageUpdates([{
@@ -196,9 +194,8 @@ test('terminal disconnect blocks pending retry until connection is restored', as
     }]);
 
     assert.equal(sent.length, 1);
-    assert.equal(events.at(-1).status, 'retrying');
+    assert.equal(events.at(-1).status, 'failed');
     await lifecycle.onConnection('connected');
-    assert.equal(sent.length, 2);
-    assert.equal(sent[1].jid, '131902740668594@lid');
-    assert.equal(events.at(-1).status, 'accepted');
+    assert.equal(sent.length, 1);
+    assert.equal(events.at(-1).status, 'failed');
 });
