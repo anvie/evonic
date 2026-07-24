@@ -100,15 +100,11 @@ class OutboundLifecycle {
             if (isDelivery) {
                 this.deliver(entry, messageId);
             } else if (isFailure && messageId === entry.activeKey) {
-                // 463 = missing privacy token (tctoken). Baileys 7.x fires an
-                // async issuePrivacyTokens recovery in the background.
-                // Retrying counts as another "reach out" and worsens the
-                // restriction per Baileys source (messages-recv.js L1518).
-                // Let the fire-and-forget token recovery complete; the next
-                // message from the user will carry the stored tctoken.
                 const code = failureCode(update);
-                const retryable = code !== '463';
-                await this.fail(entry, failureReason(update), true, retryable);
+                // A 463 can be specific to the attempted PN/LID namespace. Only
+                // switch to the pre-resolved alternate once; never resend to the
+                // same JID or enter an unbounded privacy-token retry loop.
+                await this.fail(entry, failureReason(update), true, code === '463');
             }
         }
     }
@@ -159,8 +155,7 @@ class OutboundLifecycle {
         if (entry.status === 'delivered' || entry.status === 'failed') return;
         const code = String(errorCode || '');
         const reason = code ? `Message rejected (${code})` : 'Message rejected';
-        // 463 = tctoken missing; retrying worsens restriction (see above).
-        await this.fail(entry, reason, true, code !== '463');
+        await this.fail(entry, reason, true, code === '463');
     }
 
     async fail(entry, reason, asynchronous, retryable = false) {
@@ -171,7 +166,8 @@ class OutboundLifecycle {
             entry.retries += 1;
             entry.status = 'retrying';
             entry.activeKey = null;
-            this.emitStatus(entry, 'retrying', { reason, retry: entry.retries });
+            this.emitStatus(entry, 'retrying', {
+                reason, retry: entry.retries, jid: this.targetJid(entry) });
             if (!this.connected || this.retryBlocked) {
                 entry.pendingRetry = true;
                 return;
@@ -180,13 +176,19 @@ class OutboundLifecycle {
             return;
         }
         entry.status = 'failed';
-        this.emitStatus(entry, 'failed', { reason, terminal: true });
+        this.emitStatus(entry, 'failed', {
+            reason, terminal: true, jid: this.targetJid(entry) });
     }
 
     deliver(entry, messageId) {
         entry.status = 'delivered';
         entry.pendingRetry = false;
-        this.emitStatus(entry, 'delivered', { baileys_message_id: messageId });
+        this.emitStatus(entry, 'delivered', {
+            baileys_message_id: messageId, jid: this.targetJid(entry) });
+    }
+
+    targetJid(entry) {
+        return entry.retries > 0 && entry.retryJid ? entry.retryJid : entry.jid;
     }
 
     async onConnection(status, { terminal = false } = {}) {

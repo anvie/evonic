@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
+const { normalizeRecipientJid } = require('./jid');
 const { OutboundLifecycle } = require('./outbound-lifecycle');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -563,9 +564,10 @@ app.post('/send', async (req, res) => {
     if (!messageSendReady) {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-    const retryJid = requestedRetryJid?.includes('@') && requestedRetryJid !== jid
-        ? requestedRetryJid
+    const jid = normalizeRecipientJid(to);
+    const normalizedRetryJid = normalizeRecipientJid(requestedRetryJid);
+    const retryJid = requestedRetryJid?.includes('@') && normalizedRetryJid !== jid
+        ? normalizedRetryJid
         : null;
     const correlationId = requestedCorrelationId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     console.log('[whatsapp-bridge] SEND requested correlationId=%s to=%s jid=%s len=%d', correlationId, to, jid, text.length);
@@ -600,7 +602,7 @@ app.post('/send-buttons', async (req, res) => {
         return res.status(503).json({ error: 'Not connected to WhatsApp' });
     }
     try {
-        const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+        const jid = normalizeRecipientJid(to);
         const waButtons = buttons.slice(0, 3).map((b) => ({
             buttonId: b.id,
             buttonText: { displayText: b.title.slice(0, 20) },
@@ -623,7 +625,7 @@ app.post('/typing', async (req, res) => {
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'Not connected to WhatsApp' });
     }
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+    const jid = normalizeRecipientJid(to);
     try {
         await sock.sendPresenceUpdate(state === 'paused' ? 'paused' : 'composing', jid);
         res.json({ success: true });
@@ -640,7 +642,7 @@ app.post('/send-file', async (req, res) => {
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'Not connected to WhatsApp' });
     }
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+    const jid = normalizeRecipientJid(to);
     try {
         const fileBuffer = fs.readFileSync(filePath);
         await sock.sendMessage(jid, {

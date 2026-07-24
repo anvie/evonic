@@ -19,13 +19,13 @@ function harness() {
     return { lifecycle, sent, events };
 }
 
-test('post-send ACK 463 retries a resolved-LID DM once using its original LID', async () => {
+test('post-send ACK 463 retries an inbound-LID DM once using its phone JID', async () => {
     const { lifecycle, sent, events } = harness();
     await lifecycle.onConnection('connected');
     const accepted = await lifecycle.accept({
         correlationId: 'correlation-1',
-        jid: '628111@s.whatsapp.net',
-        retryJid: '131902740668594@lid',
+        jid: '131902740668594@lid',
+        retryJid: '628111@s.whatsapp.net',
         content: { text: 'hello' },
         retryEligible: true,
     });
@@ -37,10 +37,15 @@ test('post-send ACK 463 retries a resolved-LID DM once using its original LID', 
     }]);
 
     assert.deepEqual(sent.map((item) => item.jid), [
-        '628111@s.whatsapp.net',
         '131902740668594@lid',
+        '628111@s.whatsapp.net',
     ]);
     assert.deepEqual(events.map((event) => event.status), ['accepted', 'retrying', 'accepted']);
+    assert.deepEqual(events.map((event) => event.jid), [
+        '131902740668594@lid',
+        '628111@s.whatsapp.net',
+        '628111@s.whatsapp.net',
+    ]);
     assert.ok(events.every((event) => event.correlation_id === 'correlation-1'));
 
     await lifecycle.onMessageUpdates([{
@@ -87,6 +92,30 @@ test('ACK 463 arriving before send resolves is replayed and retried to the LID',
         '131902740668594@lid',
     ]);
     assert.deepEqual(events.map((event) => event.status), ['accepted', 'retrying', 'accepted']);
+});
+
+test('pino ACK 463 retries an inbound-LID DM once using its phone JID', async () => {
+    const { lifecycle, sent, events } = harness();
+    await lifecycle.onConnection('connected');
+    await lifecycle.accept({
+        correlationId: 'correlation-pino',
+        jid: '131902740668594@lid',
+        retryJid: '628111@s.whatsapp.net',
+        content: { text: 'hello' },
+        retryEligible: true,
+    });
+
+    await lifecycle.handleBadAck('key-1', '463');
+
+    assert.deepEqual(sent.map((item) => item.jid), [
+        '131902740668594@lid',
+        '628111@s.whatsapp.net',
+    ]);
+    assert.deepEqual(events.map((event) => event.status), ['accepted', 'retrying', 'accepted']);
+
+    await lifecycle.handleBadAck('key-2', '463');
+    assert.equal(sent.length, 2);
+    assert.equal(events.at(-1).status, 'failed');
 });
 
 test('non-463 NACK is reported failed without retrying an eligible LID DM', async () => {
