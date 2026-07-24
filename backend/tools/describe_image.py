@@ -68,14 +68,14 @@ def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
     vision_model_id = agent.get("vision_model_id")
     if vision_model_id:
         model = db.get_model_by_id(vision_model_id)
-        if model and model.get("enabled"):
+        if model and model.get("enabled") and model.get("vision_supported"):
             _add_model(model)
 
     # Priority 2: system config
     system_vision_id = db.get_setting("vision_model_id")
     if system_vision_id and system_vision_id != vision_model_id:
         model = db.get_model_by_id(system_vision_id)
-        if model and model.get("enabled"):
+        if model and model.get("enabled") and model.get("vision_supported"):
             _add_model(model)
 
     # Priority 3: system fallback model (configured in System Settings → General)
@@ -290,12 +290,12 @@ def execute(agent: dict, args: dict) -> Any:
         # Check if this is a connection error we should fallback from
         error_type = result.get("error_type", "")
         error_detail = result.get("error_detail", "")
-        if error_type == "connection_error":
+        if error_type in ("connection_error", "api_error"):
             connection_failures += 1
             last_error = error_detail or f"connection to {model_name}"
             continue  # Try next model
 
-        # Non-connection error — fail immediately (auth, rate limit, API error, etc.)
+        # Non-recoverable error — fail immediately (auth, rate limit, etc.)
         return f"Error: Vision model call failed ({error_type}): {error_detail}"
 
     if result is None or not result.get("success"):
