@@ -86,6 +86,7 @@ def _systemd_command(action: str) -> None:
         raise RuntimeError(
             "SYSTEMD_SERVICE_NAME is required when SERVICE_SYSTEM=systemd"
         )
+    command = []
 
     # Check if we are NOT root (UID 0)
     if os.geteuid() != 0:
