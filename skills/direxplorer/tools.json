@@ -57,12 +57,15 @@
             "type": "string",
             "description": "Path to the file to read. Relative paths are resolved against the workspace root."
           },
+          "path": {
+            "type": "string",
+            "description": "Alias for file_path. Relative paths are resolved against the workspace root."
+          },
           "offset": {
             "type": "integer",
             "description": "1-based line number to start reading from (default: 1). Use for paginating through large files."
           }
-        },
-        "required": ["file_path"]
+        }
       }
     }
   }
