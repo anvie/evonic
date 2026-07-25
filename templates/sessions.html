@@ -2360,16 +2360,6 @@ function channelBadge(type) {
     return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-600 text-gray-400 dark:text-gray-200 font-medium">Web</span>';
 }
 
-function formatWhatsAppRestriction(content, metadata) {
-    const ends = metadata && metadata.reachout_enforcement_ends;
-    if (!ends) return content || '';
-    const parsed = new Date(ends);
-    if (Number.isNaN(parsed.getTime())) return content || '';
-    const local = parsed.toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'});
-    const original = ends.replace(/\.000Z$/, 'Z');
-    return (content || '') + '\nRestriction ends in your local time: ' + local + ' (' + original + ' UTC).';
-}
-
 function timeAgo(ts) {
     if (!ts) return '';
     const diff = (Date.now() - new Date(ts + (ts.includes('Z') ? '' : 'Z')).getTime()) / 1000;
@@ -2377,18 +2367,6 @@ function timeAgo(ts) {
     if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
     return Math.floor(diff / 86400) + 'd ago';
-}
-
-function formatWhatsAppRestriction(content, metadata) {
-    const ends = metadata && metadata.reachout_enforcement_ends;
-    if (!ends) return content || '';
-    const date = new Date(ends);
-    if (Number.isNaN(date.getTime())) return content || '';
-    const localEnd = date.toLocaleString([], {dateStyle: 'long', timeStyle: 'long'});
-    return (content || '').replace(
-        'Sending may resume after ' + ends + '.',
-        'Sending may resume after ' + localEnd + ' (' + ends + ').'
-    );
 }
 
 function formatTime(ts) {

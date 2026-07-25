@@ -37,6 +37,7 @@ test('post-send ACK 463 is terminal and reports reach-out diagnostics', async ()
         jid: '131902740668594@lid',
         retryJid: '628111@s.whatsapp.net',
         content: { text: 'hello' },
+        metadata: { session_id: 'session-1' },
         retryEligible: true,
     });
 
@@ -53,6 +54,7 @@ test('post-send ACK 463 is terminal and reports reach-out diagnostics', async ()
     assert.equal(events.at(-1).reachout_timelocked, true);
     assert.equal(events.at(-1).reachout_enforcement_type, 'WEB_COMPANION_ONLY');
     assert.equal(events.at(-1).reachout_enforcement_ends, '2026-07-25T00:00:00.000Z');
+    assert.ok(events.every((event) => event.session_id === 'session-1'));
     assert.ok(events.every((event) => event.correlation_id === 'correlation-1'));
 });
 

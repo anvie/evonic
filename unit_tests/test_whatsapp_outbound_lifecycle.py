@@ -1,6 +1,6 @@
 """Focused tests for WhatsApp outbound correlation and LID retry eligibility."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from backend.channels.whatsapp import WhatsAppChannel
 
@@ -140,3 +140,87 @@ def test_outbound_status_callback_is_forwarded_with_stable_correlation():
     assert event["correlation_id"] == "correlation-1"
     assert event["status"] == "failed"
     assert event["channel_id"] == "channel-1"
+
+
+def test_session_id_is_included_in_local_bridge_payload():
+    channel = _channel()
+    channel._jid_map["628222"] = "628222@s.whatsapp.net"
+    sent = []
+
+    with patch.object(channel, "_bridge_send_retry",
+                      side_effect=lambda body, _: sent.append(body) or True), \
+            patch.object(channel, "send_typing"), patch.object(channel, "_clear_typing"):
+        channel._do_send("628222", "response", session_id="session-1")
+
+    assert sent[0]["session_id"] == "session-1"
+
+
+def _restriction_payload():
+    return {
+        "event": "outbound_status",
+        "correlation_id": "correlation-restricted",
+        "session_id": "session-1",
+        "status": "failed",
+        "terminal": True,
+        "reachout_timelocked": True,
+        "reachout_enforcement_type": "RESTRICT_ALL_COMPANIONS",
+        "reachout_enforcement_ends": "2026-07-30T06:59:55Z",
+    }
+
+
+def test_terminal_reachout_restriction_persists_and_emits_once():
+    channel = _channel()
+    mock_db = MagicMock()
+    mock_db.get_session_with_details.return_value = {
+        "id": "session-1", "agent_id": "agent-1", "channel_id": "channel-1"}
+    mock_db.get_session_messages.side_effect = [[], [{
+        "metadata": {
+            "whatsapp_restriction_key":
+                "RESTRICT_ALL_COMPANIONS|2026-07-30T06:59:55Z"}}]]
+
+    with patch("backend.channels.whatsapp.db", mock_db), \
+            patch("backend.event_stream.event_stream.emit") as emit:
+        channel.handle_callback(_restriction_payload())
+        channel.handle_callback(_restriction_payload())
+
+    mock_db.add_chat_message.assert_called_once()
+    args, kwargs = mock_db.add_chat_message.call_args
+    assert args[:2] == ("session-1", "system")
+    assert "RESTRICT_ALL_COMPANIONS" in args[2]
+    assert "2026-07-30T06:59:55Z" in args[2]
+    assert kwargs["agent_id"] == "agent-1"
+    assert len([call for call in emit.call_args_list
+                if call.args[0] == "whatsapp_restriction_warning"]) == 1
+
+
+def test_shared_restriction_uses_session_routed_agent():
+    channel = _channel()
+    channel.agent_id = None
+    mock_db = MagicMock()
+    mock_db.get_session_with_details.return_value = {
+        "id": "session-1", "agent_id": "routed-agent", "channel_id": "channel-1"}
+    mock_db.get_session_messages.return_value = []
+    event_stream = MagicMock()
+
+    with patch.object(channel, "get_channel_type", return_value="whatsapp_shared"):
+        channel._record_reachout_restriction(
+            _restriction_payload(), mock_db, event_stream)
+
+    assert mock_db.add_chat_message.call_args.kwargs["agent_id"] == "routed-agent"
+    emitted = event_stream.emit.call_args.args[1]
+    assert emitted["agent_id"] == "routed-agent"
+    assert emitted["session_id"] == "session-1"
+
+
+def test_restriction_callback_rejects_channel_mismatch():
+    channel = _channel()
+    mock_db = MagicMock()
+    mock_db.get_session_with_details.return_value = {
+        "id": "session-1", "agent_id": "agent-1", "channel_id": "another-channel"}
+    event_stream = MagicMock()
+
+    channel._record_reachout_restriction(
+        _restriction_payload(), mock_db, event_stream)
+
+    mock_db.add_chat_message.assert_not_called()
+    event_stream.emit.assert_not_called()
