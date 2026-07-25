@@ -476,33 +476,29 @@ def run_tool_loop(agent: Dict[str, Any],
     _TOOL_PRUNE_THRESHOLD = 3  # prune zero-call tools after this many iterations
     _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch',
                         'set_mode', 'save_plan', 'update_tasks'}
-    # Skill namespaces dispatched via state() label (e.g. "kanban:activate" -> "kanban")
-    _dispatched_skill_ns: set = set()
 
     def _prune_tools(tools_list: List[dict], iteration: int) -> List[dict]:
         """Prune zero-call tools after the threshold iteration.
         
         After _TOOL_PRUNE_THRESHOLD iterations, tools that have never been called
-        (call count == 0) are removed from the list sent to the LLM — except for
-        essential tools and tools belonging to a skill whose namespace has been
-        dispatched via state().
+        (call count == 0) are removed from the list sent to the LLM, except for
+        essential tools and tools belonging to a loaded lazy skill. Lazy-skill
+        tools may be injected after the threshold and must get a chance to run.
         """
         if iteration < _TOOL_PRUNE_THRESHOLD:
             return tools_list
+        _loaded_skill_fns = {
+            fn
+            for skill_fns in _loaded_lazy_skills.values()
+            for fn in skill_fns
+        }
         pruned = []
         for t in tools_list:
             fn_name = t.get('function', {}).get('name', '')
-            if fn_name in _ESSENTIAL_TOOLS or _tool_call_counts.get(fn_name, 0) > 0:
+            if (fn_name in _ESSENTIAL_TOOLS
+                    or fn_name in _loaded_skill_fns
+                    or _tool_call_counts.get(fn_name, 0) > 0):
                 pruned.append(t)
-            elif _dispatched_skill_ns:
-                # Keep tools from skills whose namespace was dispatched via state()
-                _kept = False
-                for _sk_id, _sk_fns in _loaded_lazy_skills.items():
-                    if fn_name in _sk_fns and _sk_id in _dispatched_skill_ns:
-                        _kept = True
-                        break
-                if _kept:
-                    pruned.append(t)
         if len(pruned) < len(tools_list):
             _logger.debug(
                 "Tool pruning: %d -> %d tools (iteration %d >= threshold %d)",
@@ -1947,13 +1943,6 @@ def run_tool_loop(agent: Dict[str, Any],
             })
             _tool_call_counts[fn_name] = _tool_call_counts.get(fn_name, 0) + 1
             _tool_records.append((tc, fn_name, args, pt))
-            # Track skill namespaces dispatched via state(label="skill:*")
-            if fn_name == 'state' and isinstance(args, dict):
-                _label = args.get('label', '')
-                if isinstance(_label, str) and ':' in _label:
-                    _ns = _label.split(':', 1)[0]
-                    if _ns:
-                        _dispatched_skill_ns.add(_ns)
 
             if fn_name in _READ_ONLY_TOOLS and fn_name not in _ALWAYS_SERIAL_TOOLS:
                 _parallel_indices.add(tc_idx)
