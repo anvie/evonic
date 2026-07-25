@@ -122,7 +122,11 @@ def main():
     )
     doctor_parser.add_argument(
         "--fix", action="store_true", default=False,
-        help="Automatically fix detected inconsistencies (e.g. missing tools, safety components)",
+        help="Automatically fix detected inconsistencies with compact output",
+    )
+    doctor_parser.add_argument(
+        "--verbose", action="store_true", default=False,
+        help="Show every diagnostic detail (including with --fix)",
     )
     doctor_parser.add_argument(
         "--with-llm-provider", action="store_true", default=False,
@@ -874,7 +878,12 @@ def main():
     elif args.command == "restart":
         restart_server()
     elif args.command == "doctor":
-        doctor_command(quick=args.quick, fix=args.fix, with_llm_provider=args.with_llm_provider)
+        doctor_command(
+            quick=args.quick,
+            fix=args.fix,
+            with_llm_provider=args.with_llm_provider,
+            verbose=args.verbose,
+        )
     elif args.command == "evomem":
         if args.evomem_command is None:
             evomem_parser.print_help()

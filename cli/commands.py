@@ -2553,15 +2553,18 @@ _PASS = f"{_G}✓{_RESET}"
 _FAIL = f"{_R}✗{_RESET}"
 _WARN = f"{_Y}⚠{_RESET}"
 _INFO = f"{_B}ℹ{_RESET}"
+_DOCTOR_COMPACT = False
 
 
 def _section(title):
-    print(f"\n{_BOLD}{_C}══ {title} ══{_RESET}")
+    if not _DOCTOR_COMPACT:
+        print(f"\n{_BOLD}{_C}══ {title} ══{_RESET}")
 
 
 def _ok(msg=""):
     line = f"  {_PASS}  {msg}" if msg else f"  {_PASS}"
-    print(line)
+    if not _DOCTOR_COMPACT:
+        print(line)
     return "pass"
 
 
@@ -2578,7 +2581,8 @@ def _warn(msg=""):
 
 
 def _info(msg):
-    print(f"  {_INFO}  {msg}")
+    if not _DOCTOR_COMPACT:
+        print(f"  {_INFO}  {msg}")
 
 
 def evomem_install(force=False):
@@ -2592,11 +2596,14 @@ def evomem_install(force=False):
     return 0 if result["ok"] else 1
 
 
-def doctor_command(quick=False, fix=False, with_llm_provider=False):
+def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=False):
     """Run comprehensive system health diagnostics."""
     import importlib
     import json
     import platform
+
+    global _DOCTOR_COMPACT
+    _DOCTOR_COMPACT = fix and not verbose
 
     if fix:
         print(f"\n{_BOLD}{_C}🩺  Evonic Doctor (fix mode){_RESET}")
@@ -4183,6 +4190,7 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False):
         print(f"\n  {_DIM}Tip: run{_RESET} {_BOLD}evonic doctor --fix{_RESET} {_DIM}to auto-fix fixable issues.{_RESET}")
 
     print()
+    _DOCTOR_COMPACT = False
     return 0 if failed == 0 else 1
 
 
