@@ -25,11 +25,21 @@ def _map_usage(usage) -> Dict[str, Any]:
         return {}
     prompt = usage.get("input_tokens", 0) or 0
     completion = usage.get("output_tokens", 0) or 0
-    return {
+    input_details = usage.get("input_tokens_details") or {}
+    output_details = usage.get("output_tokens_details") or {}
+    mapped = {
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "total_tokens": usage.get("total_tokens", 0) or (prompt + completion),
     }
+    if input_details or output_details:
+        mapped["prompt_tokens_details"] = {
+            "cached_tokens": input_details.get("cached_tokens", 0) or 0,
+        }
+        mapped["completion_tokens_details"] = {
+            "reasoning_tokens": output_details.get("reasoning_tokens", 0) or 0,
+        }
+    return mapped
 
 
 class CodexClient:

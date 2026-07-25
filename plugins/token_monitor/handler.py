@@ -30,6 +30,10 @@ def on_llm_usage(event, sdk):
             total_tokens=total,
             estimated=bool(event.get('estimated', False)),
             duration_ms=int(event.get('duration_ms', 0) or 0),
+            provider=event.get('provider') or None,
+            cached_tokens=int(event.get('cached_tokens', 0) or 0),
+            reasoning_tokens=int(event.get('reasoning_tokens', 0) or 0),
+            usage_details_available=bool(event.get('usage_details_available', False)),
         )
     except Exception as e:
         try:
