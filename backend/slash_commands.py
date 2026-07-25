@@ -268,6 +268,8 @@ def _register_builtins():
         if not parts or not parts[0]:
             return "Usage: /investigate <agent-id> <context>"
         target_agent_id = parts[0].strip().lower()
+        if target_agent_id == agent_id.lower():
+            return "Cannot investigate the current agent. Choose a different agent."
         context = parts[1].strip() if len(parts) > 1 else ""
 
         # Validate context
