@@ -474,7 +474,8 @@ def run_tool_loop(agent: Dict[str, Any],
     # --- Tool pruning: track how many times each tool has been called in this loop ---
     _tool_call_counts: Dict[str, int] = {}
     _TOOL_PRUNE_THRESHOLD = 3  # prune zero-call tools after this many iterations
-    _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch'}
+    _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch',
+                        'set_mode', 'save_plan', 'update_tasks'}
     # Skill namespaces dispatched via state() label (e.g. "kanban:activate" -> "kanban")
     _dispatched_skill_ns: set = set()
 
