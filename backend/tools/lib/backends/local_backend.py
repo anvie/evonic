@@ -63,6 +63,9 @@ class LocalBackend(ExecutionBackend):
     def _cwd(self) -> str:
         return os.path.abspath(self._workspace or SANDBOX_WORKSPACE)
 
+    def _subprocess_identity_kwargs(self) -> dict:
+        return {}
+
     @staticmethod
     def _poll_proc(proc, input_data: str, timeout: int, t0: float):
         """Poll a Popen process in 1s intervals, returning (stdout, stderr, reason).
@@ -118,6 +121,7 @@ class LocalBackend(ExecutionBackend):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd=self._cwd(), env=run_env,
             start_new_session=True,
+            **self._subprocess_identity_kwargs(),
         )
         process_tracker.register(self._session_id, proc, proc.pid,
                                  kill_method='killpg')
@@ -169,6 +173,7 @@ class LocalBackend(ExecutionBackend):
             cmd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             cwd=self._cwd(), env=run_env, start_new_session=True,
+            **self._subprocess_identity_kwargs(),
         )
         process_tracker.register(self._session_id, proc, proc.pid, kill_method='killpg')
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
@@ -283,6 +288,7 @@ class LocalBackend(ExecutionBackend):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd=self._cwd(), env=run_env,
             start_new_session=True,
+            **self._subprocess_identity_kwargs(),
         )
         process_tracker.register(self._session_id, proc, proc.pid,
                                  kill_method='killpg')

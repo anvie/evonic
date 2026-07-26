@@ -158,6 +158,103 @@ def test_bwrap_argv_core_flags(tmp_path):
     assert '--chdir' not in argv
 
 
+def test_bwrap_argv_uses_open_fds_for_private_bind_sources(tmp_path):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path))
+
+    argv = b._bwrap_argv(71, 72)
+
+    assert argv[argv.index('--bind-fd') + 1:argv.index('--bind-fd') + 3] == ['71', '/workspace']
+    second = argv.index('--bind-fd', argv.index('--bind-fd') + 1)
+    assert argv[second + 1:second + 3] == ['72', '/home/agent']
+    assert str(tmp_path) not in argv and str(tmp_path / '.home') not in argv
+
+
+def test_spawn_keeper_inherits_and_closes_bind_fds(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path))
+    captured = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(cmd=cmd, pass_fds=kwargs['pass_fds'])
+        return FakeProc()
+
+    monkeypatch.setattr(bwrap_backend.subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr(bwrap_backend, '_read_child_pid', lambda fd, proc: 4242)
+    monkeypatch.setattr(bwrap_backend, '_wait_for_nsenter_ready', lambda pid: (_probe(0), None))
+
+    info, error = b._spawn_keeper()
+
+    assert error is None and info['inner_pid'] == 4242
+    assert len(captured['pass_fds']) == 3
+    bind_fds = captured['pass_fds'][1:]
+    assert all(['--bind-fd', str(fd)] in [captured['cmd'][i:i + 2]
+               for i in range(len(captured['cmd']) - 1)] for fd in bind_fds)
+    for fd in bind_fds:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    os.close(info['status_fd'])
+
+
+def test_spawn_keeper_runs_bwrap_as_workspace_owner_when_service_is_root(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path))
+    captured = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr(bwrap_backend.os, 'geteuid', lambda: 0)
+    monkeypatch.setattr(bwrap_backend.subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr(bwrap_backend, '_read_child_pid', lambda fd, proc: 4242)
+    monkeypatch.setattr(bwrap_backend, '_wait_for_nsenter_ready', lambda pid: (_probe(0), None))
+
+    info, error = b._spawn_keeper()
+
+    workspace_stat = os.stat(tmp_path)
+    assert error is None
+    assert captured['user'] == workspace_stat.st_uid
+    assert captured['group'] == workspace_stat.st_gid
+    assert captured['extra_groups'] == ()
+    os.close(info['status_fd'])
+
+
+def test_spawn_keeper_does_not_switch_user_for_non_root_service(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path))
+    captured = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr(bwrap_backend.os, 'geteuid', lambda: 1000)
+    monkeypatch.setattr(bwrap_backend.subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr(bwrap_backend, '_read_child_pid', lambda fd, proc: 4242)
+    monkeypatch.setattr(bwrap_backend, '_wait_for_nsenter_ready', lambda pid: (_probe(0), None))
+
+    info, error = b._spawn_keeper()
+
+    assert error is None
+    assert not {'user', 'group', 'extra_groups'} & captured.keys()
+    os.close(info['status_fd'])
+
+
+def test_spawn_keeper_closes_bind_fds_when_popen_fails(tmp_path, monkeypatch):
+    b = BwrapBackend(session_id='s1', workspace=str(tmp_path))
+    inherited = []
+
+    def fail_popen(cmd, **kwargs):
+        inherited.extend(kwargs['pass_fds'][1:])
+        raise OSError('spawn failed')
+
+    monkeypatch.setattr(bwrap_backend.subprocess, 'Popen', fail_popen)
+
+    info, error = b._spawn_keeper()
+
+    assert info is None and 'spawn failed' in error
+    for fd in inherited:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
 def test_stage_helpers_works_below_private_parent(tmp_path):
     private = tmp_path / 'private'
     source = private / 'helpers'

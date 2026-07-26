@@ -526,7 +526,7 @@ class BwrapBackend(LocalBackend):
         # nsenter cd trampoline), not in the bound workspace — nothing to mkdir here.
         self._dirs_ready = True
 
-    def _bwrap_argv(self) -> list:
+    def _bwrap_argv(self, workspace_fd: int = None, home_fd: int = None) -> list:
         ws = self._cwd()
         helpers_dir = _stage_helpers()
         argv = [
@@ -548,12 +548,16 @@ class BwrapBackend(LocalBackend):
         resolv = os.path.realpath('/etc/resolv.conf')
         if resolv != '/etc/resolv.conf':
             argv += ['--ro-bind-try', resolv, resolv]
+        workspace_bind = (['--bind-fd', str(workspace_fd), '/workspace'] if workspace_fd is not None
+                          else ['--bind', ws, '/workspace'])
+        home_bind = (['--bind-fd', str(home_fd), _HOME_MOUNT] if home_fd is not None
+                     else ['--bind', os.path.join(ws, _HOME_SUBDIR), _HOME_MOUNT])
         argv += [
             '--proc', '/proc',
             '--dev', '/dev',
             '--tmpfs', '/tmp',
-            '--bind', ws, '/workspace',
-            '--bind', os.path.join(ws, _HOME_SUBDIR), _HOME_MOUNT,
+            *workspace_bind,
+            *home_bind,
             '--ro-bind', helpers_dir, _HELPERS_MOUNT,
             '--unshare-pid', '--unshare-uts', '--unshare-ipc', '--unshare-user',
             '--hostname', self._hostname,
@@ -594,6 +598,13 @@ class BwrapBackend(LocalBackend):
         # by the nsenter cd trampoline (tmpfs /tmp is empty at sandbox start).
         return scratch_dir(self._agent_id) if (self._is_subagent and not self._is_explorer) else '/workspace'
 
+    def _subprocess_identity_kwargs(self) -> dict:
+        if os.geteuid() != 0:
+            return {}
+        workspace_stat = os.stat(self._cwd())
+        return {'user': workspace_stat.st_uid, 'group': workspace_stat.st_gid,
+                'extra_groups': ()}
+
     # ------------------------------------------------------------------
     # Keeper lifecycle
     # ------------------------------------------------------------------
@@ -604,20 +615,42 @@ class BwrapBackend(LocalBackend):
         Returns (info_dict, None) on success or (None, error_message).
         """
         self._ensure_dirs()
+        ws = self._cwd()
+        bind_fds = []
+        try:
+            bind_fds = [
+                os.open(ws, os.O_RDONLY | os.O_DIRECTORY),
+                os.open(os.path.join(ws, _HOME_SUBDIR), os.O_RDONLY | os.O_DIRECTORY),
+            ]
+        except OSError as e:
+            for fd in bind_fds:
+                os.close(fd)
+            return None, f'Failed to open bwrap bind source: {e}'
         r_fd, w_fd = os.pipe()
-        cmd = self._bwrap_argv() + ['--json-status-fd', str(w_fd), 'sleep', 'infinity']
+        cmd = self._bwrap_argv(*bind_fds) + ['--json-status-fd', str(w_fd), 'sleep', 'infinity']
+        # A descriptor bypasses pathname traversal, but bwrap still opens
+        # /proc/self/fd/N after entering its user namespace. If Evonic runs as
+        # root and the private workspace belongs to another user, that owner is
+        # mapped to nobody and the reopened directory remains inaccessible.
+        # Launch bwrap as the workspace owner so its user namespace maps the
+        # bind source correctly and preserves normal workspace write access.
+        popen_kwargs = self._subprocess_identity_kwargs()
         try:
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE, text=True,
                 env=self._base_env({}),
-                pass_fds=(w_fd,), start_new_session=True,
+                pass_fds=(w_fd, *bind_fds), start_new_session=True,
+                **popen_kwargs,
             )
         except OSError as e:
             os.close(r_fd)
             os.close(w_fd)
             return None, f'Failed to start bwrap keeper: {e}'
+        finally:
+            for fd in bind_fds:
+                os.close(fd)
         os.close(w_fd)  # our copy; bwrap holds its own
         inner_pid = _read_child_pid(r_fd, proc)
         if inner_pid is None:
@@ -684,6 +717,7 @@ class BwrapBackend(LocalBackend):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd=self._cwd(), env=run_env,
             start_new_session=True,
+            **self._subprocess_identity_kwargs(),
         )
         process_tracker.register(self._session_id, proc, proc.pid,
                                  kill_method='killpg')
