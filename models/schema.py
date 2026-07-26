@@ -1025,6 +1025,16 @@ class SchemaMixin:
             except sqlite3.OperationalError:
                 pass
 
+            # Migration: slash command visibility control
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN hidden_slash_commands TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN disabled_slash_commands TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+
             # Migration: relax connector_token NOT NULL so NULL is allowed before pairing completes
             try:
                 col_info = cursor.execute("PRAGMA table_info(tunnel_connectors)").fetchall()

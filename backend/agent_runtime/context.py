@@ -782,6 +782,28 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
         slash_commands.append(("/shutdown", "Shut down the Evonic server completely (super agent only)"))
     # /autopilot is not yet implemented, omit from listing
 
+    # Filter slash commands based on per-agent hidden/disabled settings.
+    # Super agents are exempt — they always see all commands.
+    if not is_super:
+        all_cmd_names = {name for name, _desc in slash_commands}
+
+        def _expand(raw_value: str) -> set:
+            if not raw_value or not raw_value.strip():
+                return set()
+            raw = raw_value.strip()
+            if raw == '*':
+                return set(all_cmd_names)
+            if raw.startswith('!'):
+                allowed = {c.strip() for c in raw[1:].split(',') if c.strip()}
+                return set(all_cmd_names) - allowed
+            return {c.strip() for c in raw.split(',') if c.strip()}
+
+        hidden = _expand(agent.get('hidden_slash_commands', ''))
+        disabled = _expand(agent.get('disabled_slash_commands', ''))
+        remove_set = hidden | disabled
+        if remove_set:
+            slash_commands = [(n, d) for n, d in slash_commands if n not in remove_set]
+
     if slash_commands:
         prompt += "\n\n## Slash Commands\n\n**Available commands:**\n"
         for name, desc in slash_commands:

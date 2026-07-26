@@ -37,7 +37,7 @@ from backend.channels.registry import channel_manager
 from backend.channels.base import BaseChannel
 from backend.event_stream import event_stream
 from backend.plugin_manager import get_busy_message
-from backend.slash_commands import parse_command, execute_command
+from backend.slash_commands import parse_command, execute_command, command_registry, _expand_slash_list
 from backend.agent_runtime.prefetch import TurnPrefetcher
 import atexit
 import json
@@ -1142,34 +1142,42 @@ class AgentRuntime:
             return {"response": response, "tool_trace": [], "timeline": [],
                     "slash_command": True, "bash_exec": True}
 
+        # Per-agent disabled slash commands — treat as regular chat
+        _disabled_raw = agent.get('disabled_slash_commands', '')
+        _all_cmds = {name for name, _desc in command_registry.list_commands()}
+        _disabled_commands = _expand_slash_list(_disabled_raw, _all_cmds)
         # Slash command interception — execute before saving message or sending to LLM
         parsed = parse_command(message)
         if parsed:
             cmd_name, cmd_args = parsed
-            response = execute_command(
-                cmd_name, cmd_args, session_id, agent_id,
-                external_user_id, channel_id,
-            )
-            if response is not None:
-                # Command was recognized — save command echo and response, then return
-                _db_retry(db.add_chat_message, session_id, 'user', message,
-                          agent_id=db_agent_id, metadata={"slash_command": True},
-                          label="save command message")
-                _db_retry(db.add_chat_message, session_id, 'assistant', response,
-                          agent_id=db_agent_id, metadata={"slash_command": True},
-                          label="save command response")
-                _cl = chatlog_manager.get(db_agent_id, session_id)
-                _cl.append({'type': 'user', 'session_id': session_id, 'content': message,
-                             'sender_id': external_user_id,
-                             'metadata': {'slash_command': True}})
-                _cl.append({'type': 'system', 'session_id': session_id, 'content': response,
-                             'metadata': {'slash_command': True}})
-                # Signal the client to clear the chat UI when the clear command was used
-                extra = {"clear_ui": True} if cmd_name == "clear" else {}
-                extra["slash_command"] = True  # flag so frontend skips thinking bubble
-                self._prefetcher.invalidate(session_id)
-                return {"response": response, "tool_trace": [], "timeline": [], **extra}
-            # Unknown command — fall through to normal LLM processing
+            if not agent.get('is_super') and cmd_name in _disabled_commands:
+                # Disabled command — fall through to normal LLM processing
+                pass
+            else:
+                response = execute_command(
+                    cmd_name, cmd_args, session_id, agent_id,
+                    external_user_id, channel_id,
+                )
+                if response is not None:
+                    # Command was recognized — save command echo and response, then return
+                    _db_retry(db.add_chat_message, session_id, 'user', message,
+                              agent_id=db_agent_id, metadata={"slash_command": True},
+                              label="save command message")
+                    _db_retry(db.add_chat_message, session_id, 'assistant', response,
+                              agent_id=db_agent_id, metadata={"slash_command": True},
+                              label="save command response")
+                    _cl = chatlog_manager.get(db_agent_id, session_id)
+                    _cl.append({'type': 'user', 'session_id': session_id, 'content': message,
+                                 'sender_id': external_user_id,
+                                 'metadata': {'slash_command': True}})
+                    _cl.append({'type': 'system', 'session_id': session_id, 'content': response,
+                                 'metadata': {'slash_command': True}})
+                    # Signal the client to clear the chat UI when the clear command was used
+                    extra = {"clear_ui": True} if cmd_name == "clear" else {}
+                    extra["slash_command"] = True  # flag so frontend skips thinking bubble
+                    self._prefetcher.invalidate(session_id)
+                    return {"response": response, "tool_trace": [], "timeline": [], **extra}
+                # Unknown command — fall through to normal LLM processing
 
         # Save user message (store image reference and any extra metadata)
         meta = {}
@@ -2709,6 +2717,15 @@ class AgentRuntime:
 
         # Slash command interception — execute immediately instead of sending to LLM
         parsed = parse_command(text)
+        if parsed:
+            cmd_name, cmd_args = parsed
+            # Check if command is disabled for this agent (super agents exempt)
+            agent = db.get_agent(agent_id)
+            disabled_raw = agent.get('disabled_slash_commands', '') if agent else ''
+            all_cmds = {name for name, _desc in command_registry.list_commands()}
+            disabled_set = _expand_slash_list(disabled_raw, all_cmds)
+            if not (agent and agent.get('is_super')) and cmd_name in disabled_set:
+                parsed = None  # fall through to normal LLM processing
         if parsed:
             cmd_name, cmd_args = parsed
             response = execute_command(
