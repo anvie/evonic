@@ -136,6 +136,32 @@ class TestUpdateTasks:
         ms.update_tasks("in_progress", task_id=1)
         assert ms.tasks[0]["status"] == "in_progress"
 
+    def test_in_progress_replaces_the_previous_active_task(self):
+        ms = AgentState()
+        ms.update_tasks("set", tasks=["Step 1", "Step 2", "Step 3"])
+        ms.update_tasks("done", task_id=3)
+
+        ms.update_tasks("in_progress", task_id=1)
+        result = ms.update_tasks("in_progress", task_id=2)
+
+        assert result["tasks"] == [
+            {"id": 1, "text": "Step 1", "status": "pending"},
+            {"id": 2, "text": "Step 2", "status": "in_progress"},
+            {"id": 3, "text": "Step 3", "status": "done"},
+        ]
+
+    @pytest.mark.parametrize("mode", ["plan", "execute"])
+    def test_task_transitions_remain_available_in_both_modes(self, mode):
+        ms = AgentState(mode=mode)
+        ms.update_tasks("set", tasks=["First"])
+        added = ms.update_tasks("add", text="Second")
+        ms.update_tasks("in_progress", task_id=added["task_id"])
+        ms.update_tasks("done", task_id=added["task_id"])
+        ms.update_tasks("remove", task_id=1)
+
+        assert ms.tasks == [{"id": 2, "text": "Second", "status": "done"}]
+        assert ms.mode == mode
+
     def test_remove_deletes_task(self):
         ms = AgentState()
         ms.update_tasks("set", tasks=["Keep", "Delete me"])
@@ -215,6 +241,31 @@ class TestSerializeDeserialize:
         assert restored.mode == "execute"
         assert len(restored.tasks) == 3
         assert restored.tasks[1]["status"] == "done"
+
+    def test_roundtrip_preserves_single_active_task_after_serial_updates(self):
+        ms = AgentState(mode="execute")
+        ms.update_tasks("set", tasks=["A", "B", "C"])
+        for task_id in (1, 2, 3):
+            ms.update_tasks("in_progress", task_id=task_id)
+
+        restored = AgentState.deserialize(ms.serialize())
+
+        assert [task["status"] for task in restored.tasks] == [
+            "pending", "pending", "in_progress",
+        ]
+
+    def test_transition_repairs_legacy_state_with_multiple_active_tasks(self):
+        legacy = AgentState(tasks=[
+            {"id": 1, "text": "A", "status": "in_progress"},
+            {"id": 2, "text": "B", "status": "done"},
+            {"id": 3, "text": "C", "status": "in_progress"},
+        ], next_task_id=4)
+
+        legacy.update_tasks("in_progress", task_id=3)
+
+        assert [task["status"] for task in legacy.tasks] == [
+            "pending", "done", "in_progress",
+        ]
 
     def test_next_task_id_preserved(self):
         ms = AgentState()

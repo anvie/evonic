@@ -224,7 +224,8 @@ class AgentState:
             "set"         — Replace the entire task list with a list of text strings.
             "add"         — Add a single new task (requires text).
             "done"        — Mark a task as done (requires task_id).
-            "in_progress" — Mark a task as in_progress (requires task_id).
+            "in_progress" — Mark a task as the sole in_progress task (requires task_id).
+                            Any other active task returns to pending.
             "remove"      — Remove a task (requires task_id).
         """
         if action == "set":
@@ -257,7 +258,16 @@ class AgentState:
             task = self._find_task(task_id)
             if task is None:
                 return {"error": f"Task #{task_id} not found."}
-            task["status"] = "done" if action == "done" else "in_progress"
+            if action == "in_progress":
+                # A serially executed batch may activate several IDs in turn.
+                # Make the latest transition authoritative and repair malformed
+                # legacy state deterministically without changing task order.
+                for other in self.tasks:
+                    if other is not task and other.get("status") == "in_progress":
+                        other["status"] = "pending"
+                task["status"] = "in_progress"
+            else:
+                task["status"] = "done"
             return {"result": f"Task #{task_id} marked as {task['status']}.", "tasks": self._task_summary()}
 
         if action == "remove":

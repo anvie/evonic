@@ -574,7 +574,8 @@ def _builtin_update_tasks_factory(agent_context: dict):
                 "(set, add, update status, remove). Each entry must describe "
                 "exactly one concrete action or outcome that can be completed "
                 "independently. Split multi-action work into separate entries; "
-                "never batch several actions into one task."
+                "never batch several actions into one task. Only one implementation "
+                "task may be in_progress at a time."
             ),
             "parameters": {
                 "type": "object",
@@ -585,8 +586,9 @@ def _builtin_update_tasks_factory(agent_context: dict):
                         "description": (
                             "'set': replace entire task list (provide 'tasks' array). "
                             "'add': add one atomic task. "
-                            "'done'/'in_progress': update status. "
-                            "'remove': delete a task."
+                            "'done': mark a task complete. 'in_progress': make the "
+                            "selected task the sole active task; this returns every "
+                            "other active task to pending. 'remove': delete a task."
                         )
                     },
                     "task_id": {
