@@ -292,6 +292,14 @@ class ToolRegistry:
         """
         executors: Dict[str, Callable] = {}
         for builtin_id, factory in self._builtins.items():
+            # Keep executor availability aligned with definition exposure.
+            # Disabled ATG/CMP tools must be unknown, not merely rejected later.
+            if builtin_id == 'builtin:compile_task_graph' and not agent_context.get('enable_atg'):
+                continue
+            if (builtin_id in ('builtin:switch_path', 'builtin:new_path',
+                               'builtin:read_transcript')
+                    and not agent_context.get('enable_cmp')):
+                continue
             tool_def, executor = factory(agent_context)
             fn_name = tool_def['function']['name']  # e.g. 'remember'
             executors[fn_name] = executor

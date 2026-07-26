@@ -102,6 +102,20 @@ def test_compile_task_graph_exposed_when_flagged():
     assert 'compile_task_graph' in names
 
 
+def test_builtin_executor_hides_compile_task_graph_without_flag():
+    from backend.tools.registry import ToolRegistry
+    executor = ToolRegistry().get_builtin_executor({'id': 'a1'})
+    assert executor('compile_task_graph', {'goal': 'do something'}) is None
+
+
+def test_builtin_executor_exposes_compile_task_graph_when_flagged():
+    from backend.tools.registry import ToolRegistry
+    executor = ToolRegistry().get_builtin_executor({'id': 'a1', 'enable_atg': True})
+    result = executor('compile_task_graph', {'goal': 'do something'})
+    assert result is not None
+    assert 'error' in result
+
+
 def test_compile_executor_defends_when_disabled():
     from backend.tools.registry import _builtin_compile_task_graph_factory
     _, executor = _builtin_compile_task_graph_factory({'id': 'a1'})
