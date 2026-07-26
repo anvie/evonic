@@ -31,7 +31,9 @@ from typing import Optional, Union
 
 import json
 import os
+import random
 import re
+import time
 
 # Project root: two levels up from this file (backend/agent_state.py → project root)
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..'))
@@ -285,6 +287,8 @@ class AgentState:
                     if other is not task and other.get("status") == "in_progress":
                         other["status"] = "pending"
                 task["status"] = "in_progress"
+                if "in_progress_since" not in task:
+                    task["in_progress_since"] = time.time()
             else:
                 task["status"] = "done"
             return {"result": f"Task #{task_id} marked as {task['status']}.", "tasks": self._task_summary()}
@@ -444,6 +448,22 @@ class AgentState:
                         "few tasks.** Consider breaking each phase into its own atomic "
                         "task entry for clearer tracking."
                     )
+            # Nudge (random): stale in_progress tasks (>3 min)
+            now = time.time()
+            stale = []
+            for t in self.tasks:
+                if t.get("status") == "in_progress" and "in_progress_since" in t:
+                    if now - t["in_progress_since"] > 180:
+                        stale.append(t)
+            if stale and random.random() < 0.33:
+                task_refs = ", ".join(f"#{t['id']}" for t in stale)
+                plural = "s" if len(stale) > 1 else ""
+                lines.append("")
+                lines.append(
+                    f":warning: **Task{plural} {task_refs} in progress for over "
+                    "3 minutes.** Consider whether stuck. If blocked, switch to another "
+                    "task or mark this one done."
+                )
         else:
             lines.append("")
             lines.append("_No tasks defined yet. Use update_tasks(action='set', tasks=[...]) to define your plan._")
