@@ -54,37 +54,18 @@ _logger = logging.getLogger(__name__)
 
 def _append_attachment_context(content: str, attachment_infos, attachment_info,
                                agent: dict, has_describe_image: bool) -> str:
-    """Append context notes for plural attachments with a legacy singular fallback."""
-    if not isinstance(attachment_infos, list):
-        attachment_infos = []
-    attachment_infos = [info for info in attachment_infos if isinstance(info, dict)]
-    if not attachment_infos and isinstance(attachment_info, dict):
-        attachment_infos = [attachment_info]
-
-    notes = []
-    for index, info in enumerate(attachment_infos, 1):
-        fp = info.get('file_path', '')
-        if fp and not os.path.isabs(fp):
-            fp = os.path.abspath(os.path.join(_BASE_DIR, fp))
-        fn = info.get('filename', '')
-        mt = info.get('mime_type', '')
-        sb = int(info.get('size_bytes', 0) or 0)
-        is_img = bool(mt and mt.startswith('image/'))
-        is_audio = bool(mt and mt.startswith('audio/'))
-        if sb >= 1048576:
-            sz = f"{sb / 1048576:.1f} MB"
-        elif sb >= 1024:
-            sz = f"{sb / 1024:.1f} KB"
-        else:
-            sz = f"{sb} B"
-        label = f"Attachment #{index}" if len(attachment_infos) > 1 else "Attachment"
-        note = f"\n\n[{label}: {fn} ({mt}, {sz})]\nFile path: {fp}"
-        if is_img and has_describe_image:
-            note += "\nUse the `describe_image` tool to view and analyze this image."
-        if is_audio and agent.get('audio_enabled'):
-            note += "\nUse the `transcribe_audio` tool to listen to this audio."
-        notes.append(note)
-    return content.rstrip() + ''.join(notes) if notes else content
+    """Compatibility wrapper around the shared attachment renderer."""
+    infos = _ctx.attachment_infos_from_metadata({
+        'attachment_infos': attachment_infos,
+        'attachment_info': attachment_info,
+    })
+    if not infos:
+        return content
+    return content.rstrip() + _ctx.build_attachment_notes(
+        infos,
+        has_describe_image=has_describe_image,
+        audio_enabled=bool(agent.get('audio_enabled')),
+    )
 
 
 # --- Configuration constants ---
@@ -1760,14 +1741,18 @@ class AgentRuntime:
             # Always pop _image_url/_audio_url but NEVER feed them to the LLM.
             msg.pop('_image_url', None)
             msg.pop('_audio_url', None)
-            # Append authoritative structured metadata, including the numeric ID
-            # required by read_attachment. This also repairs legacy message text
-            # that omitted the ID when restored from JSONL.
-            _att = msg.pop('attachment_info', None) or msg.get('attachment_info')
-            if _att and isinstance(_att, dict):
-                _ctx.append_attachment_note(
-                    msg,
-                    _att,
+            # Prefer plural metadata and retain the legacy singular fallback.
+            # Remove helper keys before the provider request: their metadata has
+            # been rendered into ordinary model-visible text.
+            _atts = msg.pop('attachment_infos', None)
+            _att = msg.pop('attachment_info', None)
+            _infos = _ctx.attachment_infos_from_metadata({
+                'attachment_infos': _atts,
+                'attachment_info': _att,
+            })
+            if _infos:
+                msg['content'] = (msg.get('content') or '').rstrip() + _ctx.build_attachment_notes(
+                    _infos,
                     has_describe_image=_has_describe_image,
                     audio_enabled=bool(agent.get('audio_enabled')),
                 )
@@ -1900,6 +1885,10 @@ class AgentRuntime:
                     for msg in history:
                         if not _is_legacy_agent_state_msg(msg) and not _is_ui_only_msg(msg) and not _is_slash_command_msg(msg):
                             messages.append(_ctx.build_message_entry(msg, agent, _has_describe_image))
+
+        # Pin a fresh authoritative file index outside prunable conversation history.
+        # This also refreshes prefetched contexts after uploads or cleanup.
+        _ctx.sync_session_attachment_manifest(messages, ctx.session_id, db_agent_id)
 
         # Ensure messages don't end with assistant role (causes prefill error with some APIs)
         while len(messages) > 1 and messages[-1].get('role') == 'assistant':

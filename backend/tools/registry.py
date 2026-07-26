@@ -1099,10 +1099,18 @@ def _builtin_read_transcript_factory(agent_context: dict):
         # rehydrating the raw transcript.
         BUDGET_CHARS, PER_MSG = 4000, 500
         lines, used = [], 0
+        from backend.agent_runtime.context import (
+            attachment_infos_from_metadata, build_attachment_notes,
+        )
         for e in entries:
             if e.get('type') not in ('user', 'final', 'intermediate'):
                 continue
             content = (e.get('content') or '').strip()
+            if e.get('type') == 'user':
+                infos = attachment_infos_from_metadata(e.get('metadata') or {})
+                if infos:
+                    content = content.rstrip() + build_attachment_notes(
+                        infos, has_describe_image=False, audio_enabled=False)
             if not content:
                 continue
             role = 'User' if e.get('type') == 'user' else 'Agent'

@@ -258,6 +258,9 @@ class TurnPrefetcher:
                         fresh_messages.append(
                             _ctx.build_message_entry(msg, agent, has_describe_image))
 
+            # Keep an authoritative metadata-only file index outside the prunable tail.
+            _ctx.sync_session_attachment_manifest(fresh_messages, session_id, db_agent_id)
+
             # Ensure messages don't end with assistant role
             while (len(fresh_messages) > 1
                    and fresh_messages[-1].get('role') == 'assistant'):

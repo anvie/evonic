@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List
 
@@ -1115,35 +1116,94 @@ def build_attachment_note(attachment_info: dict,
 def build_attachment_notes(attachment_infos: list,
                            has_describe_image: bool = True,
                            audio_enabled: bool = False) -> str:
-    """Render notes for multiple attachments, numbered when more than one.
-
-    Mirrors ``runtime._append_attachment_context`` so a DB-reconstructed message
-    and a freshly-handled one produce identical model-visible context.  Each note
-    starts with ``\\n\\n`` so callers can append with ``content.rstrip() + notes``.
-    """
+    """Render notes for multiple attachments, numbered when more than one."""
     notes = []
     count = len(attachment_infos)
     for index, info in enumerate(attachment_infos, 1):
-        file_path = info.get('file_path', '')
-        if file_path and not os.path.isabs(file_path):
-            file_path = os.path.abspath(os.path.join(_BASE_DIR, file_path))
-        filename = info.get('filename', '')
-        mime_type = info.get('mime_type', '')
-        size_bytes = int(info.get('size_bytes', 0) or 0)
-        if size_bytes >= 1048576:
-            size_str = f"{size_bytes / 1048576:.1f} MB"
-        elif size_bytes >= 1024:
-            size_str = f"{size_bytes / 1024:.1f} KB"
-        else:
-            size_str = f"{size_bytes} B"
-        label = f"Attachment #{index}" if count > 1 else "Attachment"
-        note = f"\n\n[{label}: {filename} ({mime_type}, {size_str})]\nFile path: {file_path}"
-        if mime_type.startswith('image/') and has_describe_image:
-            note += "\nUse the `describe_image` tool to view and analyze this image."
-        if mime_type.startswith('audio/') and audio_enabled:
-            note += "\nUse the `transcribe_audio` tool to listen to this audio."
+        note = build_attachment_note(
+            info,
+            has_describe_image=has_describe_image,
+            audio_enabled=audio_enabled,
+        )
+        if count > 1:
+            note = note.replace('[Attachment:', f'[Attachment #{index}:', 1)
         notes.append(note)
     return ''.join(notes)
+
+
+def attachment_infos_from_metadata(metadata: dict) -> list:
+    """Return valid plural attachment metadata with a legacy singular fallback."""
+    if not isinstance(metadata, dict):
+        return []
+    infos = metadata.get('attachment_infos')
+    if not isinstance(infos, list):
+        infos = []
+    infos = [info for info in infos if isinstance(info, dict)]
+    legacy = metadata.get('attachment_info')
+    return infos or ([legacy] if isinstance(legacy, dict) else [])
+
+
+def build_session_attachment_manifest(session_id: str, agent_id: str,
+                                      exclude_ids=None) -> str:
+    """Build a compact, authoritative metadata-only index of live session files."""
+    excluded = {str(value) for value in (exclude_ids or ())}
+    lines = []
+    try:
+        records = reversed(db.list_session_attachments(session_id, agent_id))
+    except Exception:
+        _logger.warning("Failed to load attachment manifest for session %s", session_id,
+                        exc_info=True)
+        return ''
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        attachment_id = record.get('id')
+        if attachment_id is None or str(attachment_id) in excluded:
+            continue
+        file_path = record.get('file_path') or ''
+        if file_path and not os.path.isabs(file_path):
+            file_path = os.path.abspath(os.path.join(_BASE_DIR, file_path))
+        if not file_path or not os.path.isfile(file_path):
+            continue
+        filename = re.sub(r'[\r\n|]+', '_', str(
+            record.get('filename') or record.get('original_filename') or ''))
+        mime_type = re.sub(r'[\r\n|]+', '_', str(
+            record.get('mime_type') or 'application/octet-stream'))
+        size_bytes = int(record.get('size_bytes') or 0)
+        lines.append(
+            f"- id={attachment_id} | filename={filename} | mime={mime_type} | "
+            f"size={size_bytes} B | path={file_path}"
+        )
+    if not lines:
+        return ''
+    return (
+        "## Session Attachments\n"
+        "Persistent metadata for files uploaded in this session (no binary content):\n" +
+        '\n'.join(lines)
+    )
+
+
+def sync_session_attachment_manifest(messages: list, session_id: str,
+                                     agent_id: str) -> None:
+    """Replace any cached manifest with a fresh one, excluding visible attachment notes."""
+    messages[:] = [
+        msg for msg in messages
+        if not (msg.get('role') == 'system' and
+                str(msg.get('content') or '').startswith('## Session Attachments\n'))
+    ]
+    visible_ids = set()
+    pattern = re.compile(r'^Attachment ID:\s*(\d+)\s*$', re.MULTILINE)
+    for msg in messages:
+        content = msg.get('content')
+        if isinstance(content, str):
+            visible_ids.update(pattern.findall(content))
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get('text'), str):
+                    visible_ids.update(pattern.findall(part['text']))
+    manifest = build_session_attachment_manifest(session_id, agent_id, visible_ids)
+    if manifest:
+        messages.insert(1, {'role': 'system', 'content': manifest})
 
 
 def append_attachment_note(msg: dict,
