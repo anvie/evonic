@@ -293,7 +293,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
   .pnl-search-wrap > svg { position:absolute; left:.625rem; top:50%; transform:translateY(-50%); width:1rem; height:1rem; color:#9ca3af; pointer-events:none; }
   .pnl-search { width:100%; box-sizing:border-box; padding:.5rem .75rem .5rem 2rem; border-radius:.5rem; border:1px solid #d1d5db; background:#fff; color:#111827; font-size:.8125rem; }
   .pnl-search:focus { outline:none; border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.15); }
-  .pnl-btn-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:.5rem; }
+  .pnl-btn-grid { display:grid; grid-template-columns:1fr; gap:.5rem; }
   .panel-btn { display:flex; align-items:center; gap:.5rem; color:#fff; font-weight:500; font-size:.8125rem; padding:.625rem .75rem; border-radius:.5rem; border:none; cursor:pointer; text-align:left; width:100%; min-width:0; box-sizing:border-box; transition:background-color .15s, transform .05s; }
   .panel-btn:active { transform:translateY(1px); }
   .panel-btn .pnl-dot { width:.5rem; height:.5rem; border-radius:9999px; flex:0 0 auto; background:rgba(255,255,255,.75); }
