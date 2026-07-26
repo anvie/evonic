@@ -24,6 +24,7 @@ from typing import Callable, Any, Dict, Generator, List, Optional, TypeVar
 T = TypeVar('T')
 
 from models.db import db
+from models.boolean import message_wrapper_enabled
 from models.chatlog import chatlog_manager
 from config import AGENT_TIMEOUT_RETRIES as MAX_TIMEOUT_RETRIES, AGENT_QUEUE_WORKERS
 
@@ -142,12 +143,7 @@ def _should_wrap_user_message(agent: dict) -> bool:
 
     Priority: per-agent setting > global setting > default (True).
     """
-    per_agent = agent.get('message_wrapper_enabled')
-    if per_agent is not None:
-        return bool(per_agent)
-    from models.db import db as _db
-    global_val = _db.get_setting('message_wrapper_enabled', '1')
-    return global_val != '0'
+    return message_wrapper_enabled(agent, db)
 
 
 def _apply_wrapper_prefix(messages: list, enabled: bool,

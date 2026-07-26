@@ -28,6 +28,7 @@ def _token_count(text: str) -> int:
     return len(_TIKTOKEN_ENCODING.encode(text))
 
 from models.db import db
+from models.boolean import message_wrapper_enabled
 from backend.tools import tool_registry
 from backend.tools.registry import BUILTIN_TOOL_IDS
 from backend.skills_manager import SkillsManager, skills_manager
@@ -307,22 +308,22 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
             "- Only durable, intentional deliverables belong outside the scratchpad."
         )
 
-    # Message Wrapper Protocol
-    parts.append("")
-    parts.append("## Message Wrapper Protocol")
-    parts.append(
-        "After EVERY user message, before your main response, you MUST:"
-    )
-    parts.append(
-        "1. Scan the message for any new preference, instruction, rule, or personal fact."
-    )
-    parts.append(
-        "2. If found: store it immediately via remember() (factual data), "
-        "store it as a preference via remember() for non-factual style notes, or update SYSTEM.md (critical rules)."
-    )
-    parts.append(
-        "3. This applies to BOTH explicit and implicit cues. Even casual mentions count."
-    )
+    if message_wrapper_enabled(agent, db):
+        parts.append("")
+        parts.append("## Message Wrapper Protocol")
+        parts.append(
+            "After EVERY user message, before your main response, you MUST:"
+        )
+        parts.append(
+            "1. Scan the message for any new preference, instruction, rule, or personal fact."
+        )
+        parts.append(
+            "2. If found: store it immediately via remember() (factual data), "
+            "store it as a preference via remember() for non-factual style notes, or update SYSTEM.md (critical rules)."
+        )
+        parts.append(
+            "3. This applies to BOTH explicit and implicit cues. Even casual mentions count."
+        )
 
     # Memory Retrieval Protocol — coach the agent on the retrieval side of
     # long-term memory (the capture side is covered above). Memories are NOT
@@ -543,6 +544,9 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
     if _resolve_workspace(agent) != cache_entry.get('workspace'):
         return False
 
+    if message_wrapper_enabled(agent, db) != cache_entry.get('message_wrapper_enabled'):
+        return False
+
     return True
 
 
@@ -608,6 +612,7 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
             'vars_hash': vars_hash,
             'run_as_user': agent.get('run_as_user'),
             'workspace': _resolve_workspace(agent),
+            'message_wrapper_enabled': message_wrapper_enabled(agent, db),
         }
 
     prompt = static_prompt

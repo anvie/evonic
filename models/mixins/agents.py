@@ -1,6 +1,8 @@
 import sqlite3
 from typing import Dict, Any, List, Optional
 
+from models.boolean import normalize_bool
+
 
 class AgentMixin:
     """Agent CRUD and agent-tool/skill mapping. Requires self._connect() from the host class."""
@@ -59,7 +61,7 @@ class AgentMixin:
                 1 if agent.get('sandbox_enabled') else 0,
                 agent.get('summarize_tail', 5),
                 1 if agent.get('artifacts_enabled') is not False else 0,
-                1 if agent.get('message_wrapper_enabled') is not False else 0,
+                1 if normalize_bool(agent.get('message_wrapper_enabled'), True) else 0,
                 agent.get('fallback_model_id'),
                 agent.get('model_id'),
                 1 if agent.get('audio_enabled') else 0,
@@ -94,6 +96,8 @@ class AgentMixin:
                    'messaging_acl', 'messaging_acl_mode',
                    'memory_engine', 'kb_organizer_mode', 'enable_atg', 'enable_cmp', 'always_execute'}
         updates = {k: v for k, v in data.items() if k in allowed}
+        if 'message_wrapper_enabled' in updates:
+            updates['message_wrapper_enabled'] = 1 if normalize_bool(updates['message_wrapper_enabled'], True) else 0
         if not updates:
             return False
         set_clause = ", ".join(f"{k} = ?" for k in updates)
