@@ -1,6 +1,7 @@
 """Evonic CLI commands — start, stop, status, plugin, and skill management."""
 
 import fcntl
+import json
 import os
 import shutil
 import signal
@@ -1344,6 +1345,53 @@ def agent_get(agent_id):
         for c in channels:
             cname = c.get("name", c.get("type", ""))
             print(f"  - {cname}")
+
+
+def agent_export(agent_id, output=None):
+    """Export an agent as portable JSON."""
+    from backend.agent_portability import AgentPortabilityError, export_agent
+
+    try:
+        payload = export_agent(_get_db(), agent_id, ROOT)
+        content = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        if output:
+            output = os.path.abspath(os.path.expanduser(output))
+            parent = os.path.dirname(output)
+            if parent and not os.path.isdir(parent):
+                raise AgentPortabilityError(f"Output directory does not exist: {parent}.")
+            with open(output, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            print(f"Agent exported: {output}")
+        else:
+            sys.stdout.write(content)
+    except (AgentPortabilityError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def agent_import(source, agent_id=None, name=None):
+    """Import an agent from portable JSON in a file or stdin."""
+    from backend.agent_portability import AgentPortabilityError, import_agent
+
+    try:
+        if source == "-":
+            content = sys.stdin.read()
+        else:
+            with open(os.path.expanduser(source), "r", encoding="utf-8") as handle:
+                content = handle.read()
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise AgentPortabilityError(
+                f"Invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}."
+            ) from exc
+        imported_id = import_agent(
+            _get_db(), payload, ROOT, agent_id=agent_id, name=name
+        )
+        print(f"Agent imported: {imported_id}")
+    except (AgentPortabilityError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 def agent_add(agent_id, name, description=None, model=None, skillset=None):

@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 from flask import Blueprint, render_template, jsonify, request, Response, session, stream_with_context, g
 from models.db import db
 from models.chatlog import chatlog_manager, _DISPLAY_TYPES
+from backend.agent_portability import AgentPortabilityError, export_agent, import_agent
 from backend.audit_logger import audit
 from backend.tools import tool_registry
 from backend.tools.agent_messaging import get_agent_messaging_tool_defs
@@ -278,6 +279,47 @@ def api_list_agent_commands(agent_id):
         for name, description in list_available_commands(agent_id)
     ]
     return jsonify({'commands': commands})
+
+
+@agents_bp.route('/api/agents/<agent_id>/export', methods=['GET'])
+def api_export_agent(agent_id):
+    if not db.get_agent(agent_id):
+        return jsonify({'error': 'Agent not found'}), 404
+    try:
+        content = json.dumps(export_agent(db, agent_id, BASE_DIR), indent=2, ensure_ascii=False) + '\n'
+        response = Response(content, mimetype='application/json')
+        response.headers['Content-Disposition'] = f'attachment; filename="{agent_id}.agent.json"'
+        return response
+    except AgentPortabilityError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@agents_bp.route('/api/agents/import', methods=['POST'])
+def api_import_agent():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Request body must be a JSON object.'}), 400
+    if 'payload' in data:
+        payload = data.get('payload')
+        target_id = data.get('id')
+        target_name = data.get('name')
+    else:
+        payload = data
+        target_id = request.args.get('id')
+        target_name = request.args.get('name')
+    try:
+        imported_id = import_agent(
+            db, payload, BASE_DIR, agent_id=target_id, name=target_name
+        )
+        audit.log_agent_crud(
+            user_id='admin', agent_id=imported_id, action='create', ip=_audit_ip()
+        )
+        return jsonify({'success': True, 'agent_id': imported_id}), 201
+    except AgentPortabilityError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        logger.exception('Agent import failed')
+        return jsonify({'error': 'Agent import failed and was rolled back.'}), 500
 
 
 @agents_bp.route('/api/agents', methods=['POST'])

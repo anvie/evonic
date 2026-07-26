@@ -322,6 +322,10 @@ html.dark .agent-tab.active {
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                     Clone
                 </button>
+                <button onclick="exportAgent()" class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                    Export Agent
+                </button>
                 <button onclick="toggleEnabled()" id="toggle-enabled-btn" class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm {{ 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600' if agent.enabled != 0 else 'text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300' }} transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9"/></svg>
                     <span>{{ 'Disable' if agent.enabled != 0 else 'Enable' }}</span>
@@ -7030,6 +7034,11 @@ async function doClone() {
 function cloneAgent() {
     document.getElementById('gear-dropdown').classList.add('hidden');
     showCloneModal();
+}
+
+function exportAgent() {
+    document.getElementById('gear-dropdown').classList.add('hidden');
+    window.location.href = `/api/agents/${encodeURIComponent(AGENT_ID)}/export`;
 }
 
 // ==================== Delete Agent ====================

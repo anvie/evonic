@@ -92,7 +92,7 @@ class AgentMixin:
                    'fallback_model_id', 'audio_enabled', 'video_enabled',
                    'model_id',
                    'run_as_user', 'bash_exec_enabled', 'vision_model_id',
-                   'inter_agent_clear_context', 'builtin_tools_enabled',
+                   'inter_agent_clear_context', 'builtin_tools_enabled', 'tool_compression_enabled',
                    'messaging_acl', 'messaging_acl_mode',
                    'memory_engine', 'kb_organizer_mode', 'enable_atg', 'enable_cmp', 'always_execute'}
         updates = {k: v for k, v in data.items() if k in allowed}

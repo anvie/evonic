@@ -24,6 +24,7 @@ from cli.commands import (
     skill_list, skill_add, skill_get, skill_rm, skill_export,
     skillset_list, skillset_get, skillset_apply,
     agent_list, agent_get, agent_add, agent_enable, agent_disable, agent_remove,
+    agent_export, agent_import,
     workplace_list, workplace_get, workplace_create, workplace_update, workplace_delete,
     workplace_pairing_code, workplace_unpair, workplace_download_binary,
     workplace_status, workplace_connect, workplace_disconnect,
@@ -399,8 +400,8 @@ def main():
     # --- agent ---
     agent_parser = subparsers.add_parser(
         "agent",
-        help="Manage agents (list, get, add, enable, disable, remove)",
-        description="Manage Evonic agents. Available subcommands: list, get, add, enable, disable, remove.",
+        help="Manage agents (list, get, add, export, import, enable, disable, remove)",
+        description="Manage Evonic agents, including portable JSON export and import.",
     )
     agent_subparsers = agent_parser.add_subparsers(
         dest="agent_command", help="Agent management commands"
@@ -453,6 +454,33 @@ def main():
         "--skillset",
         default=None,
         help="Skillset template ID to apply (pre-configures tools and prompt)",
+    )
+
+    agent_export_parser = agent_subparsers.add_parser(
+        "export",
+        help="Export an agent as portable JSON",
+    )
+    agent_export_parser.add_argument("agent_id", help="Agent ID to export")
+    agent_export_parser.add_argument(
+        "--output", "-o", default=None,
+        help="Write JSON to this path instead of stdout",
+    )
+
+    agent_import_parser = agent_subparsers.add_parser(
+        "import",
+        help="Create an agent from portable JSON",
+    )
+    agent_import_parser.add_argument(
+        "source",
+        help="JSON file path, or - to read from stdin",
+    )
+    agent_import_parser.add_argument(
+        "--id", dest="import_agent_id", default=None,
+        help="Optional imported agent ID; defaults to a unique slug from its name",
+    )
+    agent_import_parser.add_argument(
+        "--name", dest="import_agent_name", default=None,
+        help="Optional display-name override",
     )
 
     # agent enable
@@ -959,6 +987,14 @@ def main():
                 description=args.description,
                 model=args.model,
                 skillset=args.skillset,
+            )
+        elif args.agent_command == "export":
+            agent_export(args.agent_id, output=args.output)
+        elif args.agent_command == "import":
+            agent_import(
+                args.source,
+                agent_id=args.import_agent_id,
+                name=args.import_agent_name,
             )
         elif args.agent_command == "enable":
             agent_enable(args.agent_id)
