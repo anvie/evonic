@@ -571,11 +571,16 @@ def _builtin_update_tasks_factory(agent_context: dict):
             "name": "update_tasks",
             "description": (
                 "Manage your implementation task list "
-                "(set, add, update status, remove). Each entry must describe "
-                "exactly one concrete action or outcome that can be completed "
-                "independently. Split multi-action work into separate entries; "
-                "never batch several actions into one task. Only one implementation "
-                "task may be in_progress at a time."
+                "(set, add, update status, remove). CRITICAL: Each entry must be "
+                "ATOMIC — exactly one concrete action or outcome that can be "
+                "completed independently. Split multi-action work into separate "
+                "entries; never batch several actions into one task.\n"
+                "Example: a 3-phase plan needs at least 3 separate tasks:\n"
+                "✓ 'Audit existing API endpoints'\n"
+                "✓ 'Create sandbox environment'\n"
+                "✓ 'Implement database schema'\n"
+                "✗ 'Audit API, create env, implement schema' — BAD: 3 actions in 1 task\n"
+                "Only one implementation task may be in_progress at a time."
             ),
             "parameters": {
                 "type": "object",

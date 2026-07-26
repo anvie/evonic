@@ -68,6 +68,19 @@ _STATUS_SUFFIX_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Heuristic: detects task text that looks like multiple actions crammed into one entry.
+# Matches: comma/semicolon or conjunctions (lalu/kemudian/dan/serta/then/and)
+# followed by common Indonesian/English action verbs.
+_MULTI_CLAUSE_VERB_RE = re.compile(
+    r'(?:[,;]\s*| lalu | kemudian | dan | serta | then | and | also | next )\s*'
+    r'(?:membuat|menulis|menguji|mengaudit|menambah|mengubah|membangun|'
+    r'mengimplementasikan|mendeploy|menyiapkan|menambahkan|menjalankan|'
+    r'memeriksa|mengkonfigurasi|mendokumentasikan|mendaftarkan|'
+    r'create|build|test|audit|implement|deploy|add|write|run|configure|setup|'
+    r'check|verify|configure|document|register|prepare|validate)',
+    re.IGNORECASE,
+)
+
 # Indicators that imply the task is already done.
 _DONE_INDICATORS = re.compile(
     r'\u2705|\u2713|\u2714|\u2611|\u2612'                    # ✅✓✔☑☒
@@ -75,7 +88,6 @@ _DONE_INDICATORS = re.compile(
     r'|\((?:complete|completed|done|finished)\)',
     re.IGNORECASE,
 )
-
 
 def _sanitize_task_text(text: str) -> tuple[str, str | None]:
     """Strip leading/trailing status indicators from task text.
@@ -231,6 +243,9 @@ class AgentState:
         if action == "set":
             if not isinstance(tasks, list):
                 return {"error": "Action 'set' requires a 'tasks' list of strings."}
+            self._next_task_id = len(tasks) + 1  # will be incremented by the loop below, but we recalc at the end
+
+            # reset IDs and rebuild
             self.tasks = []
             self._next_task_id = 1
             for t in tasks:
@@ -241,7 +256,11 @@ class AgentState:
                     "status": inferred or "pending",
                 })
                 self._next_task_id += 1
-            return {"result": f"Task list replaced with {len(self.tasks)} tasks.", "tasks": self._task_summary()}
+
+            # Atomicity heuristic: warn if 1-2 tasks look too monolithic
+            atomicity_warning = self._check_atomicity(tasks)
+
+            return {"result": f"Task list replaced with {len(self.tasks)} tasks.", "tasks": self._task_summary(), "warning": atomicity_warning}
 
         if action == "add":
             if not text:
@@ -289,6 +308,45 @@ class AgentState:
 
     def _task_summary(self) -> list:
         return [{"id": t["id"], "text": t["text"], "status": t["status"]} for t in self.tasks]
+
+    # ── Atomicity heuristic ────────────────────────────────────────────────
+
+    def _check_atomicity(self, raw_tasks: list) -> str | None:
+        """Return a warning if tasks look non-atomic (too few, too long, or
+        multi-clause).
+
+        Only fires with 1-2 tasks; 3+ entries is enough atomicity regardless
+        of individual length.
+        """
+        if not raw_tasks or len(raw_tasks) > 2:
+            return None
+
+        for i, text in enumerate(raw_tasks):
+            s = str(text).strip()
+
+            # Signal 1: very long (crammed) task text
+            if len(s) > 150:
+                return (
+                    f"Task #{i + 1} is {len(s)} chars, likely combining "
+                    "multiple actions into one entry. Break into smaller "
+                    "atomic tasks (exactly ONE independently completable "
+                    "step each). Call update_tasks(action='set', tasks=[...]) "
+                    "with separate entries for each distinct action."
+                )
+
+            # Signal 2: multi-clause conjunctive / comma-separated pattern
+            conj_matches = _MULTI_CLAUSE_VERB_RE.findall(s)
+            commas = s.count(",")
+            if len(conj_matches) >= 2 or commas >= 3:
+                clue_count = max(len(conj_matches), commas)
+                return (
+                    f"Task #{i + 1} appears to bundle {clue_count}+ "
+                    "actions into one sentence (conjunctions or commas "
+                    "between clauses). Split each action into its own "
+                    "atomic task entry in update_tasks()."
+                )
+
+        return None
 
     # ── Rendering ────────────────────────────────────────────────────────────
 
@@ -340,6 +398,7 @@ class AgentState:
             reason_note = f" — {self.focus_reason}" if self.focus_reason else ""
             lines.append(f"**Focus**: active{reason_note} (messages from other sessions are rejected)")
 
+        plan_content = ""
         if self.plan_file:
             lines.append(f"**Plan file**: `{self.plan_file}`")
             plan_content = self._read_plan_file(agent_id)
@@ -375,6 +434,16 @@ class AgentState:
                 icon = STATUS_ICON.get(t.get("status"), "[ ]")
                 text = t.get("text") or "(no description)"
                 lines.append(f"- {icon} #{t['id']} {text}")
+            # Nudge: plan has multiple phases but few tasks
+            if len(self.tasks) <= 2 and plan_content and "###" in plan_content:
+                md_headers = [l for l in plan_content.split("\n") if l.strip().startswith("###")]
+                if len(md_headers) >= 3:
+                    lines.append("")
+                    lines.append(
+                        ":warning: **Your plan has multiple distinct phases but very "
+                        "few tasks.** Consider breaking each phase into its own atomic "
+                        "task entry for clearer tracking."
+                    )
         else:
             lines.append("")
             lines.append("_No tasks defined yet. Use update_tasks(action='set', tasks=[...]) to define your plan._")
