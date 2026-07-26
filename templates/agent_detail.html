@@ -690,6 +690,17 @@ html.dark .agent-tab.active {
                     </div>
 
                     <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Hidden Slash Commands</label>
+                        <input type="text" id="agent-hidden-slash-commands" value="{{ agent.hidden_slash_commands or '' }}" placeholder="e.g. help,summary" class="w-full p-2.5 border border-gray-300 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+                        <p class="text-xs text-gray-400 mt-1">Comma-separated list of <!-- --><code>/commands</code> to hide from this agent's system prompt (still executable by the user). Use <code>*</code> for all, or <code>!</code> prefix for inverse mode (e.g. <code>!clear,model</code> = only <code>/clear</code> &amp; <code>/model</code> visible). No effect on super agents. Available commands: clear, help, summary, investigate, stop, cwd, cd, restart, shutdown, plan, exec, unfocus, status, clear-memory, model, sub, detach, jobs, kb-organize, dump.</p>
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Disabled Slash Commands</label>
+                        <input type="text" id="agent-disabled-slash-commands" value="{{ agent.disabled_slash_commands or '' }}" placeholder="e.g. restart,shutdown" class="w-full p-2.5 border border-gray-300 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+                        <p class="text-xs text-gray-400 mt-1">Comma-separated list of <!-- --><code>/commands</code> to disable entirely (treated as regular chat, not executed). Same <code>*</code> wildcard and <code>!</code> inverse syntax as above. No effect on super agents.</p>
+                    </div>
+
+                    <div>
                         <div class="flex items-center gap-2 mb-1">
                             <input type="checkbox" id="agent-summarize-prompt-override" {{ 'checked' if agent.summarize_prompt else '' }} onchange="toggleSummarizePromptOverride()" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
                             <label for="agent-summarize-prompt-override" class="text-gray-600 dark:text-gray-300 text-sm font-medium">Override default summarizer prompt</label>
@@ -2288,6 +2299,8 @@ const AgentAutoSave = {
         { id: 'agent-run-as-user', key: 'run_as_user', type: 'strnull' },
         { id: 'agent-memory-engine', key: 'memory_engine', type: 'selnull' },
         { id: 'agent-kb-organizer', key: 'kb_organizer_mode', type: 'selnull' },
+        { id: 'agent-hidden-slash-commands', key: 'hidden_slash_commands', type: 'str' },
+        { id: 'agent-disabled-slash-commands', key: 'disabled_slash_commands', type: 'str' },
         // Special-handled controls (persist fn registered below); listed here so
         // they still get change/blur listeners wired.
         { id: 'agent-model-select' },
