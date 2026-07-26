@@ -1677,7 +1677,8 @@ class AgentRuntime:
                     _cmp_user = _cmp_chatlog.get_last_entry(types=frozenset({'user'}))
                     _cmp_res = _cmp_pkg.on_turn_boundary(
                         agent, _cmp_ms, _cmp_chatlog,
-                        (_cmp_user or {}).get('content', ''))
+                        (_cmp_user or {}).get('content', ''),
+                        session_id=ctx.session_id, agent_id=agent['id'])
                     if _cmp_res is not None:
                         _cmp_early_handled = True
                         from backend.agent_runtime.llm_loop import _persist_agent_state_split
@@ -2185,8 +2186,9 @@ class AgentRuntime:
                 try:
                     from backend.agent_runtime import cmp as _cmp_pkg
                     _cmp_chatlog = chatlog_manager.get(db_agent_id, ctx.session_id)
-                    _cmp_res = _cmp_pkg.on_turn_boundary(agent, ms, _cmp_chatlog,
-                                                         _boundary_text)
+                    _cmp_res = _cmp_pkg.on_turn_boundary(
+                        agent, ms, _cmp_chatlog, _boundary_text,
+                        session_id=ctx.session_id, agent_id=agent['id'])
                     _cmp_handled = _cmp_res is not None
                     if _cmp_res and _cmp_res.get('decision') not in ('continue', 'init'):
                         _logger.info("CMP boundary: %s -> %s (layer %s) for session %s",

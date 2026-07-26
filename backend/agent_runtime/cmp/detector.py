@@ -141,7 +141,8 @@ def _parse_envelope(content: str) -> dict | None:
 
 
 def _call_turn_llm(cmp: dict, ms, text: str, recent_tail: str,
-                   recent_dialogue: str, initializing: bool) -> dict | None:
+                   recent_dialogue: str, initializing: bool,
+                   session_id: str = None, agent_id: str = None) -> dict | None:
     """The single per-turn LLM call. Returns the normalized envelope, or
     None on any failure (call error, no JSON, unknown route)."""
     from backend.task_classifier import _get_classifier_client, classifier_chat
@@ -173,7 +174,8 @@ def _call_turn_llm(cmp: dict, ms, text: str, recent_tail: str,
     for budget in (2048, 4096):
         response = classifier_chat(client, messages, max_tokens=budget,
                                    log_label="CMP turn",
-                                   source="cmp", archive_category="turn")
+                                   source="cmp", archive_category="turn",
+                                   session_id=session_id, agent_id=agent_id)
         _dur = _time.time() - _t0
         if not response.get('success'):
             _logger.warning("CMP turn LLM call failed [%s] (model=%s, %.1fs) — "
@@ -208,7 +210,8 @@ def _call_turn_llm(cmp: dict, ms, text: str, recent_tail: str,
 
 
 def detect(cmp: dict, ms, user_text: str, recent_tail: str = '',
-           recent_dialogue: str = '', initializing: bool = False) -> dict:
+           recent_dialogue: str = '', initializing: bool = False,
+           session_id: str = None, agent_id: str = None) -> dict:
     """Classify a user turn in one LLM pass. Returns {'decision', 'target',
     'layer', 'reason', 'new_path', 'card_delta'}.
 
@@ -252,7 +255,8 @@ def detect(cmp: dict, ms, user_text: str, recent_tail: str = '',
 
     try:
         env = _call_turn_llm(cmp, ms, text, recent_tail, recent_dialogue,
-                             initializing)
+                             initializing, session_id=session_id,
+                             agent_id=agent_id)
     except Exception:
         _logger.warning("CMP turn call raised — defaulting to continue",
                         exc_info=True)
