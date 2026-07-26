@@ -219,9 +219,9 @@ AGENT_MAX_TOOL_RESULT_CHARS = _get_env_int("AGENT_MAX_TOOL_RESULT_CHARS", 8000, 
 AGENT_PARALLEL_TOOL_WAIT_TIMEOUT = _get_env_int(
     "AGENT_PARALLEL_TOOL_WAIT_TIMEOUT", 300, min_val=1, max_val=3600)
 
-# Same-turn context projection. Shadow mode computes the bounded model-facing
-# projection and emits attribution, while the provider still receives canonical
-# messages.
+# Same-turn context projection. Enforced mode sends the validated bounded payload;
+# shadow mode emits attribution while sending canonical messages, and off disables
+# compaction. Projection failures always fail open to canonical messages.
 ACTIVE_CONTEXT_MODE = os.getenv("ACTIVE_CONTEXT_MODE", "enforced").strip().lower()
 if ACTIVE_CONTEXT_MODE not in ("off", "shadow", "enforced"):
     _logger.warning("Invalid ACTIVE_CONTEXT_MODE=%r, using off", ACTIVE_CONTEXT_MODE)
