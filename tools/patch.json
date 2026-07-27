@@ -1,10 +1,10 @@
 {
   "id": "patch",
   "name": "Patch File",
-  "description": "Apply a unified diff patch to a file, enabling precise surgical edits.",
+  "description": "Apply a single-file text patch in standard git diff format.",
   "function": {
     "name": "patch",
-    "description": "Apply a unified diff patch to a file.",
+    "description": "Apply a single-file text patch in standard git diff format. Works for tracked, untracked, and new files without requiring a Git repository.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -14,7 +14,7 @@
         },
         "patch": {
           "type": "string",
-          "description": "The unified diff patch content. Must contain @@ hunk headers. Example:\n@@ -3,4 +3,4 @@\n context line\n-old line\n+new line\n context line",
+          "description": "A complete single-file text patch in git diff format. It must include diff --git, ---, +++, and @@ headers. Example:\ndiff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1,2 +1,2 @@\n context\n-old\n+new",
           "view": "diff"
         }
       },
@@ -24,9 +24,9 @@
       ]
     }
   },
-  "mock_response": "patch_text = args.get('patch', '')\nfile_path = args.get('file_path', 'unknown')\nif not patch_text:\n    result = {'error': \"Missing required argument: 'patch'\"}\nelse:\n    hunk_count = patch_text.count('@@') // 2\n    if hunk_count == 0:\n        result = {'error': 'No valid hunks found in patch. Make sure it contains @@ hunk headers.'}\n    else:\n        result = {'result': 'success', 'file_path': file_path, 'hunks_applied': hunk_count}",
+  "mock_response": "patch_text = args.get('patch', '')\nfile_path = args.get('file_path', 'unknown')\nif not patch_text:\n    result = {'error': \"Missing required argument: 'patch'\"}\nelif patch_text.count('diff --git ') != 1 or '\\n--- ' not in patch_text or '\\n+++ ' not in patch_text:\n    result = {'error': 'Invalid Git unified diff: include exactly one diff --git section plus --- and +++ path headers.'}\nelse:\n    hunk_count = patch_text.count('@@') // 2\n    if hunk_count == 0:\n        result = {'error': 'Invalid Git unified diff: patch contains no @@ hunks.'}\n    else:\n        result = {'result': 'success', 'file_path': file_path, 'hunks_applied': hunk_count}",
   "mock_response_type": "python",
-  "system_prompt": "## patch \u2014 Usage Rules\n\n**ALWAYS read the file immediately before constructing a patch.** Never rely on line numbers or content from memory or a previous read \u2014 each patch you apply shifts line numbers in the file.\n\n### Workflow\n1. `read_file` the target file\n2. Construct the patch from the *current* file content\n3. Apply with `patch`\n4. If you need to patch the same file again, go back to step 1\n\n",
+  "system_prompt": "## patch \u2014 Usage Rules\n\nThe `patch` argument MUST be a complete, single-file text patch in standard `git diff` format. Include `diff --git`, `---`, `+++`, and `@@` headers. Hunk-only patches are rejected. Use one tool call per file.\n\nFor an existing tracked or untracked file:\n```diff\ndiff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1,2 +1,2 @@\n context\n-old\n+new\n```\n\nFor a new file:\n```diff\ndiff --git a/new.py b/new.py\nnew file mode 100644\n--- /dev/null\n+++ b/new.py\n@@ -0,0 +1,2 @@\n+first\n+second\n```\n\n**ALWAYS read an existing file immediately before constructing a patch.** Never rely on line numbers or content from memory or a previous read \u2014 each patch you apply shifts line numbers in the file.\n\n### Workflow\n1. `read_file` the target file when it exists\n2. Construct a complete single-file Git unified diff from the current content\n3. Apply with `patch`\n4. If you need to patch the same file again, go back to step 1\n\nBinary, rename, copy, deletion, and multi-file patches are unsupported; use the dedicated file tools or separate patch calls.\n\n",
   "created_at": "2026-04-12T00:00:00.000000",
-  "updated_at": "2026-04-17T00:00:00.000000"
+  "updated_at": "2026-07-27T00:00:00.000000"
 }
