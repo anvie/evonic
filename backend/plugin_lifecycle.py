@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from backend.plugin_sdk import PluginSDK
 from backend.plugin_hooks import (
     _tool_guards, _message_interceptors, _builtin_suppressors,
+    _turn_gates, _tool_result_gates,
     _state_handlers, _unload_plugin_state_handlers,
 )
 
@@ -254,8 +255,9 @@ class PluginManager:
         for event_name, bridge in self._event_bridges.pop(plugin_id, []):
             event_stream.off(event_name, bridge)
 
-        # Unregister side-channel hooks
-        for registry in (_tool_guards, _message_interceptors, _builtin_suppressors):
+        # Unregister side-channel and synchronous lifecycle hooks
+        for registry in (_tool_guards, _message_interceptors, _builtin_suppressors,
+                         _turn_gates, _tool_result_gates):
             registry[:] = [fn for fn in registry
                            if not getattr(fn, '__module__', '').startswith(prefix)]
 

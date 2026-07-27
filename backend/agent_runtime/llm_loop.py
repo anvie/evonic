@@ -442,6 +442,40 @@ def run_tool_loop(agent: Dict[str, Any],
     chatlog.append({'type': 'turn_begin', 'session_id': session_id, 'ts': _loop_ts})
     event_stream.emit('turn_begin', {'session_id': session_id, 'ts': _loop_ts})
 
+    tool_trace = []
+    timeline = []
+    _loop_start_time = time.time()
+    _gate_context = {
+        'agent_id': agent_id, 'session_id': session_id,
+        'external_user_id': external_user_id, 'channel_id': channel_id,
+        'message_id': agent_context.get('trusted_message_id'),
+        'attachment_ids': list(agent_context.get('trusted_attachment_ids') or []),
+        'turn_index': _turn_index,
+    }
+
+    def _finalize_gate_response(response: str, source: str):
+        duration = round(time.time() - _loop_start_time, 1)
+        metadata = {'plugin_gate': source, 'thinking_duration': duration}
+        db.add_chat_message(session_id, 'assistant', response,
+                            agent_id=db_agent_id, metadata=metadata)
+        chatlog.append({'type': 'final', 'session_id': session_id,
+                        'content': response, 'metadata': metadata})
+        chatlog.append({'type': 'turn_end', 'session_id': session_id,
+                        'thinking_duration': duration})
+        event_stream.emit('final_answer', {
+            **_gate_context, 'answer': response, 'tool_trace': tool_trace,
+            'timeline': timeline, 'plugin_gate': source,
+        })
+        return response, tool_trace, timeline
+
+    from backend.plugin_manager import run_turn_gates
+    _turn_decision = run_turn_gates(_gate_context)
+    if _turn_decision and _turn_decision.get('handled'):
+        return _finalize_gate_response(str(_turn_decision.get('response') or ''),
+                                       'turn')
+    _suppress_intermediate = bool(
+        _turn_decision and _turn_decision.get('suppress_intermediate'))
+
     real_exec = tool_registry.get_real_executor(agent_context)
 
     # Built-in tool executors (read, use_skill, set_mode, remember, recall, etc.)
@@ -467,9 +501,6 @@ def run_tool_loop(agent: Dict[str, Any],
                 return result
         return None
 
-    tool_trace = []
-    timeline = []
-    _loop_start_time = time.time()
     _last_intermediate_text = None   # dedup tracker for intermediate channel sends
     _intermediate_dup_count = 0      # consecutive duplicate counter
     _force_stop_injected = False     # True after first force-stop injection
@@ -1897,8 +1928,10 @@ def run_tool_loop(agent: Dict[str, Any],
                 _last_intermediate_text = content
                 _intermediate_dup_count = 0
 
-            # Optionally forward to channel (e.g. Telegram) if agent setting is on
-            if agent.get('send_intermediate_responses') and channel_id and not _is_dup_text:
+            # Optionally forward to channel (e.g. Telegram) if agent setting is on.
+            # A synchronous plugin gate may suppress these for exact-response paths.
+            if (agent.get('send_intermediate_responses') and channel_id
+                    and not _is_dup_text and not _suppress_intermediate):
                 from backend.channels.registry import channel_manager
                 _inst = channel_manager._active.get(channel_id)
                 if _inst and _inst.is_running:
@@ -2009,7 +2042,7 @@ def run_tool_loop(agent: Dict[str, Any],
             try:
                 for p_idx in sorted(_parallel_indices):
                     _tc_p, _fn_p, _args_p, _pt_p = _tool_records[p_idx]
-                    _gr = _guard_p2(agent_id, _fn_p, _args_p)
+                    _gr = _guard_p2(agent_id, _fn_p, _args_p, _gate_context)
                     if _gr:
                         _parallel_jobs[p_idx] = {
                             'error': _gr.get('error', 'Blocked by plugin guard'),
@@ -2094,7 +2127,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 tool_result = _parallel_results[i]
             else:
                 from backend.plugin_manager import check_tool_guards
-                guard_result = check_tool_guards(agent_id, fn_name, args)
+                guard_result = check_tool_guards(agent_id, fn_name, args, _gate_context)
                 if guard_result:
                     if guard_result.get('level') == 'requires_approval':
                         tool_result = guard_result  # handled by approval flow below
@@ -2499,6 +2532,21 @@ def run_tool_loop(agent: Dict[str, Any],
                 'tool_name': fn_name, 'tool_args': args,
                 'tool_result': result_dict, 'has_error': has_error,
             })
+
+            from backend.plugin_manager import run_tool_result_gates
+            _result_decision = run_tool_result_gates(
+                _gate_context, fn_name, args, result_dict)
+            if _result_decision:
+                # Preserve tool-call/result pairing in durable history, but never
+                # expose the tool result to another LLM call or user-visible reply.
+                db.add_chat_message(session_id, 'tool', result_str,
+                                    tool_call_id=_tc['id'], agent_id=db_agent_id)
+                chatlog.append({'type': 'tool_output', 'session_id': session_id,
+                                'content': result_str, 'tool_call_id': _tc['id'],
+                                'error': has_error, 'function': fn_name})
+                tool_trace.append({"tool": fn_name, "args": args, "result": result_dict})
+                return _finalize_gate_response(
+                    str(_result_decision.get('response') or ''), 'tool_result')
 
             # Persist agent state immediately for state-changing built-in tools, then
             # push the fresh per-session snapshot. event_stream.emit only mutates its

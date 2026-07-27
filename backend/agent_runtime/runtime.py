@@ -2086,6 +2086,25 @@ class AgentRuntime:
             (_last_user or {}).get('metadata') or {},
         )
 
+        # Propagate trusted identity metadata from the channel into agent_context
+        # so synchronous lifecycle gates (e.g. workflow_guard) receive stable,
+        # attested message/attachment identifiers.
+        _trusted_meta = (_last_user or {}).get('metadata') or {}
+        if isinstance(_trusted_meta, dict):
+            if _trusted_meta.get('channel_message_id'):
+                agent_context['trusted_message_id'] = str(_trusted_meta['channel_message_id'])
+            if _trusted_meta.get('attachment_info'):
+                _att_ids = []
+                _a_info = _trusted_meta['attachment_info']
+                if isinstance(_a_info, list):
+                    for _att in _a_info:
+                        if isinstance(_att, dict) and _att.get('id'):
+                            _att_ids.append(str(_att['id']))
+                elif isinstance(_a_info, dict) and _a_info.get('id'):
+                    _att_ids.append(str(_a_info['id']))
+                if _att_ids:
+                    agent_context['trusted_attachment_ids'] = _att_ids
+
         # Propagate agent_message_depth and from_agent_id from incoming message metadata
         if ctx.external_user_id.startswith("__agent__"):
             _last_user = chatlog.get_last_entry(types=frozenset({'user'}))

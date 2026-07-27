@@ -803,10 +803,13 @@ class WhatsAppChannel(BaseChannel):
             return
 
         _logger.info("WhatsApp message received from %s (channel %s)", sender, self.channel_id)
+        inbound_metadata = {"channel_message_id": str(payload.get("message_id") or "")}
+        if attachment_info:
+            inbound_metadata["attachment_info"] = attachment_info
         result = agent_runtime.handle_message(
             agent_id, session_user_id, final_text, self.channel_id,
             image_url=image_url, video_url=video_url,
-            metadata={'attachment_info': attachment_info} if attachment_info else None,
+            metadata=inbound_metadata,
         )
         if result.get('buffered'):
             _logger.info("WhatsApp message buffered for %s (session %s)", sender, session_id)
