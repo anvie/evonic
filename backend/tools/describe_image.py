@@ -22,7 +22,9 @@ import base64
 import difflib
 import mimetypes
 import os
-from typing import Any, Dict, Optional
+import shutil
+import subprocess
+from typing import Any, Dict, Optional, Tuple
 
 from backend.llm_client import LLMClient
 
@@ -34,6 +36,122 @@ _SUPPORTED_IMAGE_TYPES = frozenset({
     "image/webp",
     "image/bmp",
 })
+
+# Cached check for ffmpeg availability (lazy, checked once at module level).
+_ffmpeg_path: Optional[str] = None
+_ffmpeg_checked: bool = False
+
+# Size threshold for auto-conversion (bytes).
+_PREPROCESS_SIZE_THRESHOLD = 3 * 1024 * 1024  # 3 MB
+
+# JPEG quality (ffmpeg -q:v range 2-31, lower = better; PIL 1-100, higher = better).
+_JPEG_FFMPEG_QUALITY = "3"
+_JPEG_PIL_QUALITY = 85
+
+
+def _ensure_ffmpeg() -> Optional[str]:
+    """Return the path to ffmpeg if available, or None.
+
+    The result is cached at module level so we only probe once per process.
+    """
+    global _ffmpeg_path, _ffmpeg_checked
+    if _ffmpeg_checked:
+        return _ffmpeg_path
+    _ffmpeg_checked = True
+    _ffmpeg_path = shutil.which("ffmpeg")
+    return _ffmpeg_path
+
+
+def _preprocess_image(
+    image_data: bytes,
+    mime_type: str,
+    file_size: int,
+) -> Tuple[bytes, str]:
+    """Auto-convert and compress an image to JPEG if needed.
+
+    Pass-through conditions:
+    - MIME type is JPEG or PNG **and** file_size <= 3 MB → returned unchanged.
+
+    Otherwise the image is converted to JPEG using **ffmpeg** (primary) or
+    **Pillow** (fallback).  The returned MIME type is always "image/jpeg"
+    after conversion.
+
+    Args:
+        image_data: Raw bytes read from the image file.
+        mime_type: Detected MIME type (e.g. "image/webp").
+        file_size: File size in bytes.
+
+    Returns:
+        (bytes, str): Preprocessed image bytes and their MIME type.
+    """
+    _MIME_JPEG = "image/jpeg"
+    _MIME_PNG = "image/png"
+
+    is_jpeg_or_png = mime_type in (_MIME_JPEG, _MIME_PNG, "image/jpg")
+    if is_jpeg_or_png and file_size <= _PREPROCESS_SIZE_THRESHOLD:
+        return image_data, mime_type
+
+    # --- Try ffmpeg first ---
+    ffmpeg = _ensure_ffmpeg()
+    if ffmpeg:
+        try:
+            proc = subprocess.run(
+                [
+                    ffmpeg,
+                    "-i", "pipe:0",
+                    "-q:v", _JPEG_FFMPEG_QUALITY,
+                    "-f", "image2pipe",
+                    "pipe:1",
+                ],
+                input=image_data,
+                capture_output=True,
+                timeout=30,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                return proc.stdout, _MIME_JPEG
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # Fall through to PIL
+
+    # --- Fallback: Pillow ---
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+    except ImportError:
+        # Neither ffmpeg nor Pillow available — return original as last resort.
+        return image_data, mime_type
+
+    try:
+        img = Image.open(BytesIO(image_data))
+    except Exception:
+        return image_data, mime_type
+
+    # Convert to RGB (JPEG does not support alpha / palette / CMYK).
+    mode = img.mode
+    if mode in ("RGBA", "LA", "PA"):
+        background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        if mode == "RGBA":
+            background.paste(img, mask=img.split()[3])
+        else:
+            background.paste(img)
+        img = background.convert("RGB")
+    elif mode == "P":
+        img = img.convert("RGBA")
+        background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        background.paste(img, mask=img)
+        img = background.convert("RGB")
+    elif mode == "CMYK":
+        img = img.convert("RGB")
+    elif mode not in ("RGB",):
+        img = img.convert("RGB")
+
+    # Animated GIF: extract first frame.
+    if getattr(img, "is_animated", False) and hasattr(img, "seek"):
+        img.seek(0)
+
+    out_buf = BytesIO()
+    img.save(out_buf, format="JPEG", quality=_JPEG_PIL_QUALITY, optimize=True)
+    return out_buf.getvalue(), _MIME_JPEG
 
 
 def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
@@ -225,6 +343,9 @@ def execute(agent: dict, args: dict) -> Any:
     except Exception as e:
         return f"Error: Failed to read image: {e}"
 
+    # --- Auto-convert / compress to JPEG if needed ---
+    image_data, resolved_mime = _preprocess_image(image_data, mime_type, file_size)
+
     image_b64 = base64.b64encode(image_data).decode("utf-8")
 
     # --- Resolve vision models (ordered list for fallback) ---
@@ -233,9 +354,7 @@ def execute(agent: dict, args: dict) -> Any:
         return f"Error: {error}"
 
     # --- Build the vision request ---
-    # Use base64 JPEG encoding for the data URL regardless of source format;
-    # most vision models handle the standard image/jpeg MIME fine.
-    data_url = f"data:image/jpeg;base64,{image_b64}"
+    data_url = f"data:{resolved_mime};base64,{image_b64}"
 
     system_prompt = (
         "You are a helpful image analysis assistant. "
