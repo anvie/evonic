@@ -6,7 +6,7 @@
   "author": "Evonic",
   "enabled": true,
   "events": [],
-  "nav_items": [{"label": "Workflow Guard", "path": "/workflow-guard"}],
+  "nav_items": [],
   "variables": [
     {"name":"ENFORCEMENT_ENABLED","label":"Enable enforcement","type":"boolean","default":true,"description":"Apply configured hard locks; disable to retain data without enforcing."},
     {"name":"SHADOW_MODE","label":"Shadow mode","type":"boolean","default":false,"description":"Record qualifying outcomes without locking or overriding responses."},
