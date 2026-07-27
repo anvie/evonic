@@ -268,8 +268,21 @@ def api_list_tools():
     from backend.skills_manager import skills_manager
     from backend.tools import tool_registry
     from backend.tools.agent_messaging import get_agent_messaging_tool_defs
-    # Built-in tools always appear first
-    tools = tool_registry.get_builtin_tool_defs()
+
+    agent_context = None
+    agent_id = request.args.get('agent_id')
+    if agent_id:
+        agent = db.get_agent(agent_id)
+        if not agent:
+            return jsonify({'error': 'Agent not found'}), 404
+        agent_context = {
+            'id': agent['id'],
+            'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
+            'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
+        }
+
+    # Built-ins are filtered by the selected agent's feature settings when supplied.
+    tools = tool_registry.get_builtin_tool_defs(agent_context)
     tools += test_manager.list_tools()
     # Append agent messaging tools (auto-loaded when agent_messaging_enabled)
     for tool_def in get_agent_messaging_tool_defs():

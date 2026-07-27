@@ -251,11 +251,23 @@ class ToolRegistry:
 
         return real_executor
 
-    def get_builtin_tool_defs(self) -> List[Dict[str, Any]]:
-        """Return UI-facing tool definitions for all built-in tools (with _builtin metadata)."""
+    @staticmethod
+    def _is_builtin_enabled(builtin_id: str, agent_context: dict) -> bool:
+        """Return whether a feature-gated built-in is available to an agent."""
+        if builtin_id == 'builtin:compile_task_graph':
+            return bool(agent_context.get('enable_atg'))
+        if builtin_id in ('builtin:switch_path', 'builtin:new_path',
+                          'builtin:read_transcript', 'builtin:forget_memory'):
+            return bool(agent_context.get('enable_cmp'))
+        return True
+
+    def get_builtin_tool_defs(self, agent_context: Optional[dict] = None) -> List[Dict[str, Any]]:
+        """Return UI-facing built-in definitions, optionally scoped to an agent."""
         defs = []
         for builtin_id, factory in self._builtins.items():
-            tool_def, _ = factory({'agent_id': ''})
+            if agent_context is not None and not self._is_builtin_enabled(builtin_id, agent_context):
+                continue
+            tool_def, _ = factory(agent_context or {})
             fn = tool_def.get('function', {})
             defs.append({
                 'id': builtin_id,          # e.g. 'builtin:remember'
@@ -272,13 +284,8 @@ class ToolRegistry:
         agent_id = agent_context.get('id', '')
         tools = []
         for builtin_id, factory in self._builtins.items():
-            # ATG/CMP tools are opt-in per agent — never expose the defs
-            # otherwise, so non-flagged agents keep a byte-identical tool list.
-            if builtin_id == 'builtin:compile_task_graph' and not agent_context.get('enable_atg'):
-                continue
-            if (builtin_id in ('builtin:switch_path', 'builtin:new_path',
-                               'builtin:read_transcript')
-                    and not agent_context.get('enable_cmp')):
+            # Feature-gated built-ins must be absent from the agent's tool list.
+            if not self._is_builtin_enabled(builtin_id, agent_context):
                 continue
             tool_def, _ = factory(agent_context)
             if should_suppress_builtin(agent_id, builtin_id, tool_def):
@@ -293,12 +300,7 @@ class ToolRegistry:
         executors: Dict[str, Callable] = {}
         for builtin_id, factory in self._builtins.items():
             # Keep executor availability aligned with definition exposure.
-            # Disabled ATG/CMP tools must be unknown, not merely rejected later.
-            if builtin_id == 'builtin:compile_task_graph' and not agent_context.get('enable_atg'):
-                continue
-            if (builtin_id in ('builtin:switch_path', 'builtin:new_path',
-                               'builtin:read_transcript')
-                    and not agent_context.get('enable_cmp')):
+            if not self._is_builtin_enabled(builtin_id, agent_context):
                 continue
             tool_def, executor = factory(agent_context)
             fn_name = tool_def['function']['name']  # e.g. 'remember'

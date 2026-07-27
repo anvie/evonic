@@ -3507,7 +3507,7 @@ let currentFilterMode = 'assigned';
 async function loadTools() {
     const epoch = window._agentEpoch;
     const [toolsRes, agentToolsRes] = await Promise.all([
-        fetch('/api/settings/tools'),
+        fetch(`/api/settings/tools?agent_id=${encodeURIComponent(AGENT_ID)}`),
         fetch(`/api/agents/${AGENT_ID}/tools`)
     ]);
     const toolsDefs = (await toolsRes.json()).tools || [];

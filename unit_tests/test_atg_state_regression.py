@@ -116,6 +116,26 @@ def test_builtin_executor_exposes_compile_task_graph_when_flagged():
     assert 'error' in result
 
 
+def test_muktamar_registrasi_hides_disabled_atg_and_cmp_builtins():
+    from backend.tools.registry import ToolRegistry
+
+    disabled = {
+        'compile_task_graph', 'forget_memory', 'new_path', 'read_transcript',
+    }
+    context = {
+        'id': 'muktamar_registrasi',
+        'enable_atg': False,
+        'enable_cmp': False,
+    }
+
+    ui_names = {tool['name'] for tool in ToolRegistry().get_builtin_tool_defs(context)}
+    runtime_names = {
+        tool['function']['name'] for tool in ToolRegistry().get_builtin_tools(context)
+    }
+    assert disabled.isdisjoint(ui_names)
+    assert disabled.isdisjoint(runtime_names)
+
+
 def test_compile_executor_defends_when_disabled():
     from backend.tools.registry import _builtin_compile_task_graph_factory
     _, executor = _builtin_compile_task_graph_factory({'id': 'a1'})
