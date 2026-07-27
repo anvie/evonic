@@ -74,7 +74,7 @@ _STATUS_SUFFIX_RE = re.compile(
 # Matches: comma/semicolon or conjunctions (lalu/kemudian/dan/serta/then/and)
 # followed by common Indonesian/English action verbs.
 _MULTI_CLAUSE_VERB_RE = re.compile(
-    r'(?:[,;]\s*| lalu | kemudian | dan | serta | then | and | also | next )\s*'
+    r'(?:[,;]\s*|\s*/\s*| lalu | kemudian | dan | serta | then | and | also | next )\s*'
     r'(?:membuat|menulis|menguji|mengaudit|menambah|mengubah|membangun|'
     r'mengimplementasikan|mendeploy|menyiapkan|menambahkan|menjalankan|'
     r'memeriksa|mengkonfigurasi|mendokumentasikan|mendaftarkan|'
@@ -319,10 +319,10 @@ class AgentState:
         """Return a warning if tasks look non-atomic (too few, too long, or
         multi-clause).
 
-        Only fires with 1-2 tasks; 3+ entries is enough atomicity regardless
-        of individual length.
+        Checks ALL tasks regardless of count. The warning is non-blocking
+        (returned as a string that agents may or may not heed).
         """
-        if not raw_tasks or len(raw_tasks) > 2:
+        if not raw_tasks:
             return None
 
         for i, text in enumerate(raw_tasks):
