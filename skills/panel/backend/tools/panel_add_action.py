@@ -31,6 +31,7 @@ def execute(agent: dict, args: dict) -> dict:
     content = args.get("content", "")
     params = args.get("params")
     sort_order = args.get("sort_order")
+    confirm_dialog = args.get("confirm_dialog", False)
 
     # ── authorization ──────────────────────────────────────────
     caller_id = agent.get("id", "")
@@ -94,6 +95,7 @@ def execute(agent: dict, args: dict) -> dict:
             content=content,
             params=params_str,
             sort_order=sort_order,
+            confirm_dialog=confirm_dialog,
         )
         try:
             from backend.event_stream import event_stream

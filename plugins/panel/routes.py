@@ -636,7 +636,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
 
   // ── Button click handler ──────────────────────────────────────────
   document.querySelectorAll('.panel-btn:not([disabled])').forEach(function(btn) {
-    btn.addEventListener('click', function() {
+    btn.addEventListener('click', async function() {
       const actionId = parseInt(btn.dataset.actionId);
       const actionType = btn.dataset.actionType;
       const action = actions.find(function(a) { return a.id === actionId; });
@@ -645,6 +645,17 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
       if (actionType === 'prompt') {
         executeAction(actionId, null);
         return;
+      }
+
+      // Confirm dialog for destructive operations
+      if (action.confirm_dialog === 1 && window.ui && window.ui.confirm) {
+        const ok = await window.ui.confirm({
+          title: action.label || 'Confirm',
+          message: 'Are you sure you want to run this action?',
+          confirmText: 'Run',
+          danger: true
+        });
+        if (!ok) return;
       }
 
       let paramsDef = [];

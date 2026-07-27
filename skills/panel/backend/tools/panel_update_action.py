@@ -107,6 +107,11 @@ def execute(agent: dict, args: dict) -> dict:
             return {"success": False, "error": "enabled must be a boolean."}
         fields["enabled"] = args["enabled"]
 
+    if "confirm_dialog" in args and args["confirm_dialog"] is not None:
+        if not isinstance(args["confirm_dialog"], bool):
+            return {"success": False, "error": "confirm_dialog must be a boolean."}
+        fields["confirm_dialog"] = args["confirm_dialog"]
+
     if not fields:
         return {"success": False, "error": "No fields to update were provided."}
 

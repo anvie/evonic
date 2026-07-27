@@ -42,6 +42,10 @@
           "sort_order": {
             "type": "integer",
             "description": "Display order position. Lower numbers appear first. Default: 0."
+          },
+          "confirm_dialog": {
+            "type": "boolean",
+            "description": "Whether to show a confirmation dialog before executing this action. Default: false."
           }
         },
         "required": ["agent_id", "label", "action_type", "content"]
@@ -99,6 +103,10 @@
           "enabled": {
             "type": "boolean",
             "description": "Enable or disable the action (optional)."
+          },
+          "confirm_dialog": {
+            "type": "boolean",
+            "description": "Whether to show a confirmation dialog before executing this action (optional)."
           }
         },
         "required": ["agent_id", "action_id"]
