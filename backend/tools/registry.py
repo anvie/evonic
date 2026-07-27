@@ -254,6 +254,8 @@ class ToolRegistry:
     @staticmethod
     def _is_builtin_enabled(builtin_id: str, agent_context: dict) -> bool:
         """Return whether a feature-gated built-in is available to an agent."""
+        if builtin_id in ('builtin:save_plan', 'builtin:set_mode', 'builtin:state'):
+            return not bool(agent_context.get('always_execute'))
         if builtin_id == 'builtin:compile_task_graph':
             return bool(agent_context.get('enable_atg'))
         if builtin_id in ('builtin:switch_path', 'builtin:new_path',

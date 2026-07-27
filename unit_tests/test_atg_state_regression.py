@@ -116,6 +116,35 @@ def test_builtin_executor_exposes_compile_task_graph_when_flagged():
     assert 'error' in result
 
 
+def test_always_execute_hides_plan_workflow_builtins_everywhere():
+    from backend.agent_runtime.context import build_tools
+    from backend.tools.registry import ToolRegistry
+
+    hidden = {'save_plan', 'set_mode', 'state'}
+    agent = {
+        'id': 'always_execute_agent',
+        'is_super': False,
+        'builtin_tools_enabled': True,
+        'always_execute': True,
+    }
+    context = {'id': agent['id'], 'always_execute': True}
+
+    ui_names = {tool['name'] for tool in ToolRegistry().get_builtin_tool_defs(context)}
+    runtime_names = {
+        tool['function']['name'] for tool in ToolRegistry().get_builtin_tools(context)
+    }
+    built_names = {
+        tool['function']['name'] for tool in build_tools(agent)
+        if tool.get('function', {}).get('name')
+    }
+    executor = ToolRegistry().get_builtin_executor(context)
+
+    assert hidden.isdisjoint(ui_names)
+    assert hidden.isdisjoint(runtime_names)
+    assert hidden.isdisjoint(built_names)
+    assert all(executor(tool_name, {}) is None for tool_name in hidden)
+
+
 def test_muktamar_registrasi_hides_disabled_atg_and_cmp_builtins():
     from backend.tools.registry import ToolRegistry
 
