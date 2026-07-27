@@ -722,6 +722,23 @@ def apply_patch(file_path: str, patch_text: str) -> dict:
     return apply_hunks(file_path, patch_text)
 
 
+_LEGACY_FORMAT_WARNING = (
+    'Legacy hunk-only patch accepted for backward compatibility; '
+    'prefer a complete single-file git diff.'
+)
+
+
+def _with_legacy_format_warning(result: dict, legacy_hunk_only: bool) -> dict:
+    if not legacy_hunk_only or result.get('result') != 'success':
+        return result
+    existing = result.get('warning')
+    result['warning'] = (
+        f'{existing} {_LEGACY_FORMAT_WARNING}' if existing
+        else _LEGACY_FORMAT_WARNING
+    )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Tool entry point
 # ---------------------------------------------------------------------------
@@ -779,11 +796,24 @@ def execute(agent, args: dict) -> dict:
     # Normalise smart quotes in patch content before applying
     from backend.normalizer import normalize_code_quotes
     patch_text = normalize_code_quotes(patch_text)
-    try:
-        patch_info = validate_git_patch_format(patch_text)
-    except ValueError as e:
-        return {'error': f'Invalid Git unified diff: {e}'}
-    creating_new = patch_info['is_new_file']
+    parsed_hunks = parse_hunks(patch_text)
+    has_git_header = any(
+        line.startswith('diff --git ') for line in patch_text.splitlines()
+    )
+    legacy_hunk_only = not has_git_header and bool(parsed_hunks)
+    if legacy_hunk_only:
+        creating_new = all(
+            h['old_start'] == 0 and h['old_count'] == 0
+            for h in parsed_hunks
+        )
+        declares_new_file = False
+    else:
+        try:
+            patch_info = validate_git_patch_format(patch_text)
+        except ValueError as e:
+            return {'error': f'Invalid Git unified diff: {e}'}
+        creating_new = patch_info['is_new_file']
+        declares_new_file = creating_new
 
     # /_self/ path: always route to the agent's local directory on the evonic server.
     # Sub-agents inherit their parent's directory — use effective agent ID.
@@ -795,7 +825,7 @@ def execute(agent, args: dict) -> dict:
         if not local_path:
             return {'error': "Access denied — path escapes agent directory."}
         target_exists = os.path.exists(local_path)
-        if creating_new and target_exists:
+        if declares_new_file and target_exists:
             return {'error': f'File already exists: {file_path}'}
         # If the file doesn't exist (and patch isn't creating a new file),
         # check for similar names (typos).
@@ -821,7 +851,7 @@ def execute(agent, args: dict) -> dict:
                         result['warning'] = _warn
                 except Exception:
                     pass
-        return result
+        return _with_legacy_format_warning(result, legacy_hunk_only)
 
     # Hint when path starts with _self/ but missing leading slash
     if agent_id and file_path and (file_path.startswith('_self/') or file_path == '_self'):
@@ -834,7 +864,7 @@ def execute(agent, args: dict) -> dict:
             return {'error': real_path}  # error message
 
         target_exists = backend.file_exists(real_path)
-        if creating_new and target_exists:
+        if declares_new_file and target_exists:
             return {'error': f'File already exists: {file_path}'}
         if not target_exists:
             if not creating_new:
@@ -858,7 +888,10 @@ def execute(agent, args: dict) -> dict:
         if 'error' in wr:
             return {'error': wr['error']}
 
-        return {'result': 'success', 'hunks_applied': result.get('hunks_applied', 0)}
+        return _with_legacy_format_warning({
+            'result': 'success',
+            'hunks_applied': result.get('hunks_applied', 0),
+        }, legacy_hunk_only)
 
     # When sandbox is enabled, the agent has a workplace, or run-as-user is
     # set, route file I/O through the execution backend (Docker container,
@@ -877,7 +910,7 @@ def execute(agent, args: dict) -> dict:
         # Convert host path to the backend's view (e.g. /workspace for Docker)
         target_path = backend.resolve_path(target_path)
         target_exists = backend.file_exists(target_path)
-        if creating_new and target_exists:
+        if declares_new_file and target_exists:
             return {'error': f'File already exists: {file_path}'}
         if not target_exists:
             if not creating_new:
@@ -901,7 +934,10 @@ def execute(agent, args: dict) -> dict:
         if 'error' in wr:
             return {'error': wr['error']}
 
-        return {'result': 'success', 'hunks_applied': result.get('hunks_applied', 0)}
+        return _with_legacy_format_warning({
+            'result': 'success',
+            'hunks_applied': result.get('hunks_applied', 0),
+        }, legacy_hunk_only)
 
     # No sandbox — direct host filesystem access (original behavior)
     workspace_root = None
@@ -915,7 +951,7 @@ def execute(agent, args: dict) -> dict:
                 workspace_root = os.path.abspath(agent_workspace or fallback)
                 file_path = resolved
 
-    if creating_new and os.path.exists(file_path):
+    if declares_new_file and os.path.exists(file_path):
         return {'error': f'File already exists: {file_path}'}
 
     result = apply_patch(file_path, patch_text)
@@ -925,7 +961,7 @@ def execute(agent, args: dict) -> dict:
     if workspace_root and 'error' in result:
         result['error'] = result['error'].replace(workspace_root, '/workspace')
 
-    return result
+    return _with_legacy_format_warning(result, legacy_hunk_only)
 
 
 # ---------------------------------------------------------------------------

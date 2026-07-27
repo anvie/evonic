@@ -1,8 +1,7 @@
 """Unit and Git-format compatibility tests for ``backend/tools/patch.py``.
 
-The model-facing ``execute()`` contract requires a complete, single-file text
-patch in ``git diff`` format.  The low-level Python helpers remain independently
-testable with hunk-only input.
+The model-facing ``execute()`` contract uses complete single-file ``git diff``
+patches as its canonical format while retaining legacy hunk-only compatibility.
 """
 
 import importlib.util
@@ -499,7 +498,7 @@ class TestGitPatchFormat:
         with pytest.raises(ValueError, match=message):
             validate_git_patch_format(patch)
 
-    def test_execute_rejects_hunk_only_patch(self, tmp_path):
+    def test_execute_accepts_legacy_hunk_only_patch_with_warning(self, tmp_path):
         target = tmp_path / 'file.txt'
         target.write_text('old\n')
         result = execute(
@@ -509,8 +508,35 @@ class TestGitPatchFormat:
                 'patch': '@@ -1 +1 @@\n-old\n+new\n',
             },
         )
-        assert 'Invalid Git unified diff' in result['error']
-        assert target.read_text() == 'old\n'
+        assert result['result'] == 'success'
+        assert 'Legacy hunk-only patch accepted' in result['warning']
+        assert target.read_text() == 'new\n'
+
+    def test_execute_accepts_legacy_hunk_only_new_file(self, tmp_path):
+        target = tmp_path / 'new.txt'
+        result = execute(
+            {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+            {
+                'file_path': str(target),
+                'patch': '@@ -0,0 +1,2 @@\n+first\n+second\n',
+            },
+        )
+        assert result['result'] == 'success'
+        assert 'Legacy hunk-only patch accepted' in result['warning']
+        assert target.read_text() == 'first\nsecond\n'
+
+    def test_legacy_insertion_only_patch_can_target_existing_file(self, tmp_path):
+        target = tmp_path / 'existing.txt'
+        target.write_text('existing\n')
+        result = execute(
+            {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+            {
+                'file_path': str(target),
+                'patch': '@@ -0,0 +1,1 @@\n+inserted\n',
+            },
+        )
+        assert result['result'] == 'success'
+        assert target.read_text() == 'inserted\nexisting\n'
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +697,7 @@ def test_evonic_matches_git_apply_for_supported_text_patches(
     assert evonic_result.get('result') == 'success', (
         f'{case_name}: Evonic rejected fixture: {evonic_result}'
     )
+    assert 'warning' not in evonic_result
     assert evonic_target.read_bytes() == (git_root / relative_path).read_bytes()
 
 
@@ -678,11 +705,6 @@ def test_evonic_matches_git_apply_for_supported_text_patches(
 @pytest.mark.parametrize(
     ('case_name', 'target_exists', 'patch_text'),
     [
-        (
-            'hunk-only',
-            True,
-            '@@ -1 +1 @@\n-old\n+new\n',
-        ),
         (
             'bad-hunk-count',
             True,
@@ -739,3 +761,27 @@ def test_evonic_and_git_apply_both_reject_invalid_or_inapplicable_patches(
     )
     after = evonic_target.read_bytes() if evonic_target.exists() else None
     assert after == before
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason='git is required for differential tests')
+def test_legacy_hunk_only_is_an_intentional_git_apply_compatibility_exception(
+        tmp_path):
+    evonic_root = tmp_path / 'evonic'
+    git_root = tmp_path / 'git'
+    evonic_root.mkdir()
+    git_root.mkdir()
+    _write_fixture(evonic_root, 'sample.txt', b'old\n')
+    _write_fixture(git_root, 'sample.txt', b'old\n')
+    patch_text = '@@ -1 +1 @@\n-old\n+new\n'
+
+    evonic_target = evonic_root / 'sample.txt'
+    evonic_result = execute(
+        {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+        {'file_path': str(evonic_target), 'patch': patch_text},
+    )
+    git_result = _git_apply(git_root, patch_text)
+
+    assert git_result.returncode != 0
+    assert evonic_result['result'] == 'success'
+    assert 'Legacy hunk-only patch accepted' in evonic_result['warning']
+    assert evonic_target.read_text() == 'new\n'
