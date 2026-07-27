@@ -2339,6 +2339,16 @@ const AgentAutoSave = {
         this._handlers['agent-summarize-prompt'] = saveSummarizePrompt;
         // Injection guard is stored as an agent variable, not a column.
         this._handlers['agent-injection-guard'] = async () => { await saveVariables(true); };
+        // Re-fetch slash command list after saving hidden/disabled settings
+        // so the chat autocomplete reflects the change immediately.
+        this._handlers['agent-hidden-slash-commands'] = async (el) => {
+            await putAgent({ hidden_slash_commands: el.value });
+            loadChatCommands();
+        };
+        this._handlers['agent-disabled-slash-commands'] = async (el) => {
+            await putAgent({ disabled_slash_commands: el.value });
+            loadChatCommands();
+        };
 
         this.FIELDS.forEach((f) => this._bind(f));
     },
@@ -5068,6 +5078,9 @@ function updateChatComposer(input) {
     const bashHint = document.getElementById('chat-bash-hint');
     if (bashHint) bashHint.classList.toggle('hidden', !bashMode);
     input.classList.toggle('font-mono', bashMode);
+
+    // No commands available (all disabled) — don't show suggestions
+    if (!chatCommands.length) return;
 
     const match = trimmed.match(/^\/([\w-]*)$/);
     if (!match) {
