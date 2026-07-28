@@ -1369,9 +1369,9 @@ def agent_export(agent_id, output=None):
         sys.exit(1)
 
 
-def agent_import(source, agent_id=None, name=None):
+def agent_import(source, agent_id=None, name=None, confirm=False):
     """Import an agent from portable JSON in a file or stdin."""
-    from backend.agent_portability import AgentPortabilityError, import_agent
+    from backend.agent_portability import AgentPortabilityError, import_agent, preflight_import
 
     try:
         if source == "-":
@@ -1385,8 +1385,17 @@ def agent_import(source, agent_id=None, name=None):
             raise AgentPortabilityError(
                 f"Invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}."
             ) from exc
+        db = _get_db()
+        preflight = preflight_import(db, payload)
+        warning = preflight["warning"]
+        if warning["skills"] or warning["tools"]:
+            print("Warning: unavailable dependencies will be skipped: " +
+                  ", ".join(warning["skills"] + warning["tools"]))
+            if not confirm and input("Continue with import? [y/N] ").strip().lower() not in ("y", "yes"):
+                print("Import cancelled.")
+                return
         imported_id = import_agent(
-            _get_db(), payload, ROOT, agent_id=agent_id, name=name
+            db, payload, ROOT, agent_id=agent_id, name=name, confirm_missing=True
         )
         print(f"Agent imported: {imported_id}")
     except (AgentPortabilityError, OSError) as exc:

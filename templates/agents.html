@@ -164,6 +164,7 @@
                 </div>
             </div>
             <p id="import-agent-error" class="hidden mt-3 text-sm text-red-600 dark:text-red-400"></p>
+            <div id="import-agent-warning" class="hidden mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></div>
         </div>
         <div class="flex gap-3 justify-end px-6 pb-5">
             <button onclick="closeImportAgentModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
@@ -525,6 +526,7 @@ let importMode = 'file';
 let importFileText = '';
 
 function showImportAgentModal() {
+    window.importMissingConfirmed = false;
     document.getElementById('import-agent-modal').classList.remove('hidden');
     document.getElementById('import-agent-id').value = '';
     document.getElementById('import-agent-name').value = '';
@@ -537,6 +539,8 @@ function showImportAgentModal() {
 }
 
 function closeImportAgentModal() {
+    window.importMissingConfirmed = false;
+    document.getElementById('import-agent-warning').classList.add('hidden');
     document.getElementById('import-agent-modal').classList.add('hidden');
 }
 
@@ -602,15 +606,22 @@ async function importAgent() {
         return setImportError(`Invalid JSON: ${error.message}`);
     }
     const button = document.getElementById('import-agent-submit');
+    const warning = document.getElementById('import-agent-warning');
     button.disabled = true;
     setImportError('');
     try {
         const response = await fetch('/api/agents/import', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({payload, ...(id ? {id} : {}), ...(name ? {name} : {})})
+            body: JSON.stringify({payload, ...(id ? {id} : {}), ...(name ? {name} : {}), ...(window.importMissingConfirmed ? {confirm_missing: true} : {})})
         });
         const data = await response.json();
+        if (response.status === 409 && data.warning) {
+            warning.textContent = `Unavailable dependencies will be skipped. Skills: ${(data.warning.skills || []).join(', ') || 'none'}. Tools: ${(data.warning.tools || []).join(', ') || 'none'}. Click Import again to confirm.`;
+            warning.classList.remove('hidden');
+            window.importMissingConfirmed = true;
+            return;
+        }
         if (!response.ok) return setImportError(data.error || 'Agent import failed.');
         window.location.href = `/agents/${encodeURIComponent(data.agent_id)}`;
     } catch (error) {

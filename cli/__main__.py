@@ -482,6 +482,10 @@ def main():
         "--name", dest="import_agent_name", default=None,
         help="Optional display-name override",
     )
+    agent_import_parser.add_argument(
+        "--yes", dest="import_confirm", action="store_true",
+        help="Confirm skipping unavailable skills and tools without prompting",
+    )
 
     # agent enable
     agent_enable_parser = agent_subparsers.add_parser(
@@ -995,6 +999,7 @@ def main():
                 args.source,
                 agent_id=args.import_agent_id,
                 name=args.import_agent_name,
+                confirm=args.import_confirm,
             )
         elif args.agent_command == "enable":
             agent_enable(args.agent_id)

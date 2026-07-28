@@ -3,6 +3,7 @@
 import os
 import re
 import shutil
+import copy
 from typing import Any, Dict, List, Optional
 
 SCHEMA = "evonic.agent"
@@ -163,15 +164,53 @@ def _available_tools(db) -> set:
     return ids
 
 
-def _validate_dependencies(db, agent: Dict[str, Any]) -> None:
-    missing_tools = sorted(set(agent["tools"]) - _available_tools(db))
-    if missing_tools:
-        raise AgentPortabilityError("Assigned tools are unavailable: " + ", ".join(missing_tools) + ".")
+def _skill_tool_ids(skill_id: str) -> set:
     from backend.skills_manager import skills_manager
-    available_skills = {skill.get("id") for skill in skills_manager.list_skills()}
-    missing_skills = sorted(set(agent["skills"]) - available_skills)
-    if missing_skills:
-        raise AgentPortabilityError("Assigned skills are unavailable: " + ", ".join(missing_skills) + ".")
+    return {
+        f"skill:{skill_id}:{definition.get('function', {}).get('name', '')}"
+        for definition in skills_manager.get_skill_tool_defs(skill_id)
+        if definition.get('function', {}).get('name')
+    }
+
+
+def preflight_import(db, payload: Any) -> Dict[str, Any]:
+    payload = validate_payload(payload)
+    from backend.skills_manager import skills_manager
+    skills = {skill.get("id"): skill for skill in skills_manager.list_skills()}
+    unavailable_skills = {s for s in payload["agent"]["skills"]
+                          if s not in skills or not skills[s].get("enabled", False)}
+    available_tools = _available_tools(db)
+    effective_tools, skipped_tools = [], set()
+    for tool_id in payload["agent"]["tools"]:
+        match = re.fullmatch(r"skill:([^:]+):([^:]+)", tool_id)
+        if not match:
+            if tool_id not in available_tools:
+                raise AgentPortabilityError(f"Assigned tools are unavailable: {tool_id}.")
+            effective_tools.append(tool_id)
+            continue
+        skill_id = match.group(1)
+        if skill_id in unavailable_skills:
+            skipped_tools.add(tool_id)
+        elif skill_id not in payload["agent"]["skills"]:
+            raise AgentPortabilityError(f"Tool '{tool_id}' does not belong to an assigned skill.")
+        elif tool_id not in _skill_tool_ids(skill_id):
+            raise AgentPortabilityError(f"Assigned skill tool is unavailable: {tool_id}.")
+        else:
+            effective_tools.append(tool_id)
+    effective = copy.deepcopy(payload)
+    effective["agent"]["skills"] = [s for s in payload["agent"]["skills"] if s not in unavailable_skills]
+    effective["agent"]["tools"] = effective_tools
+    return {"payload": effective, "warning": {"skills": sorted(unavailable_skills), "tools": sorted(skipped_tools)}}
+
+
+def _validate_dependencies(db, agent: Dict[str, Any]) -> Dict[str, Any]:
+    result = preflight_import(db, {"schema": SCHEMA, "version": VERSION,
+        "metadata": {"omitted_secret_variable_keys": []}, "agent": agent})
+    warning = result["warning"]
+    if warning["skills"] or warning["tools"]:
+        raise AgentPortabilityError("Unavailable dependencies require confirmation: " +
+            ", ".join(warning["skills"] + warning["tools"]) + "." )
+    return result["payload"]["agent"]
 
 
 def _default_agent_id(db, name: str) -> str:
@@ -187,8 +226,10 @@ def _default_agent_id(db, name: str) -> str:
     return candidate
 
 
-def import_agent(db, payload: Any, base_dir: str, agent_id: Optional[str] = None, name: Optional[str] = None) -> str:
+def import_agent(db, payload: Any, base_dir: str, agent_id: Optional[str] = None, name: Optional[str] = None, confirm_missing: bool = False) -> str:
     payload = validate_payload(payload)
+    if confirm_missing:
+        payload = preflight_import(db, payload)["payload"]
     agent = payload["agent"]
     target_name = name if name is not None else agent["name"]
     _require(isinstance(target_name, str) and target_name.strip() and len(target_name) <= 200, "Agent name must be a non-empty string up to 200 characters.")
@@ -198,7 +239,8 @@ def import_agent(db, payload: Any, base_dir: str, agent_id: Optional[str] = None
     _require(not SUBAGENT_ID_RE.search(target_id), "Agent ID cannot use the reserved sub-agent suffix pattern.")
     if explicit_id:
         _require(not db.get_agent(target_id), f"Agent ID '{target_id}' already exists.")
-    _validate_dependencies(db, agent)
+    if not confirm_missing:
+        _validate_dependencies(db, agent)
     agent_root, workspace = _agent_dir(base_dir, target_id), os.path.join(base_dir, "shared", "agents", target_id)
     _require(not os.path.exists(agent_root), f"Agent directory already exists: {agent_root}.")
     _require(not os.path.exists(workspace), f"Agent workspace already exists: {workspace}.")

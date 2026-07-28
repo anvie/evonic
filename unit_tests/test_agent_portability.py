@@ -12,6 +12,7 @@ from backend.agent_portability import (
     AgentPortabilityError,
     export_agent,
     import_agent,
+    preflight_import,
     validate_payload,
 )
 
@@ -227,6 +228,37 @@ class AgentPortabilityServiceTests(unittest.TestCase):
                 import_agent(db, payload(tools=["missing"]), root, agent_id="new_agent")
             self.assertFalse(db.agents)
 
+    @patch("backend.agent_portability._available_tools", return_value=set())
+    @patch("backend.agent_portability._skill_tool_ids", return_value={"skill:scheduler:create_schedule"})
+    @patch("backend.skills_manager.skills_manager.list_skills", return_value=[{"id": "scheduler", "enabled": True}])
+    def test_preflight_accepts_installed_lazy_skill_tool(self, skills, tool_ids, tools):
+        result = preflight_import(FakeDB(), payload(
+            skills=["scheduler"], tools=["skill:scheduler:create_schedule"]))
+        self.assertEqual(result["warning"], {"skills": [], "tools": []})
+        self.assertEqual(result["payload"]["agent"]["tools"], ["skill:scheduler:create_schedule"])
+
+    @patch("backend.agent_portability._available_tools", return_value=set())
+    @patch("backend.skills_manager.skills_manager.list_skills", return_value=[])
+    def test_preflight_warns_and_omits_unavailable_skill(self, skills, tools):
+        result = preflight_import(FakeDB(), payload(
+            skills=["missing_skill"], tools=["skill:missing_skill:run"]))
+        self.assertEqual(result["warning"], {
+            "skills": ["missing_skill"], "tools": ["skill:missing_skill:run"]})
+        self.assertEqual(result["payload"]["agent"]["skills"], [])
+        self.assertEqual(result["payload"]["agent"]["tools"], [])
+
+    @patch("backend.agent_portability._available_tools", return_value=set())
+    @patch("backend.skills_manager.skills_manager.list_skills", return_value=[])
+    def test_confirmed_import_skips_unavailable_skill(self, skills, tools):
+        db = FakeDB()
+        with tempfile.TemporaryDirectory() as root:
+            imported = import_agent(db, payload(
+                skills=["missing_skill"], tools=["skill:missing_skill:run"]),
+                root, agent_id="portable", confirm_missing=True)
+        self.assertEqual(imported, "portable")
+        self.assertEqual(db.skills["portable"], [])
+        self.assertEqual(db.tools["portable"], [])
+
 
 class AgentPortabilityRouteTests(unittest.TestCase):
     def setUp(self):
@@ -254,6 +286,14 @@ class AgentPortabilityRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()["agent_id"], "created")
         importer.assert_called_once()
+
+    @patch("routes.agents.preflight_import", return_value={"payload": payload(), "warning": {"skills": ["missing_skill"], "tools": ["skill:missing_skill:run"]}})
+    @patch("routes.agents.import_agent")
+    def test_import_endpoint_warns_before_creation(self, importer, preflight):
+        response = self.client.post("/api/agents/import", json={"payload": payload()})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["warning"]["skills"], ["missing_skill"])
+        importer.assert_not_called()
 
 
 class AgentPortabilityCliTests(unittest.TestCase):

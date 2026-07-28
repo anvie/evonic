@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional
 from flask import Blueprint, render_template, jsonify, request, Response, session, stream_with_context, g
 from models.db import db
 from models.chatlog import chatlog_manager, _DISPLAY_TYPES
-from backend.agent_portability import AgentPortabilityError, export_agent, import_agent
+from backend.agent_portability import AgentPortabilityError, export_agent, import_agent, preflight_import
 from backend.audit_logger import audit
 from backend.tools import tool_registry
 from backend.tools.agent_messaging import get_agent_messaging_tool_defs
@@ -310,8 +310,13 @@ def api_import_agent():
         target_id = request.args.get('id')
         target_name = request.args.get('name')
     try:
+        preflight = preflight_import(db, payload)
+        warning = preflight['warning']
+        if (warning['skills'] or warning['tools']) and not data.get('confirm_missing', False):
+            return jsonify({'warning': warning, 'message': 'Unavailable dependencies will be skipped. Confirm to continue.'}), 409
         imported_id = import_agent(
-            db, payload, BASE_DIR, agent_id=target_id, name=target_name
+            db, payload, BASE_DIR, agent_id=target_id, name=target_name,
+            confirm_missing=bool(data.get('confirm_missing', False))
         )
         audit.log_agent_crud(
             user_id='admin', agent_id=imported_id, action='create', ip=_audit_ip()
