@@ -188,15 +188,21 @@ class AgentState:
     # ── Mode transitions ────────────────────────────────────────────────────
 
     def set_mode(self, new_mode: str, reason: str = None,
-                 session_id: str = None, agent_id: str = None) -> dict:
-        """Transition to a new mode. Returns a result dict for the LLM."""
+                 session_id: str = None, agent_id: str = None,
+                 bypass_plan_requirement: bool = False) -> dict:
+        """Transition to a new mode. Returns a result dict for the LLM.
+
+        ``bypass_plan_requirement`` is reserved for explicit user commands such
+        as ``/exec``. Agent-initiated transitions must leave it false so the
+        plan-file guard remains in effect.
+        """
         if new_mode not in VALID_MODES:
             return {"error": f"Invalid mode '{new_mode}'. Valid modes: {sorted(VALID_MODES)}"}
         if self.always_execute:
             if new_mode == "plan":
                 return {"result": f"Agent is configured with always_execute; staying in execute mode", "mode": "execute"}
             return {"result": f"Mode is execute", "mode": "execute"}
-        if new_mode == "execute" and not self.plan_file:
+        if new_mode == "execute" and not self.plan_file and not bypass_plan_requirement:
             if session_id and agent_id:
                 from backend.task_classifier import classify_operation_trivial
                 if classify_operation_trivial(session_id, agent_id) == "trivial":

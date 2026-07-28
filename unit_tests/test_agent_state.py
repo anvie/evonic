@@ -53,6 +53,12 @@ class TestSetMode:
         assert "error" in result
         assert ms.mode == "plan"  # unchanged
 
+    def test_explicit_user_bypass_allows_execute_without_plan_file(self):
+        ms = AgentState(mode="plan")
+        result = ms.set_mode("execute", bypass_plan_requirement=True)
+        assert "error" not in result
+        assert ms.mode == "execute"
+
     def test_execute_allowed_with_plan_file(self):
         ms = AgentState(mode="plan", plan_file="plan/test.md")
         result = ms.set_mode("execute")
