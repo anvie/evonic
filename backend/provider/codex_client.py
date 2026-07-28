@@ -373,7 +373,22 @@ class CodexClient:
                 })
             elif role == "user":
                 if isinstance(content, list):
-                    converted.append({"role": "user", "content": content})
+                    # Convert Chat Completions content block types to Responses API format.
+                    # Chat Completions: "text" / "image_url" → Responses: "input_text" / "input_image"
+                    converted_content = []
+                    for block in content:
+                        btype = block.get("type", "")
+                        if btype == "text":
+                            block = {**block, "type": "input_text"}
+                        elif btype == "image_url":
+                            # Chat Completions: {"image_url": {"url": "..."}}
+                            # Responses API:    {"image_url": "..."}
+                            url = block.get("image_url", {})
+                            if isinstance(url, dict):
+                                url = url.get("url", "")
+                            block = {"type": "input_image", "image_url": url}
+                        converted_content.append(block)
+                    converted.append({"role": "user", "content": converted_content})
                 else:
                     converted.append({"role": "user", "content": str(content)})
             elif role == "assistant":
