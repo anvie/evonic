@@ -1,0 +1,18 @@
+{
+  "id": "send_file_guard",
+  "name": "Send File Path Guard",
+  "version": "1.0.0",
+  "description": "Optional per-agent allow-list for files delivered by send_file.",
+  "author": "Evonic",
+  "enabled": true,
+  "events": [],
+  "agent_settings": [
+    {
+      "name": "allowed_path_regex",
+      "label": "Allowed send_file path regex",
+      "type": "string",
+      "default": "",
+      "description": "Optional regular expression matched against canonical source paths. Leave empty to disable this guard."
+    }
+  ]
+}
