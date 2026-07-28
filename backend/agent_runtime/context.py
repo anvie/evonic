@@ -864,6 +864,12 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
                 tools.append(tool_def)
         return tools
 
+    # Resolve explicit assignments before adding messaging definitions so the LLM
+    # sees only messaging tools the agent can actually execute. Sub-agents inherit
+    # their parent's assignments.
+    eid = _effective_id(agent)
+    assigned_ids = set(db.get_agent_tools(eid))
+
     # Built-in tools (use_skill, set_mode, remember, recall, etc.)
     # Can be disabled per-agent via builtin_tools_enabled advanced setting.
     agent_context = {
@@ -903,29 +909,22 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         from backend.tools.super_agent_tools import get_super_agent_tool_defs
         tools.extend(get_super_agent_tool_defs())
 
-    # Agent messaging tools — available to super agent and agents with messaging enabled
+    # Agent messaging tools are gated by messaging enablement and assignment.
+    # This keeps definitions advertised to the LLM aligned with runtime
+    # authorization, while super agents retain access to the full messaging set.
     if agent.get('is_super') or agent.get('agent_messaging_enabled') != 0:
         from backend.tools.agent_messaging import get_agent_messaging_tool_defs
-        tools.extend(get_agent_messaging_tool_defs())
-
-    # Explorers use their own configured tool set (no parent inheritance), and
-    # their tools may come from a LAZY skill — so resolve the defs directly
-    # (get_all_tool_defs omits lazy skills) and return.
-    if agent.get('is_explorer'):
-        from backend.agent_runtime import explorer as _explorer
         seen_fn_names = {t['function']['name'] for t in tools if t.get('function', {}).get('name')}
-        for tool_def in _explorer.tool_defs(agent):
+        for tool_def in get_agent_messaging_tool_defs():
             fn_name = tool_def.get('function', {}).get('name', '')
             if not fn_name or fn_name in seen_fn_names:
                 continue
+            if not agent.get('is_super') and fn_name not in assigned_ids:
+                continue
             seen_fn_names.add(fn_name)
             tools.append(tool_def)
-        return tools
 
-    # Add assigned tools from the registry (including skill tools)
-    # Sub-agents inherit parent's tool assignments.
-    eid = _effective_id(agent)
-    assigned_ids = set(db.get_agent_tools(eid))
+    # Add assigned tools from the registry (including skill tools).
 
     # Auto-assign describe_image for vision-enabled agents.
     # Mirrors the auto-assignment in runtime.py and prefetch.py so that
