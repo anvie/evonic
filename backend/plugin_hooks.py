@@ -15,6 +15,35 @@ _logger = logging.getLogger(__name__)
 _turn_gates: list = []
 _tool_result_gates: list = []
 
+# Attachment-policy hooks run after send_file canonicalizes a path and before
+# file metadata or bytes are exposed. Hooks receive (agent, canonical_path) and
+# return None to allow or {"error": "..."} to reject the attachment.
+_attachment_policies: list = []
+
+
+def register_attachment_policy(fn: Callable) -> None:
+    """Register a synchronous attachment policy hook."""
+    if fn not in _attachment_policies:
+        _attachment_policies.append(fn)
+
+
+def unregister_attachment_policy(fn: Callable) -> None:
+    """Remove a previously registered attachment policy hook."""
+    if fn in _attachment_policies:
+        _attachment_policies.remove(fn)
+
+
+def check_attachment_policies(agent: dict, canonical_path: str) -> Optional[dict]:
+    """Return the first rejection from attachment policy hooks."""
+    for policy in list(_attachment_policies):
+        try:
+            result = policy(agent, canonical_path)
+            if result:
+                return result
+        except Exception:
+            _logger.exception("Plugin attachment policy failed")
+    return None
+
 
 def register_turn_gate(fn: Callable) -> None:
     if fn not in _turn_gates:
@@ -330,4 +359,4 @@ def get_state_summary(agent_state) -> dict:
 def _get_all_registries():
     return (_tool_guards, _message_interceptors, _builtin_suppressors,
             _turn_context_providers, _busy_message_providers, _turn_gates,
-            _tool_result_gates)
+            _tool_result_gates, _attachment_policies)

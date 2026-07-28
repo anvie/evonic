@@ -518,6 +518,11 @@ html.dark .agent-tab.active {
                         <p class="text-xs text-gray-400 mt-1">Number of recent messages kept in raw form (not summarized).</p>
                     </div>
                     <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Allowed send_file path regex</label>
+                        <input type="text" id="agent-send-file-allowed-path-regex" value="{{ agent.send_file_allowed_path_regex or '' }}" placeholder="Empty disables the policy" class="w-full p-2.5 border border-gray-300 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+                        <p class="text-xs text-gray-400 mt-1">Optional regex matched against the canonical path before file metadata or content is exposed. Traversal and symlink aliases are resolved first.</p>
+                    </div>
+                    <div>
                         <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Memory Engine</label>
                         <select id="agent-memory-engine" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
                             <option value="" {{ 'selected' if not agent.memory_engine else '' }}>Default (global setting)</option>
@@ -2299,6 +2304,7 @@ const AgentAutoSave = {
         { id: 'agent-run-as-user', key: 'run_as_user', type: 'strnull' },
         { id: 'agent-memory-engine', key: 'memory_engine', type: 'selnull' },
         { id: 'agent-kb-organizer', key: 'kb_organizer_mode', type: 'selnull' },
+        { id: 'agent-send-file-allowed-path-regex', key: 'send_file_allowed_path_regex', type: 'str' },
         { id: 'agent-hidden-slash-commands', key: 'hidden_slash_commands', type: 'str' },
         { id: 'agent-disabled-slash-commands', key: 'disabled_slash_commands', type: 'str' },
         // Special-handled controls (persist fn registered below); listed here so
