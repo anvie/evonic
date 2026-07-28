@@ -944,27 +944,6 @@ def _register_builtins():
         "Show agent status information",
     )
 
-    # /clear-memory — Delete all memories for current agent
-    def clear_memory_handler(
-        session_id: str,
-        agent_id: str,
-        external_user_id: str,
-        channel_id: Optional[str],
-        args: str,
-    ) -> str:
-        from models.db import db
-
-        count = db.clear_all_memories(agent_id)
-        if count == 0:
-            return "No memories to clear."
-        return f"{count} memories deleted."
-
-    command_registry.register(
-        "clear-memory",
-        clear_memory_handler,
-        "Delete all long-term memories for current agent",
-    )
-
     # /model — Show or set the agent's LLM model
     def model_handler(
         session_id: str,
