@@ -38,6 +38,22 @@ def test_messaging_tools_require_explicit_assignment(monkeypatch):
     assert 'resolve_agent_approval' not in names
 
 
+def test_enabled_agent_receives_send_agent_message_without_assignment(monkeypatch):
+    """The agent toggle auto-enables the core inter-agent message tool."""
+    monkeypatch.setattr(context.db, 'get_agent_tools', lambda agent_id: [])
+    monkeypatch.setattr(context.db, 'get_agent_skills', lambda agent_id: [])
+
+    names = _tool_names({
+        'id': 'enabled_agent',
+        'is_super': False,
+        'builtin_tools_enabled': False,
+        'agent_messaging_enabled': True,
+        'vision_enabled': False,
+    })
+
+    assert 'send_agent_message' in names
+
+
 def test_super_agent_receives_all_messaging_tools(monkeypatch):
     """Super agents intentionally retain the complete messaging tool set."""
     monkeypatch.setattr(context.db, 'get_agent_tools', lambda agent_id: [])

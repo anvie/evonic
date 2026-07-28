@@ -919,7 +919,12 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
             fn_name = tool_def.get('function', {}).get('name', '')
             if not fn_name or fn_name in seen_fn_names:
                 continue
-            if not agent.get('is_super') and fn_name not in assigned_ids:
+            # send_agent_message is the core inter-agent communication tool: an
+            # enabled agent receives it without a separate tool assignment. The
+            # remaining messaging tools retain assignment-based exposure.
+            if (not agent.get('is_super')
+                    and fn_name != 'send_agent_message'
+                    and fn_name not in assigned_ids):
                 continue
             seen_fn_names.add(fn_name)
             tools.append(tool_def)
