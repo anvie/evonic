@@ -773,7 +773,7 @@ html.dark .agent-tab.active {
             <!-- Overlay: Search bar + type filters (top-left, stacked) -->
             <div class="absolute top-4 left-4 z-10 flex flex-col items-start gap-1.5">
                 <div class="relative">
-                    <input type="text" id="kb-graph-search" placeholder="Search nodes..." autocomplete="off"
+                    <input type="text" id="kb-graph-search" placeholder="Search nodes..." autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
                            class="pl-3 pr-8 py-2 w-48 sm:w-64 bg-white/80 dark:bg-gray-800 backdrop-blur-sm border border-gray-200 dark:border-gray-600 rounded-lg text-sm shadow-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/50 dark:text-gray-100 dark:placeholder-gray-400"
                            oninput="searchKBGraph(this.value)">
                     <button id="kb-graph-search-clear" onclick="clearKBGraphSearch()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer hidden" type="button">
@@ -837,7 +837,7 @@ html.dark .agent-tab.active {
                         </label>
                     </div>
                 </div>
-                <input type="text" id="kb-filter" placeholder="Filter files..." autocomplete="off"
+                <input type="text" id="kb-filter" placeholder="Filter files..." autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
                        class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400 mb-4"
                        oninput="filterKBFiles()">
                 <p class="text-xs text-gray-400 mb-4">Files stored in <code>agents/{{ agent.id }}/kb/</code> — the agent can read these using <code>read_file(file_path="/_self/kb/filename.md")</code>.</p>
@@ -882,7 +882,7 @@ html.dark .agent-tab.active {
             <p class="text-xs text-gray-400 mb-4">Toggle tools on/off to assign them to this agent. {% if agent.builtin_tools_enabled is not false %}Built-in tools are always available.{% else %}Built-in tools are currently disabled — enable them in the Advanced tab.{% endif %} Click a tool name to view details.</p>
             <!-- Filter bar -->
             <div class="flex flex-wrap items-center gap-2 mb-4">
-                <input type="text" id="tool-filter" placeholder="Filter tools..." autocomplete="off"
+                <input type="text" id="tool-filter" placeholder="Filter tools..." autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
                        class="flex-1 min-w-0 w-full sm:w-auto p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400"
                        oninput="filterToolsList()">
                 <div class="flex rounded-md border border-gray-200 overflow-hidden text-xs font-medium flex-shrink-0 w-full sm:w-auto dark:border-gray-600">
