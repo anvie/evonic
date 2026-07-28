@@ -1,0 +1,33 @@
+{
+  "id": "muktamar_api",
+  "name": "Muktamar Photo API",
+  "version": "1.0.0",
+  "description": "Authenticated API for Muktamar photo validation.",
+  "author": "Evonic",
+  "enabled": false,
+  "events": [],
+  "variables": [
+    {
+      "name": "API_KEYS",
+      "label": "API keys (comma-separated)",
+      "type": "string",
+      "secret": true,
+      "default": "",
+      "description": "API keys accepted by the external photo-validation endpoint. Prefer an environment variable in production."
+    },
+    {
+      "name": "AGENT_ID",
+      "label": "Muktamar agent ID",
+      "type": "string",
+      "default": "muktamar-agent",
+      "description": "Agent owning registration drafts used for validation."
+    },
+    {
+      "name": "MAX_UPLOAD_BYTES",
+      "label": "Maximum upload size (bytes)",
+      "type": "number",
+      "default": "8388608",
+      "description": "Hard request limit; validator also enforces its own 8 MiB limit."
+    }
+  ]
+}
