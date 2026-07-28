@@ -249,8 +249,10 @@ def api_get_agent(agent_id):
         return jsonify({'error': 'Agent not found'}), 404
     agent['system_prompt'] = _read_system_prompt(agent_id, fallback=agent.get('system_prompt', ''))
     agent_tools = db.get_agent_tools(agent_id)
-    # Include auto-loaded agent messaging tools when enabled
-    if agent.get('is_super') or agent.get('agent_messaging_enabled') != 0:
+    # Agent-messaging tools are part of the built-in executor chain. Do not
+    # report them as assigned when that chain is disabled for this agent.
+    if (agent.get('builtin_tools_enabled', True)
+            and (agent.get('is_super') or agent.get('agent_messaging_enabled') != 0)):
         for tid in AGENT_MESSAGING_TOOL_IDS:
             if tid not in agent_tools:
                 agent_tools = list(agent_tools) + [tid]
@@ -532,8 +534,10 @@ def api_clone_agent(agent_id):
 def api_get_agent_tools(agent_id):
     tool_ids = db.get_agent_tools(agent_id)
     agent = db.get_agent(agent_id)
-    # Include auto-loaded agent messaging tools when enabled
-    if agent and (agent.get('is_super') or agent.get('agent_messaging_enabled') != 0):
+    # Agent-messaging tools are part of the built-in executor chain. Do not
+    # report them as assigned when that chain is disabled for this agent.
+    if (agent and agent.get('builtin_tools_enabled', True)
+            and (agent.get('is_super') or agent.get('agent_messaging_enabled') != 0)):
         for tid in AGENT_MESSAGING_TOOL_IDS:
             if tid not in tool_ids:
                 tool_ids = list(tool_ids) + [tid]
