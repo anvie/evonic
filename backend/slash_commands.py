@@ -705,7 +705,11 @@ def _register_builtins():
             ms = AgentState()  # fresh plan-mode state
 
         # Transition to execute mode
-        result = ms.set_mode("execute", reason="slash command /exec")
+        result = ms.set_mode(
+            "execute",
+            reason="slash command /exec",
+            bypass_plan_requirement=True,
+        )
         if "error" in result:
             return f"Error: {result['error']}"
 

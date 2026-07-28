@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
+import ast
 import json
 import os
 import random
@@ -91,13 +92,55 @@ _DONE_INDICATORS = re.compile(
     re.IGNORECASE,
 )
 
+def _try_parse_dict(s: str) -> dict | None:
+    """Try to parse a string as a Python dict literal or JSON object.
+
+    Returns the parsed dict on success, or None on failure.
+    Handles both ``{'text': 'Task', 'status': 'pending'}`` (Python literal)
+    and ``{"text": "Task", "status": "pending"}`` (JSON).
+    """
+    # ast.literal_eval handles Python literals safely (no code execution)
+    try:
+        result = ast.literal_eval(s)
+        if isinstance(result, dict):
+            return result
+    except (ValueError, SyntaxError):
+        pass
+    # json.loads as fallback for true JSON format
+    try:
+        result = json.loads(s)
+        if isinstance(result, dict):
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None
+
+
 def _sanitize_task_text(text: str) -> tuple[str, str | None]:
     """Strip leading/trailing status indicators from task text.
+
+    Also unwraps dict-format strings (Python/JSON dict literals containing
+    a ``text`` key) that LLMs sometimes emit when they mirror the
+    ``_task_summary()`` format they see in the rendered state.
 
     Returns (cleaned_text, inferred_status) where inferred_status is
     "done" / "in_progress" if completion markers were detected, else None.
     """
-    raw = text
+    raw = text.strip()
+
+    # --- Unwrap dict literals ---
+    # LLMs sometimes pass {'text': 'Task title', 'status': 'pending'}
+    # because they see the _task_summary() format in their context.
+    dict_status = None
+    if raw.startswith('{') and raw.endswith('}'):
+        parsed = _try_parse_dict(raw)
+        if isinstance(parsed, dict) and 'text' in parsed:
+            dict_status = parsed.get('status')
+            unwrapped = parsed['text']
+            # Only use the unwrapped text if it's a non-empty string
+            if isinstance(unwrapped, str) and unwrapped.strip():
+                raw = unwrapped.strip()
+
     # Detect status before stripping
     inferred = None
     if _DONE_INDICATORS.search(raw):
@@ -106,6 +149,12 @@ def _sanitize_task_text(text: str) -> tuple[str, str | None]:
     cleaned = _STATUS_PREFIX_RE.sub('', raw, count=1)
     cleaned = _STATUS_SUFFIX_RE.sub('', cleaned)
     cleaned = cleaned.strip() or raw.strip()
+
+    # Dict status overrides indicator-based inferred status.
+    # Exclude "pending" — it is the default and should not count as "inferred".
+    if dict_status and dict_status != "pending":
+        inferred = dict_status
+
     return cleaned, inferred
 
 
@@ -188,15 +237,21 @@ class AgentState:
     # ── Mode transitions ────────────────────────────────────────────────────
 
     def set_mode(self, new_mode: str, reason: str = None,
-                 session_id: str = None, agent_id: str = None) -> dict:
-        """Transition to a new mode. Returns a result dict for the LLM."""
+                 session_id: str = None, agent_id: str = None,
+                 bypass_plan_requirement: bool = False) -> dict:
+        """Transition to a new mode. Returns a result dict for the LLM.
+
+        ``bypass_plan_requirement`` is reserved for explicit user commands such
+        as ``/exec``. Agent-initiated transitions must leave it false so the
+        plan-file guard remains in effect.
+        """
         if new_mode not in VALID_MODES:
             return {"error": f"Invalid mode '{new_mode}'. Valid modes: {sorted(VALID_MODES)}"}
         if self.always_execute:
             if new_mode == "plan":
                 return {"result": f"Agent is configured with always_execute; staying in execute mode", "mode": "execute"}
             return {"result": f"Mode is execute", "mode": "execute"}
-        if new_mode == "execute" and not self.plan_file:
+        if new_mode == "execute" and not self.plan_file and not bypass_plan_requirement:
             if session_id and agent_id:
                 from backend.task_classifier import classify_operation_trivial
                 if classify_operation_trivial(session_id, agent_id) == "trivial":
@@ -325,8 +380,12 @@ class AgentState:
         if not raw_tasks:
             return None
 
-        for i, text in enumerate(raw_tasks):
-            s = str(text).strip()
+        for i, raw_item in enumerate(raw_tasks):
+            # Unwrap dict-format items the LLM might pass (same as _sanitize_task_text)
+            if isinstance(raw_item, dict) and 'text' in raw_item:
+                s = str(raw_item['text']).strip()
+            else:
+                s = str(raw_item).strip()
 
             # Signal 1: very long (crammed) task text
             if len(s) > 150:
