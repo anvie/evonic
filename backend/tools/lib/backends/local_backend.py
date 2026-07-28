@@ -124,7 +124,7 @@ class LocalBackend(ExecutionBackend):
             **self._subprocess_identity_kwargs(),
         )
         process_tracker.register(self._session_id, proc, proc.pid,
-                                 kill_method='killpg')
+                                 kill_method='killpg_immediate')
         try:
             stdout, stderr, reason = self._poll_proc(proc, script, timeout, t0)
             if stdout is None:
@@ -175,7 +175,9 @@ class LocalBackend(ExecutionBackend):
             cwd=self._cwd(), env=run_env, start_new_session=True,
             **self._subprocess_identity_kwargs(),
         )
-        process_tracker.register(self._session_id, proc, proc.pid, kill_method='killpg')
+        process_tracker.register(
+            self._session_id, proc, proc.pid, kill_method='killpg_immediate'
+        )
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         chunks = []
         emitted = 0
