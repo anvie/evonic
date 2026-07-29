@@ -1,6 +1,7 @@
 """Authenticated external API for Muktamar photo validation."""
 from __future__ import annotations
 
+import hashlib
 import hmac
 import os
 import tempfile
@@ -9,7 +10,10 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from backend.tools import tool_registry
-from models.db import db
+from plugins.muktamar_api.db import PhotoValidationCache
+
+
+_cache = PhotoValidationCache()
 
 PLUGIN_ID = "muktamar_api"
 
@@ -100,6 +104,14 @@ def create_blueprint():
                     if total > max_bytes:
                         return jsonify({"error": "Upload too large"}), 413
                     target.write(chunk)
+            # Hash the exact uploaded bytes before invoking the vision validator.
+            # This also makes cache keys independent of filenames and MIME labels.
+            with open(path, "rb") as source:
+                image_sha1 = hashlib.sha1(source.read()).hexdigest()
+            cached_result = _cache.get(image_sha1)
+            if cached_result is not None:
+                return jsonify(cached_result), 200
+
             # Standalone validation intentionally has no draft or agent dependency.
             try:
                 module = tool_registry._load_tool_module("validate_photo", skill_id="muktamar-agent")
@@ -113,7 +125,11 @@ def create_blueprint():
                 return jsonify({"error": "Photo validator is unavailable"}), 503
             if not isinstance(result, dict) or result.get("status") == "error":
                 return jsonify({"error": "Photo validator is unavailable"}), 503
-            return jsonify(_public_result(result)), 200
+            public_result = _public_result(result)
+            # Cache both accepted and rejected validation results. A rejected image
+            # should not repeatedly consume vision resources either.
+            _cache.put(image_sha1, public_result)
+            return jsonify(public_result), 200
         finally:
             try:
                 os.unlink(path)

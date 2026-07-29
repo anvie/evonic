@@ -6,12 +6,20 @@ from plugins.muktamar_api import routes
 
 
 @pytest.fixture()
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     monkeypatch.setattr(routes, "_keys", lambda: ("test-key",))
+    monkeypatch.setattr(routes, "_cache", routes.PhotoValidationCache(str(tmp_path / "client-cache.db")))
     from flask import Flask
     app = Flask(__name__)
     app.register_blueprint(routes.create_blueprint())
     return app.test_client()
+
+
+@pytest.fixture()
+def isolated_cache(monkeypatch, tmp_path):
+    cache = routes.PhotoValidationCache(str(tmp_path / "muktamar-api.db"))
+    monkeypatch.setattr(routes, "_cache", cache)
+    return cache
 
 
 def test_requires_bearer_key(client):
@@ -70,6 +78,53 @@ def test_validator_result_is_normalized_and_temp_file_cleaned(client, monkeypatc
     assert "model_name" not in body
     import os
     assert not os.path.exists(seen["path"])
+
+
+def test_cache_hit_skips_validator_and_returns_original_result(client, monkeypatch, isolated_cache):
+    image = b"same-image"
+    import hashlib
+    isolated_cache.put(hashlib.sha1(image).hexdigest(), {
+        "success": False,
+        "reason_code": ["APPROPRIATE_POSE"],
+        "message": "cached result",
+    })
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("validator must not run on a cache hit")
+
+    monkeypatch.setattr(routes.tool_registry, "_load_tool_module", fail_if_called)
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(image), "different-name.png")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "success": False,
+        "reason_code": ["APPROPRIATE_POSE"],
+        "message": "cached result",
+    }
+
+
+def test_cache_miss_stores_failure_result(client, monkeypatch, isolated_cache):
+    class FakeModule:
+        @staticmethod
+        def execute_standalone(agent, args):
+            return {"accepted": False, "reason_code": "NOT_PORTRAIT", "message": "portrait required"}
+
+    monkeypatch.setattr(routes.tool_registry, "_load_tool_module", lambda *args, **kwargs: FakeModule)
+    image = b"new-image"
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(image), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200
+    assert response.get_json()["success"] is False
+    import hashlib
+    assert isolated_cache.get(hashlib.sha1(image).hexdigest()) == response.get_json()
 
 
 def test_validator_failure_reasons_are_returned_as_array(client, monkeypatch):
