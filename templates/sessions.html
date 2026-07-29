@@ -1877,7 +1877,6 @@ function buildContextUsageHtml(cu) {
 
 let _bgProcessModalJobId = null;
 let _bgLogPollTimer = null;
-let _bgElapsedTimer = null;
 let _bgProcessModalTrigger = null;
 
 function _formatBgProcessDuration(seconds) {
@@ -1897,56 +1896,7 @@ function openBgProcessModal(jobId) {
     const modal = document.getElementById('bg-process-modal');
     const body = document.getElementById('bg-process-modal-body');
     const title = document.getElementById('bg-process-modal-title');
-    const subtitle = document.getElementById('bg-process-modal-subtitle');
-    const kindColors = {
-        wrapper: 'border-gray-300 text-gray-600 dark:border-white/15 dark:text-slate-300',
-        tmux: 'border-amber-300 text-amber-600 dark:border-amber-500/40 dark:text-amber-400',
-        screen: 'border-purple-300 text-purple-600 dark:border-purple-500/40 dark:text-purple-400',
-        nohup: 'border-sky-300 text-sky-600 dark:border-sky-500/40 dark:text-sky-400'
-    };
-    const pillStyles = {
-        running: { text: 'Running • Live', cls: 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300 dark:shadow-lg dark:shadow-emerald-500/30', dot: 'bg-emerald-500 dark:bg-emerald-400', ping: true },
-        done: { text: 'Done', cls: 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300', dot: 'bg-sky-500 dark:bg-sky-400', ping: false },
-        timeout: { text: 'Timeout', cls: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300', dot: 'bg-amber-500 dark:bg-amber-400', ping: false },
-        failed: { text: 'Failed', cls: 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300', dot: 'bg-red-500 dark:bg-red-400', ping: false }
-    };
-
-    const startedDate = new Date(p.started_at * 1000);
-    const finishedDate = p.finished_at ? new Date(p.finished_at * 1000) : null;
-    const elapsed = _formatBgProcessDuration((p.finished_at || Date.now() / 1000) - p.started_at);
-    const status = p.status || 'running';
-    const isRunning = status === 'running' && !p.finished_at;
-    const exitCode = !isRunning && p.exit_code != null ? String(p.exit_code) : null;
-    const kindColor = kindColors[p.kind] || kindColors.wrapper;
-    const pill = pillStyles[status] || pillStyles.failed;
-    const dateOptions = { year: 'numeric', month: 'short', day: 'numeric' };
-    const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit' };
-    const startedDay = startedDate.toLocaleDateString([], dateOptions);
-    const startedTime = startedDate.toLocaleTimeString([], timeOptions);
-
-    const iconClock = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l2.5 2.5"/></svg>';
-    const iconRefresh = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>';
-    const iconTerminal = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg>';
-
-    // Header subtitle (job id + kind + status text) and status pill.
-    const subtitleHtml = `<span class="font-mono text-gray-700 dark:text-slate-200">${esc(p.job_id)}</span>`
-        + `<span class="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${kindColor}">${esc(p.kind || 'wrapper')}</span>`
-        + '<span class="text-gray-300 dark:text-slate-600" aria-hidden="true">•</span>'
-        + `<span>${isRunning ? 'Running in the background' : 'Process ' + esc(status)}</span>`;
-    const pillDot = pill.ping
-        ? `<span class="relative flex h-2 w-2" aria-hidden="true"><span class="absolute inline-flex h-full w-full animate-ping rounded-full ${pill.dot} opacity-70"></span><span class="relative inline-flex h-2 w-2 rounded-full ${pill.dot}"></span></span>`
-        : `<span class="h-2 w-2 rounded-full ${pill.dot}" aria-hidden="true"></span>`;
-    const pillHtml = `<span class="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-bold uppercase tracking-wider ${pill.cls}" role="status">${pillDot}${esc(pill.text)}</span>`;
-
     let html = '<div class="space-y-6">';
-
-    // Execution stats — four columns split by vertical dividers on desktop.
-    html += '<div class="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-4 sm:gap-x-0 sm:gap-y-0 sm:divide-x sm:divide-gray-200 sm:dark:divide-white/10">';
-    html += `<div class="sm:px-6 sm:first:pl-0"><div class="flex items-center gap-2 text-gray-500 dark:text-slate-400">${iconClock}<span class="text-sm font-medium">Started</span></div><p class="mt-2 text-lg font-bold text-gray-900 dark:text-white">${esc(startedDay)}</p><p class="mt-1 text-sm tabular-nums text-gray-400 dark:text-slate-500">${esc(startedTime)}</p></div>`;
-    html += `<div class="sm:px-6"><div class="flex items-center gap-2 text-gray-500 dark:text-slate-400">${iconClock}<span class="text-sm font-medium">Elapsed</span></div><p class="bg-process-elapsed mt-2 font-mono text-lg font-bold tabular-nums text-gray-900 dark:text-white" data-started="${p.started_at}" data-finished="${p.finished_at || 0}">${esc(elapsed)}</p><p class="mt-1 text-sm ${isRunning ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-slate-500'}">${isRunning ? 'Updating live' : 'Total runtime'}</p></div>`;
-    html += `<div class="sm:px-6"><div class="flex items-center gap-2 text-gray-500 dark:text-slate-400">${iconRefresh}<span class="text-sm font-medium">Finished</span></div><p class="mt-2 text-lg font-bold ${finishedDate ? 'text-gray-900 dark:text-white' : 'text-emerald-600 dark:text-emerald-400'}">${finishedDate ? esc(finishedDate.toLocaleDateString([], dateOptions)) : 'In progress'}</p><p class="mt-1 text-sm tabular-nums text-gray-400 dark:text-slate-500">${finishedDate ? esc(finishedDate.toLocaleTimeString([], timeOptions)) : 'Waiting for completion'}</p></div>`;
-    html += `<div class="sm:px-6 sm:last:pr-0"><div class="flex items-center gap-2 text-gray-500 dark:text-slate-400">${iconTerminal}<span class="text-sm font-medium">Exit code</span></div><p class="mt-2 text-lg font-bold ${exitCode === '0' ? 'text-emerald-600 dark:text-emerald-400' : (exitCode ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-slate-300')}">${esc(exitCode || 'Pending')}</p><p class="mt-1 text-sm text-gray-400 dark:text-slate-500">${exitCode == null ? 'Available when finished' : (exitCode === '0' ? 'Completed successfully' : 'Process returned an error')}</p></div>`;
-    html += '</div>';
 
     // Command block — kept dark in both themes (terminal aesthetic).
     html += '<div class="border-t border-gray-200 pt-5 dark:border-white/10">';
@@ -1966,14 +1916,10 @@ function openBgProcessModal(jobId) {
     }
 
     html += '</div>';
-    title.textContent = p.session_name || 'Background Process';
-    subtitle.innerHTML = subtitleHtml;
-    const pillEl = document.getElementById('bg-process-status-pill');
-    if (pillEl) pillEl.innerHTML = pillHtml;
+    title.textContent = 'Background Process';
     body.innerHTML = html;
     backdrop.classList.remove('hidden');
     modal.classList.remove('hidden');
-    if (isRunning) _startBgElapsedTimer();
     if (p.log_file) _fetchBgLog();
     setTimeout(() => {
         const closeButton = modal.querySelector('button[aria-label="Close background process details"]');
@@ -2017,27 +1963,9 @@ function closeBgProcessModal() {
     backdrop.classList.add('hidden');
     modal.classList.add('hidden');
     _bgProcessModalJobId = null;
-    _stopBgElapsedTimer();
     _stopBgLogPolling();
     if (_bgProcessModalTrigger && document.contains(_bgProcessModalTrigger)) _bgProcessModalTrigger.focus();
     _bgProcessModalTrigger = null;
-}
-
-function _startBgElapsedTimer() {
-    _stopBgElapsedTimer();
-    _bgElapsedTimer = setInterval(() => {
-        const modal = document.getElementById('bg-process-modal');
-        const el = modal ? modal.querySelector('.bg-process-elapsed') : null;
-        if (!el) { _stopBgElapsedTimer(); return; }
-        const started = parseFloat(el.dataset.started) || 0;
-        const finished = parseFloat(el.dataset.finished) || 0;
-        if (finished) { _stopBgElapsedTimer(); return; }
-        el.textContent = _formatBgProcessDuration(Date.now() / 1000 - started);
-    }, 1000);
-}
-
-function _stopBgElapsedTimer() {
-    if (_bgElapsedTimer) { clearInterval(_bgElapsedTimer); _bgElapsedTimer = null; }
 }
 
 function _fetchBgLog() {
@@ -2045,7 +1973,9 @@ function _fetchBgLog() {
     if (!p || !p.log_file) return;
     if (!currentAgentId) return;
 
-    fetch(`/api/agents/${encodeURIComponent(currentAgentId)}/bg-job/log?file=${encodeURIComponent(p.log_file)}&lines=200`)
+    let logUrl = `/api/agents/${encodeURIComponent(currentAgentId)}/bg-job/log?file=${encodeURIComponent(p.log_file)}&lines=200`;
+    if (p.session_id) logUrl += `&session_id=${encodeURIComponent(p.session_id)}`;
+    fetch(logUrl)
         .then(res => {
             if (!res.ok) throw new Error('Failed to load log');
             return res.json();
@@ -2673,17 +2603,15 @@ document.addEventListener('keydown', function(e) {
 
 <!-- Background Process Modal -->
 <div id="bg-process-modal-backdrop" class="hidden fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-sm sm:items-center sm:p-4" onclick="closeBgProcessModal()" role="presentation">
-    <div id="bg-process-modal" class="hidden flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-white/10 dark:bg-slate-950 dark:text-slate-100 sm:max-h-[90vh] sm:rounded-2xl" role="dialog" aria-modal="true" aria-labelledby="bg-process-modal-title" aria-describedby="bg-process-modal-subtitle" onclick="event.stopPropagation()">
+    <div id="bg-process-modal" class="hidden flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-white/10 dark:bg-slate-950 dark:text-slate-100 sm:max-h-[90vh] sm:rounded-2xl" role="dialog" aria-modal="true" aria-labelledby="bg-process-modal-title" onclick="event.stopPropagation()">
         <header class="relative flex flex-shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-white/10 sm:px-6 sm:py-5">
             <div class="flex min-w-0 items-center gap-4">
                 <span class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl border border-gray-200 bg-gray-100 text-gray-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 sm:h-12 sm:w-12"><svg class="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></span>
                 <div class="min-w-0">
                     <h3 id="bg-process-modal-title" class="truncate text-lg font-bold tracking-tight text-gray-900 dark:text-white sm:text-xl">Background Process</h3>
-                    <p id="bg-process-modal-subtitle" class="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-slate-400">Process execution details</p>
                 </div>
             </div>
             <div class="flex flex-shrink-0 items-center gap-2 sm:gap-3">
-                <span id="bg-process-status-pill" class="hidden sm:inline-flex"></span>
                 <button type="button" onclick="closeBgProcessModal()" class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white dark:focus:ring-white/40" aria-label="Close background process details" title="Close (Esc)">
                     <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>

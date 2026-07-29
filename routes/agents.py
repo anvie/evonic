@@ -5,6 +5,7 @@ Agent Management Blueprint — CRUD for agents, KB files, tools, and channels.
 import os
 import re
 import json
+import shlex
 import uuid
 import queue
 import logging
@@ -1970,6 +1971,7 @@ def api_chat_agent_state(agent_id):
                     'started_at': j.started_at,
                     'finished_at': j.finished_at,
                     'log_file': j.log_file,
+                    'session_id': j.session_id,
                 })
         except Exception:
             pass
@@ -2151,6 +2153,7 @@ def api_bg_job_log(agent_id):
 
     Query params:
         file      - log file path (must start with /tmp/evonic_build_)
+        session_id - execution session owning the log file
         lines     - number of lines to return (default 200, max 2000)
         direction - 'tail' (default) or 'head'
     """
@@ -2162,11 +2165,42 @@ def api_bg_job_log(agent_id):
     if not real.startswith('/tmp/evonic_build_'):
         return jsonify({'error': 'Invalid log file path'}), 400
 
-    if not os.path.isfile(real):
-        return jsonify({'error': 'Log file not found'}), 404
-
-    lines_count = min(int(request.args.get('lines', 200)), 2000)
+    try:
+        lines_count = min(max(int(request.args.get('lines', 200)), 1), 2000)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid lines value'}), 400
     direction = request.args.get('direction', 'tail')
+    if direction not in ('tail', 'head'):
+        return jsonify({'error': 'Invalid direction'}), 400
+
+    # Guard-wrapper logs normally live inside the execution sandbox.  Reading
+    # the host /tmp only works for local jobs, so use the same session backend
+    # that launched the process when a session id is supplied.
+    if not os.path.isfile(real):
+        session_id = (request.args.get('session_id') or '').strip()
+        if not session_id:
+            return jsonify({'error': 'session_id is required for sandbox logs'}), 400
+        try:
+            from backend.agent_runtime.background_jobs import background_jobs
+            job = next((j for j in background_jobs.list_for_session(session_id)
+                        if j.log_file == real), None)
+            if not job:
+                return jsonify({'error': 'Log file not found'}), 404
+            agent = db.get_agent(agent_id)
+            if not agent:
+                return jsonify({'error': 'Agent not found'}), 404
+            from backend.tools.lib.exec_backend import registry
+            backend = registry.get_backend(session_id, {**agent, 'agent_id': agent_id})
+            command = f"{direction} -n {lines_count} -- {shlex.quote(real)}"
+            result = backend.run_bash(command, 15, {})
+            if result.get('exit_code') != 0:
+                return jsonify({'error': 'Log file not found'}), 404
+            content = (result.get('stdout') or '').splitlines()
+            return jsonify({'content': content, 'file_size': len(result.get('stdout') or ''),
+                            'total_lines': len(content)})
+        except Exception as e:
+            logger.warning('Failed to read sandbox background log: %s', e)
+            return jsonify({'error': 'Unable to read background log'}), 502
 
     try:
         file_size = os.path.getsize(real)
