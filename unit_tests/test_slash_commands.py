@@ -5,6 +5,32 @@ from unittest.mock import patch
 from backend.slash_commands import execute_command
 
 
+def _execute_clear(args: str):
+    """Execute /clear without touching persistent session or log state."""
+    with patch("models.db.db.clear_session") as clear_session, \
+         patch("models.db.db.upsert_session_state"), \
+         patch("models.db.db.upsert_agent_state"), \
+         patch("backend.slash_commands.os.path.exists", return_value=False), \
+         patch("config.SESSION_ARCHIVE", True):
+        response = execute_command("clear", args, "session-123", "agent-123", "user-123")
+
+    return response, clear_session
+
+
+def test_clear_does_not_archive_by_default():
+    response, clear_session = _execute_clear("")
+
+    assert response == "History cleared without archive"
+    clear_session.assert_called_once_with("session-123", "agent-123", no_archive=True)
+
+
+def test_clear_ar_archives_the_session():
+    response, clear_session = _execute_clear("ar")
+
+    assert response == "History cleared."
+    clear_session.assert_called_once_with("session-123", "agent-123", no_archive=False)
+
+
 def test_investigate_rejects_current_agent_before_database_lookup():
     with patch(
         "models.db.db.get_agent",

@@ -85,7 +85,6 @@
 - feat(panel): render ANSI colors and honor the agent's workplace on execution (9ed6887)
 - feat(panel): fall back to system default user when run_as_user is unset (af483b8)
 - feat(panel): revamp Panel tab into two-column palette + terminal log (3432c80)
-- feat(slash): add /clear noa|noarchive to skip session archive (36f5520)
 - feat(plugins): let plugins provide agent tools via tools_file manifest key (3f28abd)
 - feat: add MCP client tools and plugin (8c8da28)
 - feat(audio): route voice messages through transcribe_audio tool instead of inline multimodal (3ba50c7)

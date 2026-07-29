@@ -153,7 +153,7 @@ def execute_command(
 def _register_builtins():
     """Register all built-in slash commands."""
 
-    # /clear — Clear chat history and agent llm log
+    # /clear [ar] — Clear chat history and agent LLM log; `ar` also archives it.
     def clear_handler(
         session_id: str,
         agent_id: str,
@@ -165,8 +165,9 @@ def _register_builtins():
         import os
         import config
 
-        # Optional `noa`/`noarchive` arg skips writing the session to the archive DB.
-        no_archive = bool({"noa", "noarchive"} & set(args.strip().lower().split()))
+        # Archive only when explicitly requested with the `ar` argument.
+        archive_requested = "ar" in set(args.strip().lower().split())
+        no_archive = not archive_requested
 
         db.clear_session(session_id, agent_id, no_archive=no_archive)
 
@@ -222,7 +223,7 @@ def _register_builtins():
     command_registry.register(
         "clear",
         clear_handler,
-        "Clear chat history for this session",
+        "Clear chat history (`/clear ar` archives it)",
     )
 
     # /help — Show available commands
