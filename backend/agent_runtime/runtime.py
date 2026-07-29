@@ -1081,7 +1081,8 @@ class AgentRuntime:
                        audio_url: Optional[str] = None,
                        video_url: Optional[str] = None,
                        metadata: Optional[Dict[str, Any]] = None,
-                       skip_buffer: bool = False) -> Dict[str, Any]:
+                       skip_buffer: bool = False,
+                       session_id: Optional[str] = None) -> Dict[str, Any]:
         """Process an incoming user message. Always queued for processing.
 
         - With buffer: debounce rapid messages, queue when timer fires.
@@ -1095,6 +1096,8 @@ class AgentRuntime:
             skip_buffer: If True, bypass message buffering even if the agent has
                 message_buffer_seconds set. Used by API routes that need a synchronous
                 response (e.g. /chat/completions).
+            session_id: Existing owned session to use instead of resolving one from
+                external_user_id and channel_id.
         """
         # Normalize external_user_id — system-internal messages (e.g. restart
         # greeting) may arrive with None when no external user is associated.
@@ -1141,9 +1144,17 @@ class AgentRuntime:
         is_subagent = agent.get('is_subagent', False)
 
         # Get or create session (sub-agents store their own ID but use parent's DB)
-        session_id = _db_retry(db.get_or_create_session, agent_id, external_user_id,
-                               channel_id, db_agent_id=db_agent_id if is_subagent else None,
-                               label="get/create session")
+        if session_id:
+            session = _db_retry(db.get_session_with_details, session_id,
+                                label="get explicit session")
+            if not session or session.get('agent_id') != agent_id:
+                return {"response": "Session not found.", "tool_trace": []}
+            external_user_id = session.get('external_user_id') or external_user_id
+            channel_id = session.get('channel_id')
+        else:
+            session_id = _db_retry(db.get_or_create_session, agent_id, external_user_id,
+                                   channel_id, db_agent_id=db_agent_id if is_subagent else None,
+                                   label="get/create session")
 
         # Sub-agents always start fresh — clear any stale messages from a
         # previous spawn that reused the same session slug.

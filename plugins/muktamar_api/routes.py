@@ -30,14 +30,23 @@ def _authorized():
     if not header.startswith("Bearer "):
         return False
     supplied = header[7:].strip()
-    return bool(supplied) and any(hmac.compare_digest(supplied, expected) for expected in _keys())
+    try:
+        supplied_bytes = supplied.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return bool(supplied_bytes) and any(
+        hmac.compare_digest(supplied_bytes, expected.encode("ascii"))
+        for expected in _keys() if expected.isascii()
+    )
 
 
 def _public_result(result: dict) -> dict:
     """Normalize validation output to the small public API contract."""
-    if result.get("status") == "error":
-        return {"success": False, "message": result.get("error", "Validation failed")}
-    return {"success": bool(result.get("accepted")), **({"message": result["message"]} if result.get("message") else {})}
+    message = result.get("message")
+    return {
+        "success": bool(result.get("accepted")),
+        **({"message": message} if isinstance(message, str) and message else {}),
+    }
 
 
 def create_blueprint():
@@ -47,7 +56,10 @@ def create_blueprint():
     def validate_photo():
         if not _authorized():
             return jsonify({"error": "Unauthorized"}), 401
-        cfg = _config()
+        try:
+            cfg = _config()
+        except Exception:
+            return jsonify({"error": "Photo validator is unavailable"}), 503
         try:
             max_bytes = max(1, int(cfg.get("MAX_UPLOAD_BYTES", 8 * 1024 * 1024)))
         except (TypeError, ValueError):
@@ -73,12 +85,18 @@ def create_blueprint():
                         return jsonify({"error": "Upload too large"}), 413
                     target.write(chunk)
             # Standalone validation intentionally has no draft or agent dependency.
-            module = tool_registry._load_tool_module("validate_photo", skill_id="muktamar-agent")
+            try:
+                module = tool_registry._load_tool_module("validate_photo", skill_id="muktamar-agent")
+            except Exception:
+                return jsonify({"error": "Photo validator is unavailable"}), 503
             if module is None or not hasattr(module, "execute_standalone"):
                 return jsonify({"error": "Photo validator is unavailable"}), 503
-            result = module.execute_standalone({}, {"attachment_path": path})
-            if result.get("status") == "error":
-                return jsonify(_public_result(result)), 503
+            try:
+                result = module.execute_standalone({}, {"attachment_path": path})
+            except Exception:
+                return jsonify({"error": "Photo validator is unavailable"}), 503
+            if not isinstance(result, dict) or result.get("status") == "error":
+                return jsonify({"error": "Photo validator is unavailable"}), 503
             return jsonify(_public_result(result)), 200
         finally:
             try:

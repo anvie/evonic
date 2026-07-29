@@ -192,7 +192,7 @@ def notify_agent(agent_id: str, tag: str, message: str,
             from backend.agent_runtime import agent_runtime
             agent_runtime.handle_message(
                 agent_id, external_user_id, full_message, channel_id,
-                metadata=metadata,
+                metadata=metadata, session_id=target_session_id,
             )
         else:
             meta = dict(metadata) if metadata else {}

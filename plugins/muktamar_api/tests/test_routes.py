@@ -73,3 +73,126 @@ def test_upload_limit(client, monkeypatch):
         content_type="multipart/form-data",
     )
     assert response.status_code == 413
+
+
+def test_non_ascii_bearer_key_returns_401_not_500(client):
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer caf\u00e9-key"},
+    )
+    assert response.status_code == 401
+    body = response.get_json()
+    assert body["error"] == "Unauthorized"
+
+
+def test_config_exception_returns_503(client, monkeypatch):
+    def _failing_config():
+        raise RuntimeError("plugin-manager unavailable")
+    monkeypatch.setattr(routes, "_config", _failing_config)
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(b"valid-image"), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 503
+    body = response.get_json()
+    assert body["error"] == "Photo validator is unavailable"
+
+
+def test_module_load_exception_returns_503_and_cleans_temp(client, monkeypatch):
+    seen = {}
+
+    def _failing_load(*args, **kwargs):
+        raise ImportError("vision-dependency missing")
+
+    monkeypatch.setattr(routes, "_config", lambda: {"MAX_UPLOAD_BYTES": 100})
+    monkeypatch.setattr(routes.tool_registry, "_load_tool_module", _failing_load)
+
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(b"test-image"), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 503
+    body = response.get_json()
+    assert body["error"] == "Photo validator is unavailable"
+
+
+def test_validator_execution_exception_returns_503_and_cleans_temp(client, monkeypatch):
+    seen = {}
+
+    class FailingModule:
+        @staticmethod
+        def execute_standalone(agent, args):
+            seen["path"] = args["attachment_path"]
+            raise RuntimeError("Vision provider crashed")
+
+    monkeypatch.setattr(routes, "_config", lambda: {"MAX_UPLOAD_BYTES": 100})
+    monkeypatch.setattr(routes.tool_registry, "_load_tool_module", lambda *args, **kwargs: FailingModule)
+
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(b"image-data"), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 503
+    body = response.get_json()
+    assert body["error"] == "Photo validator is unavailable"
+    import os
+    assert "path" in seen
+    assert not os.path.exists(seen["path"])
+
+
+def test_malformed_validator_result_returns_503_and_cleans_temp(client, monkeypatch):
+    seen = {}
+
+    class WeirdModule:
+        @staticmethod
+        def execute_standalone(agent, args):
+            seen["path"] = args["attachment_path"]
+            return "not-a-dict"
+
+    monkeypatch.setattr(routes, "_config", lambda: {"MAX_UPLOAD_BYTES": 100})
+    monkeypatch.setattr(routes.tool_registry, "_load_tool_module", lambda *args, **kwargs: WeirdModule)
+
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(b"image-data"), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 503
+    body = response.get_json()
+    assert body["error"] == "Photo validator is unavailable"
+    import os
+    assert "path" in seen
+    assert not os.path.exists(seen["path"])
+
+
+def test_validator_status_error_returns_503_and_cleans_temp(client, monkeypatch):
+    seen = {}
+
+    class ErrorModule:
+        @staticmethod
+        def execute_standalone(agent, args):
+            seen["path"] = args["attachment_path"]
+            return {"status": "error", "error": "Vision service unavailable"}
+
+    monkeypatch.setattr(routes, "_config", lambda: {"MAX_UPLOAD_BYTES": 100})
+    monkeypatch.setattr(routes.tool_registry, "_load_tool_module", lambda *args, **kwargs: ErrorModule)
+
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(b"image-data"), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 503
+    body = response.get_json()
+    assert body["error"] == "Photo validator is unavailable"
+    import os
+    assert "path" in seen
+    assert not os.path.exists(seen["path"])
