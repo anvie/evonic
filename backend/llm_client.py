@@ -266,7 +266,7 @@ class LLMClient:
                 self.temperature = None
                 self.api_format = "openai"
         self._cached_model_name = None
-        self._codex_provider_id = model_config.get("provider", "codex") if model_config else "codex"
+        self._codex_provider_id = self.provider or "codex"
         # Cache for global LLM settings (avoids repeated DB reads in hot path).
         # TTL-based, simple dict — intentionally lock-free (worst case: 1 extra DB read).
         self._settings_cache = {}

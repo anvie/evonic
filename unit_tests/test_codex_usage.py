@@ -22,6 +22,35 @@ def test_map_usage_responses_api_keys():
     assert _map_usage(None) == {}
 
 
+def test_codex_client_uses_default_model_provider_for_oauth():
+    from backend.llm_client import LLMClient
+    from models.db import db
+
+    model = {
+        'provider': 'openai',
+        'api_format': 'codex',
+        'base_url': 'https://chatgpt.com/backend-api/codex',
+        'model_name': 'gpt-5.6-luna',
+    }
+    with patch.object(db, 'get_default_model', return_value=model), \
+         patch.object(db, 'resolve_model_config', side_effect=lambda value: value):
+        client = LLMClient()
+
+    assert client.provider == 'openai'
+    assert client._codex_provider_id == 'openai'
+
+    with patch('backend.provider.oauth_codex.get_valid_token', return_value='tok') as get_token, \
+         patch('backend.provider.codex_client.CodexClient') as codex_cls:
+        codex_cls.return_value.send_request.return_value = {
+            'success': True,
+            'response': {'choices': [{'message': {'content': 'ok'}}], 'usage': {}},
+        }
+        client._codex_chat_completion([{'role': 'user', 'content': 'test'}])
+
+    get_token.assert_called_once()
+    assert get_token.call_args.args[1] == 'openai'
+
+
 def test_codex_chat_completion_propagates_usage():
     from backend.llm_client import LLMClient
 
