@@ -168,6 +168,37 @@ def _restriction_payload():
     }
 
 
+def test_group_slash_command_response_is_sent_to_group_jid_once():
+    channel = _channel()
+    channel._running = True
+    payload = {
+        "from": "628111",
+        "jid": "120363000000000001@g.us",
+        "is_group": True,
+        "bot_mentioned": True,
+        "text": "/help",
+    }
+    sent = []
+    mock_db = MagicMock()
+    mock_db.get_agent.return_value = {"id": "agent-1", "enabled": True}
+    mock_db.get_or_create_session.return_value = "session-1"
+    mock_db.is_session_bot_enabled.return_value = True
+    mock_db.list_session_attachments.return_value = []
+
+    with patch("backend.channels.whatsapp.db", mock_db), \
+            patch.object(channel, "_resolve_agent", return_value="agent-1"), \
+            patch("backend.agent_runtime.agent_runtime.handle_message",
+                  return_value={"response": "Available commands", "slash_command": True}), \
+            patch.object(channel, "_do_send", side_effect=lambda *args, **kwargs: sent.append((args, kwargs))), \
+            patch.object(channel, "send_typing"), \
+            patch.object(channel, "_clear_typing"), \
+            patch("backend.event_stream.event_stream.emit"):
+        channel.handle_callback(payload)
+
+    assert sent == [(("120363000000000001", "Available commands"),
+                     {"session_id": "session-1"})]
+
+
 def test_terminal_reachout_restriction_persists_and_emits_once():
     channel = _channel()
     mock_db = MagicMock()

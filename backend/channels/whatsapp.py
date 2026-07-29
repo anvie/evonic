@@ -836,8 +836,13 @@ class WhatsAppChannel(BaseChannel):
                 if time.monotonic() < deadline:
                     self.send_typing(sender)
 
+            # Use the session identity for delivery.  Group slash commands are
+            # handled synchronously by the runtime, so unlike queued replies
+            # this path must explicitly address the group rather than the
+            # participant who issued the command.
+            response_recipient = session_user_id if is_group else sender
             for chunk in _split_message(response):
-                self._do_send(sender, chunk, session_id=session_id)
+                self._do_send(response_recipient, chunk, session_id=session_id)
         else:
             # No message will follow — actively clear any composing presence
             # shown during the thinking phase.
