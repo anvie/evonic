@@ -41,6 +41,16 @@ def test_agent_channel_card_only_shows_listener_for_whatsapp():
     assert 'id="channel-debug-modal"' in markup
 
 
+def test_listener_uses_native_sse_lifecycle_and_preserves_retry():
+    markup = TEMPLATE.read_text(encoding='utf-8')
+
+    assert "const source = new EventSource(" in markup
+    assert "source.onopen = markConnected;" in markup
+    assert "source.addEventListener('connected', markConnected);" in markup
+    assert "source.readyState === EventSource.CLOSED ? 'disconnected' : 'connecting'" in markup
+    assert "listener._disconnect();\n            setTimeout" not in markup
+
+
 def test_listener_rejects_non_owned_and_non_whatsapp_channels(client, owned_whatsapp_channel):
     db.create_agent({'id': 'other-agent', 'name': 'Other Agent'})
     foreign_channel = db.create_channel({

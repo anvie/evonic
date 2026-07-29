@@ -4321,25 +4321,38 @@ const channelDebugListener = {
         const listener = this;
         const agentId = encodeURIComponent(AGENT_ID);
         const channelId = encodeURIComponent(this._channelId);
-        this._es = new EventSource(`/api/agents/${agentId}/channels/${channelId}/debug/listen`);
-        this._es.addEventListener('connected', function() {
+        const source = new EventSource(`/api/agents/${agentId}/channels/${channelId}/debug/listen`);
+        let announced = false;
+        this._es = source;
+
+        const markConnected = function() {
+            if (listener._es !== source) return;
             listener._setStatus('connected');
-            listener._addLogEntry({_system: true, text: 'Connected to debug stream — listening for WhatsApp inbound messages...'});
-        });
-        this._es.addEventListener('whatsapp_inbound', function(event) {
+            if (!announced) {
+                announced = true;
+                listener._addLogEntry({_system: true, text: 'Connected to debug stream — listening for WhatsApp inbound messages...'});
+            }
+        };
+
+        // The browser dispatches `open` as soon as the SSE transport is ready.
+        // Do not rely only on our optional server-side `connected` event.
+        source.onopen = markConnected;
+        source.addEventListener('connected', markConnected);
+        source.addEventListener('whatsapp_inbound', function(event) {
+            if (listener._es !== source) return;
             try {
                 listener._addLogEntry(JSON.parse(event.data));
             } catch (error) {
                 // Ignore malformed stream events and keep the listener alive.
             }
         });
-        this._es.onerror = function() {
-            listener._setStatus('disconnected');
-            listener._disconnect();
-            setTimeout(function() {
-                const modal = document.getElementById('channel-debug-modal');
-                if (modal && !modal.classList.contains('hidden')) listener._connect();
-            }, 3000);
+        source.onerror = function() {
+            if (listener._es !== source) return;
+            // EventSource retries transient failures itself. Closing it here
+            // cancels that retry and can leave a healthy stream marked down.
+            listener._setStatus(
+                source.readyState === EventSource.CLOSED ? 'disconnected' : 'connecting'
+            );
         };
     },
 
