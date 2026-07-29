@@ -1001,14 +1001,23 @@ class WhatsAppChannel(BaseChannel):
             return {'status': 'disconnected', 'error': str(e)}
 
     def get_bridge_status(self) -> dict:
-        """Bridge connection status — cached from bridge pushes, HTTP probe fallback."""
-        if self._last_bridge_status is not None:
-            return {'status': self._last_bridge_status}
+        """Return live bridge status, falling back to the last valid push.
+
+        Status callbacks can be missed or arrive during a transient reconnect, so
+        the cached value must not permanently override the sidecar's current
+        state.  A failed probe is non-destructive: retain the last known status
+        rather than turning a temporary HTTP failure into a false disconnect.
+        """
         try:
             resp = requests.get(f"http://127.0.0.1:{self._bridge_port}/status", timeout=5)
-            return resp.json()
-        except Exception:
-            return {'status': 'disconnected'}
+            resp.raise_for_status()
+            live_status = resp.json().get('status')
+            if live_status in ('connected', 'qr_pending', 'disconnected'):
+                self._last_bridge_status = live_status
+        except (requests.RequestException, ValueError, TypeError, AttributeError):
+            pass
+
+        return {'status': self._last_bridge_status or 'disconnected'}
 
     def _do_send(self, external_user_id: str, text: str,
                  session_id: Optional[str] = None):

@@ -4231,7 +4231,8 @@ async function loadChannels() {
         const toggleBtn = running
             ? `<button onclick="event.stopPropagation(); toggleChannel('${ch.id}', false)" class="text-xs px-3 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100">Stop</button>`
             : `<button onclick="event.stopPropagation(); toggleChannel('${ch.id}', true)" class="text-xs px-3 py-1 rounded bg-green-50 text-green-600 hover:bg-green-100">Start</button>`;
-        const qrBtn = (ch.type === 'whatsapp' && running)
+        const needsWhatsAppAuth = ch.bridge_status === 'qr_pending' || ch.bridge_status === 'disconnected';
+        const qrBtn = (ch.type === 'whatsapp' && running && needsWhatsAppAuth)
             ? `<button onclick="event.stopPropagation(); openQRModal('${ch.id}')" class="text-xs px-3 py-1 rounded bg-green-50 text-green-700 hover:bg-green-100">Scan QR</button>`
             : '';
         const primaryBtn = isPrimary
