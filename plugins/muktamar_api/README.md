@@ -13,7 +13,7 @@ photo=<image file>
 (no draft_id; validation is stateless)
 ```
 
-The upload is written to a private temporary file, validated directly without registration state or an agent, and removed in a `finally` block. Responses are normalized:
+The upload is written to a private temporary file, validated directly without registration state or an agent, and removed in a `finally` block. Photos must be portrait and at least 200 × 300 pixels after EXIF orientation is applied. Responses are normalized:
 
 ```json
 {"success": true, "message": "Foto sudah sesuai standar."}
