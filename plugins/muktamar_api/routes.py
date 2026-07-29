@@ -54,11 +54,15 @@ def _public_result(result: dict) -> dict:
     if success and not reason_codes:
         reason_codes = ["OK"]
 
-    return {
+    public_result = {
         "success": success,
         "reason_code": reason_codes,
         **({"message": message} if isinstance(message, str) and message else {}),
     }
+    model_index = result.get("model_index")
+    if isinstance(model_index, int) and not isinstance(model_index, bool) and model_index >= 0:
+        public_result["model_index"] = model_index
+    return public_result
 
 
 def create_blueprint():

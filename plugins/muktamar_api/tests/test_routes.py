@@ -43,7 +43,12 @@ def test_validator_result_is_normalized_and_temp_file_cleaned(client, monkeypatc
         def execute_standalone(agent, args):
             seen["path"] = args["attachment_path"]
             assert agent == {}
-            return {"accepted": True, "message": "accepted"}
+            return {
+                "accepted": True,
+                "message": "accepted",
+                "model_index": 1,
+                "model_name": "private/provider-model-name",
+            }
 
     monkeypatch.setattr(routes, "_config", lambda: {"MAX_UPLOAD_BYTES": 100})
     monkeypatch.setattr(routes.tool_registry, "_load_tool_module", lambda *args, **kwargs: FakeModule)
@@ -60,7 +65,9 @@ def test_validator_result_is_normalized_and_temp_file_cleaned(client, monkeypatc
         "success": True,
         "reason_code": ["OK"],
         "message": "accepted",
+        "model_index": 1,
     }
+    assert "model_name" not in body
     import os
     assert not os.path.exists(seen["path"])
 
