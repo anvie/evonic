@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { OutboundLifecycle } = require('./outbound-lifecycle');
 
-function harness() {
+function harness(options = {}) {
     const sent = [];
     const events = [];
     const lifecycle = new OutboundLifecycle({
@@ -14,19 +14,30 @@ function harness() {
             return { key };
         },
         emit: (event) => events.push(event),
-        maxRetries: 1,
+        diagnoseFailure: options.diagnoseFailure,
     });
     return { lifecycle, sent, events };
 }
 
-test('post-send ACK 463 retries a resolved-LID DM once using its original LID', async () => {
-    const { lifecycle, sent, events } = harness();
+test('post-send ACK 463 is terminal and reports reach-out diagnostics', async () => {
+    const diagnostics = [];
+    const { lifecycle, sent, events } = harness({
+        diagnoseFailure: async (jid) => {
+            diagnostics.push({ code: '463', jid });
+            return {
+                reachout_timelocked: true,
+                reachout_enforcement_type: 'WEB_COMPANION_ONLY',
+                reachout_enforcement_ends: '2026-07-25T00:00:00.000Z',
+            };
+        },
+    });
     await lifecycle.onConnection('connected');
     const accepted = await lifecycle.accept({
         correlationId: 'correlation-1',
-        jid: '628111@s.whatsapp.net',
-        retryJid: '131902740668594@lid',
+        jid: '131902740668594@lid',
+        retryJid: '628111@s.whatsapp.net',
         content: { text: 'hello' },
+        metadata: { session_id: 'session-1' },
         retryEligible: true,
     });
 
@@ -36,22 +47,18 @@ test('post-send ACK 463 retries a resolved-LID DM once using its original LID', 
         update: { status: 0, messageStubParameters: ['463'] },
     }]);
 
-    assert.deepEqual(sent.map((item) => item.jid), [
-        '628111@s.whatsapp.net',
-        '131902740668594@lid',
-    ]);
-    assert.deepEqual(events.map((event) => event.status), ['accepted', 'retrying', 'accepted']);
+    assert.deepEqual(sent.map((item) => item.jid), ['131902740668594@lid']);
+    assert.deepEqual(events.map((event) => event.status), ['accepted', 'failed']);
+    assert.deepEqual(diagnostics, [{ code: '463', jid: '131902740668594@lid' }]);
+    assert.equal(events.at(-1).retry_count, 0);
+    assert.equal(events.at(-1).reachout_timelocked, true);
+    assert.equal(events.at(-1).reachout_enforcement_type, 'WEB_COMPANION_ONLY');
+    assert.equal(events.at(-1).reachout_enforcement_ends, '2026-07-25T00:00:00.000Z');
+    assert.ok(events.every((event) => event.session_id === 'session-1'));
     assert.ok(events.every((event) => event.correlation_id === 'correlation-1'));
-
-    await lifecycle.onMessageUpdates([{
-        key: { id: 'key-2', fromMe: true },
-        update: { status: 0, messageStubParameters: ['463'] },
-    }]);
-    assert.equal(sent.length, 2);
-    assert.equal(events.at(-1).status, 'failed');
 });
 
-test('ACK 463 arriving before send resolves is replayed and retried to the LID', async () => {
+test('ACK 463 arriving before send resolves is replayed as terminal', async () => {
     const sent = [];
     const events = [];
     let lifecycle;
@@ -59,16 +66,14 @@ test('ACK 463 arriving before send resolves is replayed and retried to the LID',
         send: async (jid, content) => {
             const key = { id: `early-key-${sent.length + 1}` };
             sent.push({ jid, content, key });
-            if (sent.length === 1) {
-                await lifecycle.onMessageUpdates([{
-                    key: { id: key.id, fromMe: true },
-                    update: { status: 0, messageStubParameters: ['463'] },
-                }]);
-            }
+            await lifecycle.onMessageUpdates([{
+                key: { id: key.id, fromMe: true },
+                update: { status: 0, messageStubParameters: ['463'] },
+            }]);
             return { key };
         },
         emit: (event) => events.push(event),
-        maxRetries: 1,
+        diagnoseFailure: async () => ({ reachout_timelocked: false }),
     });
     await lifecycle.onConnection('connected');
 
@@ -80,13 +85,38 @@ test('ACK 463 arriving before send resolves is replayed and retried to the LID',
         retryEligible: true,
     });
 
-    assert.equal(result.status, 'accepted');
-    assert.equal(result.retry_count, 1);
-    assert.deepEqual(sent.map((item) => item.jid), [
-        '628111@s.whatsapp.net',
-        '131902740668594@lid',
-    ]);
-    assert.deepEqual(events.map((event) => event.status), ['accepted', 'retrying', 'accepted']);
+    assert.equal(result.status, 'failed');
+    assert.equal(result.retry_count, 0);
+    assert.deepEqual(sent.map((item) => item.jid), ['628111@s.whatsapp.net']);
+    assert.deepEqual(events.map((event) => event.status), ['accepted', 'failed']);
+});
+
+test('pino ACK 463 is terminal and duplicate updates do not rerun diagnostics', async () => {
+    let diagnostics = 0;
+    const { lifecycle, sent, events } = harness({
+        diagnoseFailure: async () => {
+            diagnostics += 1;
+            return { reachout_timelocked: true };
+        },
+    });
+    await lifecycle.onConnection('connected');
+    await lifecycle.accept({
+        correlationId: 'correlation-pino',
+        jid: '131902740668594@lid',
+        retryJid: '628111@s.whatsapp.net',
+        content: { text: 'hello' },
+        retryEligible: true,
+    });
+
+    await lifecycle.handleBadAck('key-1', '463');
+    await lifecycle.onMessageUpdates([{
+        key: { id: 'key-1', fromMe: true },
+        update: { status: 0, messageStubParameters: ['463'] },
+    }]);
+
+    assert.deepEqual(sent.map((item) => item.jid), ['131902740668594@lid']);
+    assert.deepEqual(events.map((event) => event.status), ['accepted', 'failed']);
+    assert.equal(diagnostics, 1);
 });
 
 test('non-463 NACK is reported failed without retrying an eligible LID DM', async () => {
@@ -151,15 +181,13 @@ test('normal group send reports failure without retrying', async () => {
     assert.equal(events.at(-1).status, 'failed');
 });
 
-test('terminal disconnect blocks pending retry until connection is restored', async () => {
+test('ACK 463 remains terminal across a disconnect and reconnect', async () => {
     const { lifecycle, sent, events } = harness();
     await lifecycle.onConnection('connected');
     await lifecycle.accept({
         correlationId: 'correlation-3',
         jid: '628333@s.whatsapp.net',
-        retryJid: '131902740668594@lid',
         content: { text: 'hello' },
-        retryEligible: true,
     });
     await lifecycle.onConnection('disconnected', { terminal: true });
     await lifecycle.onMessageUpdates([{
@@ -168,9 +196,8 @@ test('terminal disconnect blocks pending retry until connection is restored', as
     }]);
 
     assert.equal(sent.length, 1);
-    assert.equal(events.at(-1).status, 'retrying');
+    assert.equal(events.at(-1).status, 'failed');
     await lifecycle.onConnection('connected');
-    assert.equal(sent.length, 2);
-    assert.equal(sent[1].jid, '131902740668594@lid');
-    assert.equal(events.at(-1).status, 'accepted');
+    assert.equal(sent.length, 1);
+    assert.equal(events.at(-1).status, 'failed');
 });

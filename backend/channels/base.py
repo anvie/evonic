@@ -51,7 +51,7 @@ class BaseChannel(ABC):
         """Stop listening."""
         pass
 
-    def send_message_buffered(self, external_user_id: str, text: str):
+    def send_message_buffered(self, external_user_id: str, text: str, session_id: str = None):
         """Coalescing path: accumulate text, reset debounce timer, flush after window.
 
         Use this for high-frequency intermediate responses to avoid flooding the
@@ -67,12 +67,12 @@ class BaseChannel(ABC):
             old = self._buf_timers.pop(external_user_id, None)
             if old:
                 old.cancel()
-            t = Timer(self._outbound_buffer_seconds, self._flush_buffer, args=[external_user_id])
+            t = Timer(self._outbound_buffer_seconds, self._flush_buffer, args=[external_user_id, session_id])
             t.daemon = True
             self._buf_timers[external_user_id] = t
             t.start()
 
-    def _flush_buffer(self, external_user_id: str):
+    def _flush_buffer(self, external_user_id: str, session_id: str = None):
         """Timer callback: send accumulated text, respecting the rate limit."""
         with self._buf_lock:
             text = self._buf.pop(external_user_id, None)
@@ -86,12 +86,15 @@ class BaseChannel(ABC):
         if wait > 0:
             time.sleep(wait)
         try:
-            self._do_send(external_user_id, text)
+            if session_id is None:
+                self._do_send(external_user_id, text)
+            else:
+                self._do_send(external_user_id, text, session_id=session_id)
             self._last_sent[external_user_id] = time.time()
         except Exception as e:
             self._store_send_error(external_user_id, str(e))
 
-    def send_message(self, external_user_id: str, text: str):
+    def send_message(self, external_user_id: str, text: str, session_id: str = None):
         """Immediate path: cancel any pending buffer for this chat, merge + send now.
 
         Use this for final responses and bot-initiated messages. Flushes any
@@ -105,13 +108,16 @@ class BaseChannel(ABC):
         if pending:
             text = pending + "\n\n" + text
         try:
-            self._do_send(external_user_id, text)
+            if session_id is None:
+                self._do_send(external_user_id, text)
+            else:
+                self._do_send(external_user_id, text, session_id=session_id)
             self._last_sent[external_user_id] = time.time()
         except Exception as e:
             self._store_send_error(external_user_id, str(e))
 
     @abstractmethod
-    def _do_send(self, external_user_id: str, text: str):
+    def _do_send(self, external_user_id: str, text: str, session_id: str = None):
         """Actual delivery implementation — subclasses must implement this."""
         pass
 

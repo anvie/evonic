@@ -135,7 +135,6 @@ def _find_first_anchor(lines: list, hunk_lines: list) -> int:
             for i, line in enumerate(lines):
                 if line.rstrip('\r\n').rstrip() == needle:
                     return i
-            break  # only search for the very first context/removal line
     return -1
 
 
@@ -290,8 +289,9 @@ def _apply_hunks_to_content(raw: str, patch_text: str) -> dict:
         if pos == -1:
             anchor = _find_first_anchor(lines, hunk_lines)
             hint = f' (Hint: anchor found at line {anchor + 1})' if anchor >= 0 else ''
-            read_offset = max(1, hunk['old_start'] - 20)
-            read_hint = f' Use read_file with offset={read_offset} to view content around line {hunk["old_start"]}.'
+            target_line = (anchor + 1) if anchor >= 0 else hunk['old_start']
+            read_offset = max(1, target_line - 20)
+            read_hint = f' Use read_file with offset={read_offset} to view content around line {target_line}.'
 
             for op, txt, _ in hunk_lines:
                 if op in (' ', '-') and txt.strip():
@@ -422,8 +422,9 @@ def apply_hunks(file_path: str, patch_text: str) -> dict:
             # Build a helpful error message.
             anchor = _find_first_anchor(lines, hunk_lines)
             hint = f' (Hint: anchor found at line {anchor + 1})' if anchor >= 0 else ''
-            read_offset = max(1, hunk['old_start'] - 20)
-            read_hint = f' Use read_file with offset={read_offset} to view content around line {hunk["old_start"]}.'
+            target_line = (anchor + 1) if anchor >= 0 else hunk['old_start']
+            read_offset = max(1, target_line - 20)
+            read_hint = f' Use read_file with offset={read_offset} to view content around line {target_line}.'
 
             # Detect indentation mismatch specifically.
             for op, txt, _ in hunk_lines:

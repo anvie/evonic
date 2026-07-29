@@ -118,22 +118,23 @@
   const gridColor = () => isDark() ? 'rgba(148,163,184,0.15)' : 'rgba(0,0,0,0.06)';
   const tickColor = () => isDark() ? '#94a3b8' : '#6b7280';
 
-  function getJSON(path) { return fetch(path).then(r => r.json()); }
+  let activeRequest = null;
 
-  function loadOverview() {
-    getJSON(`${API}/overview?range=${range}`).then(d => {
-      document.getElementById('tm-total').textContent = fmt(d.total_tokens);
-      document.getElementById('tm-prompt').textContent = fmt(d.prompt_tokens);
-      document.getElementById('tm-completion').textContent = fmt(d.completion_tokens);
-      document.getElementById('tm-calls').textContent = fmt(d.calls);
-      document.getElementById('tm-cost').textContent =
-        (d.estimated_cost === null || d.estimated_cost === undefined)
-          ? 'n/a' : '$' + Number(d.estimated_cost).toFixed(2);
-      const est = d.estimated_calls || 0;
-      const note = document.getElementById('tm-est-note');
-      note.textContent = est ? `${est} call(s) estimated` : '';
-      note.className = est ? 'sub tm-est' : 'sub';
-    });
+  function renderOverview(d) {
+    document.getElementById('tm-total').textContent = fmt(d.total_tokens);
+    document.getElementById('tm-prompt').textContent = fmt(d.billable_input_tokens);
+    document.getElementById('tm-completion').textContent = fmt(d.completion_tokens);
+    document.getElementById('tm-calls').textContent = fmt(d.calls);
+    document.getElementById('tm-cost').textContent =
+      (d.estimated_cost === null || d.estimated_cost === undefined)
+        ? 'n/a' : '$' + Number(d.estimated_cost).toFixed(2);
+    const notes = [];
+    if (d.cached_tokens) notes.push(`${fmt(d.cached_tokens)} cached input`);
+    if (d.reasoning_tokens) notes.push(`${fmt(d.reasoning_tokens)} reasoning`);
+    if (d.estimated_calls) notes.push(`${d.estimated_calls} estimated call(s)`);
+    const note = document.getElementById('tm-est-note');
+    note.textContent = notes.join(' · ');
+    note.className = d.estimated_calls ? 'sub tm-est' : 'sub';
   }
 
   function renderDoughnut(id, labels, values, colors) {
@@ -141,7 +142,7 @@
     charts[id] = new Chart(document.getElementById(id), {
       type: 'doughnut',
       data: { labels, datasets: [{ data: values, backgroundColor: colors || PALETTE }] },
-      options: { responsive: true, maintainAspectRatio: false,
+      options: { animation: false, responsive: true, maintainAspectRatio: false,
         plugins: { legend: { position: 'right', labels: { color: tickColor() } } } }
     });
   }
@@ -151,92 +152,91 @@
     charts[id] = new Chart(document.getElementById(id), {
       type: 'bar',
       data: { labels, datasets: [{ label: 'Total tokens', data: values, backgroundColor: colors || '#4f46e5' }] },
-      options: { responsive: true, maintainAspectRatio: false,
+      options: { animation: false, responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false } },
-        scales: { x: { ticks: { color: tickColor() }, grid: { color: gridColor() } },
+        scales: { x: { ticks: { color: tickColor(), autoSkip: true, maxTicksLimit: 12 }, grid: { color: gridColor() } },
                   y: { ticks: { color: tickColor() }, grid: { color: gridColor() } } } }
-    });
-  }
-
-  function loadBySource() {
-    getJSON(`${API}/by-source?range=${range}`).then(d => {
-      const rows = d.sources || [];
-      const colors = rows.map(r => r.key === 'explorer' ? EXPLORER_COLOR : r.key === 'kb_organizer' ? ORGANIZER_COLOR : null);
-      const used = new Set();
-      let pi = 0;
-      colors.forEach((c, i) => {
-        if (c) { used.add(c); return; }
-        while (used.has(PALETTE[pi % PALETTE.length])) pi++;
-        colors[i] = PALETTE[pi % PALETTE.length];
-        used.add(colors[i]);
-        pi++;
-      });
-      renderDoughnut('tm-source-chart', rows.map(r => r.key || 'other'), rows.map(r => r.total_tokens), colors);
-    });
-  }
-
-  function loadByModel() {
-    getJSON(`${API}/by-model?range=${range}`).then(d => {
-      const rows = d.models || [];
-      const body = document.getElementById('tm-model-body');
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="4">No data</td></tr>'; return; }
-      body.innerHTML = rows.map(r => `<tr>
-        <td>${(r.key || '(unknown)')}</td>
-        <td class="num">${fmt(r.total_tokens)}</td>
-        <td class="num">${fmt(r.calls)}</td>
-        <td class="num">${r.cost === null || r.cost === undefined ? '<span style="color:#9ca3af">unpriced</span>' : '$' + Number(r.cost).toFixed(4)}</td>
-      </tr>`).join('');
     });
   }
 
   const EXPLORER_COLOR = '#ec4899';
   const ORGANIZER_COLOR = '#f59e0b';
   const TEST_COLOR = '#10b981';
-  function loadByAgent() {
-    getJSON(`${API}/by-agent?range=${range}&rollup=${rollup ? 1 : 0}`).then(d => {
-      const rows = d.agents || [];
-      const colors = rows.map(r => r.is_explorer ? EXPLORER_COLOR : r.is_organizer ? ORGANIZER_COLOR : r.is_test ? TEST_COLOR : '#4f46e5');
-      renderBar('tm-agent-chart', rows.map(r => r.agent_id || '(none)'), rows.map(r => r.total_tokens), colors);
-      const body = document.getElementById('tm-agent-body');
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="5">No data</td></tr>'; return; }
-      body.innerHTML = rows.map(r => {
-        const name = r.agent_id || '(none)';
-        const color = r.is_explorer ? EXPLORER_COLOR : r.is_organizer ? ORGANIZER_COLOR : r.is_test ? TEST_COLOR : null;
-        const agentCell = color
-          ? `<span style="color:${color};font-weight:600;">${name}</span>`
-          : name;
-        return `<tr>
-        <td>${agentCell}</td>
-        <td class="num">${fmt(r.prompt_tokens)}</td>
-        <td class="num">${fmt(r.completion_tokens)}</td>
-        <td class="num">${fmt(r.total_tokens)}</td>
-        <td class="num">${fmt(r.calls)}</td>
-      </tr>`;
-      }).join('');
+
+  function renderSources(rows) {
+    const colors = rows.map(r => r.key === 'explorer' ? EXPLORER_COLOR : r.key === 'kb_organizer' ? ORGANIZER_COLOR : null);
+    const used = new Set();
+    let pi = 0;
+    colors.forEach((color, i) => {
+      if (color) { used.add(color); return; }
+      while (used.has(PALETTE[pi % PALETTE.length])) pi++;
+      colors[i] = PALETTE[pi % PALETTE.length];
+      used.add(colors[i]);
+      pi++;
+    });
+    renderDoughnut('tm-source-chart', rows.map(r => r.key || 'other'), rows.map(r => r.total_tokens), colors);
+  }
+
+  function renderModels(rows) {
+    const body = document.getElementById('tm-model-body');
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="4">No data</td></tr>'; return; }
+    body.innerHTML = rows.map(r => `<tr>
+      <td>${r.key || '(unknown)'}</td>
+      <td class="num">${fmt(r.total_tokens)}</td>
+      <td class="num">${fmt(r.calls)}</td>
+      <td class="num">${r.cost === null || r.cost === undefined ? '<span style="color:#9ca3af">unpriced</span>' : '$' + Number(r.cost).toFixed(4)}</td>
+    </tr>`).join('');
+  }
+
+  function renderAgents(rows) {
+    const colors = rows.map(r => r.is_explorer ? EXPLORER_COLOR : r.is_organizer ? ORGANIZER_COLOR : r.is_test ? TEST_COLOR : '#4f46e5');
+    renderBar('tm-agent-chart', rows.map(r => r.agent_id || '(none)'), rows.map(r => r.total_tokens), colors);
+    const body = document.getElementById('tm-agent-body');
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="5">No data</td></tr>'; return; }
+    body.innerHTML = rows.map(r => {
+      const name = r.agent_id || '(none)';
+      const color = r.is_explorer ? EXPLORER_COLOR : r.is_organizer ? ORGANIZER_COLOR : r.is_test ? TEST_COLOR : null;
+      const agentCell = color ? `<span style="color:${color};font-weight:600;">${name}</span>` : name;
+      return `<tr><td>${agentCell}</td><td class="num">${fmt(r.prompt_tokens)}</td>
+        <td class="num">${fmt(r.completion_tokens)}</td><td class="num">${fmt(r.total_tokens)}</td>
+        <td class="num">${fmt(r.calls)}</td></tr>`;
+    }).join('');
+  }
+
+  function renderSeries(rows) {
+    if (charts.series) charts.series.destroy();
+    charts.series = new Chart(document.getElementById('tm-series-chart'), {
+      type: 'line',
+      data: { labels: rows.map(r => r.bucket), datasets: [
+        { label: 'Prompt', data: rows.map(r => r.prompt_tokens), borderColor: '#06b6d4', tension: 0.25 },
+        { label: 'Completion', data: rows.map(r => r.completion_tokens), borderColor: '#f59e0b', tension: 0.25 },
+        { label: 'Total', data: rows.map(r => r.total_tokens), borderColor: '#4f46e5', tension: 0.25 },
+      ] },
+      options: { animation: false, responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: tickColor() } } },
+        scales: { x: { ticks: { color: tickColor(), autoSkip: true, maxTicksLimit: 16 }, grid: { color: gridColor() } },
+                  y: { ticks: { color: tickColor() }, grid: { color: gridColor() } } } }
     });
   }
 
-  function loadSeries() {
-    getJSON(`${API}/series?range=${range}&bucket=${bucket}`).then(d => {
-      const rows = d.series || [];
-      const labels = rows.map(r => r.bucket);
-      if (charts.series) charts.series.destroy();
-      charts.series = new Chart(document.getElementById('tm-series-chart'), {
-        type: 'line',
-        data: { labels, datasets: [
-          { label: 'Prompt', data: rows.map(r => r.prompt_tokens), borderColor: '#06b6d4', tension: 0.25 },
-          { label: 'Completion', data: rows.map(r => r.completion_tokens), borderColor: '#f59e0b', tension: 0.25 },
-          { label: 'Total', data: rows.map(r => r.total_tokens), borderColor: '#4f46e5', tension: 0.25 },
-        ] },
-        options: { responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { labels: { color: tickColor() } } },
-          scales: { x: { ticks: { color: tickColor() }, grid: { color: gridColor() } },
-                    y: { ticks: { color: tickColor() }, grid: { color: gridColor() } } } }
-      });
-    });
+  async function loadAll() {
+    if (activeRequest) activeRequest.abort();
+    activeRequest = new AbortController();
+    const effectiveBucket = range === '30d' ? 'day' : bucket;
+    try {
+      const response = await fetch(`${API}/snapshot?range=${range}&bucket=${effectiveBucket}&rollup=${rollup ? 1 : 0}`,
+                                   { signal: activeRequest.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      renderOverview(data.totals || {});
+      renderSources(data.sources || []);
+      renderModels(data.models || []);
+      renderAgents(data.agents || []);
+      renderSeries(data.series || []);
+    } catch (error) {
+      if (error.name !== 'AbortError') console.error('Token Monitor request failed', error);
+    }
   }
-
-  function loadAll() { loadOverview(); loadBySource(); loadByModel(); loadByAgent(); loadSeries(); }
 
   document.getElementById('tm-range').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -248,9 +248,9 @@
     const b = e.target.closest('button'); if (!b) return;
     bucket = b.dataset.bucket;
     document.querySelectorAll('#tm-bucket button').forEach(x => x.classList.toggle('active', x === b));
-    loadSeries();
+    loadAll();
   });
-  document.getElementById('tm-rollup').addEventListener('change', e => { rollup = e.target.checked; loadByAgent(); });
+  document.getElementById('tm-rollup').addEventListener('change', e => { rollup = e.target.checked; loadAll(); });
   document.getElementById('tm-refresh').addEventListener('click', loadAll);
 
   if (window.Chart) { loadAll(); }

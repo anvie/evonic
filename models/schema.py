@@ -383,6 +383,7 @@ class SchemaMixin:
                 ("sandbox_enabled", "BOOLEAN DEFAULT 0"),
                 ("attachments_enabled", "BOOLEAN DEFAULT 0"),
                 ("attachment_max_size_mb", "INTEGER DEFAULT 20"),
+                ("send_file_allowed_path_regex", "TEXT DEFAULT ''"),
                 ("audio_enabled", "BOOLEAN DEFAULT 0"),
                 ("video_enabled", "BOOLEAN DEFAULT 0"),
                 ("enable_atg", "BOOLEAN DEFAULT 0"),
@@ -1022,6 +1023,16 @@ class SchemaMixin:
             # Migration: add workplace_id to agents
             try:
                 cursor.execute("ALTER TABLE agents ADD COLUMN workplace_id TEXT REFERENCES workplaces(id)")
+            except sqlite3.OperationalError:
+                pass
+
+            # Migration: slash command visibility control
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN hidden_slash_commands TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN disabled_slash_commands TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
 

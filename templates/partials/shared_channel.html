@@ -816,6 +816,16 @@
                 }
             },
 
+            _maskIdentifier: function(value) {
+                var raw = String(value || '');
+                if (!raw) return '';
+                var at = raw.indexOf('@');
+                var local = at >= 0 ? raw.slice(0, at) : raw;
+                var domain = at >= 0 ? raw.slice(at) : '';
+                if (local.length <= 6) return local.slice(0, 1) + '***' + domain;
+                return local.slice(0, 3) + '***' + local.slice(-3) + domain;
+            },
+
             _addLogEntry: function(data) {
                 var dl = sharedChannel.debugListener;
                 var log = document.getElementById('sc-debug-log');
@@ -857,32 +867,48 @@
                             '<span class="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded">' + sharedChannel.esc(data.channel_name || data.channel_id || '') + '</span>' +
                         '</div>'
                     );
-                    // Row 2: sender info
+                    // Row 2: sender and route summary. Identifiers are masked by
+                    // default; the metadata disclosure contains the same safe form.
                     var senderInfo = [];
-                    senderInfo.push('<span class="font-semibold text-gray-800 dark:text-gray-200">' + sharedChannel.esc(data.sender || '?') + '</span>');
+                    senderInfo.push('<span class="font-semibold text-gray-800 dark:text-gray-200">' + sharedChannel.esc(dl._maskIdentifier(data.sender) || '?') + '</span>');
                     if (data.push_name) senderInfo.push('<span class="text-gray-500 dark:text-gray-400">(' + sharedChannel.esc(data.push_name) + ')</span>');
-                    if (data.jid && data.jid !== data.sender) senderInfo.push('<span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">JID: ' + sharedChannel.esc(data.jid) + '</span>');
-                    parts.push('<div class="flex items-center gap-1.5 mb-1 text-xs">' + senderInfo.join(' ') + '</div>');
-                    // Row 3: group info (if applicable)
+                    senderInfo.push('<span class="text-[10px] font-medium px-1.5 py-0.5 rounded ' +
+                        (data.route_status === 'matched' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300') + '">' +
+                        sharedChannel.esc(data.route_status || 'unknown') + '</span>');
+                    parts.push('<div class="flex items-center gap-1.5 mb-1 text-xs flex-wrap">' + senderInfo.join(' ') + '</div>');
                     if (data.is_group) {
-                        parts.push(
-                            '<div class="text-[11px] text-gray-400 dark:text-gray-500 mb-1">' +
-                                '<span class="font-medium">Group:</span> ' + sharedChannel.esc(data.group_name || '(unnamed)') + ' &middot; <span class="font-mono">' + sharedChannel.esc(data.jid || '?') + '</span>' +
-                            '</div>'
-                        );
+                        parts.push('<div class="text-[11px] text-gray-400 dark:text-gray-500 mb-1"><span class="font-medium">Group:</span> ' + sharedChannel.esc(data.group_name || '(unnamed)') + '</div>');
                     }
-                    // Row 4: message text
                     if (data.text) {
-                        parts.push(
-                            '<div class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed">' +
-                                sharedChannel.esc(data.text) +
-                            '</div>'
-                        );
+                        parts.push('<div class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed">' + sharedChannel.esc(data.text) + '</div>');
                     } else {
-                        parts.push(
-                            '<div class="text-gray-400 dark:text-gray-500 italic">[No text — ' + sharedChannel.esc(type) + ' only]</div>'
-                        );
+                        parts.push('<div class="text-gray-400 dark:text-gray-500 italic">[No text - ' + sharedChannel.esc(type) + ' only]</div>');
                     }
+
+                    var metadata = [
+                        ['Message ID', data.message_id],
+                        ['Inbound JID', dl._maskIdentifier(data.jid)],
+                        ['JID namespace', data.jid_namespace],
+                        ['Alternate JID', dl._maskIdentifier(data.alt_jid)],
+                        ['Alternate namespace', data.alt_jid_namespace],
+                        ['Reply target', dl._maskIdentifier(data.reply_jid)],
+                        ['Fallback target', dl._maskIdentifier(data.fallback_jid)],
+                        ['Agent', data.routed_agent_id],
+                        ['Content type', data.content_type],
+                        ['Payload keys', (data.payload_keys || []).join(', ')],
+                        ['Wrappers', (data.wrapper_types || []).join(', ')],
+                        ['Text length', data.text_length],
+                        ['Message timestamp', data.message_timestamp],
+                        ['Server timestamp', data.server_timestamp],
+                        ['Mentioned bot', data.bot_mentioned],
+                        ['Quoted message', data.quoted],
+                        ['Quoted type', data.quoted_type],
+                        ['Quoted bot', data.quoted_is_bot]
+                    ].filter(function(item) { return item[1] !== '' && item[1] !== null && item[1] !== undefined; });
+                    var metadataRows = metadata.map(function(item) {
+                        return '<div class="grid grid-cols-[120px_minmax(0,1fr)] gap-2"><dt class="text-gray-400 dark:text-gray-500">' + sharedChannel.esc(item[0]) + '</dt><dd class="font-mono text-gray-600 dark:text-gray-300 break-all">' + sharedChannel.esc(String(item[1])) + '</dd></div>';
+                    }).join('');
+                    parts.push('<details class="mt-2 border-t border-gray-100 dark:border-gray-700 pt-2"><summary class="cursor-pointer text-[11px] font-medium text-indigo-600 dark:text-indigo-400">Transport metadata (' + metadata.length + ')</summary><dl class="mt-2 space-y-1 text-[11px]">' + metadataRows + '</dl></details>');
                     card.innerHTML = parts.join('');
                 }
 

@@ -184,6 +184,12 @@ SANDBOX_CPU_LIMIT = os.getenv("SANDBOX_CPU_LIMIT", "1")
 SANDBOX_NETWORK = os.getenv("SANDBOX_NETWORK", "bridge")  # 'none' or 'bridge'
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "evonic-sandbox:latest")
 SANDBOX_MAX_CONTAINERS = _get_env_int("SANDBOX_MAX_CONTAINERS", 10, min_val=1, max_val=100)
+# When True (default), the main agent's Docker sandbox container is keyed by
+# agent_id instead of session_id, runs with --restart=unless-stopped, and is
+# stopped (not removed) on `evonic stop` so installed packages and state survive
+# across sessions. Subagents and explorer sub-workspaces remain session-scoped.
+SANDBOX_PERSISTENT_CONTAINER_ENABLED = _get_env_bool(
+    "SANDBOX_PERSISTENT_CONTAINER_ENABLED", True)
 
 # Sandbox backend selector: 'docker' (default) or 'bwrap' (Linux-only, bubblewrap).
 # 'bwrap' runs each command in a lightweight namespace sandbox (no daemon/image) —
@@ -213,9 +219,9 @@ AGENT_MAX_TOOL_RESULT_CHARS = _get_env_int("AGENT_MAX_TOOL_RESULT_CHARS", 8000, 
 AGENT_PARALLEL_TOOL_WAIT_TIMEOUT = _get_env_int(
     "AGENT_PARALLEL_TOOL_WAIT_TIMEOUT", 300, min_val=1, max_val=3600)
 
-# Same-turn context projection. Shadow mode computes the bounded model-facing
-# projection and emits attribution, while the provider still receives canonical
-# messages.
+# Same-turn context projection. Enforced mode sends the validated bounded payload;
+# shadow mode emits attribution while sending canonical messages, and off disables
+# compaction. Projection failures always fail open to canonical messages.
 ACTIVE_CONTEXT_MODE = os.getenv("ACTIVE_CONTEXT_MODE", "enforced").strip().lower()
 if ACTIVE_CONTEXT_MODE not in ("off", "shadow", "enforced"):
     _logger.warning("Invalid ACTIVE_CONTEXT_MODE=%r, using off", ACTIVE_CONTEXT_MODE)

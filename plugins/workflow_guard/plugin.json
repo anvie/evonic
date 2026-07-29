@@ -1,0 +1,16 @@
+{
+  "id": "workflow_guard",
+  "name": "Workflow Guard",
+  "version": "1.0.0",
+  "description": "Reusable deterministic failure thresholds, hard locks, escalation outbox, and audited staff recovery for agent workflows.",
+  "author": "Evonic",
+  "enabled": true,
+  "events": [],
+  "nav_items": [],
+  "variables": [
+    {"name":"ENFORCEMENT_ENABLED","label":"Enable enforcement","type":"boolean","default":true,"description":"Apply configured hard locks; disable to retain data without enforcing."},
+    {"name":"SHADOW_MODE","label":"Shadow mode","type":"boolean","default":false,"description":"Record qualifying outcomes without locking or overriding responses."},
+    {"name":"ESCALATION_WEBHOOK_URL","label":"Escalation webhook URL","type":"string","default":"","description":"Optional staff escalation endpoint. Pending reports remain durable when empty."},
+    {"name":"OUTBOX_INTERVAL_SECONDS","label":"Outbox interval","type":"number","default":30,"description":"Seconds between pending report delivery scans."}
+  ]
+}

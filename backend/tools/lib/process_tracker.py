@@ -7,8 +7,9 @@ regardless of which backend (Docker, Local, SSH) is executing it.
 Supports backend-specific killing strategies:
 - **Docker**: Use ``container_id`` to kill orphan processes inside the
   container after the exec process is terminated.
-- **Local**: Use ``kill_method='killpg'`` to kill the entire process group
-  (parent + all children) in one shot.
+- **Local**: Use ``kill_method='killpg_immediate'`` for Bash to kill the
+  entire process group (parent + all children) before reaping the leader.
+  The legacy ``'killpg'`` strategy retains its parent-first behavior.
 - **SSH**: No special handling needed; the existing SSH backend's ``.kill()``
   method already handles remote cleanup.
 
@@ -18,8 +19,9 @@ Usage:
     # Docker backend — pass container_id for orphan cleanup
     process_tracker.register(session_id, proc, pid, container_id=cid)
 
-    # Local backend — pass kill_method='killpg' for process-group killing
-    process_tracker.register(session_id, proc, pid, kill_method='killpg')
+    # Local Bash — signal its dedicated process group before reaping the leader
+    process_tracker.register(session_id, proc, pid,
+                             kill_method='killpg_immediate')
 
     try:
         ...  # polling loop
@@ -41,7 +43,8 @@ class ProcessTracker:
     """Thread-safe registry of running subprocesses, keyed by session_id.
 
     Supports optional ``container_id`` (for Docker orphan cleanup) and
-    ``kill_method`` (e.g. ``'killpg'`` for local process-group killing).
+    ``kill_method`` (e.g. ``'killpg_immediate'`` for immediate local Bash
+    process-group killing).
     """
 
     # How long a stop marker stays "pending" after kill() — long enough to
@@ -90,8 +93,9 @@ class ProcessTracker:
             pid: The process PID (or remote PID for SSH).
             container_id: Optional Docker container ID; used during kill() to
                 clean up orphan processes inside the container.
-            kill_method: Optional killing strategy. Use ``'killpg'`` for local
-                backends to kill the entire process group.
+            kill_method: Optional killing strategy. Use ``'killpg_immediate'``
+                for a dedicated local Bash process group, or ``'killpg'`` for
+                process-group cleanup after the leader has been reaped.
         """
         with self._lock:
             self._processes[session_id] = {
@@ -118,13 +122,15 @@ class ProcessTracker:
         Safe to call even if the process has already finished or was never
         registered (no-op for missing entries).
 
-        After the primary process is killed, applies backend-specific cleanup:
+        Applies backend-specific cleanup:
 
         - If ``container_id`` was provided at registration, runs
           ``docker exec <id> sh -c 'kill -9 -1'`` to kill any orphan
           processes still running inside the Docker container.
+        - If ``kill_method='killpg_immediate'`` was provided, sends SIGKILL to
+          the dedicated process group before waiting for its leader.
         - If ``kill_method='killpg'`` was provided, sends SIGKILL to the
-          entire process group via ``os.killpg()``.
+          process group after the existing parent termination sequence.
         """
         # Mark the stop as pending FIRST so a subprocess registering in the
         # tiny race window right after this call is aborted before it runs.
@@ -136,6 +142,7 @@ class ProcessTracker:
             return
         proc = info['proc']
         pid = info['pid']
+        kill_method = info.get('kill_method')
 
         # --- Effective in-container kill FIRST (Docker) ---
         # Killing the `docker exec` CLIENT proc below does NOT stop the bash
@@ -154,6 +161,28 @@ class ProcessTracker:
                 )
             except Exception:
                 pass  # Best-effort — the client reap below is the fallback
+
+        # Local Bash starts a new session, making its tracked leader PID the
+        # process-group ID. Kill that dedicated group before any parent-only
+        # grace period so background children cannot continue for two seconds.
+        if kill_method == 'killpg_immediate':
+            try:
+                __import__('os').killpg(pid, __import__('signal').SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass  # The process group already exited
+            try:
+                proc.wait(timeout=2)
+            except __import__('subprocess').TimeoutExpired:
+                # The group signal should include the leader; retain a
+                # parent-only fallback for unusual Popen implementations.
+                proc.kill()
+                proc.wait(timeout=2)
+            except Exception as e:
+                logger.warning(
+                    '[process_tracker] Error reaping process-group leader pid=%s '
+                    'for session %s: %s', pid, session_id[:12], e,
+                )
+            return
 
         try:
             logger.info(
@@ -182,7 +211,6 @@ class ProcessTracker:
         # This ensures that for local backends the parent bash process
         # and all its children (e.g. sleep, background jobs) are
         # terminated together.
-        kill_method = info.get('kill_method')
         if kill_method == 'killpg':
             try:
                 __import__('os').killpg(info['pid'], __import__('signal').SIGKILL)

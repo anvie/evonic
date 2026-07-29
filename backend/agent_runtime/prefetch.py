@@ -100,6 +100,13 @@ class TurnPrefetcher:
             else:
                 assigned_tool_ids = db.get_agent_tools(db_agent_id)
 
+            # Inter-agent communication is enabled by the agent-level toggle;
+            # send_agent_message is therefore available without a separate tool
+            # assignment, matching build_tools() exposure.
+            if (agent.get('agent_messaging_enabled') != 0
+                    and 'send_agent_message' not in assigned_tool_ids):
+                assigned_tool_ids.append('send_agent_message')
+
             # Inject skill tool IDs from assigned skills into assigned_tool_ids.
             # This mirrors build_tools() Layer 9 auto-injection and ensures
             # the authorization guard allows execution of skill tools that
@@ -120,20 +127,21 @@ class TurnPrefetcher:
                     if _skill_id in assigned_skill_ids and _tid not in _existing_ids:
                         assigned_tool_ids.append(_tid)
 
-            # Auto-assign save_artifact to all agents so they can save files.
-            # No DB assignment needed — every agent can create and store artifacts.
-            if 'save_artifact' not in assigned_tool_ids:
-                assigned_tool_ids.append('save_artifact')
+            # Auto-assign artifact tools (save_artifact, list_artifacts, fetch_artifact)
+            # only when artifacts_enabled is True for the agent.
+            if agent.get('artifacts_enabled', True):
+                if 'save_artifact' not in assigned_tool_ids:
+                    assigned_tool_ids.append('save_artifact')
 
-            # Agents with save_artifact automatically get list_artifacts.
-            # fetch_artifact is only auto-assigned for agents with workplace or sandbox;
-            # local agents can access artifacts directly via bash/runpy.
-            if 'save_artifact' in assigned_tool_ids:
-                if 'list_artifacts' not in assigned_tool_ids:
-                    assigned_tool_ids.append('list_artifacts')
-                if agent.get('workplace_id') or agent.get('sandbox_enabled', 0):
-                    if 'fetch_artifact' not in assigned_tool_ids:
-                        assigned_tool_ids.append('fetch_artifact')
+                # Agents with save_artifact automatically get list_artifacts.
+                # fetch_artifact is only auto-assigned for agents with workplace or sandbox;
+                # local agents can access artifacts directly via bash/runpy.
+                if 'save_artifact' in assigned_tool_ids:
+                    if 'list_artifacts' not in assigned_tool_ids:
+                        assigned_tool_ids.append('list_artifacts')
+                    if agent.get('workplace_id') or agent.get('sandbox_enabled', 0):
+                        if 'fetch_artifact' not in assigned_tool_ids:
+                            assigned_tool_ids.append('fetch_artifact')
 
             # Agents with vision_enabled automatically get describe_image.
             # No DB assignment needed — every vision-capable agent can analyze images.
@@ -256,6 +264,9 @@ class TurnPrefetcher:
                     for msg in history:
                         fresh_messages.append(
                             _ctx.build_message_entry(msg, agent, has_describe_image))
+
+            # Keep an authoritative metadata-only file index outside the prunable tail.
+            _ctx.sync_session_attachment_manifest(fresh_messages, session_id, db_agent_id)
 
             # Ensure messages don't end with assistant role
             while (len(fresh_messages) > 1

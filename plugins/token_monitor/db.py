@@ -61,11 +61,26 @@ class UsageDB:
                     completion_tokens INTEGER NOT NULL DEFAULT 0,
                     total_tokens      INTEGER NOT NULL DEFAULT 0,
                     estimated         INTEGER NOT NULL DEFAULT 0,
+                    provider          TEXT NOT NULL DEFAULT '',
+                    cached_tokens     INTEGER NOT NULL DEFAULT 0,
+                    reasoning_tokens  INTEGER NOT NULL DEFAULT 0,
+                    usage_details_available INTEGER NOT NULL DEFAULT 0,
                     duration_ms       INTEGER NOT NULL DEFAULT 0,
                     created_at        TEXT NOT NULL
                 )
             """)
+            # Additive migrations keep existing installations and historical rows intact.
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(token_usage)").fetchall()}
+            for name, definition in (
+                ('provider', "TEXT NOT NULL DEFAULT ''"),
+                ('cached_tokens', 'INTEGER NOT NULL DEFAULT 0'),
+                ('reasoning_tokens', 'INTEGER NOT NULL DEFAULT 0'),
+                ('usage_details_available', 'INTEGER NOT NULL DEFAULT 0'),
+            ):
+                if name not in columns:
+                    conn.execute(f'ALTER TABLE token_usage ADD COLUMN {name} {definition}')
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tu_created ON token_usage(created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_tu_created_source_model ON token_usage(created_at, source, provider, model)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tu_agent   ON token_usage(agent_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tu_source  ON token_usage(source)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tu_model   ON token_usage(model)")
@@ -74,16 +89,21 @@ class UsageDB:
     def record(self, *, source: str, agent_id: Optional[str], agent_name: Optional[str],
                session_id: Optional[str], model: Optional[str],
                prompt_tokens: int, completion_tokens: int, total_tokens: int,
-               estimated: bool = False, duration_ms: int = 0) -> None:
+               estimated: bool = False, duration_ms: int = 0,
+               provider: Optional[str] = None, cached_tokens: int = 0,
+               reasoning_tokens: int = 0, usage_details_available: bool = False) -> None:
         with self._connect() as conn:
             conn.execute("""
                 INSERT INTO token_usage (source, agent_id, agent_name, session_id, model,
                                          prompt_tokens, completion_tokens, total_tokens,
-                                         estimated, duration_ms, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         estimated, provider, cached_tokens, reasoning_tokens,
+                                         usage_details_available, duration_ms, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (source or 'other', agent_id, agent_name, session_id, model or '',
                   int(prompt_tokens or 0), int(completion_tokens or 0), int(total_tokens or 0),
-                  1 if estimated else 0, int(duration_ms or 0), _now()))
+                  1 if estimated else 0, provider or '', int(cached_tokens or 0),
+                  int(reasoning_tokens or 0), 1 if usage_details_available else 0,
+                  int(duration_ms or 0), _now()))
 
     # ── Aggregations ──────────────────────────────────────────────────
     @staticmethod
@@ -102,6 +122,111 @@ class UsageDB:
                 FROM token_usage{where}
             """, params).fetchone()
             return dict(row)
+
+    def snapshot(self, since: Optional[str] = None, *, rollup_subagents: bool = False,
+                 bucket: str = 'hour', agent_limit: int = 30) -> Dict[str, Any]:
+        """Return all dashboard aggregates from one filtered SQLite snapshot."""
+        length = 13 if bucket == 'hour' else 10
+        limit = max(1, min(int(agent_limit or 30), 100))
+        where, params = self._since_clause(since)
+        with self._connect() as conn:
+            conn.execute('DROP TABLE IF EXISTS temp.token_monitor_snapshot')
+            conn.execute(
+                'CREATE TEMP TABLE token_monitor_snapshot AS '
+                'SELECT * FROM token_usage' + where, params)
+            totals = dict(conn.execute(
+                '''SELECT COUNT(*) AS calls,
+                          COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                          COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                          COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                          COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                          COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+                          COALESCE(SUM(estimated), 0) AS estimated_calls,
+                          COALESCE(SUM(usage_details_available), 0) AS detailed_calls
+                   FROM token_monitor_snapshot''').fetchone())
+
+            def grouped(column: str) -> List[Dict[str, Any]]:
+                return [dict(row) for row in conn.execute(
+                    f'''SELECT {column} AS key, COUNT(*) AS calls,
+                               COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                               COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                               COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                               COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                               COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens
+                        FROM token_monitor_snapshot GROUP BY {column}
+                        ORDER BY total_tokens DESC''').fetchall()]
+
+            sources = grouped('source')
+            models = grouped("CASE WHEN provider <> '' THEN provider || '/' || model ELSE model END")
+            series = [dict(row) for row in conn.execute(
+                f'''SELECT substr(created_at, 1, {length}) AS bucket,
+                           COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                           COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                           COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                           COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                           COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens
+                    FROM token_monitor_snapshot GROUP BY bucket ORDER BY bucket''').fetchall()]
+            raw_agents = [dict(row) for row in conn.execute(
+                '''SELECT agent_id, MAX(agent_name) AS agent_name, COUNT(*) AS calls,
+                          COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                          COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                          COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                          COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                          COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens
+                   FROM token_monitor_snapshot GROUP BY agent_id ORDER BY total_tokens DESC''').fetchall()]
+
+        fields = ('calls', 'prompt_tokens', 'completion_tokens', 'total_tokens',
+                  'cached_tokens', 'reasoning_tokens')
+        merged: Dict[str, Dict[str, Any]] = {}
+        standalone = []
+        for row in raw_agents:
+            aid = row.get('agent_id') or ''
+            flags = {
+                'is_explorer': bool(_EXPLORER_RE.search(aid)),
+                'is_organizer': bool(_ORGANIZER_RE.search(aid)),
+                'is_test': bool(_TEST_RE.match(aid)),
+            }
+            if _EXPLORER_RE.search(aid):
+                key = _EXPLORER_RE.sub('', aid)
+            elif _ORGANIZER_RE.search(aid):
+                key = _ORGANIZER_RE.sub('', aid) + '_org'
+            elif _TEST_RE.match(aid):
+                key = 'test_*'
+            elif rollup_subagents and _SUBAGENT_RE.search(aid):
+                key = _SUBAGENT_RE.sub('', aid) or aid
+            else:
+                standalone.append(dict(row, **flags))
+                continue
+            target = merged.setdefault(key, {
+                'agent_id': key, 'agent_name': row.get('agent_name'),
+                'calls': 0, 'prompt_tokens': 0, 'completion_tokens': 0,
+                'total_tokens': 0, 'cached_tokens': 0, 'reasoning_tokens': 0,
+                **flags,
+            })
+            for field in fields:
+                target[field] += row.get(field, 0) or 0
+
+        agents = sorted(list(merged.values()) + standalone,
+                        key=lambda row: row['total_tokens'], reverse=True)
+        agent_total = len(agents)
+        if agent_total > limit:
+            visible, hidden = agents[:limit], agents[limit:]
+            other = {
+                'agent_id': 'Other', 'agent_name': 'Other agents',
+                'is_explorer': False, 'is_organizer': False, 'is_test': False,
+            }
+            for field in fields:
+                other[field] = sum(row[field] for row in hidden)
+            agents = visible + [other]
+        return {
+            'totals': totals,
+            'sources': sources,
+            'models': models,
+            'agents': agents,
+            'agent_total': agent_total,
+            'series': series,
+            'bucket': bucket,
+        }
 
     def by_agent(self, since: Optional[str] = None, rollup_subagents: bool = False) -> List[Dict[str, Any]]:
         where, params = self._since_clause(since)

@@ -1,0 +1,22 @@
+[
+  {
+    "policy_id": "muktamar-registration-failure",
+    "agent_id": "muktamar_registrasi",
+    "enabled": true,
+    "threshold": 25,
+    "counter_strategy": "cumulative",
+    "identity_resolver": "trusted_channel_identity",
+    "monitored_tools": ["registration_draft", "person_data_match", "validate_photo", "register", "cek_status"],
+    "mutating_tools": ["registration_draft", "person_data_match", "validate_photo", "register", "cek_status"],
+    "countable_reason_codes": [
+      "REQUIRED_DATA_INVALID", "IDENTITY_NO_MATCH", "IDENTITY_AMBIGUOUS",
+      "INVALID_IMAGE", "INVALID_MIME", "INVALID_FILE_SIZE", "INVALID_DIMENSIONS",
+      "NOT_PORTRAIT", "SINGLE_PERSON", "FACE_VISIBLE", "GOOD_QUALITY",
+      "BRIGHT_LIGHTING", "APPROPRIATE_POSE", "APPROPRIATE_BACKGROUND",
+      "APPROPRIATE_CONTENT", "STAGED_DATA_INVALID"
+    ],
+    "success_statuses": ["submitted"],
+    "fixed_response": "Mohon ma'af Saya tidak bisa lagi melanjutkan proses registrasi, namun sudah dibuatkan laporan ke sistem untuk ditindaklanjuti oleh staff kami, mohon ma'af atas ketidaknyamanan ini, terima kasih 🙏🏼",
+    "escalation_destination": "muktamar-secretariat"
+  }
+]

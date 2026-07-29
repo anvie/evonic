@@ -59,29 +59,32 @@ def test_state_changed_sse_reaches_agent_state_listener():
 def test_sessions_refresh_restores_empty_buffer_thinking_placeholder():
     sessions = read_repo_file("templates/sessions.html")
 
-    # Buffered events remain the primary recovery path; only an empty replay
-    # consults the selected agent's authoritative busy snapshot.
-    replay_pos = sessions.index("if (replayEvents.length) {")
-    busy_pos = sessions.index("const busyRes = await fetch", replay_pos)
-    assert replay_pos < busy_pos
+    # Busy ownership is authoritative after refresh. Buffered events enrich the
+    # current turn, but may be empty while a synchronous Explorer call is active.
+    busy_pos = sessions.index("const ownsActiveTurn =")
+    replay_pos = sessions.index("const replayEvents =", busy_pos)
+    assert busy_pos < replay_pos
     assert "`/api/agents/${encodeURIComponent(selectedAgentId)}/busy`" in sessions
-    assert "busyState.busy && busyState.session_id === sessionId" in sessions
+    assert "busyState && busyState.busy && busyState.session_id === sessionId" in sessions
 
     # A confirmed active selected session gets exactly one SSE-owned placeholder,
     # immediate Stop affordance, and persisted active reasoning state.
-    assert "_sseThinkingId = chatUI.showThinkingIndicator(null, userMsgEl);" in sessions
+    assert "function _beginSessionTurn(startTs = null, anchor = null)" in sessions
+    assert "if (!restoredReasoning && ownsActiveTurn)" in sessions
     assert "showStopBtn(true);" in sessions
     assert "saveReasoningState(sessionId, resumeSeq);" in sessions
     assert "if (!restoredReasoning) clearReasoningState();" in sessions
 
-    # Every busy-fetch continuation is rejected if selection changed. The first
-    # SSE event reuses the restored ID because dispatch only creates when absent.
+    # The first lifecycle event adopts the optimistic/restored bubble. Terminal
+    # sequence state prevents stale replay and poll callbacks from reopening it.
     selection_guard = (
         "_selectGeneration !== gen || currentSessionId !== sessionId || "
         "currentAgentId !== selectedAgentId"
     )
-    assert sessions.count(selection_guard) >= 4
-    assert "if (!_sseThinkingId) {" in sessions
+    assert sessions.count(selection_guard) >= 3
+    assert "evtName === 'turn_begin'" in sessions
+    assert "_completeSessionTurn(seq);" in sessions
+    assert "afterSeq = Math.max(afterSeq, _sessionTurn.lastSeq, _sessionTurn.terminalSeq);" in sessions
     assert "clearReasoningState();" in sessions
     assert "function disconnectSessionStream()" in sessions
 
@@ -96,19 +99,20 @@ def test_agent_detail_refresh_restores_only_matching_busy_session():
     # /busy is authoritative even when replay contains a stale incomplete tail.
     # Idle and cross-session snapshots must both return before any bubble is created.
     replay_pos = restore.index("const replayEvents =")
-    busy_pos = restore.index("const busyRes = await fetch", replay_pos)
+    busy_pos = restore.index("const [eRes, busyRes] = await Promise.all")
     busy_guard_pos = restore.index(
         "!busyState.busy || busyState.session_id !== sessionId", busy_pos
     )
     bubble_pos = restore.index("let thinkingId = chatUI.showThinkingIndicator", busy_guard_pos)
-    assert replay_pos < busy_pos < busy_guard_pos < bubble_pos
+    assert busy_pos < replay_pos < bubble_pos
     assert "`/api/agents/${encodeURIComponent(AGENT_ID)}/busy`" in restore
     assert "if (!replayEvents.length)" not in restore[replay_pos:bubble_pos]
+    assert "let _restoringActiveReasoning = false;" in detail
 
-    # Agent/session epoch guards survive both awaits, and the restored placeholder
-    # is reused by the stream and polling fallback rather than duplicated.
+    # The parallel fetch pair is followed by an agent/session epoch guard, and the
+    # restored placeholder is reused by stream and poll rather than duplicated.
     guard = "epoch !== window._agentEpoch || sessionId !== _chatSessionId"
-    assert restore.count(guard) >= 2
+    assert guard in restore
     assert "_currentTurn = { abortController: null, thinkingId" in restore
     assert "chatUI.connectThinkingStream(" in restore
     assert "pollForResponse(thinkingId);" in restore
