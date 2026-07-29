@@ -41,10 +41,22 @@ def _authorized():
 
 
 def _public_result(result: dict) -> dict:
-    """Normalize validation output to the small public API contract."""
-    message = result.get("message")
+    """Normalize validation output without discarding precise failure reasons."""
+    success = bool(result.get("accepted"))
+    message = result.get("user_message") or result.get("message")
+    raw_codes = result.get("reason_code")
+    if isinstance(raw_codes, str):
+        reason_codes = [raw_codes] if raw_codes else []
+    elif isinstance(raw_codes, (list, tuple)):
+        reason_codes = [code for code in raw_codes if isinstance(code, str) and code]
+    else:
+        reason_codes = []
+    if success and not reason_codes:
+        reason_codes = ["OK"]
+
     return {
-        "success": bool(result.get("accepted")),
+        "success": success,
+        "reason_code": reason_codes,
         **({"message": message} if isinstance(message, str) and message else {}),
     }
 

@@ -16,10 +16,24 @@ photo=<image file>
 The upload is written to a private temporary file, validated directly without registration state or an agent, and removed in a `finally` block. Photos must be portrait and at least 200 × 300 pixels after EXIF orientation is applied. Responses are normalized:
 
 ```json
-{"success": true, "message": "Foto sudah sesuai standar."}
+{
+  "success": true,
+  "reason_code": ["OK"],
+  "message": "Foto sudah sesuai standar."
+}
 ```
 
-Rejected photos return `success: false`; operational failures use the same shape with an error status.
+Rejected photos return every validation failure as a stable string array so clients can map each enum to a precise message:
+
+```json
+{
+  "success": false,
+  "reason_code": ["APPROPRIATE_POSE", "APPROPRIATE_BACKGROUND"],
+  "message": "Pose dan latar foto tidak sesuai."
+}
+```
+
+Legacy scalar validator codes are normalized to a one-item array. Operational failures use an HTTP error status and an `error` field instead of validation reason codes.
 
 ## Configuration
 

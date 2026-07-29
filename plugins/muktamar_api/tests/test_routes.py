@@ -58,10 +58,67 @@ def test_validator_result_is_normalized_and_temp_file_cleaned(client, monkeypatc
     body = response.get_json()
     assert body == {
         "success": True,
+        "reason_code": ["OK"],
         "message": "accepted",
     }
     import os
     assert not os.path.exists(seen["path"])
+
+
+def test_validator_failure_reasons_are_returned_as_array(client, monkeypatch):
+    class FakeModule:
+        @staticmethod
+        def execute_standalone(agent, args):
+            return {
+                "accepted": False,
+                "reason_code": ["APPROPRIATE_POSE", "APPROPRIATE_BACKGROUND"],
+                "user_message": "Pose dan latar foto tidak sesuai.",
+            }
+
+    monkeypatch.setattr(routes, "_config", lambda: {"MAX_UPLOAD_BYTES": 100})
+    monkeypatch.setattr(routes.tool_registry, "_load_tool_module", lambda *args, **kwargs: FakeModule)
+
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(b"image-bytes"), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "success": False,
+        "reason_code": ["APPROPRIATE_POSE", "APPROPRIATE_BACKGROUND"],
+        "message": "Pose dan latar foto tidak sesuai.",
+    }
+
+
+def test_legacy_scalar_failure_reason_is_normalized_to_array(client, monkeypatch):
+    class FakeModule:
+        @staticmethod
+        def execute_standalone(agent, args):
+            return {
+                "accepted": False,
+                "reason_code": "NOT_PORTRAIT",
+                "message": "Orientasi foto harus portrait.",
+            }
+
+    monkeypatch.setattr(routes, "_config", lambda: {"MAX_UPLOAD_BYTES": 100})
+    monkeypatch.setattr(routes.tool_registry, "_load_tool_module", lambda *args, **kwargs: FakeModule)
+
+    response = client.post(
+        "/plugin/muktamar-api/v1/photo/validate",
+        headers={"Authorization": "Bearer test-key"},
+        data={"photo": (io.BytesIO(b"image-bytes"), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "success": False,
+        "reason_code": ["NOT_PORTRAIT"],
+        "message": "Orientasi foto harus portrait.",
+    }
 
 
 def test_upload_limit(client, monkeypatch):
