@@ -34,13 +34,10 @@ def _authorized():
 
 
 def _public_result(result: dict) -> dict:
-    """Remove internal paths/fingerprints/provider details from the API response."""
-    return {
-        "accepted": bool(result.get("accepted", False)),
-        "reason_code": result.get("reason_code") if result.get("accepted") is not None else "ERROR",
-        "user_message": result.get("user_message", ""),
-        "checks": result.get("checks", {}),
-    }
+    """Normalize validation output to the small public API contract."""
+    if result.get("status") == "error":
+        return {"success": False, "message": result.get("error", "Validation failed")}
+    return {"success": bool(result.get("accepted")), **({"message": result["message"]} if result.get("message") else {})}
 
 
 def create_blueprint():
@@ -57,14 +54,7 @@ def create_blueprint():
             max_bytes = 8 * 1024 * 1024
         if request.content_length and request.content_length > max_bytes + 65536:
             return jsonify({"error": "Upload too large"}), 413
-        draft_raw = request.form.get("draft_id", "")
-        try:
-            draft_id = int(draft_raw)
-            if draft_id <= 0:
-                raise ValueError
-        except (TypeError, ValueError):
-            return jsonify({"error": "draft_id must be a positive integer"}), 400
-        upload = request.files.get("photo") or request.files.get("foto")
+        upload = request.files.get("photo")
         if upload is None or not upload.filename:
             return jsonify({"error": "multipart field 'photo' is required"}), 400
 
@@ -82,20 +72,13 @@ def create_blueprint():
                     if total > max_bytes:
                         return jsonify({"error": "Upload too large"}), 413
                     target.write(chunk)
-            agent_id = cfg.get("AGENT_ID") or "muktamar-agent"
-            # Skill directories use a hyphen in their on-disk ID and cannot be
-            # imported as a normal Python package. Use the same registry boundary
-            # as the agent runtime so relative imports and future tool changes stay
-            # consistent with normal tool execution.
-            agent = db.get_agent(agent_id)
-            if not agent or not agent.get("enabled", True):
-                return jsonify({"error": "Configured Muktamar agent is unavailable"}), 503
+            # Standalone validation intentionally has no draft or agent dependency.
             module = tool_registry._load_tool_module("validate_photo", skill_id="muktamar-agent")
-            if module is None or not hasattr(module, "execute"):
+            if module is None or not hasattr(module, "execute_standalone"):
                 return jsonify({"error": "Photo validator is unavailable"}), 503
-            result = module.execute(agent, {"draft_id": draft_id, "attachment_path": path})
+            result = module.execute_standalone({}, {"attachment_path": path})
             if result.get("status") == "error":
-                return jsonify({"error": result.get("error", "Validation failed")}), 503
+                return jsonify(_public_result(result)), 503
             return jsonify(_public_result(result)), 200
         finally:
             try:

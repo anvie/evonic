@@ -16,13 +16,6 @@
       "description": "API keys accepted by the external photo-validation endpoint. Prefer an environment variable in production."
     },
     {
-      "name": "AGENT_ID",
-      "label": "Muktamar agent ID",
-      "type": "string",
-      "default": "muktamar-agent",
-      "description": "Agent owning registration drafts used for validation."
-    },
-    {
       "name": "MAX_UPLOAD_BYTES",
       "label": "Maximum upload size (bytes)",
       "type": "number",

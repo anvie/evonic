@@ -27,7 +27,7 @@ def test_rejects_invalid_key(client):
     assert response.status_code == 401
 
 
-def test_requires_draft_and_photo(client):
+def test_requires_photo_only(client):
     response = client.post(
         "/plugin/muktamar-api/v1/photo/validate",
         headers={"Authorization": "Bearer test-key"},
@@ -40,34 +40,25 @@ def test_validator_result_is_normalized_and_temp_file_cleaned(client, monkeypatc
 
     class FakeModule:
         @staticmethod
-        def execute(agent, args):
+        def execute_standalone(agent, args):
             seen["path"] = args["attachment_path"]
-            assert agent["id"] == "muktamar-agent"
-            return {
-                "accepted": True,
-                "reason_code": "OK",
-                "user_message": "accepted",
-                "file_fingerprint": "secret",
-                "checks": {"face_visible": True},
-            }
+            assert agent == {}
+            return {"accepted": True, "message": "accepted"}
 
-    monkeypatch.setattr(routes, "_config", lambda: {"AGENT_ID": "muktamar-agent", "MAX_UPLOAD_BYTES": 100})
-    monkeypatch.setattr(routes.db, "get_agent", lambda agent_id: {"id": agent_id, "enabled": 1}, raising=False)
+    monkeypatch.setattr(routes, "_config", lambda: {"MAX_UPLOAD_BYTES": 100})
     monkeypatch.setattr(routes.tool_registry, "_load_tool_module", lambda *args, **kwargs: FakeModule)
 
     response = client.post(
         "/plugin/muktamar-api/v1/photo/validate",
         headers={"Authorization": "Bearer test-key"},
-        data={"draft_id": "1", "photo": (io.BytesIO(b"image-bytes"), "photo.jpg")},
+        data={"photo": (io.BytesIO(b"image-bytes"), "photo.jpg")},
         content_type="multipart/form-data",
     )
     assert response.status_code == 200
     body = response.get_json()
     assert body == {
-        "accepted": True,
-        "reason_code": "OK",
-        "user_message": "accepted",
-        "checks": {"face_visible": True},
+        "success": True,
+        "message": "accepted",
     }
     import os
     assert not os.path.exists(seen["path"])
@@ -78,7 +69,7 @@ def test_upload_limit(client, monkeypatch):
     response = client.post(
         "/plugin/muktamar-api/v1/photo/validate",
         headers={"Authorization": "Bearer test-key"},
-        data={"draft_id": "1", "photo": (io.BytesIO(b"12345"), "photo.jpg")},
+        data={"photo": (io.BytesIO(b"12345"), "photo.jpg")},
         content_type="multipart/form-data",
     )
     assert response.status_code == 413
