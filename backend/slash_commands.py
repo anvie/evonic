@@ -1002,7 +1002,7 @@ def _register_builtins():
                     "Type /model list to see all available models. /model <number> to switch."
                 )
 
-        if args.strip().lower() == "list":
+        if args.strip().lower() in ("list", "ls"):
             # Full listing grouped by provider
             current = db.get_agent_model(agent_id)
             current_id = current.get("id") if current else None
@@ -1089,7 +1089,7 @@ def _register_builtins():
     command_registry.register(
         "model",
         model_handler,
-        "Show or switch LLM model — /model, /model list, /model [number|provider/model]",
+        "Show or switch LLM model — /model, /model list|ls, /model [number|provider/model]",
     )
 
 
