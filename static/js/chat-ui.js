@@ -1036,6 +1036,17 @@ function highlightDiff(patch) {
 
 // ── Tool result rendering helpers ─────────────────────────────────────────────
 
+function _summarizeToolResultValue(value) {
+    if (value === null || value === undefined || typeof value === 'object' && !Array.isArray(value)) return null;
+    if (Array.isArray(value)) {
+        const scalarValues = value.filter(item => item !== null && item !== undefined && typeof item !== 'object');
+        if (!scalarValues.length) return null;
+        const summary = scalarValues.slice(0, 4).map(String).join(', ');
+        return scalarValues.length > 4 ? `${summary}, …` : summary;
+    }
+    return String(value);
+}
+
 function summarizeToolResult(result) {
     if (result === null || result === undefined) return 'OK';
     if (Array.isArray(result)) return `${result.length} item${result.length !== 1 ? 's' : ''}`;
@@ -1051,8 +1062,8 @@ function summarizeToolResult(result) {
         if ('count'   in result && typeof result.count === 'number') return `${result.count} item${result.count !== 1 ? 's' : ''}`;
         const parts = [];
         for (const k of keys.slice(0, 3)) {
-            const v = result[k];
-            if (v !== null && v !== undefined && typeof v !== 'object') parts.push(`${k}: ${String(v)}`);
+            const summary = _summarizeToolResultValue(result[k]);
+            if (summary !== null) parts.push(`${k}: ${summary}`);
         }
         if (parts.length) return parts.join(' · ');
         return `${keys.length} field${keys.length !== 1 ? 's' : ''}`;
