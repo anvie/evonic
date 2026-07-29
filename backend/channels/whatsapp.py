@@ -724,8 +724,8 @@ class WhatsAppChannel(BaseChannel):
                         image_url = f"data:image/jpeg;base64,{b64}"
                     except Exception as e:
                         _logger.error("WhatsApp image conversion failed: %s", e)
-            elif not text:
-                return
+            if not text:
+                text = '[Image]'
 
         if audio_data:
             # Audio is attachment-only — agents listen to it via the
