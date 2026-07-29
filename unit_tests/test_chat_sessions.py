@@ -413,6 +413,21 @@ class TestGetAllSessions:
         sessions, total = db.get_all_sessions(search='Test Agent')
         assert total >= 1
 
+    def test_lists_subagent_session_stored_in_parent_chat_db(self, chat_db, agent_id):
+        subagent_id = f'{agent_id}_sub_1'
+        session_id = db.get_or_create_session(
+            subagent_id, 'subagent_user', db_agent_id=agent_id,
+        )
+        db.add_chat_message(
+            session_id, 'user', 'delegated task', agent_id=subagent_id,
+            db_agent_id=agent_id,
+        )
+
+        sessions, _ = db.get_all_sessions(exclude_test=False)
+        session = next(s for s in sessions if s['id'] == session_id)
+        assert session['agent_id'] == subagent_id
+        assert session['last_message'] == 'delegated task'
+
 
 class TestAgentCommandDiscoveryAPI:
     def test_returns_sorted_commands_available_to_agent(self, agent_id, chat_db):
