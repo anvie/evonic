@@ -1256,6 +1256,58 @@ def api_list_channels(agent_id):
     return jsonify({'channels': channels})
 
 
+@agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/debug/listen', methods=['GET'])
+def api_channel_debug_listen(agent_id, channel_id):
+    """Stream inbound WhatsApp diagnostics only for this agent-owned channel."""
+    channel = db.get_channel(channel_id)
+    if not channel or channel.get('agent_id') != agent_id:
+        return jsonify({'error': 'Channel not found'}), 404
+    if channel.get('type') not in ('whatsapp', 'whatsapp_shared'):
+        return jsonify({'error': 'Debug listener is only available for WhatsApp channels'}), 400
+
+    from backend.event_stream import event_stream
+
+    event_queue = queue.Queue(maxsize=500)
+
+    def handler(data):
+        if data.get('channel_id') != channel_id:
+            return
+        try:
+            event_queue.put_nowait(('whatsapp_inbound', data))
+        except queue.Full:
+            pass
+
+    event_stream.on('whatsapp_inbound', handler)
+
+    def generate():
+        yield (
+            'event: connected\n'
+            f"data: {json.dumps({'type': 'connected', 'message': 'Listening for WhatsApp inbound messages...'})}\n\n"
+        )
+        try:
+            while True:
+                try:
+                    event_name, payload = event_queue.get(timeout=30)
+                except queue.Empty:
+                    yield ': heartbeat\n\n'
+                    continue
+                yield f'event: {event_name}\ndata: {json.dumps(payload)}\n\n'
+        except GeneratorExit:
+            pass
+        finally:
+            event_stream.off('whatsapp_inbound', handler)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
+
+
 @agents_bp.route('/api/agents/<agent_id>/channels', methods=['POST'])
 def api_create_channel(agent_id):
     if not db.get_agent(agent_id):
