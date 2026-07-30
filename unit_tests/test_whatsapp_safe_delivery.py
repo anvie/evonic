@@ -255,3 +255,78 @@ def test_resume_outbound_route_calls_operator_resume_without_restart():
     assert response.status_code == 200
     assert response.get_json() == {"success": True}
     dispatcher.resume_after_restriction.assert_called_once_with()
+
+
+def test_delivery_preserves_fifo_and_keeps_chats_independent():
+    dispatcher, channel = _dispatcher()
+    dispatcher._interruptible_sleep = lambda _: None
+
+    dispatcher._deliver({"text": "first", "session_id": "s-1"}, "user-1")
+    dispatcher._deliver({"text": "other", "session_id": "s-2"}, "user-2")
+    dispatcher._deliver({"text": "second", "session_id": "s-3"}, "user-1")
+
+    assert [(uid, text) for uid, text, _ in channel.sent] == [
+        ("user-1", "first"), ("user-2", "other"), ("user-1", "second")
+    ]
+    assert [session for _, _, session in channel.sent] == ["s-1", "s-2", "s-3"]
+
+
+def test_delay_respects_hard_minimum_interval():
+    dispatcher, channel = _dispatcher(
+        whatsapp_typing_chars_per_second="1",
+        whatsapp_max_typing_delay_seconds="2",
+        whatsapp_min_send_interval_seconds="5",
+    )
+    dispatcher._last_send["user-1"] = 0
+    dispatcher._interruptible_sleep = MagicMock()
+    with patch("backend.channels.whatsapp_dispatcher.time.monotonic", return_value=1):
+        dispatcher._deliver({"text": "x"}, "user-1")
+
+    # The hard minimum is applied before the configured typing-delay cap.
+    assert dispatcher._interruptible_sleep.call_args.args == (2.0,)
+    assert channel.sent == [("user-1", "x", None)]
+
+
+def test_jitter_is_applied_within_configured_ratio():
+    dispatcher, _ = _dispatcher(whatsapp_delay_jitter_ratio="0.2")
+    dispatcher._interruptible_sleep = MagicMock()
+    with patch("backend.channels.whatsapp_dispatcher.secrets.randbelow", return_value=1000):
+        dispatcher._deliver({"text": "1234567890"}, "user-1")
+
+    # The base delay is 0.5s, so the upper 20% jitter boundary is 0.6s.
+    assert dispatcher._interruptible_sleep.call_args.args[0] == 0.6
+
+
+def test_shutdown_cancels_workers_and_sends_paused_presence():
+    dispatcher, channel = _dispatcher()
+    cancel = MagicMock()
+    dispatcher._workers["user-1"] = cancel
+
+    dispatcher.shutdown()
+
+    cancel.set.assert_called_once_with()
+    assert ("user-1", "paused") in channel.presence
+    dispatcher.shutdown()
+    cancel.set.assert_called_once_with()
+
+
+def test_ambiguous_send_error_is_not_retried():
+    dispatcher, channel = _dispatcher()
+    channel._do_send = MagicMock(side_effect=TimeoutError("read timeout"))
+    dispatcher._interruptible_sleep = lambda _: None
+
+    dispatcher._deliver({"text": "ambiguous"}, "user-1")
+
+    channel._do_send.assert_called_once()
+
+
+def test_queue_event_contains_depth_without_message_body():
+    dispatcher, _ = _dispatcher()
+    events = []
+    dispatcher._emit = lambda event, *args, **kwargs: events.append((event, kwargs))
+    with patch("backend.channels.whatsapp_dispatcher.threading.Thread"):
+        dispatcher.enqueue("user-1", "private outbound body", session_id="s-1")
+
+    assert events[0][0] == "queued"
+    assert events[0][1]["queue_depth"] == 1
+    assert all("private outbound body" not in repr(event) for event in events)
