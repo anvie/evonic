@@ -14,6 +14,18 @@ def _channel():
     return channel
 
 
+def test_whatsapp_system_instructions_require_natural_non_human_replies():
+    instructions = _channel().get_system_instructions()
+
+    assert "concisely, naturally, and conversationally" in instructions
+    assert "repetitive greetings" in instructions
+    assert "one complete combined answer" in instructions
+    assert "Avoid Markdown constructs" in instructions
+    assert "Do not claim to be human" in instructions
+    assert "AI assistant" in instructions
+    assert "NEVER use markdown symbols" not in instructions
+
+
 def test_lid_dm_uses_inbound_jid_and_pn_as_recovery_fallback():
     channel = _channel()
     payload = {

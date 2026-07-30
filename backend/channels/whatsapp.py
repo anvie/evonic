@@ -256,18 +256,16 @@ class WhatsAppChannel(BaseChannel):
 
     def get_system_instructions(self) -> Optional[str]:
         return (
-            "IMPORTANT — WhatsApp Formatting Constraint:\n"
-            "You are responding via WhatsApp which uses PLAIN TEXT only. "
-            "Markdown formatting (bold, italic, code blocks, headers, bullet lists) "
-            "is NOT supported and will appear as raw symbols.\n\n"
-            "STRICTLY FOLLOW THESE RULES:\n"
-            "- NEVER use markdown symbols: **, *, `, ```, #, -, >, [], ()\n"
-            "- Use UPPERCASE for emphasis instead of bold/italic\n"
-            "- Use numbered lists (1. 2. 3.) for lists\n"
-            "- Use indentation with spaces for structure\n"
-            "- Use plain URLs without markdown link syntax\n"
-            "- Write code inline with clear labels like \"CODE:\" prefix\n"
-            "- Keep responses clean and readable in plain text"
+            "WhatsApp response style:\n"
+            "- Reply concisely, naturally, and conversationally. Avoid repetitive greetings, "
+            "signatures, and unnecessary ceremony.\n"
+            "- Prefer one complete combined answer over several fragmented messages.\n"
+            "- Use plain text that renders reliably in WhatsApp. Avoid Markdown constructs "
+            "such as heading markers, fenced code blocks, and Markdown links; use plain URLs.\n"
+            "- Do not claim to be human. Be transparent that you are an AI assistant when "
+            "identity is relevant.\n"
+            "- Preserve useful structure with short paragraphs or simple numbered items "
+            "when needed."
         )
 
     def _resolve_agent(self, sender: str, is_group: bool, jid: str,
