@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -9,6 +10,7 @@ from flask import Blueprint, render_template, jsonify, request, Response, stream
 
 from backend.audit_logger import audit
 import config
+from models.boolean import FALSE_VALUES, TRUE_VALUES
 from models.db import db
 
 _logger = logging.getLogger(__name__)
@@ -32,6 +34,19 @@ def _sanitize_model(model: Dict[str, Any]) -> Dict[str, Any]:
     for key in _SENSITIVE_MODEL_KEYS:
         model.pop(key, None)
     return model
+
+
+def _coerce_boolean(value: Any) -> bool:
+    """Convert an API boolean value, rejecting ambiguous input."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in TRUE_VALUES:
+            return True
+        if normalized in FALSE_VALUES:
+            return False
+    raise ValueError('must be a boolean')
 
 
 @settings_bp.route('/system')
@@ -859,6 +874,23 @@ def api_get_general_settings():
         'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
         'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
+        # ── WhatsApp Safe Delivery (global) ──
+        'whatsapp_safe_delivery_enabled': db.get_setting('whatsapp_safe_delivery_enabled',
+                                                         '1' if config.WHATSAPP_SAFE_DELIVERY_ENABLED else '0') == '1',
+        'whatsapp_pool_window_seconds': float(db.get_setting('whatsapp_pool_window_seconds',
+                                                             str(config.WHATSAPP_POOL_WINDOW_SECONDS))),
+        'whatsapp_min_send_interval_seconds': float(db.get_setting('whatsapp_min_send_interval_seconds',
+                                                                    str(config.WHATSAPP_MIN_SEND_INTERVAL_SECONDS))),
+        'whatsapp_typing_chars_per_second': float(db.get_setting('whatsapp_typing_chars_per_second',
+                                                                  str(config.WHATSAPP_TYPING_CHARS_PER_SECOND))),
+        'whatsapp_max_typing_delay_seconds': float(db.get_setting('whatsapp_max_typing_delay_seconds',
+                                                                   str(config.WHATSAPP_MAX_TYPING_DELAY_SECONDS))),
+        'whatsapp_delay_jitter_ratio': float(db.get_setting('whatsapp_delay_jitter_ratio',
+                                                            str(config.WHATSAPP_DELAY_JITTER_RATIO))),
+        'whatsapp_max_outbound_per_minute': int(db.get_setting('whatsapp_max_outbound_per_minute',
+                                                               str(config.WHATSAPP_MAX_OUTBOUND_PER_MINUTE))),
+        'whatsapp_natural_formatting_enabled': db.get_setting('whatsapp_natural_formatting_enabled',
+                                                               '1' if config.WHATSAPP_NATURAL_FORMATTING_ENABLED else '0') == '1',
     })
 
 
@@ -999,6 +1031,44 @@ def api_batch_save():
             results['message_wrapper_enabled'] = enabled == '1'
         except (ValueError, TypeError) as e:
             errors.append(f'message_wrapper_enabled: {e}')
+
+    # ── WhatsApp Safe Delivery (global) ──
+    _whatsapp_bool_keys = ('whatsapp_safe_delivery_enabled', 'whatsapp_natural_formatting_enabled')
+    for key in _whatsapp_bool_keys:
+        if key in settings:
+            try:
+                enabled = '1' if _coerce_boolean(settings[key]) else '0'
+                db.set_setting(key, enabled)
+                results[key] = enabled == '1'
+            except (ValueError, TypeError) as e:
+                errors.append(f'{key}: {e}')
+
+    _whatsapp_float_keys = (
+        ('whatsapp_pool_window_seconds', 0.1, 30.0),
+        ('whatsapp_min_send_interval_seconds', 0.1, 60.0),
+        ('whatsapp_typing_chars_per_second', 1.0, 100.0),
+        ('whatsapp_max_typing_delay_seconds', 1.0, 120.0),
+        ('whatsapp_delay_jitter_ratio', 0.0, 0.5),
+    )
+    for key, lo, hi in _whatsapp_float_keys:
+        if key in settings:
+            try:
+                value = float(settings[key])
+                if not math.isfinite(value):
+                    raise ValueError('must be a finite number')
+                value = max(lo, min(hi, value))
+                db.set_setting(key, str(value))
+                results[key] = value
+            except (ValueError, TypeError) as e:
+                errors.append(f'{key}: {e}')
+
+    if 'whatsapp_max_outbound_per_minute' in settings:
+        try:
+            value = max(1, min(600, int(settings['whatsapp_max_outbound_per_minute'])))
+            db.set_setting('whatsapp_max_outbound_per_minute', str(value))
+            results['whatsapp_max_outbound_per_minute'] = value
+        except (ValueError, TypeError) as e:
+            errors.append(f'whatsapp_max_outbound_per_minute: {e}')
 
     # Default Model
     if 'default_model_id' in settings:
