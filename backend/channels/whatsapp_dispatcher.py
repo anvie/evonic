@@ -9,7 +9,6 @@ callback threads are never blocked by sleeps.
 """
 
 import hashlib
-import hashlib
 import logging
 import secrets
 import threading
@@ -386,7 +385,19 @@ class WhatsAppOutboundDispatcher:
 
             # --- Deliver ---
             try:
-                self._deliver(item, external_user_id)
+                retry = self._deliver(item, external_user_id)
+                if retry:
+                    with lock:
+                        queue = self._queues.get(external_user_id)
+                        if queue is not None:
+                            queue.appendleft(item)
+                            self._emit(
+                                "queued", external_user_id,
+                                item.get("session_id"),
+                                queue_depth=len(queue),
+                                queue_reason="throttle_pause",
+                            )
+                    cancel.wait(0.5)
             except Exception:
                 _logger.exception(
                     "dispatcher delivery failed for %s", external_user_id)
@@ -497,7 +508,7 @@ class WhatsAppOutboundDispatcher:
             self._emit("throttled", external_user_id, session_id,
                        queue_depth=self._queue_depth(external_user_id),
                        throttle_reason="outbound_quota")
-            return
+            return True
 
         # --- Typing indicator + wait ---
         try:
@@ -524,7 +535,7 @@ class WhatsAppOutboundDispatcher:
                 self._channel.send_typing(external_user_id, state="paused")
             except Exception:
                 pass
-            return
+            return True
 
         # --- Send chunks ---
         for i, chunk in enumerate(chunks):
