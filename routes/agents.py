@@ -1374,6 +1374,22 @@ def api_start_channel(agent_id, channel_id):
         return jsonify({'error': str(e)}), 500
 
 
+@agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/resume-outbound', methods=['POST'])
+def api_resume_whatsapp_outbound(agent_id, channel_id):
+    """Clear a live WhatsApp reach-out pause after operator review."""
+    from backend.channels.registry import channel_manager
+    from backend.channels.whatsapp import WhatsAppChannel
+
+    channel = db.get_channel(channel_id)
+    if not channel or channel['agent_id'] != agent_id:
+        return jsonify({'error': 'Channel not found for this agent'}), 404
+    instance = channel_manager.get_channel_instance(channel_id)
+    if not isinstance(instance, WhatsAppChannel) or not instance._dispatcher:
+        return jsonify({'error': 'WhatsApp channel not running'}), 409
+    instance._dispatcher.resume_after_restriction()
+    return jsonify({'success': True})
+
+
 @agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/stop', methods=['POST'])
 def api_stop_channel(agent_id, channel_id):
     from backend.channels.registry import channel_manager

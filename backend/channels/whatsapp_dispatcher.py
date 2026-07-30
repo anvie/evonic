@@ -8,11 +8,14 @@ All waiting happens in dedicated worker threads — the runtime and
 callback threads are never blocked by sleeps.
 """
 
+import hashlib
+import hashlib
 import logging
 import secrets
 import threading
 import time
 from collections import deque
+from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
 
 _logger = logging.getLogger(__name__)
@@ -91,13 +94,80 @@ class WhatsAppOutboundDispatcher:
 
         # Per-channel rate limiter
         self._outbound_window: deque = deque()  # (timestamp,) per send
+        self._rate_limit_lock = threading.Lock()
 
         self._running = True
         self._shutdown_lock = threading.Lock()
 
-        # Dedup short-term store: (external_user_id, text_hash) -> last_sent_ts
+        # A reach-out restriction applies to the entire WhatsApp account.
+        self._restriction_lock = threading.Lock()
+        self._restriction_until = 0.0
+        self._restriction_reason: Optional[str] = None
+
+        # Dedup short-term store: (external_user_id, text_digest) -> last_seen_ts
         self._dedup: Dict[tuple, float] = {}
+        self._dedup_lock = threading.Lock()
         self._dedup_ttl = 30.0  # seconds
+
+    def pause_for_restriction(self, ends_at: Optional[str] = None,
+                              reason: Optional[str] = None) -> None:
+        """Pause delivery until the bridge deadline or an explicit resume."""
+        until = float("inf")
+        if ends_at:
+            try:
+                parsed = datetime.fromisoformat(ends_at.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                until = time.monotonic() + max(0.0, parsed.timestamp() - time.time())
+            except (TypeError, ValueError):
+                _logger.warning("Invalid WhatsApp restriction deadline: %s", ends_at)
+        with self._restriction_lock:
+            self._restriction_until = until
+            self._restriction_reason = reason
+        self._emit("restriction_paused", restriction_ends=ends_at,
+                   restriction_reason=reason)
+
+    def resume_after_restriction(self, source: str = "operator") -> None:
+        """Clear a bridge restriction after expiry or an operator action."""
+        with self._restriction_lock:
+            was_paused = self._restriction_until > 0
+            self._restriction_until = 0.0
+            self._restriction_reason = None
+        if was_paused:
+            self._emit("restriction_resumed", resume_source=source)
+
+    def _restriction_active(self) -> bool:
+        with self._restriction_lock:
+            if self._restriction_until == 0:
+                return False
+            if time.monotonic() < self._restriction_until:
+                return True
+        self.resume_after_restriction(source="deadline")
+        return False
+
+    def _emit(self, event: str, external_user_id: Optional[str] = None,
+              session_id: Optional[str] = None, **metadata) -> None:
+        """Emit queue telemetry using identifiers and metadata, never text."""
+        payload = {
+            "event": event,
+            "channel_type": "whatsapp",
+            "channel_id": getattr(self._channel, "channel_id", None),
+            "agent_id": getattr(self._channel, "agent_id", None),
+            "external_user_id": external_user_id,
+            "session_id": session_id,
+            **metadata,
+        }
+        try:
+            from backend.event_stream import event_stream
+            event_stream.emit("whatsapp_outbound_queue", payload)
+        except Exception:
+            _logger.debug("Unable to emit WhatsApp queue event %s", event,
+                          exc_info=True)
+
+    def _queue_depth(self, external_user_id: str) -> int:
+        with self._global_lock:
+            queue = self._queues.get(external_user_id)
+            return len(queue) if queue else 0
 
     # ------------------------------------------------------------------
     # Settings helpers
@@ -156,6 +226,8 @@ class WhatsAppOutboundDispatcher:
         last = self._dedup.get(dedup_key)
         if last is not None and (now - last) < self._dedup_ttl:
             _logger.debug("dedup suppressed duplicate to %s", external_user_id)
+            self._emit("deduplicated", external_user_id, session_id,
+                       queue_depth=self._queue_depth(external_user_id))
             return
         self._dedup[dedup_key] = now
         self._prune_dedup(now)
@@ -183,6 +255,8 @@ class WhatsAppOutboundDispatcher:
                     "pooled %s item for %s (queue depth %d)",
                     "final" if is_final else "intermediate",
                     external_user_id, len(queue))
+                self._emit("pooled", external_user_id, session_id,
+                           queue_depth=len(queue))
             else:
                 item = {
                     "text": text,
@@ -191,6 +265,8 @@ class WhatsAppOutboundDispatcher:
                     "queued_at": now,
                 }
                 queue.append(item)
+                self._emit("queued", external_user_id, session_id,
+                           queue_depth=len(queue))
 
             # If this is a final message, absorb pending intermediates
             # that are ahead of us in the queue (they arrived before but
@@ -206,15 +282,17 @@ class WhatsAppOutboundDispatcher:
                     else:
                         keep.append(qi)
                         break
-                # Remaining items stay in queue
+                # Remaining items stay in queue. The final item may have
+                # pooled into the preceding entry, so prepend to its actual
+                # retained queue item rather than a local variable.
                 remain = list(queue)
                 queue.clear()
-                if merged_text:
-                    item["text"] = merged_text + "\n\n" + item["text"]
                 for ki in keep:
                     queue.append(ki)
                 for ri in remain:
                     queue.append(ri)
+                if merged_text and queue:
+                    queue[0]["text"] = merged_text + "\n\n" + queue[0]["text"]
 
             # Reset pool deadline
             self._pool_deadline[external_user_id] = now + pool_window
@@ -268,6 +346,12 @@ class WhatsAppOutboundDispatcher:
         while self._running and not cancel.is_set():
             # Wait for an item that is ready to send
             item = None
+            if self._restriction_active():
+                self._emit("throttled", external_user_id,
+                           queue_depth=self._queue_depth(external_user_id),
+                           throttle_reason="reachout_restriction")
+                cancel.wait(1.0)
+                continue
             while self._running and not cancel.is_set():
                 with lock:
                     queue = self._queues.get(external_user_id)
@@ -282,7 +366,7 @@ class WhatsAppOutboundDispatcher:
 
                     if peek["is_final"] or peek_age >= pool_window:
                         # Ready to send: pop all ready items and merge
-                        merged = self._pop_ready(
+                        merged = self._pop_ready_impl(
                             lock, external_user_id, pool_window)
                         if merged is None:
                             continue  # retry
@@ -311,22 +395,7 @@ class WhatsAppOutboundDispatcher:
         with self._global_lock:
             self._workers.pop(external_user_id, None)
 
-    @staticmethod
-    def _pop_ready(lock: threading.Lock, external_user_id: str,
-                   pool_window: float) -> Optional[dict]:
-        """Pop all ready items from the queue, merging their text.
-
-        Must be called with *lock* held.  Returns a merged item or None
-        if nothing is ready.
-        """
-        from collections import deque as _deque
-
-        queue = _deque()  # local reference
-        # We need to access the shared queue — get it from the instance
-        # This is a staticmethod; we pass queue from the caller
-        return None  # Placeholder — see _pop_ready_impl below
-
-    def _pop_ready_impl(self, lock: threading.Lock,
+    def _pop_ready_impl(self, _lock: threading.Lock,
                         external_user_id: str,
                         pool_window: float) -> Optional[dict]:
         """Pop all ready items from the queue for *external_user_id*."""
@@ -417,12 +486,17 @@ class WhatsAppOutboundDispatcher:
         _logger.debug(
             "dispatcher delay=%0.2fs (text_len=%d chunks=%d min_dist=%0.2f) for %s",
             delay, len(text), len(chunks), min_dist, external_user_id)
+        self._emit("delayed", external_user_id, session_id,
+                   delay_seconds=round(delay, 3), queue_depth=self._queue_depth(external_user_id))
 
         # Rate-limit check (circuit breaker)
-        if not self._check_rate_limit():
+        if not self._reserve_outbound_slot():
             _logger.warning(
                 "dispatcher rate limit exceeded — throttling send to %s",
                 external_user_id)
+            self._emit("throttled", external_user_id, session_id,
+                       queue_depth=self._queue_depth(external_user_id),
+                       throttle_reason="outbound_quota")
             return
 
         # --- Typing indicator + wait ---
@@ -442,23 +516,47 @@ class WhatsAppOutboundDispatcher:
                 pass
             return
 
+        if self._restriction_active():
+            self._emit("throttled", external_user_id, session_id,
+                       queue_depth=self._queue_depth(external_user_id),
+                       throttle_reason="reachout_restriction")
+            try:
+                self._channel.send_typing(external_user_id, state="paused")
+            except Exception:
+                pass
+            return
+
         # --- Send chunks ---
         for i, chunk in enumerate(chunks):
             if not self._running:
                 break
-            if not self._check_rate_limit():
+            if i > 0 and not self._reserve_outbound_slot():
                 _logger.warning(
                     "dispatcher rate limit hit mid-send for %s", external_user_id)
+                self._emit("throttled", external_user_id, session_id,
+                           queue_depth=self._queue_depth(external_user_id),
+                           throttle_reason="outbound_quota")
                 break
 
             try:
-                self._channel._do_send(
+                delivered = self._channel._do_send(
                     external_user_id, chunk, session_id=session_id)
-                self._record_outbound()
+                if delivered is False:
+                    self._emit("failed", external_user_id, session_id,
+                               chunk_index=i + 1, chunk_count=len(chunks),
+                               queue_depth=self._queue_depth(external_user_id))
+                    break
+                self._emit("sent", external_user_id, session_id,
+                           chunk_index=i + 1, chunk_count=len(chunks),
+                           queue_depth=self._queue_depth(external_user_id))
             except Exception:
                 _logger.exception(
                     "dispatcher chunk %d/%d failed for %s",
                     i + 1, len(chunks), external_user_id)
+                self._emit("failed", external_user_id, session_id,
+                           chunk_index=i + 1, chunk_count=len(chunks),
+                           queue_depth=self._queue_depth(external_user_id))
+                break
 
             # Inter-chunk pacing
             if i < len(chunks) - 1 and self._running:
@@ -492,25 +590,21 @@ class WhatsAppOutboundDispatcher:
             time.sleep(min(tick, seconds - elapsed))
             elapsed += tick
 
-    def _check_rate_limit(self) -> bool:
-        """Return True if sending is allowed under the per-channel rate limit."""
+    def _reserve_outbound_slot(self) -> bool:
+        """Atomically reserve one rolling outbound slot before a send."""
         max_per_minute = self._setting_int("whatsapp_max_outbound_per_minute", "30")
         if max_per_minute <= 0:
             return True
 
         now = time.monotonic()
         window = 60.0
-        # Prune old entries
-        while self._outbound_window and now - self._outbound_window[0] > window:
-            self._outbound_window.popleft()
-
-        if len(self._outbound_window) >= max_per_minute:
-            return False
-        return True
-
-    def _record_outbound(self):
-        """Record a send timestamp for rate limiting."""
-        self._outbound_window.append(time.monotonic())
+        with self._rate_limit_lock:
+            while self._outbound_window and now - self._outbound_window[0] > window:
+                self._outbound_window.popleft()
+            if len(self._outbound_window) >= max_per_minute:
+                return False
+            self._outbound_window.append(now)
+            return True
 
     def _prune_dedup(self, now: float):
         """Remove expired dedup entries."""

@@ -650,6 +650,11 @@ class WhatsAppChannel(BaseChannel):
             })
             if (status == 'failed' and payload.get('terminal')
                     and payload.get('reachout_timelocked')):
+                if self._dispatcher:
+                    self._dispatcher.pause_for_restriction(
+                        payload.get('reachout_enforcement_ends'),
+                        payload.get('reachout_enforcement_type'),
+                    )
                 self._record_reachout_restriction(payload, db, event_stream)
             return
 
