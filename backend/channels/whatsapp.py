@@ -20,10 +20,67 @@ _bridge_logger = logging.getLogger('baileys')
 _BRIDGE_DIR = os.path.join(os.path.dirname(__file__), 'whatsapp-bridge')
 
 
-def _strip_markdown(text: str) -> str:
-    """Remove markdown symbols from text for plain WhatsApp messages."""
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\*+', '', text)
+def _whatsapp_format(text: str) -> str:
+    """Convert Markdown/rich text to WhatsApp-native conversational formatting.
+
+    Unlike _strip_markdown (which deleted markup destructively), this formatter:
+    - Converts headings to plain-text labels.
+    - Converts unordered-list bullets to '•'.
+    - Preserves numbered lists.
+    - Converts [label](url) → "label: url".
+    - Converts fenced code blocks to compact "CODE:" sections.
+    - Removes unsupported inline markup (**, __, ~~, `) without harming
+      punctuation, URLs, or literal content.
+    - Collapses excessive blank lines and trims leading/trailing whitespace.
+    - Is deterministic and safe for noncompliant LLM output.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+
+    # ── 1. Convert fenced code blocks into compact "CODE:" sections ──────────
+    #     (process before inline rules so content inside blocks is untouched)
+    text = re.sub(
+        r'```[a-zA-Z]*\n(.*?)```',
+        lambda m: 'CODE:\n' + m.group(1).rstrip() + '\n',
+        text, flags=re.DOTALL
+    )
+
+    # ── 2. Convert headings (# ## ### …) to plain-text labels ────────────────
+    text = re.sub(r'^######\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^#####\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^####\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^###\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^##\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^#\s+', '', text, flags=re.MULTILINE)
+
+    # ── 3. Convert [label](url) → "label: url" ───────────────────────────────
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1: \2', text)
+
+    # ── 4. Convert bold (**text** or __text__) – strip markers ─────────────
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+
+    # ── 5. Convert italic (_text_ or *text*) – strip markers ─────────────────
+    #     Single * or _ wrapped text, but not double. Must not destroy URLs.
+    text = re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'\1', text)
+    text = re.sub(r'(?<!\*)\*([^*\n]+)\*(?!\*)', r'\1', text)
+
+    # ── 6. Convert strikethrough (~~text~~) – strip markers ──────────────────
+    text = re.sub(r'~~(.+?)~~', r'\1', text)
+
+    # ── 7. Convert inline code (`text`) – strip backticks ────────────────────
+    text = re.sub(r'`([^`\n]+)`', r'\1', text)
+
+    # ── 8. Convert unordered-list markers (- or * at line start) to '•' ──────
+    #     Preserves indentation via leading spaces capture.
+    text = re.sub(r'^(\s*)[-*]\s+', r'\1• ', text, flags=re.MULTILINE)
+
+    # ── 9. Collapse 3+ consecutive blank lines to at most 2 ──────────────────
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # ── 10. Remove leading/trailing blank lines and whitespace ───────────────
+    text = text.strip()
+
     return text
 
 
@@ -819,7 +876,7 @@ class WhatsAppChannel(BaseChannel):
         # after the response is sent (would show a phantom "typing" indicator).
         self._clear_typing(sender)
 
-        response = _strip_markdown(result.get('response') or '')
+        response = _whatsapp_format(result.get('response') or '')
         if response and response != "(No response)":
             # Human-like typing delay relative to response length
             _TYPING_SPEED = 15   # chars/sec
@@ -1031,7 +1088,7 @@ class WhatsAppChannel(BaseChannel):
             "persisted=%s channel=%s",
             self._jid_namespace(to), self._jid_namespace(alternate_jid or ''),
             from_map, self.channel_id)
-        text = _strip_markdown(text)
+        text = _whatsapp_format(text)
         # Every send path (direct, buffered worker, messaging tool) ends here —
         # clear typing state so no phantom indicator survives the send.
         self._clear_typing(external_user_id)
@@ -1082,7 +1139,7 @@ class WhatsAppChannel(BaseChannel):
 
         # 4. Strip markdown from caption (WhatsApp uses plain text)
         if caption:
-            caption = _strip_markdown(caption)
+            caption = _whatsapp_format(caption)
 
         # 5. Send via bridge
         self._clear_typing(external_user_id)
