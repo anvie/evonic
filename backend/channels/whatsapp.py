@@ -12,6 +12,7 @@ import uuid
 import requests
 from typing import Dict, Any, Optional
 from backend.channels.base import BaseChannel, strip_system_tags
+from backend.channels.whatsapp_dispatcher import WhatsAppOutboundDispatcher
 
 _logger = logging.getLogger(__name__)
 # Bridge (Node/Baileys) stdout is routed to logs/baileys.log via EVONIC_LOG_ROUTES
@@ -106,6 +107,15 @@ def _split_message(text: str, max_len: int = 4096) -> list:
     return chunks
 
 
+def _read_global_setting(key: str, default: str) -> str:
+    """Read a WhatsApp safe-delivery setting from the global app_settings table."""
+    try:
+        from models.db import db
+        return db.get_setting(key, default) or default
+    except Exception:
+        return default
+
+
 def _format_quoted_context(quoted_text=None, quoted_message=None,
                            quoted_is_bot=False, quoted_sender_name='',
                            quoted_sender='', is_group=False) -> str:
@@ -182,6 +192,9 @@ class WhatsAppChannel(BaseChannel):
         # Per-user suppression deadline (monotonic) — blocks late llm_thinking
         # events from re-scheduling typing right after a response was sent
         self._typing_suppress_until: Dict[str, float] = {}
+
+        # ── Outbound dispatcher (lazy-init in start()) ──
+        self._dispatcher: Optional[WhatsAppOutboundDispatcher] = None
 
     def _load_persisted_jid_routes(self, config: dict) -> None:
         """Restore reply JIDs learned from inbound traffic before a restart."""
@@ -429,6 +442,12 @@ class WhatsAppChannel(BaseChannel):
         event_stream.on('approval_resolved', _on_approval_resolved)
         event_stream.on('llm_thinking', _on_llm_thinking)
 
+        # ── Initialize outbound dispatcher ──
+        self._dispatcher = WhatsAppOutboundDispatcher(
+            self,
+            settings_getter=_read_global_setting,
+        )
+
         self._running = True
 
         # Start the bridge in a background thread so start() returns immediately
@@ -572,6 +591,9 @@ class WhatsAppChannel(BaseChannel):
         if not self._running:
             return
         self._running = False
+        if self._dispatcher:
+            self._dispatcher.shutdown()
+            self._dispatcher = None
 
         from backend.event_stream import event_stream
         if self._approval_required_handler:
@@ -876,30 +898,12 @@ class WhatsAppChannel(BaseChannel):
         # after the response is sent (would show a phantom "typing" indicator).
         self._clear_typing(sender)
 
-        response = _whatsapp_format(result.get('response') or '')
+        response = result.get('response') or ''
         if response and response != "(No response)":
-            # Human-like typing delay relative to response length
-            _TYPING_SPEED = 15   # chars/sec
-            _MIN_DELAY = 1.0     # seconds
-            _MAX_DELAY = 8.0     # seconds
-            _TYPING_REFRESH = 5.0  # re-send composing every N seconds during delay
-
-            delay = max(_MIN_DELAY, min(len(response) / _TYPING_SPEED, _MAX_DELAY))
-            self.send_typing(sender)
-            deadline = time.monotonic() + delay
-            while time.monotonic() < deadline:
-                remaining = deadline - time.monotonic()
-                time.sleep(min(_TYPING_REFRESH, remaining))
-                if time.monotonic() < deadline:
-                    self.send_typing(sender)
-
-            # Use the session identity for delivery.  Group slash commands are
-            # handled synchronously by the runtime, so unlike queued replies
-            # this path must explicitly address the group rather than the
-            # participant who issued the command.
+            # Use the session identity for delivery. Group slash commands need
+            # the group recipient rather than the participant who issued them.
             response_recipient = session_user_id if is_group else sender
-            for chunk in _split_message(response):
-                self._do_send(response_recipient, chunk, session_id=session_id)
+            self.send_message(response_recipient, response, session_id=session_id)
         else:
             # No message will follow — actively clear any composing presence
             # shown during the thinking phase.
@@ -1049,6 +1053,24 @@ class WhatsAppChannel(BaseChannel):
         except Exception as e:
             _logger.warning("WhatsApp typing indicator failed for %s: %s", external_user_id, e)
 
+    def send_message_buffered(self, external_user_id: str, text: str,
+                              session_id: str = None):
+        """Queue intermediate output without blocking runtime callback threads."""
+        if self._dispatcher:
+            self._dispatcher.enqueue(
+                external_user_id, text, session_id=session_id, is_final=False)
+            return
+        super().send_message_buffered(external_user_id, text, session_id=session_id)
+
+    def send_message(self, external_user_id: str, text: str,
+                     session_id: str = None):
+        """Queue final output and absorb pending intermediate messages."""
+        if self._dispatcher:
+            self._dispatcher.enqueue(
+                external_user_id, text, session_id=session_id, is_final=True)
+            return
+        super().send_message(external_user_id, text, session_id=session_id)
+
     def get_qr(self) -> dict:
         """Fetch QR code data from the bridge."""
         try:
@@ -1077,7 +1099,8 @@ class WhatsAppChannel(BaseChannel):
         return {'status': self._last_bridge_status or 'disconnected'}
 
     def _do_send(self, external_user_id: str, text: str,
-                 session_id: Optional[str] = None):
+                 session_id: Optional[str] = None,
+                 _inter_chunk_seconds: float = 0.0):
         # Prefer the exact inbound JID, including @lid. Persisted routes restore
         # this mapping for delayed agent/tool sends after a process restart.
         to = self._jid_map.get(external_user_id, external_user_id)
@@ -1088,11 +1111,18 @@ class WhatsAppChannel(BaseChannel):
             "persisted=%s channel=%s",
             self._jid_namespace(to), self._jid_namespace(alternate_jid or ''),
             from_map, self.channel_id)
+        # Format text for WhatsApp (already formatted by dispatcher; safe no-op
+        # for bypass calls like pairing/approval failures).
         text = _whatsapp_format(text)
-        # Every send path (direct, buffered worker, messaging tool) ends here —
-        # clear typing state so no phantom indicator survives the send.
+        # Every send path ends here — clear typing state so no phantom indicator
+        # survives the send.
         self._clear_typing(external_user_id)
-        for chunk in _split_message(text):
+        chunks = _split_message(text)
+        for i, chunk in enumerate(chunks):
+            # Inter-chunk pacing: insert a short gap between 4096-char splits
+            # so one answer is not emitted as a zero-gap burst.
+            if i > 0 and _inter_chunk_seconds > 0:
+                time.sleep(_inter_chunk_seconds)
             correlation_id = uuid.uuid4().hex
             payload = {
                 'to': to,
