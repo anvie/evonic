@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Warn after branch switches when unfinished work may be easy to overlook.
+
+set -euo pipefail
+
+previous_head=${1:-}
+new_head=${2:-}
+branch_checkout=${3:-0}
+
+# Git calls this hook for file checkouts too; branch changes are the relevant risk.
+if [[ "$branch_checkout" != "1" ]]; then
+    exit 0
+fi
+
+warnings=()
+
+if git stash list | grep -q .; then
+    warnings+=("pending Git stash entries: $(git stash list | wc -l | tr -d ' ')")
+fi
+
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+    warnings+=("uncommitted working-tree changes")
+fi
+
+if ((${#warnings[@]})); then
+    printf '%s\n' 'WARNING: Branch changed while unfinished work is present:' >&2
+    printf '  - %s\n' "${warnings[@]}" >&2
+    printf '%s\n' 'Review with: git status --short && git stash list' >&2
+    printf '%s\n' 'Commit, stash with a clear purpose, or discard the work deliberately.' >&2
+fi
