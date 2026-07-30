@@ -29,6 +29,7 @@ window.settingsGeneral = {
                 defaultModelId: defaultModel && defaultModel.model ? defaultModel.model.id : "",
                 visionModelId: general.vision_model_id || "",
                 visionFallbackModelId: general.vision_fallback_model_id || "",
+                visionFallbackModel2Id: general.vision_fallback_model_2_id || "",
                 kbOrganizerModelId: general.kb_organizer_model_id || "",
                 classifierModelId: classifier ? classifier.model_id || "" : "",
                 cmpModelId: cmpModel ? cmpModel.model_id || "" : "",
@@ -88,6 +89,7 @@ window.settingsGeneral = {
             defaultModelId: val("default-model-select"),
             visionModelId: val("vision-model-select"),
             visionFallbackModelId: val("vision-fallback-model-select"),
+            visionFallbackModel2Id: val("vision-fallback-model-2-select"),
             kbOrganizerModelId: val("kb-organizer-model-select"),
             classifierModelId: val("task-classifier-model-select"),
             cmpModelId: val("cmp-model-select"),
@@ -133,12 +135,9 @@ window.settingsGeneral = {
             current.visionModelId,
             "Auto-detect (first vision-capable model)",
         );
-        fill(
-            "vision-fallback-model-select",
-            enabled.filter((m) => m.vision_supported),
-            current.visionFallbackModelId,
-            "No fallback",
-        );
+        const visionModels = enabled.filter((m) => m.vision_supported);
+        fill("vision-fallback-model-select", visionModels, current.visionFallbackModelId, "No fallback");
+        fill("vision-fallback-model-2-select", visionModels, current.visionFallbackModel2Id, "No fallback");
         fill(
             "kb-organizer-model-select",
             enabled,

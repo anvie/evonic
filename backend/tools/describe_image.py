@@ -6,8 +6,9 @@ main LLM. The vision model is selected via a configurable priority chain:
   1. agent-level `vision_model_id` column
   2. system config `vision_model_id` (app_settings)
   3. system fallback `vision_fallback_model_id` (app_settings)
-  4. agent's current model (if vision_supported)
-  5. all enabled models with `vision_supported = 1` in `llm_models`
+  4. system fallback `vision_fallback_model_2_id` (app_settings)
+  5. agent's current model (if vision_supported)
+  6. all enabled models with `vision_supported = 1` in `llm_models`
 
 On connection errors, the tool automatically falls back to the next
 vision-capable model in priority order.
@@ -163,8 +164,9 @@ def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
       1. Agent-level vision_model_id (from agent_context)
       2. System config vision_model_id (app_settings)
       3. System fallback vision_fallback_model_id (app_settings)
-      4. Agent's current model (if vision_supported)
-      5. All enabled models with vision_supported = 1
+      4. System fallback vision_fallback_model_2_id (app_settings)
+      5. Agent's current model (if vision_supported)
+      6. All enabled models with vision_supported = 1
 
     Returns:
         (models_list, error_string).  Exactly one will be non-None/empty.
@@ -196,14 +198,15 @@ def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
         if model and model.get("enabled") and model.get("vision_supported"):
             _add_model(model)
 
-    # Priority 3: system fallback model (configured in System Settings → General)
-    fallback_vision_id = db.get_setting("vision_fallback_model_id")
-    if fallback_vision_id and fallback_vision_id not in seen_ids:
-        model = db.get_model_by_id(fallback_vision_id)
-        if model and model.get("enabled") and model.get("vision_supported"):
-            _add_model(model)
+    # Priority 3-4: explicitly configured fallback chain.
+    for setting_key in ("vision_fallback_model_id", "vision_fallback_model_2_id"):
+        fallback_vision_id = db.get_setting(setting_key)
+        if fallback_vision_id and fallback_vision_id not in seen_ids:
+            model = db.get_model_by_id(fallback_vision_id)
+            if model and model.get("enabled") and model.get("vision_supported"):
+                _add_model(model)
 
-    # Priority 4: agent's current model (natural fallback before global auto-detect).
+    # Priority 5: agent's current model (natural fallback before global auto-detect).
     _agent_db_id = agent.get("_db_agent_id") or agent.get("id")
     agent_model = db.get_agent_model(_agent_db_id)
     if agent_model and agent_model.get("vision_supported"):

@@ -857,6 +857,7 @@ def api_get_general_settings():
         'theme': db.get_setting('theme', 'system'),
         'vision_model_id': db.get_setting('vision_model_id', ''),
         'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
+        'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
     })
 
@@ -1013,38 +1014,40 @@ def api_batch_save():
             else:
                 errors.append('default_model_id: Model not found')
 
-    # Vision Model
-    if 'vision_model_id' in settings:
-        vision_model_id = settings['vision_model_id']
-        if vision_model_id:
-            model = db.get_model_by_id(vision_model_id)
-            if model and model.get('vision_supported'):
-                db.set_setting('vision_model_id', model['id'])
-                results['vision_model_id'] = model['id']
-            elif model:
-                errors.append('vision_model_id: Model does not support vision')
+    # Vision routing chain (primary + two fallbacks)
+    vision_setting_keys = (
+        'vision_model_id',
+        'vision_fallback_model_id',
+        'vision_fallback_model_2_id',
+    )
+    if any(key in settings for key in vision_setting_keys):
+        vision_ids = {
+            key: settings.get(key, db.get_setting(key, ''))
+            for key in vision_setting_keys
+        }
+        duplicate_vision_ids = {
+            model_id for model_id in vision_ids.values() if model_id
+            and list(vision_ids.values()).count(model_id) > 1
+        }
+        for key in vision_setting_keys:
+            if key not in settings:
+                continue
+            model_id = vision_ids[key]
+            if model_id in duplicate_vision_ids:
+                errors.append(f'{key}: Must differ from the other configured vision models')
+                continue
+            if model_id:
+                model = db.get_model_by_id(model_id)
+                if model and model.get('vision_supported'):
+                    db.set_setting(key, model['id'])
+                    results[key] = model['id']
+                elif model:
+                    errors.append(f'{key}: Model does not support vision')
+                else:
+                    errors.append(f'{key}: Model not found')
             else:
-                errors.append('vision_model_id: Model not found')
-        else:
-            # Allow clearing the setting
-            db.set_setting('vision_model_id', '')
-            results['vision_model_id'] = ''
-
-    # Vision Fallback Model
-    if 'vision_fallback_model_id' in settings:
-        fallback_model_id = settings['vision_fallback_model_id']
-        if fallback_model_id:
-            model = db.get_model_by_id(fallback_model_id)
-            if model and model.get('vision_supported'):
-                db.set_setting('vision_fallback_model_id', model['id'])
-                results['vision_fallback_model_id'] = model['id']
-            elif model:
-                errors.append('vision_fallback_model_id: Model does not support vision')
-            else:
-                errors.append('vision_fallback_model_id: Model not found')
-        else:
-            db.set_setting('vision_fallback_model_id', '')
-            results['vision_fallback_model_id'] = ''
+                db.set_setting(key, '')
+                results[key] = ''
 
     # KB Organizer Model — global default for the KB organizer background sub-agent
     if 'kb_organizer_model_id' in settings:
