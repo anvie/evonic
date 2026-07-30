@@ -621,6 +621,7 @@ def _csrf_exempt(path):
     """Return True if the path should skip CSRF validation."""
     if path in ('/login', '/logout', '/setup',
                 '/api/health', '/api/connector/pair',
+                '/api/internal/skills/muktamar-agent/verify-token',
                 '/api/setup', '/api/setup/test-connection', '/api/setup/docker-status'):
         return True
     if path.startswith(('/static/', '/webhook', '/plugin/', '/ws/',
@@ -697,6 +698,8 @@ def enforce_auth():
     # Always-accessible endpoints (no auth required)
     if request.path == '/api/health':
         return None
+    if request.path == '/api/internal/skills/muktamar-agent/verify-token':
+        return None  # Loopback-only route validates its own token against skill config.
     if request.path.startswith('/api/channels/whatsapp-bridge/'):
         return None  # Baileys sidecar calls this from localhost
     if request.path == '/api/connector/pair':
