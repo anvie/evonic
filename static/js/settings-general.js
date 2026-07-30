@@ -78,6 +78,13 @@ window.settingsGeneral = {
         check("public-history-toggle", s.public_history);
         check("long-running-guard-toggle", s.long_running_guard_enabled);
         check("message-wrapper-toggle", s.message_wrapper_enabled);
+        check("whatsapp-safe-delivery-toggle", s.whatsapp_safe_delivery_enabled);
+        check("whatsapp-natural-formatting-toggle", s.whatsapp_natural_formatting_enabled);
+        set("whatsapp-pool-window-input", s.whatsapp_pool_window_seconds);
+        set("whatsapp-min-send-interval-input", s.whatsapp_min_send_interval_seconds);
+        set("whatsapp-typing-speed-input", s.whatsapp_typing_chars_per_second);
+        set("whatsapp-max-typing-delay-input", s.whatsapp_max_typing_delay_seconds);
+        set("whatsapp-outbound-limit-input", s.whatsapp_max_outbound_per_minute);
     },
 
     _currentSelectValues() {

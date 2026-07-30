@@ -126,9 +126,13 @@ const AutoSave = {
         clearTimeout(this._timers.get(key));
         this._timers.delete(key);
         let value = el.value;
-        if ((el.dataset.settingType || "") === "int") {
+        const type = el.dataset.settingType || "";
+        if (type === "int") {
             if (value === "" || isNaN(parseInt(value, 10))) return; // incomplete input
             value = parseInt(value, 10);
+        } else if (type === "float") {
+            if (value === "" || !Number.isFinite(Number(value))) return; // incomplete input
+            value = Number(value);
         }
         if (el._lastSaved === value) return; // nothing changed
         this.save(key, value, el);
