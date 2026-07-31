@@ -105,6 +105,29 @@ def _emit(event_name, task):
         pass
 
 
+def _enhance_completion(messages):
+    """Run Kanban enhancement with the global default model and its fallback."""
+    from backend.llm_client import LLMClient, get_llm_client
+    from models.db import db
+
+    completion_kwargs = {
+        'messages': messages,
+        'temperature': 0.3,
+        'enable_thinking': False,
+        'max_tokens': 4096,
+    }
+    result = get_llm_client().chat_completion(**completion_kwargs)
+    if result.get('success'):
+        return result
+
+    fallback_id = db.get_setting('default_model_fallback_id', '')
+    fallback_model = db.get_model_by_id(fallback_id) if fallback_id else None
+    if not fallback_model or not fallback_model.get('enabled', True):
+        return result
+
+    return LLMClient(model_config=fallback_model).chat_completion(**completion_kwargs)
+
+
 def create_blueprint():
     bp = Blueprint('kanban', __name__, template_folder=os.path.join(PLUGIN_DIR, 'templates'))
 
@@ -198,8 +221,6 @@ def create_blueprint():
         if not description:
             return jsonify({'error': 'Description is required'}), 400
 
-        from backend.llm_client import get_llm_client
-
         system_prompt = (
             "You are a professional task-writing assistant. Your job is to:\n"
             "1. Enhance the user's task description to be more detailed, structured, and actionable, but not too much, simple and lean but descriptive.\n"
@@ -215,15 +236,10 @@ def create_blueprint():
 
         user_prompt = f"Title: {data.get('title', '').strip() or '(not provided)'}\n\nDescription: {description}"
 
-        result = get_llm_client().chat_completion(
-            messages=[
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_prompt},
-            ],
-            temperature=0.3,
-            enable_thinking=False,
-            max_tokens=4096,
-        )
+        result = _enhance_completion([
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': user_prompt},
+        ])
 
         # Check for API-level errors
         if not result.get('success'):

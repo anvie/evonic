@@ -71,3 +71,70 @@ def test_all_agents_returns_enabled_agents_when_skill_lookup_fails():
             "avatar_path": "",
         }],
     }
+
+
+def _failure(error_type="api_error"):
+    return {"success": False, "error_type": error_type, "error_detail": "provider failed"}
+
+
+def test_enhance_retries_with_global_fallback_after_primary_failure():
+    fallback_result = _FakeLLMClient()
+    primary = type("Primary", (), {"chat_completion": lambda self, **kwargs: _failure()})()
+    with patch("backend.llm_client.get_llm_client", return_value=primary), patch(
+        "backend.llm_client.LLMClient", return_value=fallback_result
+    ) as fallback_client, patch("models.db.db.get_setting", return_value="fallback-id"), patch(
+        "models.db.db.get_model_by_id", return_value={"id": "fallback-id", "enabled": 1}
+    ):
+        response = _client().post(
+            "/api/kanban/enhance",
+            json={"title": "", "description": "Use fallback."},
+        )
+
+    assert response.status_code == 200
+    assert fallback_client.call_count == 1
+
+
+def test_enhance_does_not_retry_after_primary_success():
+    primary = _FakeLLMClient()
+    with patch("backend.llm_client.get_llm_client", return_value=primary), patch(
+        "backend.llm_client.LLMClient"
+    ) as fallback_client:
+        response = _client().post(
+            "/api/kanban/enhance",
+            json={"title": "", "description": "Primary works."},
+        )
+
+    assert response.status_code == 200
+    fallback_client.assert_not_called()
+
+
+def test_enhance_does_not_retry_malformed_success():
+    malformed = type("Malformed", (), {"chat_completion": lambda self, **kwargs: {
+        "success": True, "response": {"choices": []}
+    }})()
+    with patch("backend.llm_client.get_llm_client", return_value=malformed), patch(
+        "backend.llm_client.LLMClient"
+    ) as fallback_client:
+        response = _client().post(
+            "/api/kanban/enhance",
+            json={"title": "", "description": "Malformed response."},
+        )
+
+    assert response.status_code == 500
+    assert response.get_json()["error"] == "LLM returned no choices"
+    fallback_client.assert_not_called()
+
+
+def test_enhance_does_not_retry_without_enabled_fallback():
+    primary = type("Primary", (), {"chat_completion": lambda self, **kwargs: _failure()})()
+    with patch("backend.llm_client.get_llm_client", return_value=primary), patch(
+        "models.db.db.get_setting", return_value=""
+    ), patch("backend.llm_client.LLMClient") as fallback_client:
+        response = _client().post(
+            "/api/kanban/enhance",
+            json={"title": "", "description": "No fallback."},
+        )
+
+    assert response.status_code == 500
+    assert response.get_json()["error"] == "LLM API error"
+    fallback_client.assert_not_called()
