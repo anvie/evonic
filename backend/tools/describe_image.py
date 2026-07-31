@@ -10,7 +10,8 @@ main LLM. The vision model is selected via a configurable priority chain:
   5. agent's current model (if vision_supported)
   6. all enabled models with `vision_supported = 1` in `llm_models`
 
-On connection errors, the tool automatically falls back to the next
+On connection errors, rate limits (HTTP 429), provider errors, timeouts,
+and auth errors, the tool automatically falls back to the next
 vision-capable model in priority order.
 
 The `vision_enabled` flag on the agent gates access to this tool entirely:
@@ -383,10 +384,25 @@ def execute(agent: dict, args: dict) -> Any:
         },
     ]
 
-    # --- Call vision models with fallback on connection errors ---
+    # --- Call vision models with fallback on transient/provider errors ---
     result = None
-    connection_failures = 0
+    failures = 0
     last_error = None
+
+    # Errors that are safe to fall back to the next vision-capable model:
+    # network/connection failures, 5xx API errors, rate limits (HTTP 429),
+    # provider errors, timeouts, and auth errors on a single provider — a
+    # later model in the chain (e.g. a local Ollama model) may still succeed.
+    _FALLBACK_ERROR_TYPES = frozenset({
+        "connection_error",
+        "api_error",
+        "provider_error",
+        "rate_limit_error",
+        "timeout_error",
+        "request_timeout",
+        "generation_timeout",
+        "auth_error",
+    })
 
     for vision_model in vision_models:
         model_name = vision_model.get("name", vision_model.get("id", "unknown"))
@@ -401,32 +417,31 @@ def execute(agent: dict, args: dict) -> Any:
                 enable_thinking=False,  # No need for reasoning on vision task
             )
         except Exception as e:
-            # Unexpected exception — treat as connection failure and try next
-            connection_failures += 1
-            last_error = str(e)
+            # Unexpected exception — treat as transient failure, try next
+            failures += 1
+            last_error = f"{model_name}: {e}"
             continue
 
         if result.get("success"):
             break  # Success — use this result
 
-        # Check if this is a connection error we should fallback from
+        # Fallback-eligible error — try the next model in the chain.
         error_type = result.get("error_type", "")
         error_detail = result.get("error_detail", "")
-        if error_type in ("connection_error", "api_error"):
-            connection_failures += 1
-            last_error = error_detail or f"connection to {model_name}"
+        if error_type in _FALLBACK_ERROR_TYPES:
+            failures += 1
+            last_error = f"{model_name}: {error_detail or error_type}"
             continue  # Try next model
 
-        # Non-recoverable error — fail immediately (auth, rate limit, etc.)
+        # Non-recoverable error (e.g. malformed request, unsupported content) —
+        # fail immediately.
         return f"Error: Vision model call failed ({error_type}): {error_detail}"
 
     if result is None or not result.get("success"):
-        if connection_failures >= len(vision_models):
-            return (
-                "Error: All vision-capable models failed with connection errors. "
-                "Please check your network and LLM server status."
-            )
-        return f"Error: Vision model call failed: {last_error or 'unknown error'}"
+        return (
+            "Error: All vision-capable models failed "
+            f"({failures} model(s) tried). Last error: {last_error or 'unknown error'}"
+        )
 
     # Extract text content from the nested API response.
     # result["response"] is the raw API dict: {"choices": [{"message": {"content": "..."}}]}
