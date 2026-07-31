@@ -443,7 +443,7 @@ class TestAgentCommandDiscoveryAPI:
         assert names == sorted(names)
         assert 'help' in names
         assert 'restart' not in names
-        assert all(set(command) == {'name', 'description'} for command in commands)
+        assert all({'name', 'description', 'accepts_args', 'parameters'}.issubset(set(command)) for command in commands)
 
     def test_returns_404_for_unknown_agent(self, agent_id, chat_db):
         from app import app

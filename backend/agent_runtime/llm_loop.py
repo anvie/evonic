@@ -747,7 +747,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         f"[System note: The user sent an image{(' with the message: ' + _user_text) if _user_text else ''}, "
                         "but this model does not support image processing. "
                         "Please inform the user politely that you cannot process images with the current model, "
-                        "and respond in the same language the user is using.]"
+                        "and respond in the same language the user is using. "
+                        "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/]"
                     )
                     _msg = {**_msg, 'content': _note}
             _patched.append(_msg)
@@ -1427,7 +1428,8 @@ def run_tool_loop(agent: Dict[str, Any],
                                         f"[System note: The user sent an image{' with the message: ' + _user_text if _user_text else ''}, "
                                         "but the fallback model does not support image processing. "
                                         "Please inform the user politely that you cannot process images with the current model, "
-                                        "and respond in the same language the user is using.]"
+                                        "and respond in the same language the user is using. "
+                                        "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/]"
                                     )}
                                     _fb_stripped = True
                             _fb_patched.append(_fb_msg)
@@ -1508,7 +1510,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         "Sorry, I couldn't process that image. The image "
                         "model is currently unavailable and my fallback "
                         "model doesn't support images. Please try again "
-                        "later or describe the image in text."
+                        "later or describe the image in text. "
+                        "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/"
                     )
                 else:
                     error_msg = _humanize_llm_error(error_detail)

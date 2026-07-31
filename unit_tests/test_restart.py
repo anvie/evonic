@@ -79,6 +79,7 @@ class TestServiceManagement(unittest.TestCase):
 
     def test_systemd_restart_command(self):
         with mock.patch('config.SYSTEMD_SERVICE_NAME', 'evonic'), \
+                mock.patch.object(restart.os, 'geteuid', return_value=0), \
                 mock.patch.object(restart.subprocess, 'run') as run:
             restart._systemd_command('restart')
         run.assert_called_once_with(
@@ -87,6 +88,7 @@ class TestServiceManagement(unittest.TestCase):
 
     def test_systemd_stop_command(self):
         with mock.patch('config.SYSTEMD_SERVICE_NAME', 'evonic'), \
+                mock.patch.object(restart.os, 'geteuid', return_value=0), \
                 mock.patch.object(restart.subprocess, 'run') as run:
             restart._systemd_command('stop')
         run.assert_called_once_with(['systemctl', 'stop', 'evonic'], check=True)

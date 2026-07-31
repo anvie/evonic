@@ -1,5 +1,6 @@
 """Focused tests for WhatsApp outbound correlation and persisted JID routing."""
 
+import threading
 from unittest.mock import MagicMock, patch
 
 from backend.channels.whatsapp import WhatsAppChannel
@@ -11,6 +12,15 @@ def _channel():
     channel.channel_id = "channel-1"
     channel.agent_id = "agent-1"
     channel.config = {}
+    # BaseChannel.__init__ is patched out above, so re-create the outbound
+    # coalescing buffer state it normally sets up.
+    channel._buf = {}
+    channel._buf_timers = {}
+    channel._buf_lock = threading.Lock()
+    channel._last_sent = {}
+    channel._send_errors = {}
+    channel._send_errors_lock = threading.Lock()
+    channel._send_error_ttl = 3600
     return channel
 
 

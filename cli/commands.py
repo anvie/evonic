@@ -2277,6 +2277,25 @@ def setup_command(non_interactive=False):
             return
         language = lang if lang in ("english", "indonesian", "adaptive") else "english"
 
+    # --- Timezone ---
+    from backend.setup import validate_timezone
+    timezone_name = "Asia/Jakarta"
+    if non_interactive:
+        print(f"  [non-interactive] Using default timezone: {timezone_name}")
+    else:
+        while True:
+            try:
+                tz = input(f"  Timezone (default: {timezone_name}): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Setup aborted.")
+                return
+            tz = tz if tz else timezone_name
+            try:
+                timezone_name = validate_timezone(tz)
+                break
+            except ValueError:
+                print(f"  Invalid timezone: {tz} \u2014 must be a valid IANA name (e.g. Asia/Jakarta, Europe/London)")
+
     # --- Admin password ---
     password = ""
     if non_interactive:
@@ -2305,6 +2324,7 @@ def setup_command(non_interactive=False):
     print(f"    Model       : {model_name}")
     print(f"    Agent Name  : {agent_name}")
     print(f"    Language    : {language}")
+    print(f"    Timezone    : {timezone_name}")
     if password:
         print(f"    Admin Pass  : (set)")
     print()
@@ -2333,6 +2353,7 @@ def setup_command(non_interactive=False):
         language=language,
         sandbox_enabled=False,
         password=password,
+        timezone_name=timezone_name,
     )
 
     if "error" in result:

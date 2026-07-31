@@ -346,6 +346,8 @@ class AgentState:
                     task["in_progress_since"] = time.time()
             else:
                 task["status"] = "done"
+                # Timestamp is only meaningful while the task is in progress.
+                task.pop("in_progress_since", None)
             return {"result": f"Task #{task_id} marked as {task['status']}.", "tasks": self._task_summary()}
 
         if action == "remove":
