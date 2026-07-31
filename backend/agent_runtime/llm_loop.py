@@ -19,6 +19,7 @@ import re
 import time
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import dataclass, replace
 from typing import Dict, Any, List, Optional
 
 from config import AGENT_PARALLEL_TOOL_WAIT_TIMEOUT
@@ -27,6 +28,51 @@ _logger = logging.getLogger(__name__)
 
 # Compiled regex constants (module-level to avoid re-compilation on every call)
 _TRIVIAL_RESPONSE_RE = re.compile(r'^[\s>|#\-\.\\/<>!]+$')
+
+
+@dataclass(frozen=True)
+class EffectiveRequest:
+    """Bounded provider payload and content-free attribution for one attempt."""
+
+    messages: List[Dict[str, Any]]
+    tools: Optional[List[Dict[str, Any]]]
+    canonical_message_tokens: int
+    effective_message_tokens: int
+    initial_tool_tokens: int
+    effective_tool_tokens: int
+    projection_mode: str
+    projection_applied: bool
+    fail_open_reason: Optional[str]
+    provider: str
+    model: str
+    path: str = "primary"
+
+    def derive(self, *, messages=None, provider=None, model=None, path=None):
+        """Derive a provider-compatible representation from this exact payload."""
+        from backend.llm_usage_events import estimate_context_tokens
+        effective_messages = self.messages if messages is None else messages
+        return replace(
+            self,
+            messages=effective_messages,
+            effective_message_tokens=estimate_context_tokens(effective_messages, None),
+            provider=self.provider if provider is None else str(provider or ""),
+            model=self.model if model is None else str(model or ""),
+            path=self.path if path is None else path,
+        )
+
+    def metrics(self) -> Dict[str, Any]:
+        return {
+            "canonical_message_tokens": self.canonical_message_tokens,
+            "effective_message_tokens": self.effective_message_tokens,
+            "initial_tool_tokens": self.initial_tool_tokens,
+            "effective_tool_tokens": self.effective_tool_tokens,
+            "provider": self.provider,
+            "model": self.model,
+            "projection_mode": self.projection_mode,
+            "projection_applied": self.projection_applied,
+            "path": self.path,
+            "fail_open_reason": self.fail_open_reason,
+        }
 
 # Short polling keeps /stop responsive while parallel tool workers are running.
 # The total wait remains bounded by AGENT_PARALLEL_TOOL_WAIT_TIMEOUT.
@@ -396,6 +442,40 @@ def run_tool_loop(agent: Dict[str, Any],
     chatlog.append({'type': 'turn_begin', 'session_id': session_id, 'ts': _loop_ts})
     event_stream.emit('turn_begin', {'session_id': session_id, 'ts': _loop_ts})
 
+    tool_trace = []
+    timeline = []
+    _loop_start_time = time.time()
+    _gate_context = {
+        'agent_id': agent_id, 'session_id': session_id,
+        'external_user_id': external_user_id, 'channel_id': channel_id,
+        'message_id': agent_context.get('trusted_message_id'),
+        'attachment_ids': list(agent_context.get('trusted_attachment_ids') or []),
+        'turn_index': _turn_index,
+    }
+
+    def _finalize_gate_response(response: str, source: str):
+        duration = round(time.time() - _loop_start_time, 1)
+        metadata = {'plugin_gate': source, 'thinking_duration': duration}
+        db.add_chat_message(session_id, 'assistant', response,
+                            agent_id=db_agent_id, metadata=metadata)
+        chatlog.append({'type': 'final', 'session_id': session_id,
+                        'content': response, 'metadata': metadata})
+        chatlog.append({'type': 'turn_end', 'session_id': session_id,
+                        'thinking_duration': duration})
+        event_stream.emit('final_answer', {
+            **_gate_context, 'answer': response, 'tool_trace': tool_trace,
+            'timeline': timeline, 'plugin_gate': source,
+        })
+        return response, tool_trace, timeline
+
+    from backend.plugin_manager import run_turn_gates
+    _turn_decision = run_turn_gates(_gate_context)
+    if _turn_decision and _turn_decision.get('handled'):
+        return _finalize_gate_response(str(_turn_decision.get('response') or ''),
+                                       'turn')
+    _suppress_intermediate = bool(
+        _turn_decision and _turn_decision.get('suppress_intermediate'))
+
     real_exec = tool_registry.get_real_executor(agent_context)
 
     # Built-in tool executors (read, use_skill, set_mode, remember, recall, etc.)
@@ -421,9 +501,6 @@ def run_tool_loop(agent: Dict[str, Any],
                 return result
         return None
 
-    tool_trace = []
-    timeline = []
-    _loop_start_time = time.time()
     _last_intermediate_text = None   # dedup tracker for intermediate channel sends
     _intermediate_dup_count = 0      # consecutive duplicate counter
     _force_stop_injected = False     # True after first force-stop injection
@@ -474,21 +551,30 @@ def run_tool_loop(agent: Dict[str, Any],
     # --- Tool pruning: track how many times each tool has been called in this loop ---
     _tool_call_counts: Dict[str, int] = {}
     _TOOL_PRUNE_THRESHOLD = 3  # prune zero-call tools after this many iterations
-    _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch'}
+    _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch',
+                        'set_mode', 'save_plan', 'update_tasks'}
 
     def _prune_tools(tools_list: List[dict], iteration: int) -> List[dict]:
         """Prune zero-call tools after the threshold iteration.
         
         After _TOOL_PRUNE_THRESHOLD iterations, tools that have never been called
-        (call count == 0) are removed from the list sent to the LLM — except for
-        essential tools that the agent may always need.
+        (call count == 0) are removed from the list sent to the LLM, except for
+        essential tools and tools belonging to a loaded lazy skill. Lazy-skill
+        tools may be injected after the threshold and must get a chance to run.
         """
         if iteration < _TOOL_PRUNE_THRESHOLD:
             return tools_list
+        _loaded_skill_fns = {
+            fn
+            for skill_fns in _loaded_lazy_skills.values()
+            for fn in skill_fns
+        }
         pruned = []
         for t in tools_list:
             fn_name = t.get('function', {}).get('name', '')
-            if fn_name in _ESSENTIAL_TOOLS or _tool_call_counts.get(fn_name, 0) > 0:
+            if (fn_name in _ESSENTIAL_TOOLS
+                    or fn_name in _loaded_skill_fns
+                    or _tool_call_counts.get(fn_name, 0) > 0):
                 pruned.append(t)
         if len(pruned) < len(tools_list):
             _logger.debug(
@@ -670,6 +756,9 @@ def run_tool_loop(agent: Dict[str, Any],
     max_timeout_retries = int(db.get_setting('agent_timeout_retries', str(MAX_TIMEOUT_RETRIES)))
     max_tool_iterations = int(db.get_setting('max_tool_iterations', str(MAX_TOOL_ITERATIONS)))
     _compaction_attempted = False
+    # Overflow recovery is derived from the effective payload and consumed by the
+    # next provider attempt without mutating the canonical transcript.
+    _overflow_request = None
 
     # Build param view-type lookup: {fn_name: {param_name: view_type}}
     _param_type_map = {}
@@ -809,9 +898,6 @@ def run_tool_loop(agent: Dict[str, Any],
         if _llm_call_count > _max_llm_calls:
             _logger.error("Maximum LLM calls reached (%d) without finishing — aborting", _max_llm_calls)
             break
-        # Prune zero-call tools after threshold iterations to reduce token waste
-        # from schema definitions of tools the agent never uses in this session.
-        _effective_tools = _prune_tools(tools, _iteration)
         # Drain injected user messages from mid-loop injection queue.
         # Multiple queued messages are merged into one to avoid consecutive user turns.
         if inject_queue is not None:
@@ -927,29 +1013,30 @@ def run_tool_loop(agent: Dict[str, Any],
         if _sanitize_tool_call_pairs(messages):
             _logger.warning("Repaired orphaned tool_call/tool pairs before LLM call (session=%s)", session_id)
 
-        # Build the bounded same-turn projection before every provider request.
-        # Phase 1 is deliberately shadow-only: even when ACTIVE_CONTEXT_MODE is
-        # "enforced", canonical messages remain authoritative on the wire until
-        # replay/provider compatibility gates approve enforcement.
+        # Select tools once, then project and validate the messages against that
+        # exact schema set. Every provider path below derives from this snapshot.
         from backend.agent_runtime.active_context import (
             ActiveContextProjection, project_active_context)
+        from backend.llm_usage_events import estimate_context_tokens
+        _effective_tools = _prune_tools(tools, _iteration) if tools else None
         try:
             _active_projection = project_active_context(
                 messages,
-                tools,
+                _effective_tools,
                 mode=ACTIVE_CONTEXT_MODE,
                 recent_completed_groups=ACTIVE_CONTEXT_RECENT_GROUPS,
                 receipt_max_chars=ACTIVE_CONTEXT_RECEIPT_MAX_CHARS,
                 soft_token_threshold=ACTIVE_CONTEXT_SOFT_TOKENS,
             )
         except Exception as _active_exc:
-            # Telemetry/projection must never prevent the canonical provider call.
             _active_projection = ActiveContextProjection(
                 messages=messages, mode=ACTIVE_CONTEXT_MODE, applied=False,
                 failed_open=True,
                 error=f"{type(_active_exc).__name__}: {_active_exc}",
-                canonical_tokens=0, projected_tokens=0, receipt_tokens=0,
-                completed_groups=0, compacted_groups=0, retained_groups=0,
+                canonical_tokens=estimate_context_tokens(messages, _effective_tools),
+                projected_tokens=estimate_context_tokens(messages, _effective_tools),
+                receipt_tokens=0, completed_groups=0, compacted_groups=0,
+                retained_groups=0,
             )
         if _active_projection.failed_open:
             _logger.warning(
@@ -961,31 +1048,46 @@ def run_tool_loop(agent: Dict[str, Any],
                 session_id, _active_projection.mode, _active_projection.canonical_tokens,
                 _active_projection.projected_tokens, _active_projection.saved_tokens,
                 _active_projection.compacted_groups)
+        _request_messages = (
+            _active_projection.messages
+            if (_active_projection.mode == 'enforced'
+                and _active_projection.applied
+                and not _active_projection.failed_open)
+            else messages
+        )
+        _request = EffectiveRequest(
+            messages=_request_messages,
+            tools=_effective_tools,
+            canonical_message_tokens=estimate_context_tokens(messages, None),
+            effective_message_tokens=estimate_context_tokens(_request_messages, None),
+            initial_tool_tokens=estimate_context_tokens([], tools),
+            effective_tool_tokens=estimate_context_tokens([], _effective_tools),
+            projection_mode=_active_projection.mode,
+            projection_applied=(_request_messages is _active_projection.messages),
+            fail_open_reason=_active_projection.error if _active_projection.failed_open else None,
+            provider=str(getattr(llm, 'provider', '') or ''),
+            model=str(getattr(llm, 'model', '') or ''),
+        )
+        if _overflow_request is not None:
+            _request = _overflow_request.derive(
+                provider=getattr(llm, 'provider', ''),
+                model=getattr(llm, 'model', ''),
+                path='context_overflow_retry',
+            )
+            _overflow_request = None
         event_stream.emit('active_context_projection', {
             'agent_id': agent_id,
             'session_id': session_id,
             **_active_projection.metrics(),
+            **_request.metrics(),
         })
-        # Use the projected (compacted) messages when the active context projection
-        # was successfully applied, otherwise fall back to canonical messages.
-        # This replaces completed informational tool groups with compact receipt
-        # lines, reducing token waste on repeated tool outputs.
-        _request_messages = (
-            _active_projection.messages
-            if _active_projection.applied and not _active_projection.failed_open
-            else messages
-        )
 
         # LOCK ORDERING: Main path — llm_lock only. No other locks held here.
-        # Keep thinking enabled unless the thinking budget was exceeded, in which
-        # case we disable thinking to force the model to commit without deliberating.
         _enable_thinking_this_call = not _thinking_budget_aborted
-        # _logger.info("[LOCK] _llm_lock - WAITING (session=%s, main LLM call)", session_id)
         with llm_lock:
-            # _logger.info("[LOCK] _llm_lock - ACQUIRED (session=%s, main LLM call)", session_id)
             result = llm.chat_completion(
-                messages=_request_messages,
-                tools=_prune_tools(tools, _iteration) if tools else None,
+                messages=_request.messages,
+                tools=_request.tools,
                 temperature=None,
                 enable_thinking=_enable_thinking_this_call,
                 max_tokens=None,
@@ -1209,27 +1311,29 @@ def run_tool_loop(agent: Dict[str, Any],
                     'error_type': 'context_compaction',
                     'user_message': 'Conversation is too long, automatically compacting...',
                 })
+                # Compact the payload that actually overflowed. The canonical
+                # transcript remains available for persistence, UI, and auditing.
                 _compacted = _emergency_compact_messages(
-                    messages=messages,
+                    messages=_request.messages,
                     llm=llm,
                     llm_lock=llm_lock,
                     session_id=session_id,
                     agent_id=agent_id,
                 )
                 if _compacted is not None:
-                    messages[:] = _compacted
+                    _overflow_request = _request.derive(
+                        messages=_compacted, path='context_overflow_retry')
                     event_stream.emit('llm_retry', {
                         'agent_id': agent_id, 'session_id': session_id,
                         'external_user_id': external_user_id, 'channel_id': channel_id,
                         'retry_count': 1, 'max_retries': 1,
                         'error_type': 'context_compaction',
                         'user_message': 'Summary complete, resuming...',
+                        'effective_request': _overflow_request.metrics(),
                     })
                     continue
-                # Compaction failed — try a simple truncation as a
-                # last-ditch attempt.  Keep system messages + last N
-                # conversation messages.  Better than losing the entire
-                # session context.
+                # Compaction failed: derive a protocol-safe last-ditch truncation
+                # from the same effective payload, never from canonical history.
                 event_stream.emit('llm_retry', {
                     'agent_id': agent_id, 'session_id': session_id,
                     'external_user_id': external_user_id, 'channel_id': channel_id,
@@ -1237,39 +1341,25 @@ def run_tool_loop(agent: Dict[str, Any],
                     'error_type': 'context_compaction',
                     'user_message': 'Compaction did not reduce enough. Trying fallback truncation...',
                 })
-                _sys_msgs = [m for m in messages if m.get('role') == 'system']
-                _conv_msgs = [m for m in messages if m.get('role') != 'system']
+                _sys_msgs = [m for m in _request.messages if m.get('role') == 'system']
+                _conv_msgs = [m for m in _request.messages if m.get('role') != 'system']
                 _keep_n = 6
                 if len(_conv_msgs) > _keep_n:
                     _truncated = _sys_msgs + _conv_msgs[-_keep_n:]
-                    _trunc_note = (
-                        "[SYSTEM] The conversation was truncated because it grew "
-                        "too large for the model's context window.  The most recent "
-                        "messages have been preserved.  Please continue."
-                    )
-                    _truncated.append({'role': 'system', 'content': _trunc_note})
-                    messages[:] = _truncated
+                    _truncated.append({
+                        'role': 'system',
+                        'content': (
+                            "[SYSTEM] The conversation was truncated because it grew "
+                            "too large for the model's context window. The most recent "
+                            "messages have been preserved. Please continue.")})
+                    _overflow_request = _request.derive(
+                        messages=_truncated, path='context_overflow_truncation')
                     _logger.warning(
-                        "Emergency dumb-truncation applied for session %s: "
-                        "%d -> %d messages", session_id,
-                        len(_sys_msgs) + len(_conv_msgs), len(_truncated))
+                        "Emergency request truncation applied for session %s: %d -> %d messages",
+                        session_id, len(_request.messages), len(_truncated))
                     continue
-                # Dumb truncation was a no-op (too few messages) — retry primary one more time
-                try:
-                    with llm_lock:
-                        result = llm.chat_completion(
-                            messages=messages,
-                            tools=_prune_tools(tools, _iteration) if tools else None,
-                            temperature=None,
-                            enable_thinking=_enable_thinking_this_call,
-                            max_tokens=None,
-                            log_file=llm_log_path
-                        )
-                    if result.get('success'):
-                        continue
-                except Exception:
-                    pass
-                # Retry failed — fall through to fallback
+                # A no-op truncation falls through to the fallback model, which
+                # reuses this request snapshot rather than restoring canonical data.
 
             if _compaction_attempted:
                 event_stream.emit('llm_retry', {
@@ -1301,47 +1391,49 @@ def run_tool_loop(agent: Dict[str, Any],
                 try:
                     _fallback_config = _build_model_config(_fallback_model)
                     _fallback_llm = LLMClient(model_config=_fallback_config)
-                    # If the fallback model doesn't support vision, strip image
-                    # content from messages — mirroring the primary model check
-                    # at loop start (lines 400-418).  Without this, a non-vision
-                    # fallback rejects multimodal image_url blocks.
-                    _fb_vision_supported = bool(_fallback_config.get('vision_supported', False))
-                    if not _fb_vision_supported:
+                    _fallback_request = _request.derive(
+                        provider=_fallback_config.get('provider'),
+                        model=_fallback_config.get('model_name'),
+                        path='fallback')
+                    # Provider-specific vision adaptation is derived from the
+                    # effective payload and never mutates canonical messages.
+                    if not bool(_fallback_config.get('vision_supported', False)):
                         _fb_patched = []
                         _fb_stripped = False
-                        for _fb_msg in messages:
+                        for _fb_msg in _fallback_request.messages:
                             _fb_content = _fb_msg.get('content')
                             if _fb_msg.get('role') == 'user' and isinstance(_fb_content, list):
                                 _has_img = any(
                                     isinstance(p, dict) and p.get('type') == 'image_url'
-                                    for p in _fb_content
-                                )
+                                    for p in _fb_content)
                                 if _has_img:
                                     _text_parts = [
-                                        p['text']
-                                        for p in _fb_content
-                                        if isinstance(p, dict) and p.get('type') == 'text'
-                                    ]
+                                        p['text'] for p in _fb_content
+                                        if isinstance(p, dict) and p.get('type') == 'text']
                                     _user_text = _text_parts[0] if _text_parts else ''
-                                    _note = (
+                                    _fb_msg = {**_fb_msg, 'content': (
                                         f"[System note: The user sent an image{' with the message: ' + _user_text if _user_text else ''}, "
                                         "but the fallback model does not support image processing. "
                                         "Please inform the user politely that you cannot process images with the current model, "
                                         "and respond in the same language the user is using.]"
-                                    )
-                                    _fb_msg = {**_fb_msg, 'content': _note}
+                                    )}
                                     _fb_stripped = True
                             _fb_patched.append(_fb_msg)
                         if _fb_stripped:
-                            messages = _fb_patched
+                            _fallback_request = _fallback_request.derive(
+                                messages=_fb_patched, path='fallback_vision_adapted')
                             _fallback_vision_stripped = True
                             _logger.warning(
                                 "Stripped image content for fallback model %s (%s) — fallback does not support vision",
                                 _fallback_model.get('name'), _fallback_model.get('model_name'))
+                    event_stream.emit('llm_effective_request', {
+                        'agent_id': agent_id, 'session_id': session_id,
+                        **_fallback_request.metrics(),
+                    })
                     with llm_lock:
                         _fallback_result = _fallback_llm.chat_completion(
-                            messages=messages,
-                            tools=_prune_tools(tools, _iteration) if tools else None,
+                            messages=_fallback_request.messages,
+                            tools=_fallback_request.tools,
                             temperature=None,
                             enable_thinking=_enable_thinking_this_call,
                             max_tokens=None,
@@ -1358,6 +1450,7 @@ def run_tool_loop(agent: Dict[str, Any],
                         })
                         llm = _fallback_llm
                         result = _fallback_result
+                        _request = _fallback_request
                         _fallback_succeeded = True
                         # Persist fallback model ID to agent_state (cross-session)
                         try:
@@ -1458,18 +1551,14 @@ def run_tool_loop(agent: Dict[str, Any],
             except Exception:
                 _logger.exception("LLM-trace archive failed (session=%s)", session_id)
 
-        # Context monitor: remember the size of the last successful call so the
-        # Session State panel can show context usage vs the model's window.
-        # When the provider omits usage (e.g. the Codex Responses endpoint
-        # returns none), estimate prompt tokens locally from the exact
-        # messages+tools we sent — otherwise the meter freezes at the last
-        # reading forever (guarded on prompt_tokens > 0).
+        # Context telemetry is attributed to the exact successful provider
+        # snapshot, including its projected messages and pruned tool schemas.
         _cu_prompt = result.get('prompt_tokens') or 0
         _cu_estimated = False
         if _cu_prompt <= 0:
             try:
                 from backend.llm_usage_events import estimate_context_tokens
-                _cu_prompt = estimate_context_tokens(messages, tools)
+                _cu_prompt = estimate_context_tokens(_request.messages, _request.tools)
                 _cu_estimated = True
             except Exception:
                 _cu_prompt = 0
@@ -1480,8 +1569,10 @@ def run_tool_loop(agent: Dict[str, Any],
                     'prompt_tokens': _cu_prompt,
                     'completion_tokens': _cu_completion,
                     'total_tokens': result.get('total_tokens') or (_cu_prompt + _cu_completion),
-                    'model': (result.get('request_payload') or {}).get('model'),
+                    'model': (result.get('request_payload') or {}).get('model') or _request.model,
+                    'provider': _request.provider,
                     'estimated': _cu_estimated,
+                    'effective_request': _request.metrics(),
                     'active_context': _active_projection.metrics(),
                     'ts': int(time.time()),
                 })
@@ -1837,8 +1928,10 @@ def run_tool_loop(agent: Dict[str, Any],
                 _last_intermediate_text = content
                 _intermediate_dup_count = 0
 
-            # Optionally forward to channel (e.g. Telegram) if agent setting is on
-            if agent.get('send_intermediate_responses') and channel_id and not _is_dup_text:
+            # Optionally forward to channel (e.g. Telegram) if agent setting is on.
+            # A synchronous plugin gate may suppress these for exact-response paths.
+            if (agent.get('send_intermediate_responses') and channel_id
+                    and not _is_dup_text and not _suppress_intermediate):
                 from backend.channels.registry import channel_manager
                 _inst = channel_manager._active.get(channel_id)
                 if _inst and _inst.is_running:
@@ -1949,7 +2042,7 @@ def run_tool_loop(agent: Dict[str, Any],
             try:
                 for p_idx in sorted(_parallel_indices):
                     _tc_p, _fn_p, _args_p, _pt_p = _tool_records[p_idx]
-                    _gr = _guard_p2(agent_id, _fn_p, _args_p)
+                    _gr = _guard_p2(agent_id, _fn_p, _args_p, _gate_context)
                     if _gr:
                         _parallel_jobs[p_idx] = {
                             'error': _gr.get('error', 'Blocked by plugin guard'),
@@ -2034,7 +2127,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 tool_result = _parallel_results[i]
             else:
                 from backend.plugin_manager import check_tool_guards
-                guard_result = check_tool_guards(agent_id, fn_name, args)
+                guard_result = check_tool_guards(agent_id, fn_name, args, _gate_context)
                 if guard_result:
                     if guard_result.get('level') == 'requires_approval':
                         tool_result = guard_result  # handled by approval flow below
@@ -2439,6 +2532,21 @@ def run_tool_loop(agent: Dict[str, Any],
                 'tool_name': fn_name, 'tool_args': args,
                 'tool_result': result_dict, 'has_error': has_error,
             })
+
+            from backend.plugin_manager import run_tool_result_gates
+            _result_decision = run_tool_result_gates(
+                _gate_context, fn_name, args, result_dict)
+            if _result_decision:
+                # Preserve tool-call/result pairing in durable history, but never
+                # expose the tool result to another LLM call or user-visible reply.
+                db.add_chat_message(session_id, 'tool', result_str,
+                                    tool_call_id=_tc['id'], agent_id=db_agent_id)
+                chatlog.append({'type': 'tool_output', 'session_id': session_id,
+                                'content': result_str, 'tool_call_id': _tc['id'],
+                                'error': has_error, 'function': fn_name})
+                tool_trace.append({"tool": fn_name, "args": args, "result": result_dict})
+                return _finalize_gate_response(
+                    str(_result_decision.get('response') or ''), 'tool_result')
 
             # Persist agent state immediately for state-changing built-in tools, then
             # push the fresh per-session snapshot. event_stream.emit only mutates its

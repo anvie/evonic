@@ -217,7 +217,11 @@ class _ExecCtx:
 def _run_tool(ctx: _ExecCtx, tool: str, args: dict) -> dict:
     """Guard-checked tool execution with the loop's approval semantics."""
     from backend.plugin_manager import check_tool_guards
-    guard = check_tool_guards(ctx.agent_id, tool, args)
+    guard_context = {
+        'agent_id': ctx.agent_id, 'session_id': ctx.session_id,
+        'external_user_id': ctx.external_user_id, 'channel_id': ctx.channel_id,
+    }
+    guard = check_tool_guards(ctx.agent_id, tool, args, guard_context)
     if guard and guard.get('level') != 'requires_approval':
         return {'error': guard.get('error', 'Blocked by plugin guard'),
                 'blocked_by': 'tool_guard'}

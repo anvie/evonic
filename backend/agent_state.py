@@ -29,9 +29,12 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
+import ast
 import json
 import os
+import random
 import re
+import time
 
 # Project root: two levels up from this file (backend/agent_state.py → project root)
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..'))
@@ -68,6 +71,19 @@ _STATUS_SUFFIX_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Heuristic: detects task text that looks like multiple actions crammed into one entry.
+# Matches: comma/semicolon or conjunctions (lalu/kemudian/dan/serta/then/and)
+# followed by common Indonesian/English action verbs.
+_MULTI_CLAUSE_VERB_RE = re.compile(
+    r'(?:[,;]\s*|\s*/\s*| lalu | kemudian | dan | serta | then | and | also | next )\s*'
+    r'(?:membuat|menulis|menguji|mengaudit|menambah|mengubah|membangun|'
+    r'mengimplementasikan|mendeploy|menyiapkan|menambahkan|menjalankan|'
+    r'memeriksa|mengkonfigurasi|mendokumentasikan|mendaftarkan|'
+    r'create|build|test|audit|implement|deploy|add|write|run|configure|setup|'
+    r'check|verify|configure|document|register|prepare|validate)',
+    re.IGNORECASE,
+)
+
 # Indicators that imply the task is already done.
 _DONE_INDICATORS = re.compile(
     r'\u2705|\u2713|\u2714|\u2611|\u2612'                    # ✅✓✔☑☒
@@ -76,14 +92,55 @@ _DONE_INDICATORS = re.compile(
     re.IGNORECASE,
 )
 
+def _try_parse_dict(s: str) -> dict | None:
+    """Try to parse a string as a Python dict literal or JSON object.
+
+    Returns the parsed dict on success, or None on failure.
+    Handles both ``{'text': 'Task', 'status': 'pending'}`` (Python literal)
+    and ``{"text": "Task", "status": "pending"}`` (JSON).
+    """
+    # ast.literal_eval handles Python literals safely (no code execution)
+    try:
+        result = ast.literal_eval(s)
+        if isinstance(result, dict):
+            return result
+    except (ValueError, SyntaxError):
+        pass
+    # json.loads as fallback for true JSON format
+    try:
+        result = json.loads(s)
+        if isinstance(result, dict):
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None
+
 
 def _sanitize_task_text(text: str) -> tuple[str, str | None]:
     """Strip leading/trailing status indicators from task text.
 
+    Also unwraps dict-format strings (Python/JSON dict literals containing
+    a ``text`` key) that LLMs sometimes emit when they mirror the
+    ``_task_summary()`` format they see in the rendered state.
+
     Returns (cleaned_text, inferred_status) where inferred_status is
     "done" / "in_progress" if completion markers were detected, else None.
     """
-    raw = text
+    raw = text.strip()
+
+    # --- Unwrap dict literals ---
+    # LLMs sometimes pass {'text': 'Task title', 'status': 'pending'}
+    # because they see the _task_summary() format in their context.
+    dict_status = None
+    if raw.startswith('{') and raw.endswith('}'):
+        parsed = _try_parse_dict(raw)
+        if isinstance(parsed, dict) and 'text' in parsed:
+            dict_status = parsed.get('status')
+            unwrapped = parsed['text']
+            # Only use the unwrapped text if it's a non-empty string
+            if isinstance(unwrapped, str) and unwrapped.strip():
+                raw = unwrapped.strip()
+
     # Detect status before stripping
     inferred = None
     if _DONE_INDICATORS.search(raw):
@@ -92,6 +149,12 @@ def _sanitize_task_text(text: str) -> tuple[str, str | None]:
     cleaned = _STATUS_PREFIX_RE.sub('', raw, count=1)
     cleaned = _STATUS_SUFFIX_RE.sub('', cleaned)
     cleaned = cleaned.strip() or raw.strip()
+
+    # Dict status overrides indicator-based inferred status.
+    # Exclude "pending" — it is the default and should not count as "inferred".
+    if dict_status and dict_status != "pending":
+        inferred = dict_status
+
     return cleaned, inferred
 
 
@@ -174,15 +237,21 @@ class AgentState:
     # ── Mode transitions ────────────────────────────────────────────────────
 
     def set_mode(self, new_mode: str, reason: str = None,
-                 session_id: str = None, agent_id: str = None) -> dict:
-        """Transition to a new mode. Returns a result dict for the LLM."""
+                 session_id: str = None, agent_id: str = None,
+                 bypass_plan_requirement: bool = False) -> dict:
+        """Transition to a new mode. Returns a result dict for the LLM.
+
+        ``bypass_plan_requirement`` is reserved for explicit user commands such
+        as ``/exec``. Agent-initiated transitions must leave it false so the
+        plan-file guard remains in effect.
+        """
         if new_mode not in VALID_MODES:
             return {"error": f"Invalid mode '{new_mode}'. Valid modes: {sorted(VALID_MODES)}"}
         if self.always_execute:
             if new_mode == "plan":
                 return {"result": f"Agent is configured with always_execute; staying in execute mode", "mode": "execute"}
             return {"result": f"Mode is execute", "mode": "execute"}
-        if new_mode == "execute" and not self.plan_file:
+        if new_mode == "execute" and not self.plan_file and not bypass_plan_requirement:
             if session_id and agent_id:
                 from backend.task_classifier import classify_operation_trivial
                 if classify_operation_trivial(session_id, agent_id) == "trivial":
@@ -224,12 +293,16 @@ class AgentState:
             "set"         — Replace the entire task list with a list of text strings.
             "add"         — Add a single new task (requires text).
             "done"        — Mark a task as done (requires task_id).
-            "in_progress" — Mark a task as in_progress (requires task_id).
+            "in_progress" — Mark a task as the sole in_progress task (requires task_id).
+                            Any other active task returns to pending.
             "remove"      — Remove a task (requires task_id).
         """
         if action == "set":
             if not isinstance(tasks, list):
                 return {"error": "Action 'set' requires a 'tasks' list of strings."}
+            self._next_task_id = len(tasks) + 1  # will be incremented by the loop below, but we recalc at the end
+
+            # reset IDs and rebuild
             self.tasks = []
             self._next_task_id = 1
             for t in tasks:
@@ -240,7 +313,11 @@ class AgentState:
                     "status": inferred or "pending",
                 })
                 self._next_task_id += 1
-            return {"result": f"Task list replaced with {len(self.tasks)} tasks.", "tasks": self._task_summary()}
+
+            # Atomicity heuristic: warn if 1-2 tasks look too monolithic
+            atomicity_warning = self._check_atomicity(tasks)
+
+            return {"result": f"Task list replaced with {len(self.tasks)} tasks.", "tasks": self._task_summary(), "warning": atomicity_warning}
 
         if action == "add":
             if not text:
@@ -257,7 +334,18 @@ class AgentState:
             task = self._find_task(task_id)
             if task is None:
                 return {"error": f"Task #{task_id} not found."}
-            task["status"] = "done" if action == "done" else "in_progress"
+            if action == "in_progress":
+                # A serially executed batch may activate several IDs in turn.
+                # Make the latest transition authoritative and repair malformed
+                # legacy state deterministically without changing task order.
+                for other in self.tasks:
+                    if other is not task and other.get("status") == "in_progress":
+                        other["status"] = "pending"
+                task["status"] = "in_progress"
+                if "in_progress_since" not in task:
+                    task["in_progress_since"] = time.time()
+            else:
+                task["status"] = "done"
             return {"result": f"Task #{task_id} marked as {task['status']}.", "tasks": self._task_summary()}
 
         if action == "remove":
@@ -279,6 +367,49 @@ class AgentState:
 
     def _task_summary(self) -> list:
         return [{"id": t["id"], "text": t["text"], "status": t["status"]} for t in self.tasks]
+
+    # ── Atomicity heuristic ────────────────────────────────────────────────
+
+    def _check_atomicity(self, raw_tasks: list) -> str | None:
+        """Return a warning if tasks look non-atomic (too few, too long, or
+        multi-clause).
+
+        Checks ALL tasks regardless of count. The warning is non-blocking
+        (returned as a string that agents may or may not heed).
+        """
+        if not raw_tasks:
+            return None
+
+        for i, raw_item in enumerate(raw_tasks):
+            # Unwrap dict-format items the LLM might pass (same as _sanitize_task_text)
+            if isinstance(raw_item, dict) and 'text' in raw_item:
+                s = str(raw_item['text']).strip()
+            else:
+                s = str(raw_item).strip()
+
+            # Signal 1: very long (crammed) task text
+            if len(s) > 150:
+                return (
+                    f"Task #{i + 1} is {len(s)} chars, likely combining "
+                    "multiple actions into one entry. Break into smaller "
+                    "atomic tasks (exactly ONE independently completable "
+                    "step each). Call update_tasks(action='set', tasks=[...]) "
+                    "with separate entries for each distinct action."
+                )
+
+            # Signal 2: multi-clause conjunctive / comma-separated pattern
+            conj_matches = _MULTI_CLAUSE_VERB_RE.findall(s)
+            commas = s.count(",")
+            if len(conj_matches) >= 2 or commas >= 3:
+                clue_count = max(len(conj_matches), commas)
+                return (
+                    f"Task #{i + 1} appears to bundle {clue_count}+ "
+                    "actions into one sentence (conjunctions or commas "
+                    "between clauses). Split each action into its own "
+                    "atomic task entry in update_tasks()."
+                )
+
+        return None
 
     # ── Rendering ────────────────────────────────────────────────────────────
 
@@ -330,6 +461,7 @@ class AgentState:
             reason_note = f" — {self.focus_reason}" if self.focus_reason else ""
             lines.append(f"**Focus**: active{reason_note} (messages from other sessions are rejected)")
 
+        plan_content = ""
         if self.plan_file:
             lines.append(f"**Plan file**: `{self.plan_file}`")
             plan_content = self._read_plan_file(agent_id)
@@ -365,6 +497,32 @@ class AgentState:
                 icon = STATUS_ICON.get(t.get("status"), "[ ]")
                 text = t.get("text") or "(no description)"
                 lines.append(f"- {icon} #{t['id']} {text}")
+            # Nudge: plan has multiple phases but few tasks
+            if len(self.tasks) <= 2 and plan_content and "###" in plan_content:
+                md_headers = [l for l in plan_content.split("\n") if l.strip().startswith("###")]
+                if len(md_headers) >= 3:
+                    lines.append("")
+                    lines.append(
+                        ":warning: **Your plan has multiple distinct phases but very "
+                        "few tasks.** Consider breaking each phase into its own atomic "
+                        "task entry for clearer tracking."
+                    )
+            # Nudge (random): stale in_progress tasks (>3 min)
+            now = time.time()
+            stale = []
+            for t in self.tasks:
+                if t.get("status") == "in_progress" and "in_progress_since" in t:
+                    if now - t["in_progress_since"] > 180:
+                        stale.append(t)
+            if stale and random.random() < 0.33:
+                task_refs = ", ".join(f"#{t['id']}" for t in stale)
+                plural = "s" if len(stale) > 1 else ""
+                lines.append("")
+                lines.append(
+                    f":warning: **Task{plural} {task_refs} in progress for over "
+                    "3 minutes.** Consider whether stuck. If blocked, switch to another "
+                    "task or mark this one done."
+                )
         else:
             lines.append("")
             lines.append("_No tasks defined yet. Use update_tasks(action='set', tasks=[...]) to define your plan._")

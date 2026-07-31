@@ -12,7 +12,7 @@ _CHUNK_CHARS = 8000
 
 
 def execute(agent: dict, args: dict) -> dict:
-    file_path = args.get('file_path', '')
+    file_path = args.get('file_path') or args.get('path', '')
     if not file_path:
         return {'error': 'file_path is required'}
 

@@ -100,6 +100,13 @@ class TurnPrefetcher:
             else:
                 assigned_tool_ids = db.get_agent_tools(db_agent_id)
 
+            # Inter-agent communication is enabled by the agent-level toggle;
+            # send_agent_message is therefore available without a separate tool
+            # assignment, matching build_tools() exposure.
+            if (agent.get('agent_messaging_enabled') != 0
+                    and 'send_agent_message' not in assigned_tool_ids):
+                assigned_tool_ids.append('send_agent_message')
+
             # Inject skill tool IDs from assigned skills into assigned_tool_ids.
             # This mirrors build_tools() Layer 9 auto-injection and ensures
             # the authorization guard allows execution of skill tools that
@@ -257,6 +264,9 @@ class TurnPrefetcher:
                     for msg in history:
                         fresh_messages.append(
                             _ctx.build_message_entry(msg, agent, has_describe_image))
+
+            # Keep an authoritative metadata-only file index outside the prunable tail.
+            _ctx.sync_session_attachment_manifest(fresh_messages, session_id, db_agent_id)
 
             # Ensure messages don't end with assistant role
             while (len(fresh_messages) > 1

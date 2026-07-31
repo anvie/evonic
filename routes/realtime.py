@@ -537,6 +537,10 @@ def _producer_chat(ring: BoundedRing, breaker: CircuitBreaker,
             'message': d.get('message', ''),
             'metadata': d.get('metadata', {}),
         }),
+        'whatsapp_restriction_warning': ('whatsapp_restriction_warning', lambda d: {
+            'content': d.get('content', ''),
+            'metadata': d.get('metadata', {}),
+        }),
         'session_clear': ('session_clear', lambda d: {
             'session_id': d.get('session_id', ''),
             'agent_id': d.get('agent_id', ''),

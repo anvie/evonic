@@ -33,6 +33,7 @@ _LLM_ERROR_MESSAGES = {
     "provider_error": "The LLM provider is experiencing issues. Please try again shortly.",
     "llm_error": "The LLM returned an error. Please try again.",
     "unknown_error": "An unexpected error occurred with the LLM service.",
+    "parse_error": "The LLM provider returned an invalid response. Check the provider configuration.",
 }
 
 
@@ -210,12 +211,14 @@ class LLMClient:
                          thinking (bool), thinking_budget (int), max_tokens, temperature.
                          If None, uses the default model from DB or config.py defaults.
         """
+        self.provider = None
         if model_config:
             try:
                 from models.db import db
                 model_config = db.resolve_model_config(model_config)
             except Exception:
                 pass
+            self.provider = model_config.get("provider")
             self.base_url = model_config.get("base_url")
             self.api_key = model_config.get("api_key")
             self.model = model_config.get("model_name")
@@ -232,6 +235,7 @@ class LLMClient:
                 dm = db.get_default_model()
                 if dm:
                     dm = db.resolve_model_config(dm)
+                    self.provider = dm.get("provider")
                     self.base_url = dm.get("base_url")
                     self.api_key = dm.get("api_key")
                     self.model = dm.get("model_name")
@@ -262,7 +266,7 @@ class LLMClient:
                 self.temperature = None
                 self.api_format = "openai"
         self._cached_model_name = None
-        self._codex_provider_id = model_config.get("provider", "codex") if model_config else "codex"
+        self._codex_provider_id = self.provider or "codex"
         # Cache for global LLM settings (avoids repeated DB reads in hot path).
         # TTL-based, simple dict — intentionally lock-free (worst case: 1 extra DB read).
         self._settings_cache = {}
@@ -417,15 +421,24 @@ class LLMClient:
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
         total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        completion_details = usage.get("completion_tokens_details") or {}
+        cached_tokens = prompt_details.get("cached_tokens", 0) or 0
+        reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
+        usage_details_available = bool(prompt_details or completion_details)
 
         # Codex bypasses the standard completion path below, so emit the same
         # generic usage event here for consumers such as the Token Monitor.
         from backend.llm_usage_events import record_llm_usage
         record_llm_usage(
             model=result["response"].get("model") or self.model,
+            provider=self.provider or self._codex_provider_id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cached_tokens=cached_tokens,
+            reasoning_tokens=reasoning_tokens,
+            usage_details_available=usage_details_available,
             duration_ms=duration_ms,
             messages=messages,
             response_text=response_text,
@@ -858,6 +871,7 @@ class LLMClient:
                     # Map usage from Anthropic to OpenAI field names
                     anthropic_input = anthropic_usage.get("input_tokens", 0)
                     anthropic_output = anthropic_usage.get("output_tokens", 0)
+                    anthropic_cached = anthropic_usage.get("cache_read_input_tokens", 0) or 0
                     result = {
                         "choices": [
                             {
@@ -869,6 +883,9 @@ class LLMClient:
                             "prompt_tokens": anthropic_input,
                             "completion_tokens": anthropic_output,
                             "total_tokens": anthropic_input + anthropic_output,
+                            "prompt_tokens_details": {
+                                "cached_tokens": anthropic_cached,
+                            },
                         },
                     }
 
@@ -948,6 +965,11 @@ class LLMClient:
                 total_tokens = usage.get(
                     "total_tokens", prompt_tokens + completion_tokens
                 )
+                prompt_details = usage.get("prompt_tokens_details") or {}
+                completion_details = usage.get("completion_tokens_details") or {}
+                cached_tokens = prompt_details.get("cached_tokens", 0) or 0
+                reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
+                usage_details_available = bool(prompt_details or completion_details)
 
                 response_text = ""
                 thinking_text = ""
@@ -975,9 +997,13 @@ class LLMClient:
                 from backend.llm_usage_events import record_llm_usage
                 record_llm_usage(
                     model=self._cached_model_name or self.model,
+                    provider=self.provider,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     total_tokens=total_tokens,
+                    cached_tokens=cached_tokens,
+                    reasoning_tokens=reasoning_tokens,
+                    usage_details_available=usage_details_available,
                     duration_ms=duration_ms,
                     messages=messages,
                     response_text=response_text,
@@ -1037,6 +1063,28 @@ class LLMClient:
                     time.sleep(2)
                     continue
                 return last_error_result
+
+            except json.JSONDecodeError:
+                elapsed_ms = (
+                    int((time.time() - start_time) * 1000)
+                    if "start_time" in locals()
+                    else 0
+                )
+                raw_snippet = getattr(response, "text", "(no response)")[:500]
+                log_api_call(
+                    messages,
+                    None,
+                    elapsed_ms,
+                    error=f"JSON decode failed. Raw response: {raw_snippet}",
+                    log_file=log_file,
+                )
+                return {
+                    "response": {"error": _format_llm_error("parse_error")},
+                    "duration_ms": elapsed_ms,
+                    "success": False,
+                    "error_type": "parse_error",
+                    "error_detail": f"Received invalid (non-JSON) response from LLM server. Raw response: {raw_snippet}",
+                }
 
             except Exception as e:
                 elapsed_ms = (

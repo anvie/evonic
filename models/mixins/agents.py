@@ -1,6 +1,8 @@
 import sqlite3
 from typing import Dict, Any, List, Optional
 
+from models.boolean import normalize_bool
+
 
 class AgentMixin:
     """Agent CRUD and agent-tool/skill mapping. Requires self._connect() from the host class."""
@@ -9,7 +11,7 @@ class AgentMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, messaging_acl, messaging_acl_mode, memory_engine, kb_organizer_mode, enable_atg, enable_cmp, always_execute FROM agents ORDER BY last_active_at DESC NULLS LAST, name")
+            cursor.execute("SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, send_file_allowed_path_regex, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, messaging_acl, messaging_acl_mode, memory_engine, kb_organizer_mode, enable_atg, enable_cmp, always_execute, hidden_slash_commands, disabled_slash_commands FROM agents ORDER BY last_active_at DESC NULLS LAST, name")
             return [dict(row) for row in cursor.fetchall()]
 
     def get_enabled_agents_sorted(self, limit: int = None) -> List[Dict[str, Any]]:
@@ -17,7 +19,7 @@ class AgentMixin:
         Filters and sorts in SQL instead of Python for performance."""
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            sql = """SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, messaging_acl, messaging_acl_mode, memory_engine, kb_organizer_mode, enable_atg, enable_cmp, always_execute FROM agents
+            sql = """SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, send_file_allowed_path_regex, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, messaging_acl, messaging_acl_mode, memory_engine, kb_organizer_mode, enable_atg, enable_cmp, always_execute, hidden_slash_commands, disabled_slash_commands FROM agents
                      WHERE enabled = 1
                      ORDER BY last_active_at DESC NULLS LAST, name"""
             if limit is not None:
@@ -29,7 +31,7 @@ class AgentMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, messaging_acl, messaging_acl_mode, memory_engine, kb_organizer_mode, enable_atg, enable_cmp, always_execute FROM agents WHERE id = ?", (agent_id,))
+            cursor.execute("SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, send_file_allowed_path_regex, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, messaging_acl, messaging_acl_mode, memory_engine, kb_organizer_mode, enable_atg, enable_cmp, always_execute, hidden_slash_commands, disabled_slash_commands FROM agents WHERE id = ?", (agent_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -59,7 +61,7 @@ class AgentMixin:
                 1 if agent.get('sandbox_enabled') else 0,
                 agent.get('summarize_tail', 5),
                 1 if agent.get('artifacts_enabled') is not False else 0,
-                1 if agent.get('message_wrapper_enabled') is not False else 0,
+                1 if normalize_bool(agent.get('message_wrapper_enabled'), True) else 0,
                 agent.get('fallback_model_id'),
                 agent.get('model_id'),
                 1 if agent.get('audio_enabled') else 0,
@@ -86,14 +88,17 @@ class AgentMixin:
                    'enabled', 'is_super', 'sandbox_enabled', 'safety_checker_enabled', 'primary_channel_id',
                    'avatar_path', 'disable_parallel_tool_execution', 'disable_turn_prefetch',
                    'agent_messaging_enabled', 'workplace_id',
-                   'attachments_enabled', 'attachment_max_size_mb', 'artifacts_enabled',
+                   'attachments_enabled', 'attachment_max_size_mb', 'send_file_allowed_path_regex', 'artifacts_enabled',
                    'fallback_model_id', 'audio_enabled', 'video_enabled',
                    'model_id',
                    'run_as_user', 'bash_exec_enabled', 'vision_model_id',
-                   'inter_agent_clear_context', 'builtin_tools_enabled',
+                   'inter_agent_clear_context', 'builtin_tools_enabled', 'tool_compression_enabled',
                    'messaging_acl', 'messaging_acl_mode',
-                   'memory_engine', 'kb_organizer_mode', 'enable_atg', 'enable_cmp', 'always_execute'}
+                   'memory_engine', 'kb_organizer_mode', 'enable_atg', 'enable_cmp', 'always_execute',
+                   'hidden_slash_commands', 'disabled_slash_commands'}
         updates = {k: v for k, v in data.items() if k in allowed}
+        if 'message_wrapper_enabled' in updates:
+            updates['message_wrapper_enabled'] = 1 if normalize_bool(updates['message_wrapper_enabled'], True) else 0
         if not updates:
             return False
         set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -170,7 +175,7 @@ class AgentMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, always_execute FROM agents WHERE is_super = 1 LIMIT 1")
+            cursor.execute("SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, send_file_allowed_path_regex, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, always_execute FROM agents WHERE is_super = 1 LIMIT 1")
             row = cursor.fetchone()
             return dict(row) if row else None
 

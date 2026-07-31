@@ -2,7 +2,7 @@
 
 The projector is intentionally pure: callers retain the complete canonical
 transcript while this module builds a deep-copied, model-facing alternative.
-Phase 1 uses it for shadow metrics only; enforcement remains a later rollout.
+Shadow mode measures the projection; enforced mode sends the validated projection.
 """
 
 from __future__ import annotations
@@ -36,6 +36,10 @@ _CONTEXT_CONTROL_TOOLS = frozenset({
     "use_skill", "unload_skill", "save_plan", "set_mode", "update_tasks",
     "state", "compile_task_graph", "switch_path", "new_path", "reset_active_model",
 })
+# Tools whose results must ALWAYS be retained verbatim in the LLM context.
+# use_skill/unload_skill results inform the LLM whether a skill is loaded/unloaded;
+# compacting them into receipts causes confusion (regression edaa229 + 2e09fc9).
+_PRESERVE_VERBATIM_TOOLS = frozenset({"use_skill", "unload_skill"})
 _ELIGIBLE_TOOLS = _INFORMATIONAL_TOOLS | _MUTATION_RECEIPT_TOOLS | _CONTEXT_CONTROL_TOOLS
 
 
@@ -162,8 +166,13 @@ def _result_has_error(result: Dict[str, Any]) -> bool:
 
 
 def _eligible(group: _ToolGroup) -> bool:
-    return bool(group.names) and all(name in _ELIGIBLE_TOOLS for name in group.names) and not any(
-        _result_has_error(result) for result in group.results
+    return (
+        bool(group.names)
+        and all(name in _ELIGIBLE_TOOLS for name in group.names)
+        and not any(
+            _result_has_error(result) for result in group.results
+        )
+        and not any(name in _PRESERVE_VERBATIM_TOOLS for name in group.names)
     )
 
 

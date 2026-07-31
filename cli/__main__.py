@@ -24,6 +24,7 @@ from cli.commands import (
     skill_list, skill_add, skill_get, skill_rm, skill_export,
     skillset_list, skillset_get, skillset_apply,
     agent_list, agent_get, agent_add, agent_enable, agent_disable, agent_remove,
+    agent_export, agent_import,
     workplace_list, workplace_get, workplace_create, workplace_update, workplace_delete,
     workplace_pairing_code, workplace_unpair, workplace_download_binary,
     workplace_status, workplace_connect, workplace_disconnect,
@@ -122,7 +123,11 @@ def main():
     )
     doctor_parser.add_argument(
         "--fix", action="store_true", default=False,
-        help="Automatically fix detected inconsistencies (e.g. missing tools, safety components)",
+        help="Automatically fix detected inconsistencies with compact output",
+    )
+    doctor_parser.add_argument(
+        "--verbose", action="store_true", default=False,
+        help="Show every diagnostic detail (including with --fix)",
     )
     doctor_parser.add_argument(
         "--with-llm-provider", action="store_true", default=False,
@@ -395,8 +400,8 @@ def main():
     # --- agent ---
     agent_parser = subparsers.add_parser(
         "agent",
-        help="Manage agents (list, get, add, enable, disable, remove)",
-        description="Manage Evonic agents. Available subcommands: list, get, add, enable, disable, remove.",
+        help="Manage agents (list, get, add, export, import, enable, disable, remove)",
+        description="Manage Evonic agents, including portable JSON export and import.",
     )
     agent_subparsers = agent_parser.add_subparsers(
         dest="agent_command", help="Agent management commands"
@@ -449,6 +454,37 @@ def main():
         "--skillset",
         default=None,
         help="Skillset template ID to apply (pre-configures tools and prompt)",
+    )
+
+    agent_export_parser = agent_subparsers.add_parser(
+        "export",
+        help="Export an agent as portable JSON",
+    )
+    agent_export_parser.add_argument("agent_id", help="Agent ID to export")
+    agent_export_parser.add_argument(
+        "--output", "-o", default=None,
+        help="Write JSON to this path instead of stdout",
+    )
+
+    agent_import_parser = agent_subparsers.add_parser(
+        "import",
+        help="Create an agent from portable JSON",
+    )
+    agent_import_parser.add_argument(
+        "source",
+        help="JSON file path, or - to read from stdin",
+    )
+    agent_import_parser.add_argument(
+        "--id", dest="import_agent_id", default=None,
+        help="Optional imported agent ID; defaults to a unique slug from its name",
+    )
+    agent_import_parser.add_argument(
+        "--name", dest="import_agent_name", default=None,
+        help="Optional display-name override",
+    )
+    agent_import_parser.add_argument(
+        "--yes", dest="import_confirm", action="store_true",
+        help="Confirm skipping unavailable skills and tools without prompting",
     )
 
     # agent enable
@@ -874,7 +910,12 @@ def main():
     elif args.command == "restart":
         restart_server()
     elif args.command == "doctor":
-        doctor_command(quick=args.quick, fix=args.fix, with_llm_provider=args.with_llm_provider)
+        doctor_command(
+            quick=args.quick,
+            fix=args.fix,
+            with_llm_provider=args.with_llm_provider,
+            verbose=args.verbose,
+        )
     elif args.command == "evomem":
         if args.evomem_command is None:
             evomem_parser.print_help()
@@ -950,6 +991,15 @@ def main():
                 description=args.description,
                 model=args.model,
                 skillset=args.skillset,
+            )
+        elif args.agent_command == "export":
+            agent_export(args.agent_id, output=args.output)
+        elif args.agent_command == "import":
+            agent_import(
+                args.source,
+                agent_id=args.import_agent_id,
+                name=args.import_agent_name,
+                confirm=args.import_confirm,
             )
         elif args.agent_command == "enable":
             agent_enable(args.agent_id)

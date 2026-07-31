@@ -582,28 +582,32 @@ class TestApiErrorOrphanRecovery(unittest.TestCase):
         return {'id': agent_id, 'name': 'Test', 'model': None,
                 'send_intermediate_responses': False, 'summarize_threshold': 0}
 
-    def _run_tool_loop(self, llm, messages, session_id):
+    def _run_tool_loop(self, llm, messages, session_id, tools=None,
+                       fallback_model=None, fallback_llm=None, return_db=False):
         run_tool_loop = _llm_loop_mod.run_tool_loop
         mock_db = MagicMock()
         mock_db.get_setting.side_effect = lambda key, default=None: default or '0'
         mock_db.add_chat_message.return_value = None
         mock_db.get_agent_default_model.return_value = None
-        mock_db.get_agent_fallback_model.return_value = None
+        mock_db.get_agent_model.return_value = None
+        mock_db.get_agent_state.return_value = None
+        mock_db.get_agent_fallback_model.return_value = fallback_model
         mock_db.get_summary.return_value = None
         mock_tr = MagicMock()
         mock_tr.get_builtin_executor.return_value = lambda n, a: None
         mock_tr.get_real_executor.return_value = lambda n, a: None
+        clients = [fallback_llm] if fallback_llm is not None else [llm]
         import backend.event_stream as _es_mod
         with patch.object(_llm_loop_mod, 'db', mock_db), \
              patch.object(_llm_loop_mod, 'tool_registry', mock_tr), \
              patch.object(_es_mod, 'event_stream', MagicMock()) as mock_es, \
-             patch.object(_llm_loop_mod, 'LLMClient', return_value=llm), \
+             patch.object(_llm_loop_mod, 'LLMClient', side_effect=clients), \
              patch.object(_llm_loop_mod, 'llm_client', llm):
             result = run_tool_loop(
                 agent=self._make_agent(),
                 agent_context=self._make_agent_context(),
                 messages=messages,
-                tools=[],
+                tools=tools or [],
                 session_id=session_id,
                 llm_lock=threading.Lock(),
                 stop_event=threading.Event(),
@@ -611,6 +615,8 @@ class TestApiErrorOrphanRecovery(unittest.TestCase):
                 session_skill_tools={},
                 llm_log_path=None,
             )
+            if return_db:
+                return (result, mock_db), mock_es
             return result, mock_es
 
     def test_proactive_sanitize_prevents_400(self):
@@ -673,13 +679,170 @@ class TestActiveContextShadowIntegration(TestApiErrorOrphanRecovery):
             (_, _, _), mock_es = self._run_tool_loop(llm, messages, 'sess_shadow')
 
         sent = llm.chat_completion.call_args[1]['messages']
-        self.assertIs(sent, messages)
         self.assertEqual(sent, canonical_snapshot)
+        self.assertEqual(messages, canonical_snapshot)
         projections = [c[0][1] for c in mock_es.emit.call_args_list
                        if c[0][0] == 'active_context_projection']
         self.assertEqual(len(projections), 1)
         self.assertTrue(projections[0]['applied'])
         self.assertGreater(projections[0]['saved_tokens'], 0)
+
+
+class TestEffectiveRequestIntegration(TestApiErrorOrphanRecovery):
+    def _long_tool_loop(self, groups=8):
+        messages = [{"role": "system", "content": "sys"},
+                    {"role": "user", "content": "inspect"}]
+        for i in range(groups):
+            messages.extend([
+                _asst_tc(f"call-{i}"),
+                {"role": "tool", "tool_call_id": f"call-{i}",
+                 "content": (f"result-{i} " * 500)},
+            ])
+        return messages
+
+    def test_enforced_primary_uses_projected_messages_and_exact_telemetry(self):
+        llm = MagicMock(provider='primary-provider', model='primary-model')
+        llm.chat_completion.return_value = _ok('Done.')
+        messages = self._long_tool_loop()
+        canonical_snapshot = json.loads(json.dumps(messages))
+        tools = [
+            {"type": "function", "function": {"name": "read_file",
+             "description": "read " * 200, "parameters": {"type": "object"}}},
+            {"type": "function", "function": {"name": "unused",
+             "description": "unused " * 200, "parameters": {"type": "object"}}},
+        ]
+
+        with patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_MODE', 'enforced'), \
+             patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_SOFT_TOKENS', 0), \
+             patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_RECENT_GROUPS', 1), \
+             patch.object(_llm_loop_mod, '_persist_context_usage') as persist:
+            (_, _, _), mock_es = self._run_tool_loop(
+                llm, messages, 'sess_effective_primary', tools=tools)
+
+        sent = llm.chat_completion.call_args.kwargs
+        self.assertLess(len(sent['messages']), len(messages))
+        self.assertEqual(messages, canonical_snapshot)
+        projections = [c.args[1] for c in mock_es.emit.call_args_list
+                       if c.args[0] == 'active_context_projection']
+        metrics = projections[-1]
+        self.assertEqual(metrics['path'], 'primary')
+        self.assertEqual(metrics['provider'], 'primary-provider')
+        self.assertLess(metrics['effective_message_tokens'],
+                        metrics['canonical_message_tokens'] * 0.5)
+        self.assertEqual(metrics['initial_tool_tokens'],
+                         metrics['effective_tool_tokens'])
+        usage = persist.call_args.args[2]
+        self.assertEqual(usage['effective_request']['effective_message_tokens'],
+                         metrics['effective_message_tokens'])
+        self.assertEqual(usage['provider'], 'primary-provider')
+
+    def test_tool_pruning_metrics_match_the_fourth_provider_request(self):
+        llm = MagicMock(provider='primary-provider', model='primary-model')
+        tool_rounds = []
+        for i in range(3):
+            tool_rounds.append({
+                'success': True,
+                'response': {'choices': [{'message': {
+                    'content': '',
+                    'tool_calls': [{'id': f'round-{i}', 'type': 'function',
+                                    'function': {'name': 'read_file',
+                                                 'arguments': '{}'}}]},
+                    'finish_reason': 'tool_calls'}]},
+                'duration_ms': 1,
+            })
+        llm.chat_completion.side_effect = tool_rounds + [_ok('Done.')]
+        tools = [
+            {"type": "function", "function": {"name": "read_file",
+             "description": "used " * 200, "parameters": {"type": "object"}}},
+            {"type": "function", "function": {"name": "unused",
+             "description": "unused " * 200, "parameters": {"type": "object"}}},
+        ]
+
+        with patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_MODE', 'off'):
+            (_, _, _), mock_es = self._run_tool_loop(
+                llm, [{"role": "user", "content": "go"}],
+                'sess_effective_pruning', tools=tools)
+
+        fourth = llm.chat_completion.call_args_list[3].kwargs
+        self.assertEqual([t['function']['name'] for t in fourth['tools']], ['read_file'])
+        requests = [c.args[1] for c in mock_es.emit.call_args_list
+                    if c.args[0] == 'active_context_projection']
+        fourth_metrics = requests[3]
+        self.assertLess(fourth_metrics['effective_tool_tokens'],
+                        fourth_metrics['initial_tool_tokens'])
+        from backend.llm_usage_events import estimate_context_tokens
+        self.assertEqual(fourth_metrics['effective_tool_tokens'],
+                         estimate_context_tokens([], fourth['tools']))
+
+    def test_context_retry_does_not_restore_projected_history(self):
+        llm = MagicMock(provider='primary-provider', model='primary-model')
+        llm.chat_completion.side_effect = [
+            _err('exceeds the available context size'),
+            _ok('- compacted effective request'),
+            _ok('Done after retry.'),
+        ]
+        messages = self._long_tool_loop()
+        canonical_snapshot = json.loads(json.dumps(messages))
+
+        with patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_MODE', 'enforced'), \
+             patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_SOFT_TOKENS', 0), \
+             patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_RECENT_GROUPS', 1):
+            self._run_tool_loop(llm, messages, 'sess_effective_retry')
+
+        primary = llm.chat_completion.call_args_list[0].kwargs['messages']
+        retry = llm.chat_completion.call_args_list[2].kwargs['messages']
+        self.assertLess(len(primary), len(messages))
+        self.assertLess(len(retry), len(messages))
+        self.assertFalse(any('result-0' in str(m.get('content')) for m in retry))
+        self.assertEqual(messages, canonical_snapshot)
+
+    def test_fallback_reuses_projected_messages_and_tools(self):
+        primary = MagicMock(provider='primary-provider', model='primary-model')
+        primary.chat_completion.return_value = _tc_err('primary rejected request')
+        fallback = MagicMock(provider='fallback-provider', model='fallback-model')
+        fallback.chat_completion.return_value = _ok('Fallback done.')
+        fallback_model = {
+            'id': 'fallback-id', 'name': 'Fallback', 'provider': 'fallback-provider',
+            'model_name': 'fallback-model', 'vision_supported': True,
+        }
+        messages = self._long_tool_loop()
+        tools = [{"type": "function", "function": {"name": "read_file",
+                  "parameters": {"type": "object"}}}]
+
+        with patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_MODE', 'enforced'), \
+             patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_SOFT_TOKENS', 0), \
+             patch.object(_llm_loop_mod, 'ACTIVE_CONTEXT_RECENT_GROUPS', 1):
+            (_, _, _), mock_es = self._run_tool_loop(
+                primary, messages, 'sess_effective_fallback', tools=tools,
+                fallback_model=fallback_model, fallback_llm=fallback)
+
+        primary_call = primary.chat_completion.call_args.kwargs
+        fallback_call = fallback.chat_completion.call_args.kwargs
+        self.assertEqual(fallback_call['messages'], primary_call['messages'])
+        self.assertIs(fallback_call['tools'], primary_call['tools'])
+        requests = [c.args[1] for c in mock_es.emit.call_args_list
+                    if c.args[0] == 'llm_effective_request']
+        self.assertEqual(requests[-1]['path'], 'fallback')
+        self.assertEqual(requests[-1]['provider'], 'fallback-provider')
+
+    def test_projection_exception_fails_open_with_reason(self):
+        llm = MagicMock(provider='primary-provider', model='primary-model')
+        llm.chat_completion.return_value = _ok('Done.')
+        messages = [{"role": "system", "content": "sys"},
+                    {"role": "user", "content": "go"}]
+
+        with patch('backend.agent_runtime.active_context.project_active_context',
+                   side_effect=ValueError('invalid projection')):
+            (_, _, _), mock_es = self._run_tool_loop(
+                llm, messages, 'sess_effective_fail_open')
+
+        self.assertEqual(llm.chat_completion.call_args.kwargs['messages'], messages)
+        self.assertEqual(messages, [{"role": "system", "content": "sys"},
+                                    {"role": "user", "content": "go"}])
+        projections = [c.args[1] for c in mock_es.emit.call_args_list
+                       if c.args[0] == 'active_context_projection']
+        self.assertIn('ValueError: invalid projection',
+                      projections[-1]['fail_open_reason'])
 
 
 class TestHumanizeInsufficientToolMessages(unittest.TestCase):

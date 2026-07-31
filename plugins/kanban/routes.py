@@ -154,6 +154,13 @@ def create_blueprint():
         if not title:
             return jsonify({'error': 'Title is required'}), 400
 
+        # Validate assignee matches a real agent (prevents names being stored as IDs)
+        assignee_raw = data.get('assignee')
+        if assignee_raw and assignee_raw.strip():
+            from models.db import db as main_db
+            if not main_db.get_agent(assignee_raw.strip()):
+                return jsonify({'error': f'Agent "{assignee_raw}" not found. Use an agent ID, not a display name.'}), 400
+
         now = _now()
         new_task = {
             'title': title,
@@ -286,6 +293,12 @@ def create_blueprint():
         if 'assignee' in data:
             if task.get('status') == 'done' or task.get('archived_at'):
                 return jsonify({'error': 'Cannot change assignee on a completed or archived task.'}), 400
+
+        # Validate assignee matches a real agent
+        if 'assignee' in data and data['assignee']:
+            from models.db import db as main_db
+            if not main_db.get_agent(data['assignee'].strip()):
+                return jsonify({'error': f'Agent "{data["assignee"]}" not found. Use an agent ID, not a display name.'}), 400
 
         updatable = ['title', 'description', 'status', 'priority', 'assignee', 'completed_at']
         fields = {k: data[k] for k in updatable if k in data}
@@ -548,6 +561,11 @@ def create_blueprint():
                     f"Please try again later."
                 )
             }), 500
+
+        # Verify agent exists before attempting to trigger
+        from models.db import db as main_db
+        if not main_db.get_agent(agent_id):
+            return jsonify({'error': f'Agent "{agent_id}" not found. The task assignee may be invalid — use an agent ID, not a display name.'}), 400
 
         # Trigger the agent using the same notify path as the kanban scheduler
         try:
@@ -815,10 +833,16 @@ def create_blueprint():
             now = _now()
             assigned_count = 0
 
+            from models.db import db as main_db
+
             for item in assignments:
                 task_id = item.get('task_id')
                 agent_id = item.get('agent_id', '').strip()
                 if not task_id or not agent_id:
+                    continue
+
+                # Validate agent exists
+                if not main_db.get_agent(agent_id):
                     continue
 
                 task = kanban_db.get(task_id)

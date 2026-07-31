@@ -61,6 +61,22 @@ def _get_env_int(name: str, default: int, min_val: int = None, max_val: int = No
         return max_val
     return value
 
+
+def _get_env_float(name: str, default: float, min_val: float = None, max_val: float = None) -> float:
+    """Read a float environment variable with validation and bounds clamping."""
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (ValueError, TypeError):
+        _logger.warning("Invalid %s, using default %s", name, default)
+        return default
+    if min_val is not None and value < min_val:
+        _logger.warning("%s=%f below minimum %f, clamping to %f", name, value, min_val, min_val)
+        return min_val
+    if max_val is not None and value > max_val:
+        _logger.warning("%s=%f above maximum %f, clamping to %f", name, value, max_val, max_val)
+        return max_val
+    return value
+
 # Two-Pass Extraction Configuration
 # PASS 1: LLM generates answer with reasoning
 # PASS 2: LLM extracts ONLY the final answer in strict format
@@ -184,6 +200,12 @@ SANDBOX_CPU_LIMIT = os.getenv("SANDBOX_CPU_LIMIT", "1")
 SANDBOX_NETWORK = os.getenv("SANDBOX_NETWORK", "bridge")  # 'none' or 'bridge'
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "evonic-sandbox:latest")
 SANDBOX_MAX_CONTAINERS = _get_env_int("SANDBOX_MAX_CONTAINERS", 10, min_val=1, max_val=100)
+# When True (default), the main agent's Docker sandbox container is keyed by
+# agent_id instead of session_id, runs with --restart=unless-stopped, and is
+# stopped (not removed) on `evonic stop` so installed packages and state survive
+# across sessions. Subagents and explorer sub-workspaces remain session-scoped.
+SANDBOX_PERSISTENT_CONTAINER_ENABLED = _get_env_bool(
+    "SANDBOX_PERSISTENT_CONTAINER_ENABLED", True)
 
 # Sandbox backend selector: 'docker' (default) or 'bwrap' (Linux-only, bubblewrap).
 # 'bwrap' runs each command in a lightweight namespace sandbox (no daemon/image) —
@@ -213,9 +235,9 @@ AGENT_MAX_TOOL_RESULT_CHARS = _get_env_int("AGENT_MAX_TOOL_RESULT_CHARS", 8000, 
 AGENT_PARALLEL_TOOL_WAIT_TIMEOUT = _get_env_int(
     "AGENT_PARALLEL_TOOL_WAIT_TIMEOUT", 300, min_val=1, max_val=3600)
 
-# Same-turn context projection. Shadow mode computes the bounded model-facing
-# projection and emits attribution, while the provider still receives canonical
-# messages.
+# Same-turn context projection. Enforced mode sends the validated bounded payload;
+# shadow mode emits attribution while sending canonical messages, and off disables
+# compaction. Projection failures always fail open to canonical messages.
 ACTIVE_CONTEXT_MODE = os.getenv("ACTIVE_CONTEXT_MODE", "enforced").strip().lower()
 if ACTIVE_CONTEXT_MODE not in ("off", "shadow", "enforced"):
     _logger.warning("Invalid ACTIVE_CONTEXT_MODE=%r, using off", ACTIVE_CONTEXT_MODE)
@@ -238,6 +260,41 @@ TOOL_COMPRESSION_VERBOSE = _get_env_bool("RTK_VERBOSE", False)
 # without the tmux/screen wrapper. The DB setting long_running_guard_enabled can also
 # override this at runtime via the system settings UI.
 LONG_RUNNING_GUARD_ENABLED = _get_env_bool("LR_GUARD_DISABLED", False, invert=True)
+
+# ---- WhatsApp safe outbound delivery (global, system-wide) ----
+# These settings apply to ALL agents using WhatsApp channels.
+# They can be overridden at runtime via the System Settings UI (app_settings table).
+
+# Master toggle: when disabled (0), all safe-delivery features are bypassed.
+WHATSAPP_SAFE_DELIVERY_ENABLED = _get_env_bool("WHATSAPP_SAFE_DELIVERY_ENABLED", True)
+
+# Pooling window in seconds: text chunks arriving within this window are merged
+# before sending, reducing bursty multi-message delivery.
+WHATSAPP_POOL_WINDOW_SECONDS = _get_env_float("WHATSAPP_POOL_WINDOW_SECONDS", 2.0, min_val=0.1, max_val=30.0)
+
+# Hard minimum interval (seconds) between sends to the same chat, independent of
+# the cosmetic typing delay.
+WHATSAPP_MIN_SEND_INTERVAL_SECONDS = _get_env_float("WHATSAPP_MIN_SEND_INTERVAL_SECONDS", 2.0, min_val=0.1, max_val=60.0)
+
+# Characters-per-second used to estimate a bounded typing delay from content length.
+WHATSAPP_TYPING_CHARS_PER_SECOND = _get_env_float("WHATSAPP_TYPING_CHARS_PER_SECOND", 20.0, min_val=1.0, max_val=100.0)
+
+# Hard upper bound (seconds) on the computed typing delay so users are not left
+# waiting indefinitely for long messages.
+WHATSAPP_MAX_TYPING_DELAY_SECONDS = _get_env_float("WHATSAPP_MAX_TYPING_DELAY_SECONDS", 15.0, min_val=1.0, max_val=120.0)
+
+# Fraction of the computed delay that is added/subtracted as random jitter to
+# break up mechanical timing patterns. 0.15 means ±15% variation.
+WHATSAPP_DELAY_JITTER_RATIO = _get_env_float("WHATSAPP_DELAY_JITTER_RATIO", 0.15, min_val=0.0, max_val=0.5)
+
+# Per-channel rolling outbound cap (messages/minute). Exceeding this triggers
+# throttling warnings and circuit-breaker behavior.
+WHATSAPP_MAX_OUTBOUND_PER_MINUTE = _get_env_int("WHATSAPP_MAX_OUTBOUND_PER_MINUTE", 30, min_val=1, max_val=600)
+
+# Master toggle for WhatsApp-native text formatting (headings→labels, bullets→•,
+# [label](url)→"label: url", code blocks→CODE, etc.). When disabled (0), the
+# original _strip_markdown is used.
+WHATSAPP_NATURAL_FORMATTING_ENABLED = _get_env_bool("WHATSAPP_NATURAL_FORMATTING_ENABLED", True)
 
 # Session archiving on /clear — when enabled, session data (messages, JSONL,
 # summaries, state) is saved to shared/db/session_archive.db before clearing.

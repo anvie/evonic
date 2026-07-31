@@ -10,11 +10,45 @@ def test_map_usage_responses_api_keys():
     assert _map_usage({'input_tokens': 95000, 'output_tokens': 420,
                        'total_tokens': 95420}) == {
         'prompt_tokens': 95000, 'completion_tokens': 420, 'total_tokens': 95420}
+    detailed = _map_usage({'input_tokens': 95000, 'output_tokens': 420,
+                           'input_tokens_details': {'cached_tokens': 12000},
+                           'output_tokens_details': {'reasoning_tokens': 80}})
+    assert detailed['prompt_tokens_details']['cached_tokens'] == 12000
+    assert detailed['completion_tokens_details']['reasoning_tokens'] == 80
     # total derived when absent
     assert _map_usage({'input_tokens': 10, 'output_tokens': 5}) == {
         'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}
     assert _map_usage({}) == {}
     assert _map_usage(None) == {}
+
+
+def test_codex_client_uses_default_model_provider_for_oauth():
+    from backend.llm_client import LLMClient
+    from models.db import db
+
+    model = {
+        'provider': 'openai',
+        'api_format': 'codex',
+        'base_url': 'https://chatgpt.com/backend-api/codex',
+        'model_name': 'gpt-5.6-luna',
+    }
+    with patch.object(db, 'get_default_model', return_value=model), \
+         patch.object(db, 'resolve_model_config', side_effect=lambda value: value):
+        client = LLMClient()
+
+    assert client.provider == 'openai'
+    assert client._codex_provider_id == 'openai'
+
+    with patch('backend.provider.oauth_codex.get_valid_token', return_value='tok') as get_token, \
+         patch('backend.provider.codex_client.CodexClient') as codex_cls:
+        codex_cls.return_value.send_request.return_value = {
+            'success': True,
+            'response': {'choices': [{'message': {'content': 'ok'}}], 'usage': {}},
+        }
+        client._codex_chat_completion([{'role': 'user', 'content': 'test'}])
+
+    get_token.assert_called_once()
+    assert get_token.call_args.args[1] == 'openai'
 
 
 def test_codex_chat_completion_propagates_usage():
@@ -27,6 +61,7 @@ def test_codex_chat_completion_propagates_usage():
     client.temperature = None
     client.thinking = False
     client.timeout = 120
+    client.provider = 'codex'
     client._codex_provider_id = 'codex'
 
     fake_result = {
@@ -59,9 +94,13 @@ def test_codex_chat_completion_propagates_usage():
     assert result['request_payload']['messages'][0]['content'] == 'halo'
     record_usage.assert_called_once_with(
         model='gpt-5.6-terra',
+        provider='codex',
         prompt_tokens=1234,
         completion_tokens=56,
         total_tokens=1290,
+        cached_tokens=0,
+        reasoning_tokens=0,
+        usage_details_available=False,
         duration_ms=result['duration_ms'],
         messages=messages,
         response_text='hi',

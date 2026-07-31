@@ -8,9 +8,11 @@ import secrets
 import subprocess
 import time
 import threading
+import uuid
 import requests
 from typing import Dict, Any, Optional
 from backend.channels.base import BaseChannel, strip_system_tags
+from backend.channels.whatsapp_dispatcher import WhatsAppOutboundDispatcher
 
 _logger = logging.getLogger(__name__)
 # Bridge (Node/Baileys) stdout is routed to logs/baileys.log via EVONIC_LOG_ROUTES
@@ -19,10 +21,67 @@ _bridge_logger = logging.getLogger('baileys')
 _BRIDGE_DIR = os.path.join(os.path.dirname(__file__), 'whatsapp-bridge')
 
 
-def _strip_markdown(text: str) -> str:
-    """Remove markdown symbols from text for plain WhatsApp messages."""
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\*+', '', text)
+def _whatsapp_format(text: str) -> str:
+    """Convert Markdown/rich text to WhatsApp-native conversational formatting.
+
+    Unlike _strip_markdown (which deleted markup destructively), this formatter:
+    - Converts headings to plain-text labels.
+    - Converts unordered-list bullets to '•'.
+    - Preserves numbered lists.
+    - Converts [label](url) → "label: url".
+    - Converts fenced code blocks to compact "CODE:" sections.
+    - Removes unsupported inline markup (**, __, ~~, `) without harming
+      punctuation, URLs, or literal content.
+    - Collapses excessive blank lines and trims leading/trailing whitespace.
+    - Is deterministic and safe for noncompliant LLM output.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+
+    # ── 1. Convert fenced code blocks into compact "CODE:" sections ──────────
+    #     (process before inline rules so content inside blocks is untouched)
+    text = re.sub(
+        r'```[a-zA-Z]*\n(.*?)```',
+        lambda m: 'CODE:\n' + m.group(1).rstrip() + '\n',
+        text, flags=re.DOTALL
+    )
+
+    # ── 2. Convert headings (# ## ### …) to plain-text labels ────────────────
+    text = re.sub(r'^######\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^#####\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^####\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^###\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^##\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^#\s+', '', text, flags=re.MULTILINE)
+
+    # ── 3. Convert [label](url) → "label: url" ───────────────────────────────
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1: \2', text)
+
+    # ── 4. Convert bold (**text** or __text__) – strip markers ─────────────
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+
+    # ── 5. Convert italic (_text_ or *text*) – strip markers ─────────────────
+    #     Single * or _ wrapped text, but not double. Must not destroy URLs.
+    text = re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'\1', text)
+    text = re.sub(r'(?<!\*)\*([^*\n]+)\*(?!\*)', r'\1', text)
+
+    # ── 6. Convert strikethrough (~~text~~) – strip markers ──────────────────
+    text = re.sub(r'~~(.+?)~~', r'\1', text)
+
+    # ── 7. Convert inline code (`text`) – strip backticks ────────────────────
+    text = re.sub(r'`([^`\n]+)`', r'\1', text)
+
+    # ── 8. Convert unordered-list markers (- or * at line start) to '•' ──────
+    #     Preserves indentation via leading spaces capture.
+    text = re.sub(r'^(\s*)[-*]\s+', r'\1• ', text, flags=re.MULTILINE)
+
+    # ── 9. Collapse 3+ consecutive blank lines to at most 2 ──────────────────
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # ── 10. Remove leading/trailing blank lines and whitespace ───────────────
+    text = text.strip()
+
     return text
 
 
@@ -46,6 +105,15 @@ def _split_message(text: str, max_len: int = 4096) -> list:
         chunks.append(text[:split_at])
         text = text[split_at:].lstrip('\n')
     return chunks
+
+
+def _read_global_setting(key: str, default: str) -> str:
+    """Read a WhatsApp safe-delivery setting from the global app_settings table."""
+    try:
+        from models.db import db
+        return db.get_setting(key, default) or default
+    except Exception:
+        return default
 
 
 def _format_quoted_context(quoted_text=None, quoted_message=None,
@@ -112,8 +180,12 @@ class WhatsAppChannel(BaseChannel):
         self._callback_secret: str = secrets.token_urlsafe(32)
         # Last status pushed by the bridge ('connected' | 'qr_pending' | 'disconnected')
         self._last_bridge_status: Optional[str] = None
-        # Maps external_user_id (bare number) → full WhatsApp JID for reliable replies
+        # Maps session-facing external_user_id values to the exact inbound JID.
+        # The alternate map retains the other WhatsApp identity namespace (PN or
+        # LID) for diagnostics without changing the canonical reply target.
         self._jid_map: Dict[str, str] = {}
+        self._alternate_jids: Dict[str, str] = {}
+        self._load_persisted_jid_routes(config)
         # Debounce state for llm_thinking typing indicator
         self._typing_timer: Dict[str, threading.Timer] = {}
         self._typing_lock = threading.Lock()
@@ -121,24 +193,79 @@ class WhatsAppChannel(BaseChannel):
         # events from re-scheduling typing right after a response was sent
         self._typing_suppress_until: Dict[str, float] = {}
 
+        # ── Outbound dispatcher (lazy-init in start()) ──
+        self._dispatcher: Optional[WhatsAppOutboundDispatcher] = None
+
+    def _load_persisted_jid_routes(self, config: dict) -> None:
+        """Restore reply JIDs learned from inbound traffic before a restart."""
+        for user_id, route in (config.get('jid_routes') or {}).items():
+            if not isinstance(route, dict):
+                continue
+            primary = route.get('primary') or ''
+            alternate = route.get('alternate') or ''
+            if primary:
+                self._jid_map[str(user_id)] = primary
+            if alternate and alternate != primary:
+                self._alternate_jids[str(user_id)] = alternate
+
+    def _remember_jid_route(self, user_id: str, primary: str,
+                            alternate: str = '') -> None:
+        """Cache and persist a canonical reply JID plus its alternate identity."""
+        if not user_id or not primary:
+            return
+        self._jid_map[user_id] = primary
+        if alternate and alternate != primary:
+            self._alternate_jids[user_id] = alternate
+        else:
+            self._alternate_jids.pop(user_id, None)
+
+        # Persist only when the learned route changed. Reading the latest config
+        # first avoids clobbering route-table edits made while the channel runs.
+        try:
+            from models.db import db
+            channel = db.get_channel(self.channel_id)
+            if not channel:
+                return
+            config = dict(channel.get('config') or {})
+            routes = dict(config.get('jid_routes') or {})
+            learned = {'primary': primary}
+            if alternate and alternate != primary:
+                learned['alternate'] = alternate
+            if routes.get(user_id) == learned:
+                return
+            routes[user_id] = learned
+            # Bound persisted transport metadata independently from user routes.
+            if len(routes) > 2000:
+                routes.pop(next(iter(routes)))
+            config['jid_routes'] = routes
+            db.update_channel(self.channel_id, {'config': config})
+            self.config = config
+        except Exception as exc:
+            _logger.warning("WhatsApp JID route persistence failed for channel %s: %s",
+                            self.channel_id, exc)
+
+    @staticmethod
+    def _jid_namespace(jid: str) -> str:
+        if not jid or '@' not in jid:
+            return 'bare'
+        return jid.rsplit('@', 1)[-1]
+
     @staticmethod
     def get_channel_type() -> str:
         return 'whatsapp'
 
     def get_system_instructions(self) -> Optional[str]:
         return (
-            "IMPORTANT — WhatsApp Formatting Constraint:\n"
-            "You are responding via WhatsApp which uses PLAIN TEXT only. "
-            "Markdown formatting (bold, italic, code blocks, headers, bullet lists) "
-            "is NOT supported and will appear as raw symbols.\n\n"
-            "STRICTLY FOLLOW THESE RULES:\n"
-            "- NEVER use markdown symbols: **, *, `, ```, #, -, >, [], ()\n"
-            "- Use UPPERCASE for emphasis instead of bold/italic\n"
-            "- Use numbered lists (1. 2. 3.) for lists\n"
-            "- Use indentation with spaces for structure\n"
-            "- Use plain URLs without markdown link syntax\n"
-            "- Write code inline with clear labels like \"CODE:\" prefix\n"
-            "- Keep responses clean and readable in plain text"
+            "WhatsApp response style:\n"
+            "- Reply concisely, naturally, and conversationally. Avoid repetitive greetings, "
+            "signatures, and unnecessary ceremony.\n"
+            "- Prefer one complete combined answer over several fragmented messages.\n"
+            "- Use plain text that renders reliably in WhatsApp. Avoid Markdown constructs "
+            "such as heading markers, fenced code blocks, and Markdown links; use plain URLs.\n"
+            "- Do not claim to be human. Be transparent that you are an AI assistant when "
+            "identity is relevant.\n"
+            "- Preserve useful structure with short paragraphs or simple numbered items "
+            "when needed."
         )
 
     def _resolve_agent(self, sender: str, is_group: bool, jid: str,
@@ -313,6 +440,12 @@ class WhatsAppChannel(BaseChannel):
         event_stream.on('approval_resolved', _on_approval_resolved)
         event_stream.on('llm_thinking', _on_llm_thinking)
 
+        # ── Initialize outbound dispatcher ──
+        self._dispatcher = WhatsAppOutboundDispatcher(
+            self,
+            settings_getter=_read_global_setting,
+        )
+
         self._running = True
 
         # Start the bridge in a background thread so start() returns immediately
@@ -407,6 +540,15 @@ class WhatsAppChannel(BaseChannel):
                     # Routed to logs/baileys.log via the 'baileys' logger.
                     _bridge_logger.info("[%s] %s", self.channel_id[:8], line.decode().rstrip())
 
+                # Reap the child process to prevent zombie accumulation.
+                # The process may be already dead (stdout pipe closed) or
+                # still alive if we broke out due to _running=False.
+                try:
+                    self._process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # Still alive — deliberate stop path; kill via stop() later
+                    pass
+
                 # If _running is False, this was a deliberate stop — exit cleanly
                 if not self._running:
                     return
@@ -447,6 +589,9 @@ class WhatsAppChannel(BaseChannel):
         if not self._running:
             return
         self._running = False
+        if self._dispatcher:
+            self._dispatcher.shutdown()
+            self._dispatcher = None
 
         from backend.event_stream import event_stream
         if self._approval_required_handler:
@@ -489,6 +634,28 @@ class WhatsAppChannel(BaseChannel):
             })
             return
 
+        if payload.get('event') == 'outbound_status':
+            status = payload.get('status') or 'unknown'
+            _logger.info(
+                'WhatsApp outbound status: correlation_id=%s status=%s retry=%s reason=%s',
+                payload.get('correlation_id'), status,
+                payload.get('retry_count', 0), payload.get('reason', ''),
+            )
+            event_stream.emit('whatsapp_outbound_status', {
+                'agent_id': self.agent_id,
+                'channel_id': self.channel_id,
+                **payload,
+            })
+            if (status == 'failed' and payload.get('terminal')
+                    and payload.get('reachout_timelocked')):
+                if self._dispatcher:
+                    self._dispatcher.pause_for_restriction(
+                        payload.get('reachout_enforcement_ends'),
+                        payload.get('reachout_enforcement_type'),
+                    )
+                self._record_reachout_restriction(payload, db, event_stream)
+            return
+
         # Handle button reply (approval flow)
         button_id = payload.get('button_id', '')
         if button_id:
@@ -509,18 +676,19 @@ class WhatsAppChannel(BaseChannel):
         quoted_sender = payload.get('quoted_sender') or ''
         quoted_sender_name = payload.get('quoted_sender_name') or ''
 
-        # Reply to the JID the message came from, in its native addressing. For
-        # a LID-addressed chat that is the @lid JID: Baileys v7 stores the
-        # per-contact tctoken keyed by LID and resolves it on send, so replying
-        # to @lid is what lets the message get delivered. (The ack-463 failures
-        # were a MISSING tctoken — fixed by the Baileys v7 upgrade — not the
-        # address; replying to the phone JID would force an extra PN->LID token
-        # lookup that can miss.)
-        if sender and jid:
-            self._jid_map[sender] = jid
+        # Reply through the exact namespace used by the inbound conversation.
+        # Baileys may also resolve the peer's alternate PN/LID identity; retain it
+        # for diagnostics and persist both identities across restarts.
+        alt_jid = payload.get('alt_jid') or ''
+        alt_sender = payload.get('alt_sender') or ''
+        if is_group:
+            self._remember_jid_route(jid.split('@')[0], jid)
+        elif sender and jid:
+            self._remember_jid_route(sender, jid, alt_jid)
         if not is_group and jid.endswith('@lid'):
-            _logger.info("WhatsApp LID DM reply target: sender=%s jid=%s alt_jid=%s",
-                         sender, jid, payload.get('alt_jid') or '(none)')
+            _logger.info(
+                "WhatsApp LID DM route: primary_namespace=%s alternate_namespace=%s channel=%s",
+                self._jid_namespace(jid), self._jid_namespace(alt_jid), self.channel_id)
         text = strip_system_tags(payload.get('text', ''))
         image_data = payload.get('image')
         audio_data = payload.get('audio')
@@ -551,29 +719,48 @@ class WhatsAppChannel(BaseChannel):
         elif payload.get('location'):
             msg_type = 'location'
 
-        # Emit debug event BEFORE routing so ALL inbound messages are visible,
-        # including those routed to different agents or dropped entirely.
-        from datetime import datetime
+        # Resolve before emitting diagnostics so the listener can report the route
+        # outcome while still showing messages that are ultimately dropped.
+        agent_id = self._resolve_agent(sender, is_group, jid, alt_sender,
+                                       payload=payload)
+        from datetime import datetime, timezone
+        server_timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         event_stream.emit('whatsapp_inbound', {
             'channel_id': self.channel_id,
             'channel_name': self.config.get('name', self.channel_id),
+            'message_id': payload.get('message_id') or '',
             'sender': sender,
             'jid': jid,
+            'jid_namespace': self._jid_namespace(jid),
+            'alt_sender': alt_sender,
+            'alt_jid': alt_jid,
+            'alt_jid_namespace': self._jid_namespace(alt_jid),
             'is_group': is_group,
             'push_name': push_name,
             'group_name': group_name,
             'text': (text[:200] if text else ''),
+            'text_length': len(text or ''),
             'type': msg_type,
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'content_type': payload.get('content_type') or msg_type,
+            'wrapper_types': payload.get('wrapper_types') or [],
+            'payload_keys': payload.get('payload_keys') or [],
+            'message_timestamp': payload.get('message_timestamp'),
+            'server_timestamp': server_timestamp,
+            # Keep timestamp for older listener clients.
+            'timestamp': server_timestamp,
+            'bot_mentioned': bot_mentioned,
+            'quoted': bool(quoted_message or quoted_text),
+            'quoted_is_bot': quoted_is_bot,
+            'quoted_sender': quoted_sender,
+            'quoted_sender_name': quoted_sender_name,
+            'quoted_type': (quoted_message or {}).get('type')
+                if isinstance(quoted_message, dict) else '',
+            'route_status': 'matched' if agent_id else 'unmatched',
+            'routed_agent_id': agent_id or '',
+            'reply_jid': self._jid_map.get(sender, jid) if not is_group else jid,
+            'fallback_jid': self._alternate_jids.get(sender, '') if not is_group else '',
         })
 
-        # Resolve the handling agent (shared channels route per sender/group).
-        # Runs BEFORE the group mention gate so shared channels capture unrouted
-        # groups into the Unassigned inbox on ANY group message — group discovery
-        # must not depend on (fragile, LID-sensitive) @mention detection.
-        agent_id = self._resolve_agent(sender, is_group, jid,
-                                       payload.get('alt_sender') or '',
-                                       payload=payload)
         if not agent_id:
             _logger.info("WhatsApp message dropped (no route): sender=%s is_group=%s jid=%s",
                          sender, is_group, jid)
@@ -619,8 +806,8 @@ class WhatsAppChannel(BaseChannel):
                         image_url = f"data:image/jpeg;base64,{b64}"
                     except Exception as e:
                         _logger.error("WhatsApp image conversion failed: %s", e)
-            elif not text:
-                return
+            if not text:
+                text = '[Image]'
 
         if audio_data:
             # Audio is attachment-only — agents listen to it via the
@@ -698,10 +885,13 @@ class WhatsAppChannel(BaseChannel):
             return
 
         _logger.info("WhatsApp message received from %s (channel %s)", sender, self.channel_id)
+        inbound_metadata = {"channel_message_id": str(payload.get("message_id") or "")}
+        if attachment_info:
+            inbound_metadata["attachment_info"] = attachment_info
         result = agent_runtime.handle_message(
             agent_id, session_user_id, final_text, self.channel_id,
             image_url=image_url, video_url=video_url,
-            metadata={'attachment_info': attachment_info} if attachment_info else None,
+            metadata=inbound_metadata,
         )
         if result.get('buffered'):
             _logger.info("WhatsApp message buffered for %s (session %s)", sender, session_id)
@@ -711,25 +901,12 @@ class WhatsAppChannel(BaseChannel):
         # after the response is sent (would show a phantom "typing" indicator).
         self._clear_typing(sender)
 
-        response = _strip_markdown(result.get('response') or '')
+        response = result.get('response') or ''
         if response and response != "(No response)":
-            # Human-like typing delay relative to response length
-            _TYPING_SPEED = 15   # chars/sec
-            _MIN_DELAY = 1.0     # seconds
-            _MAX_DELAY = 8.0     # seconds
-            _TYPING_REFRESH = 5.0  # re-send composing every N seconds during delay
-
-            delay = max(_MIN_DELAY, min(len(response) / _TYPING_SPEED, _MAX_DELAY))
-            self.send_typing(sender)
-            deadline = time.monotonic() + delay
-            while time.monotonic() < deadline:
-                remaining = deadline - time.monotonic()
-                time.sleep(min(_TYPING_REFRESH, remaining))
-                if time.monotonic() < deadline:
-                    self.send_typing(sender)
-
-            for chunk in _split_message(response):
-                self._do_send(sender, chunk)
+            # Use the session identity for delivery. Group slash commands need
+            # the group recipient rather than the participant who issued them.
+            response_recipient = session_user_id if is_group else sender
+            self.send_message(response_recipient, response, session_id=session_id)
         else:
             # No message will follow — actively clear any composing presence
             # shown during the thinking phase.
@@ -879,6 +1056,24 @@ class WhatsAppChannel(BaseChannel):
         except Exception as e:
             _logger.warning("WhatsApp typing indicator failed for %s: %s", external_user_id, e)
 
+    def send_message_buffered(self, external_user_id: str, text: str,
+                              session_id: str = None):
+        """Queue intermediate output without blocking runtime callback threads."""
+        if self._dispatcher:
+            self._dispatcher.enqueue(
+                external_user_id, text, session_id=session_id, is_final=False)
+            return
+        super().send_message_buffered(external_user_id, text, session_id=session_id)
+
+    def send_message(self, external_user_id: str, text: str,
+                     session_id: str = None):
+        """Queue final output and absorb pending intermediate messages."""
+        if self._dispatcher:
+            self._dispatcher.enqueue(
+                external_user_id, text, session_id=session_id, is_final=True)
+            return
+        super().send_message(external_user_id, text, session_id=session_id)
+
     def get_qr(self) -> dict:
         """Fetch QR code data from the bridge."""
         try:
@@ -888,32 +1083,61 @@ class WhatsAppChannel(BaseChannel):
             return {'status': 'disconnected', 'error': str(e)}
 
     def get_bridge_status(self) -> dict:
-        """Bridge connection status — cached from bridge pushes, HTTP probe fallback."""
-        if self._last_bridge_status is not None:
-            return {'status': self._last_bridge_status}
+        """Return live bridge status, falling back to the last valid push.
+
+        Status callbacks can be missed or arrive during a transient reconnect, so
+        the cached value must not permanently override the sidecar's current
+        state.  A failed probe is non-destructive: retain the last known status
+        rather than turning a temporary HTTP failure into a false disconnect.
+        """
         try:
             resp = requests.get(f"http://127.0.0.1:{self._bridge_port}/status", timeout=5)
-            return resp.json()
-        except Exception:
-            return {'status': 'disconnected'}
+            resp.raise_for_status()
+            live_status = resp.json().get('status')
+            if live_status in ('connected', 'qr_pending', 'disconnected'):
+                self._last_bridge_status = live_status
+        except (requests.RequestException, ValueError, TypeError, AttributeError):
+            pass
 
-    def _do_send(self, external_user_id: str, text: str):
-        # Resolve full JID from map; fall back to external_user_id as-is
+        return {'status': self._last_bridge_status or 'disconnected'}
+
+    def _do_send(self, external_user_id: str, text: str,
+                 session_id: Optional[str] = None,
+                 _inter_chunk_seconds: float = 0.0):
+        # Prefer the exact inbound JID, including @lid. Persisted routes restore
+        # this mapping for delayed agent/tool sends after a process restart.
         to = self._jid_map.get(external_user_id, external_user_id)
-        _from_map = external_user_id in self._jid_map
-        # DIAGNOSTIC (shared-channel reply loss): shows the exact target JID and
-        # whether it was resolved from _jid_map or fell back to bare digits (which
-        # the bridge turns into <digits>@s.whatsapp.net — wrong for a LID sender).
+        alternate_jid = self._alternate_jids.get(external_user_id)
+        from_map = external_user_id in self._jid_map
         _logger.info(
-            "WhatsApp _do_send: user=%s -> to=%s (from_jid_map=%s, port=%s, channel %s)",
-            external_user_id, to, _from_map, self._bridge_port, self.channel_id)
-        text = _strip_markdown(text)
-        # Every send path (direct, buffered worker, messaging tool) ends here —
-        # clear typing state so no phantom indicator survives the send.
+            "WhatsApp outbound route: primary_namespace=%s alternate_namespace=%s "
+            "persisted=%s channel=%s",
+            self._jid_namespace(to), self._jid_namespace(alternate_jid or ''),
+            from_map, self.channel_id)
+        # Format text for WhatsApp (already formatted by dispatcher; safe no-op
+        # for bypass calls like pairing/approval failures).
+        text = _whatsapp_format(text)
+        # Every send path ends here — clear typing state so no phantom indicator
+        # survives the send.
         self._clear_typing(external_user_id)
-        for chunk in _split_message(text):
-            if self._bridge_send_retry({'to': to, 'text': chunk}, external_user_id):
-                _logger.info("WhatsApp message sent to %s (channel %s)", external_user_id, self.channel_id)
+        chunks = _split_message(text)
+        for i, chunk in enumerate(chunks):
+            # Inter-chunk pacing: insert a short gap between 4096-char splits
+            # so one answer is not emitted as a zero-gap burst.
+            if i > 0 and _inter_chunk_seconds > 0:
+                time.sleep(_inter_chunk_seconds)
+            correlation_id = uuid.uuid4().hex
+            payload = {
+                'to': to,
+                'text': chunk,
+                'correlation_id': correlation_id,
+            }
+            if session_id:
+                payload['session_id'] = session_id
+            if self._bridge_send_retry(payload, external_user_id):
+                _logger.info(
+                    "WhatsApp outbound accepted: correlation_id=%s channel=%s",
+                    correlation_id, self.channel_id)
         # Actively clear any lingering composing presence on the recipient
         self.send_typing(external_user_id, state='paused')
         from backend.event_stream import event_stream
@@ -948,7 +1172,7 @@ class WhatsAppChannel(BaseChannel):
 
         # 4. Strip markdown from caption (WhatsApp uses plain text)
         if caption:
-            caption = _strip_markdown(caption)
+            caption = _whatsapp_format(caption)
 
         # 5. Send via bridge
         self._clear_typing(external_user_id)
@@ -1015,6 +1239,57 @@ class WhatsAppChannel(BaseChannel):
                 _logger.error("WhatsApp send failed to %s: %s", external_user_id, e)
                 return False
         return False
+
+    def _record_reachout_restriction(self, payload: dict, db, event_stream) -> None:
+        """Persist a deduplicated restriction warning in the originating session."""
+        session_id = payload.get('session_id')
+        if not session_id or self.get_channel_type() not in ('whatsapp', 'whatsapp_shared'):
+            return
+        session = db.get_session_with_details(session_id)
+        if not session:
+            _logger.warning('Ignoring WhatsApp restriction callback for unknown session %s', session_id)
+            return
+        if session.get('channel_id') != self.channel_id:
+            _logger.warning('Ignoring WhatsApp restriction callback for channel mismatch: %s', session_id)
+            return
+        session_agent_id = session.get('agent_id')
+        if (self.get_channel_type() == 'whatsapp'
+                and session_agent_id != self.agent_id):
+            _logger.warning('Ignoring WhatsApp restriction callback for agent mismatch: %s', session_id)
+            return
+        if not session_agent_id:
+            _logger.warning('Ignoring WhatsApp restriction callback without session agent: %s', session_id)
+            return
+        enforcement_type = payload.get('reachout_enforcement_type') or 'unknown enforcement'
+        ends = payload.get('reachout_enforcement_ends') or 'an unknown time'
+        restriction_key = f'{enforcement_type}|{ends}'
+        content = (
+            '[SYSTEM/whatsapp-restriction] WhatsApp sending is temporarily restricted '
+            f'for this account ({enforcement_type}). Sending may resume after {ends}.'
+        )
+        for message in db.get_session_messages(session_id, limit=100, agent_id=session_agent_id):
+            metadata = message.get('metadata') or {}
+            if metadata.get('whatsapp_restriction_key') == restriction_key:
+                return
+        metadata = {
+            'whatsapp_restriction_key': restriction_key,
+            'reachout_enforcement_type': enforcement_type,
+            'reachout_enforcement_ends': ends,
+            'correlation_id': payload.get('correlation_id'),
+        }
+        db.add_chat_message(session_id, 'system', content, agent_id=session_agent_id,
+                            metadata=metadata)
+        _logger.warning(
+            'WhatsApp reach-out restriction in session %s: type=%s ends=%s',
+            session_id, enforcement_type, ends,
+        )
+        event_stream.emit('whatsapp_restriction_warning', {
+            'agent_id': session_agent_id,
+            'channel_id': self.channel_id,
+            'session_id': session_id,
+            'content': content,
+            'metadata': metadata,
+        })
 
     def _bridge_post(self, path: str, payload: dict):
         resp = requests.post(

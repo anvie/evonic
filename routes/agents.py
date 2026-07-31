@@ -5,6 +5,7 @@ Agent Management Blueprint — CRUD for agents, KB files, tools, and channels.
 import os
 import re
 import json
+import shlex
 import uuid
 import queue
 import logging
@@ -12,6 +13,7 @@ from typing import Dict, Any, List, Optional
 from flask import Blueprint, render_template, jsonify, request, Response, session, stream_with_context, g
 from models.db import db
 from models.chatlog import chatlog_manager, _DISPLAY_TYPES
+from backend.agent_portability import AgentPortabilityError, export_agent, import_agent, preflight_import
 from backend.audit_logger import audit
 from backend.tools import tool_registry
 from backend.tools.agent_messaging import get_agent_messaging_tool_defs
@@ -248,8 +250,10 @@ def api_get_agent(agent_id):
         return jsonify({'error': 'Agent not found'}), 404
     agent['system_prompt'] = _read_system_prompt(agent_id, fallback=agent.get('system_prompt', ''))
     agent_tools = db.get_agent_tools(agent_id)
-    # Include auto-loaded agent messaging tools when enabled
-    if agent.get('is_super') or agent.get('agent_messaging_enabled') != 0:
+    # Agent-messaging tools are part of the built-in executor chain. Do not
+    # report them as assigned when that chain is disabled for this agent.
+    if (agent.get('builtin_tools_enabled', True)
+            and (agent.get('is_super') or agent.get('agent_messaging_enabled') != 0)):
         for tid in AGENT_MESSAGING_TOOL_IDS:
             if tid not in agent_tools:
                 agent_tools = list(agent_tools) + [tid]
@@ -278,6 +282,52 @@ def api_list_agent_commands(agent_id):
         for name, description in list_available_commands(agent_id)
     ]
     return jsonify({'commands': commands})
+
+
+@agents_bp.route('/api/agents/<agent_id>/export', methods=['GET'])
+def api_export_agent(agent_id):
+    if not db.get_agent(agent_id):
+        return jsonify({'error': 'Agent not found'}), 404
+    try:
+        content = json.dumps(export_agent(db, agent_id, BASE_DIR), indent=2, ensure_ascii=False) + '\n'
+        response = Response(content, mimetype='application/json')
+        response.headers['Content-Disposition'] = f'attachment; filename="{agent_id}.agent.json"'
+        return response
+    except AgentPortabilityError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@agents_bp.route('/api/agents/import', methods=['POST'])
+def api_import_agent():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Request body must be a JSON object.'}), 400
+    if 'payload' in data:
+        payload = data.get('payload')
+        target_id = data.get('id')
+        target_name = data.get('name')
+    else:
+        payload = data
+        target_id = request.args.get('id')
+        target_name = request.args.get('name')
+    try:
+        preflight = preflight_import(db, payload)
+        warning = preflight['warning']
+        if (warning['skills'] or warning['tools']) and not data.get('confirm_missing', False):
+            return jsonify({'warning': warning, 'message': 'Unavailable dependencies will be skipped. Confirm to continue.'}), 409
+        imported_id = import_agent(
+            db, payload, BASE_DIR, agent_id=target_id, name=target_name,
+            confirm_missing=bool(data.get('confirm_missing', False))
+        )
+        audit.log_agent_crud(
+            user_id='admin', agent_id=imported_id, action='create', ip=_audit_ip()
+        )
+        return jsonify({'success': True, 'agent_id': imported_id}), 201
+    except AgentPortabilityError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        logger.exception('Agent import failed')
+        return jsonify({'error': 'Agent import failed and was rolled back.'}), 500
 
 
 @agents_bp.route('/api/agents', methods=['POST'])
@@ -490,8 +540,10 @@ def api_clone_agent(agent_id):
 def api_get_agent_tools(agent_id):
     tool_ids = db.get_agent_tools(agent_id)
     agent = db.get_agent(agent_id)
-    # Include auto-loaded agent messaging tools when enabled
-    if agent and (agent.get('is_super') or agent.get('agent_messaging_enabled') != 0):
+    # Agent-messaging tools are part of the built-in executor chain. Do not
+    # report them as assigned when that chain is disabled for this agent.
+    if (agent and agent.get('builtin_tools_enabled', True)
+            and (agent.get('is_super') or agent.get('agent_messaging_enabled') != 0)):
         for tid in AGENT_MESSAGING_TOOL_IDS:
             if tid not in tool_ids:
                 tool_ids = list(tool_ids) + [tid]
@@ -1204,6 +1256,58 @@ def api_list_channels(agent_id):
     return jsonify({'channels': channels})
 
 
+@agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/debug/listen', methods=['GET'])
+def api_channel_debug_listen(agent_id, channel_id):
+    """Stream inbound WhatsApp diagnostics only for this agent-owned channel."""
+    channel = db.get_channel(channel_id)
+    if not channel or channel.get('agent_id') != agent_id:
+        return jsonify({'error': 'Channel not found'}), 404
+    if channel.get('type') not in ('whatsapp', 'whatsapp_shared'):
+        return jsonify({'error': 'Debug listener is only available for WhatsApp channels'}), 400
+
+    from backend.event_stream import event_stream
+
+    event_queue = queue.Queue(maxsize=500)
+
+    def handler(data):
+        if data.get('channel_id') != channel_id:
+            return
+        try:
+            event_queue.put_nowait(('whatsapp_inbound', data))
+        except queue.Full:
+            pass
+
+    event_stream.on('whatsapp_inbound', handler)
+
+    def generate():
+        yield (
+            'event: connected\n'
+            f"data: {json.dumps({'type': 'connected', 'message': 'Listening for WhatsApp inbound messages...'})}\n\n"
+        )
+        try:
+            while True:
+                try:
+                    event_name, payload = event_queue.get(timeout=30)
+                except queue.Empty:
+                    yield ': heartbeat\n\n'
+                    continue
+                yield f'event: {event_name}\ndata: {json.dumps(payload)}\n\n'
+        except GeneratorExit:
+            pass
+        finally:
+            event_stream.off('whatsapp_inbound', handler)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
+
+
 @agents_bp.route('/api/agents/<agent_id>/channels', methods=['POST'])
 def api_create_channel(agent_id):
     if not db.get_agent(agent_id):
@@ -1268,6 +1372,22 @@ def api_start_channel(agent_id, channel_id):
         return jsonify({'success': True, 'running': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/resume-outbound', methods=['POST'])
+def api_resume_whatsapp_outbound(agent_id, channel_id):
+    """Clear a live WhatsApp reach-out pause after operator review."""
+    from backend.channels.registry import channel_manager
+    from backend.channels.whatsapp import WhatsAppChannel
+
+    channel = db.get_channel(channel_id)
+    if not channel or channel['agent_id'] != agent_id:
+        return jsonify({'error': 'Channel not found for this agent'}), 404
+    instance = channel_manager.get_channel_instance(channel_id)
+    if not isinstance(instance, WhatsAppChannel) or not instance._dispatcher:
+        return jsonify({'error': 'WhatsApp channel not running'}), 409
+    instance._dispatcher.resume_after_restriction()
+    return jsonify({'success': True})
 
 
 @agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/stop', methods=['POST'])
@@ -1919,6 +2039,7 @@ def api_chat_agent_state(agent_id):
                     'started_at': j.started_at,
                     'finished_at': j.finished_at,
                     'log_file': j.log_file,
+                    'session_id': j.session_id,
                 })
         except Exception:
             pass
@@ -2100,6 +2221,7 @@ def api_bg_job_log(agent_id):
 
     Query params:
         file      - log file path (must start with /tmp/evonic_build_)
+        session_id - execution session owning the log file
         lines     - number of lines to return (default 200, max 2000)
         direction - 'tail' (default) or 'head'
     """
@@ -2111,11 +2233,42 @@ def api_bg_job_log(agent_id):
     if not real.startswith('/tmp/evonic_build_'):
         return jsonify({'error': 'Invalid log file path'}), 400
 
-    if not os.path.isfile(real):
-        return jsonify({'error': 'Log file not found'}), 404
-
-    lines_count = min(int(request.args.get('lines', 200)), 2000)
+    try:
+        lines_count = min(max(int(request.args.get('lines', 200)), 1), 2000)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid lines value'}), 400
     direction = request.args.get('direction', 'tail')
+    if direction not in ('tail', 'head'):
+        return jsonify({'error': 'Invalid direction'}), 400
+
+    # Guard-wrapper logs normally live inside the execution sandbox.  Reading
+    # the host /tmp only works for local jobs, so use the same session backend
+    # that launched the process when a session id is supplied.
+    if not os.path.isfile(real):
+        session_id = (request.args.get('session_id') or '').strip()
+        if not session_id:
+            return jsonify({'error': 'session_id is required for sandbox logs'}), 400
+        try:
+            from backend.agent_runtime.background_jobs import background_jobs
+            job = next((j for j in background_jobs.list_for_session(session_id)
+                        if j.log_file == real), None)
+            if not job:
+                return jsonify({'error': 'Log file not found'}), 404
+            agent = db.get_agent(agent_id)
+            if not agent:
+                return jsonify({'error': 'Agent not found'}), 404
+            from backend.tools.lib.exec_backend import registry
+            backend = registry.get_backend(session_id, {**agent, 'agent_id': agent_id})
+            command = f"{direction} -n {lines_count} -- {shlex.quote(real)}"
+            result = backend.run_bash(command, 15, {})
+            if result.get('exit_code') != 0:
+                return jsonify({'error': 'Log file not found'}), 404
+            content = (result.get('stdout') or '').splitlines()
+            return jsonify({'content': content, 'file_size': len(result.get('stdout') or ''),
+                            'total_lines': len(content)})
+        except Exception as e:
+            logger.warning('Failed to read sandbox background log: %s', e)
+            return jsonify({'error': 'Unable to read background log'}), 502
 
     try:
         file_size = os.path.getsize(real)

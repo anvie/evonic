@@ -2,6 +2,7 @@
 Token Monitor Plugin — Flask routes.
 
 - GET /token-monitor                     → dashboard page
+- GET /api/token-monitor/snapshot        → consolidated dashboard payload
 - GET /api/token-monitor/overview        → headline totals + estimated cost
 - GET /api/token-monitor/by-agent        → per-agent breakdown (?rollup=1 folds sub-agents)
 - GET /api/token-monitor/by-source       → per-source breakdown
@@ -43,6 +44,37 @@ def create_blueprint():
     @bp.route('/token-monitor')
     def token_monitor_page():
         return render_template('token_monitor.html')
+
+    @bp.route('/api/token-monitor/snapshot')
+    def api_snapshot():
+        since = _since_from_request()
+        rollup = request.args.get('rollup', '').lower() in ('1', 'true')
+        requested_bucket = request.args.get('bucket', 'hour')
+        bucket = requested_bucket if requested_bucket in ('hour', 'day') else 'hour'
+        if request.args.get('range', '24h') == '30d':
+            bucket = 'day'
+        try:
+            agent_limit = int(request.args.get('agent_limit', 30))
+        except (TypeError, ValueError):
+            agent_limit = 30
+        payload = usage_db.snapshot(
+            since, rollup_subagents=rollup, bucket=bucket,
+            agent_limit=agent_limit)
+        pricing = _pricing._load_pricing()
+        total_cost = 0.0
+        priced = False
+        for row in payload['models']:
+            row['cost'] = _pricing.cost(
+                row.get('key', ''), row.get('prompt_tokens', 0),
+                row.get('completion_tokens', 0), pricing)
+            if row['cost'] is not None:
+                total_cost += row['cost']
+                priced = True
+        totals = payload['totals']
+        totals['billable_input_tokens'] = max(
+            totals.get('prompt_tokens', 0) - totals.get('cached_tokens', 0), 0)
+        totals['estimated_cost'] = round(total_cost, 4) if priced else None
+        return jsonify(payload)
 
     @bp.route('/api/token-monitor/overview')
     def api_overview():

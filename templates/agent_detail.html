@@ -322,6 +322,10 @@ html.dark .agent-tab.active {
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                     Clone
                 </button>
+                <button onclick="exportAgent()" class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                    Export Agent
+                </button>
                 <button onclick="toggleEnabled()" id="toggle-enabled-btn" class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm {{ 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600' if agent.enabled != 0 else 'text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300' }} transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9"/></svg>
                     <span>{{ 'Disable' if agent.enabled != 0 else 'Enable' }}</span>
@@ -514,6 +518,11 @@ html.dark .agent-tab.active {
                         <p class="text-xs text-gray-400 mt-1">Number of recent messages kept in raw form (not summarized).</p>
                     </div>
                     <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Allowed send_file path regex</label>
+                        <input type="text" id="agent-send-file-allowed-path-regex" value="{{ agent.send_file_allowed_path_regex or '' }}" placeholder="Empty disables the policy" class="w-full p-2.5 border border-gray-300 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+                        <p class="text-xs text-gray-400 mt-1">Optional regex matched against the canonical path before file metadata or content is exposed. Traversal and symlink aliases are resolved first.</p>
+                    </div>
+                    <div>
                         <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Memory Engine</label>
                         <select id="agent-memory-engine" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
                             <option value="" {{ 'selected' if not agent.memory_engine else '' }}>Default (global setting)</option>
@@ -686,6 +695,17 @@ html.dark .agent-tab.active {
                     </div>
 
                     <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Hidden Slash Commands</label>
+                        <input type="text" id="agent-hidden-slash-commands" value="{{ agent.hidden_slash_commands or '' }}" placeholder="e.g. help,summary" class="w-full p-2.5 border border-gray-300 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+                        <p class="text-xs text-gray-400 mt-1">Comma-separated list of <!-- --><code>/commands</code> to hide from this agent's system prompt (still executable by the user). Use <code>*</code> for all, or <code>!</code> prefix for inverse mode (e.g. <code>!clear,model</code> = only <code>/clear</code> &amp; <code>/model</code> visible). No effect on super agents. Available commands: clear, help, summary, investigate, stop, cwd, cd, restart, shutdown, plan, exec, unfocus, status, model, sub, detach, jobs, kb-organize, dump.</p>
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Disabled Slash Commands</label>
+                        <input type="text" id="agent-disabled-slash-commands" value="{{ agent.disabled_slash_commands or '' }}" placeholder="e.g. restart,shutdown" class="w-full p-2.5 border border-gray-300 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+                        <p class="text-xs text-gray-400 mt-1">Comma-separated list of <!-- --><code>/commands</code> to disable entirely (treated as regular chat, not executed). Same <code>*</code> wildcard and <code>!</code> inverse syntax as above. No effect on super agents.</p>
+                    </div>
+
+                    <div>
                         <div class="flex items-center gap-2 mb-1">
                             <input type="checkbox" id="agent-summarize-prompt-override" {{ 'checked' if agent.summarize_prompt else '' }} onchange="toggleSummarizePromptOverride()" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
                             <label for="agent-summarize-prompt-override" class="text-gray-600 dark:text-gray-300 text-sm font-medium">Override default summarizer prompt</label>
@@ -753,7 +773,7 @@ html.dark .agent-tab.active {
             <!-- Overlay: Search bar + type filters (top-left, stacked) -->
             <div class="absolute top-4 left-4 z-10 flex flex-col items-start gap-1.5">
                 <div class="relative">
-                    <input type="text" id="kb-graph-search" placeholder="Search nodes..." autocomplete="off"
+                    <input type="search" id="kb-graph-search" name="agent_kb_graph_query" placeholder="Search nodes..." autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"
                            class="pl-3 pr-8 py-2 w-48 sm:w-64 bg-white/80 dark:bg-gray-800 backdrop-blur-sm border border-gray-200 dark:border-gray-600 rounded-lg text-sm shadow-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/50 dark:text-gray-100 dark:placeholder-gray-400"
                            oninput="searchKBGraph(this.value)">
                     <button id="kb-graph-search-clear" onclick="clearKBGraphSearch()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer hidden" type="button">
@@ -817,7 +837,7 @@ html.dark .agent-tab.active {
                         </label>
                     </div>
                 </div>
-                <input type="text" id="kb-filter" placeholder="Filter files..." autocomplete="off"
+                <input type="search" id="kb-filter" name="agent_kb_files_query" placeholder="Filter files..." autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"
                        class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400 mb-4"
                        oninput="filterKBFiles()">
                 <p class="text-xs text-gray-400 mb-4">Files stored in <code>agents/{{ agent.id }}/kb/</code> — the agent can read these using <code>read_file(file_path="/_self/kb/filename.md")</code>.</p>
@@ -862,7 +882,7 @@ html.dark .agent-tab.active {
             <p class="text-xs text-gray-400 mb-4">Toggle tools on/off to assign them to this agent. {% if agent.builtin_tools_enabled is not false %}Built-in tools are always available.{% else %}Built-in tools are currently disabled — enable them in the Advanced tab.{% endif %} Click a tool name to view details.</p>
             <!-- Filter bar -->
             <div class="flex flex-wrap items-center gap-2 mb-4">
-                <input type="text" id="tool-filter" placeholder="Filter tools..." autocomplete="off"
+                <input type="search" id="tool-filter" name="agent_tools_query" placeholder="Filter tools..." autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"
                        class="flex-1 min-w-0 w-full sm:w-auto p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400"
                        oninput="filterToolsList()">
                 <div class="flex rounded-md border border-gray-200 overflow-hidden text-xs font-medium flex-shrink-0 w-full sm:w-auto dark:border-gray-600">
@@ -1560,6 +1580,29 @@ html.dark .agent-tab.active {
     </div>
 </div>
 
+<!-- Per-channel WhatsApp Debug Listener Modal -->
+<div id="channel-debug-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4" onclick="if(event.target===this) channelDebugListener.close()">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col" style="max-height:85vh" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 dark:border-gray-700 flex-shrink-0">
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">WhatsApp Debug Listener</h3>
+                <p id="channel-debug-status" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                    <span class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1.5"></span>Disconnected
+                </p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="channelDebugListener.clear()" class="px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">Clear</button>
+                <button onclick="channelDebugListener.close()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xl leading-none">&times;</button>
+            </div>
+        </div>
+        <div id="channel-debug-log" class="flex-1 overflow-y-auto px-6 py-4 space-y-2 bg-gray-50 dark:bg-gray-900/50" style="min-height:300px"></div>
+        <div class="px-6 py-3 border-t border-gray-100 dark:border-gray-700 flex-shrink-0 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
+            <span id="channel-debug-count">0 messages</span>
+            <span>Max 500 &middot; newest first</span>
+        </div>
+    </div>
+</div>
+
 <!-- Drop File Confirmation Modal -->
 <div id="chat-drop-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4">
     <div class="bg-white dark:bg-gray-800 rounded-xl w-[66%] max-w-[420px] shadow-xl flex flex-col" style="max-height:85vh">
@@ -1652,7 +1695,7 @@ html.dark .agent-tab.active {
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=59" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=60" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=6" defer></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
@@ -2284,6 +2327,9 @@ const AgentAutoSave = {
         { id: 'agent-run-as-user', key: 'run_as_user', type: 'strnull' },
         { id: 'agent-memory-engine', key: 'memory_engine', type: 'selnull' },
         { id: 'agent-kb-organizer', key: 'kb_organizer_mode', type: 'selnull' },
+        { id: 'agent-send-file-allowed-path-regex', key: 'send_file_allowed_path_regex', type: 'str' },
+        { id: 'agent-hidden-slash-commands', key: 'hidden_slash_commands', type: 'str' },
+        { id: 'agent-disabled-slash-commands', key: 'disabled_slash_commands', type: 'str' },
         // Special-handled controls (persist fn registered below); listed here so
         // they still get change/blur listeners wired.
         { id: 'agent-model-select' },
@@ -2322,6 +2368,16 @@ const AgentAutoSave = {
         this._handlers['agent-summarize-prompt'] = saveSummarizePrompt;
         // Injection guard is stored as an agent variable, not a column.
         this._handlers['agent-injection-guard'] = async () => { await saveVariables(true); };
+        // Re-fetch slash command list after saving hidden/disabled settings
+        // so the chat autocomplete reflects the change immediately.
+        this._handlers['agent-hidden-slash-commands'] = async (el) => {
+            await putAgent({ hidden_slash_commands: el.value });
+            loadChatCommands();
+        };
+        this._handlers['agent-disabled-slash-commands'] = async (el) => {
+            await putAgent({ disabled_slash_commands: el.value });
+            loadChatCommands();
+        };
 
         this.FIELDS.forEach((f) => this._bind(f));
     },
@@ -2818,6 +2874,19 @@ function autoGrowKBTextarea(el) {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, window.innerHeight * 0.65) + 'px';
     el.style.overflowY = el.scrollHeight > window.innerHeight * 0.65 ? 'auto' : 'hidden';
+}
+
+function setSaveLoading(btnId, loading) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    if (loading) {
+        btn.dataset.origText = btn.textContent;
+        btn.textContent = "Saving...";
+        btn.disabled = true;
+    } else {
+        btn.textContent = btn.dataset.origText || "Save";
+        btn.disabled = false;
+    }
 }
 
 function closeEditor() {
@@ -3467,7 +3536,7 @@ let currentFilterMode = 'assigned';
 async function loadTools() {
     const epoch = window._agentEpoch;
     const [toolsRes, agentToolsRes] = await Promise.all([
-        fetch('/api/settings/tools'),
+        fetch(`/api/settings/tools?agent_id=${encodeURIComponent(AGENT_ID)}`),
         fetch(`/api/agents/${AGENT_ID}/tools`)
     ]);
     const toolsDefs = (await toolsRes.json()).tools || [];
@@ -4185,8 +4254,12 @@ async function loadChannels() {
         const toggleBtn = running
             ? `<button onclick="event.stopPropagation(); toggleChannel('${ch.id}', false)" class="text-xs px-3 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100">Stop</button>`
             : `<button onclick="event.stopPropagation(); toggleChannel('${ch.id}', true)" class="text-xs px-3 py-1 rounded bg-green-50 text-green-600 hover:bg-green-100">Start</button>`;
-        const qrBtn = (ch.type === 'whatsapp' && running)
+        const needsWhatsAppAuth = ch.bridge_status === 'qr_pending' || ch.bridge_status === 'disconnected';
+        const qrBtn = (ch.type === 'whatsapp' && running && needsWhatsAppAuth)
             ? `<button onclick="event.stopPropagation(); openQRModal('${ch.id}')" class="text-xs px-3 py-1 rounded bg-green-50 text-green-700 hover:bg-green-100">Scan QR</button>`
+            : '';
+        const debugBtn = ch.type === 'whatsapp'
+            ? `<button onclick="event.stopPropagation(); channelDebugListener.open('${ch.id}')" class="text-xs px-3 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" title="Real-time inbound WhatsApp messages">Debug Listener</button>`
             : '';
         const primaryBtn = isPrimary
             ? `<button onclick="event.stopPropagation(); unsetPrimaryChannel('${ch.id}')" class="text-xs px-3 py-1 rounded bg-yellow-50 text-yellow-600 hover:bg-yellow-100" title="Remove as primary">&#9733;</button>`
@@ -4210,12 +4283,133 @@ async function loadChannels() {
             <div class="flex items-center gap-2">
                 ${primaryBtn}
                 ${qrBtn}
+                ${debugBtn}
                 ${toggleBtn}
                 <button onclick="event.stopPropagation(); deleteChannel('${ch.id}')" class="text-xs text-red-500 hover:text-red-700">Delete</button>
             </div>
         </div>`;
     }).join('');
 }
+
+const channelDebugListener = {
+    _es: null,
+    _messages: [],
+    _channelId: null,
+    _maxMessages: 500,
+
+    open(channelId) {
+        this._channelId = channelId;
+        document.getElementById('channel-debug-modal').classList.remove('hidden');
+        this._connect();
+    },
+
+    close() {
+        document.getElementById('channel-debug-modal').classList.add('hidden');
+        this._disconnect();
+    },
+
+    clear() {
+        this._messages = [];
+        document.getElementById('channel-debug-log').innerHTML = '';
+        document.getElementById('channel-debug-count').textContent = '0 messages';
+    },
+
+    _connect() {
+        if (!this._channelId) return;
+        this._disconnect();
+        this._setStatus('connecting');
+        const listener = this;
+        const agentId = encodeURIComponent(AGENT_ID);
+        const channelId = encodeURIComponent(this._channelId);
+        const source = new EventSource(`/api/agents/${agentId}/channels/${channelId}/debug/listen`);
+        let announced = false;
+        this._es = source;
+
+        const markConnected = function() {
+            if (listener._es !== source) return;
+            listener._setStatus('connected');
+            if (!announced) {
+                announced = true;
+                listener._addLogEntry({_system: true, text: 'Connected to debug stream — listening for WhatsApp inbound messages...'});
+            }
+        };
+
+        // The browser dispatches `open` as soon as the SSE transport is ready.
+        // Do not rely only on our optional server-side `connected` event.
+        source.onopen = markConnected;
+        source.addEventListener('connected', markConnected);
+        source.addEventListener('whatsapp_inbound', function(event) {
+            if (listener._es !== source) return;
+            try {
+                listener._addLogEntry(JSON.parse(event.data));
+            } catch (error) {
+                // Ignore malformed stream events and keep the listener alive.
+            }
+        });
+        source.onerror = function() {
+            if (listener._es !== source) return;
+            // EventSource retries transient failures itself. Closing it here
+            // cancels that retry and can leave a healthy stream marked down.
+            listener._setStatus(
+                source.readyState === EventSource.CLOSED ? 'disconnected' : 'connecting'
+            );
+        };
+    },
+
+    _disconnect() {
+        if (this._es) {
+            this._es.close();
+            this._es = null;
+        }
+    },
+
+    _setStatus(state) {
+        const status = document.getElementById('channel-debug-status');
+        if (!status) return;
+        if (state === 'connected') {
+            status.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>Listening...';
+        } else if (state === 'connecting') {
+            status.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5"></span>Connecting...';
+        } else {
+            status.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1.5"></span>Disconnected';
+        }
+    },
+
+    _maskIdentifier(value) {
+        const raw = String(value || '');
+        if (!raw) return '';
+        const at = raw.indexOf('@');
+        const local = at >= 0 ? raw.slice(0, at) : raw;
+        const domain = at >= 0 ? raw.slice(at) : '';
+        return local.length <= 6 ? local.slice(0, 1) + '***' + domain : local.slice(0, 3) + '***' + local.slice(-3) + domain;
+    },
+
+    _addLogEntry(data) {
+        const log = document.getElementById('channel-debug-log');
+        if (!log) return;
+        const card = document.createElement('div');
+        card.className = 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm p-3 text-sm';
+        const time = new Date().toTimeString().slice(0, 8);
+        if (data._system) {
+            card.className += ' border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30';
+            card.innerHTML = `<div class="flex items-center gap-2 text-green-700 dark:text-green-400"><span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">${escapeHtml(time)}</span><span class="text-green-500">&#10003;</span><span>${escapeHtml(data.text || '')}</span></div>`;
+        } else {
+            const type = data.type || 'text';
+            const sender = this._maskIdentifier(data.sender) || '?';
+            const routeStatus = data.route_status || 'unknown';
+            const message = data.text || `[No text - ${type} only]`;
+            const group = data.is_group ? `<div class="text-[11px] text-gray-400 dark:text-gray-500 mt-1"><span class="font-medium">Group:</span> ${escapeHtml(data.group_name || '(unnamed)')}</div>` : '';
+            card.innerHTML = `<div class="flex items-center gap-2 mb-1.5 flex-wrap"><span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">${escapeHtml(time)}</span><span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">${escapeHtml(type)}</span></div><div class="flex items-center gap-1.5 mb-1 text-xs flex-wrap"><span class="font-semibold text-gray-800 dark:text-gray-200">${escapeHtml(sender)}</span>${data.push_name ? `<span class="text-gray-500 dark:text-gray-400">(${escapeHtml(data.push_name)})</span>` : ''}<span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">${escapeHtml(routeStatus)}</span></div>${group}<div class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed mt-1">${escapeHtml(message)}</div>`;
+        }
+        log.insertBefore(card, log.firstChild);
+        this._messages.unshift(data);
+        if (this._messages.length > this._maxMessages) {
+            this._messages.pop();
+            if (log.lastChild) log.removeChild(log.lastChild);
+        }
+        document.getElementById('channel-debug-count').textContent = `${this._messages.length} message${this._messages.length === 1 ? '' : 's'}`;
+    }
+};
 
 function showAddChannelModal() {
     document.getElementById('channel-modal').classList.remove('hidden');
@@ -4761,19 +4955,30 @@ document.addEventListener('evonic:message-received', function (event) {
     if (meta.escalated_from_agent_session) loadChatHistory();
 });
 
+let _restoringActiveReasoning = false;
+
 async function restoreActiveReasoning() {
+    if (_restoringActiveReasoning) return;
+    _restoringActiveReasoning = true;
     const epoch = window._agentEpoch;
     try {
         // Use cached session_id — already fetched in loadChatHistory()
         const sessionId = await _getChatSessionId();
-        if (!sessionId || _chatBusy || _currentTurn) return; // bail if user already sent a message or turn exists
+        if (!sessionId || _currentTurn) return; // an in-page turn already owns this session
 
-        // Fetch all buffered events for this session.
-        const eRes = await fetch(`/api/agents/${encodeURIComponent(AGENT_ID)}/chat/events?session_id=${encodeURIComponent(sessionId)}&after=0`);
-        if (!eRes.ok || _chatBusy || _currentTurn) return; // bail if user sent a message while fetching
-        const eData = await eRes.json();
+        // Busy ownership is authoritative after refresh. The event buffer may be
+        // empty for a long synchronous tool call, so do not require a recent
+        // thinking/tool event before restoring the indicator.
+        const [eRes, busyRes] = await Promise.all([
+            fetch(`/api/agents/${encodeURIComponent(AGENT_ID)}/chat/events?session_id=${encodeURIComponent(sessionId)}&after=0`),
+            fetch(`/api/agents/${encodeURIComponent(AGENT_ID)}/busy`),
+        ]);
+        if (_currentTurn) return; // user sent a message while fetching
+        const eData = eRes.ok ? await eRes.json() : {events: []};
+        const busyState = busyRes.ok ? await busyRes.json() : {};
         if (epoch !== window._agentEpoch || sessionId !== _chatSessionId) return; // agent/session switched mid-fetch
-        if (_chatBusy || _currentTurn) return; // bail before touching shared state
+        if (_currentTurn) return; // bail before touching shared state
+        if (!busyState.busy || busyState.session_id !== sessionId) return;
         const events = eData.events || [];
 
         // Only replay events from the current in-progress turn.
@@ -4787,14 +4992,8 @@ async function restoreActiveReasoning() {
         const replayEvents = cutIdx >= 0 ? events.slice(cutIdx + 1) : events;
 
         // The event buffer can retain an incomplete tail after a restart or other
-        // interrupted turn. Treat /busy as authoritative for every restoration,
-        // including when replayEvents is non-empty, and only resume this session.
-        const busyRes = await fetch(`/api/agents/${encodeURIComponent(AGENT_ID)}/busy`);
-        if (!busyRes.ok || _chatBusy || _currentTurn) return;
-        const busyState = await busyRes.json();
-        if (epoch !== window._agentEpoch || sessionId !== _chatSessionId) return;
-        if (_chatBusy || _currentTurn || !busyState.busy || busyState.session_id !== sessionId) return;
-
+        // interrupted turn. /busy above remains authoritative; replay only enriches
+        // the indicator and never creates activity by itself.
         // Guard: if the in-progress turn started before the last turn_end rendered
         // from chatlog history, that turn was already fully finalized — skip to avoid
         // creating a duplicate thinking bubble above completed messages.
@@ -4856,6 +5055,7 @@ async function restoreActiveReasoning() {
         // Poll until the final response lands
         pollForResponse(thinkingId);
     } catch(e) { /* silently ignore */ }
+    finally { _restoringActiveReasoning = false; }
 }
 
 let chatPollTimer = null;
@@ -5032,6 +5232,9 @@ function updateChatComposer(input) {
     const bashHint = document.getElementById('chat-bash-hint');
     if (bashHint) bashHint.classList.toggle('hidden', !bashMode);
     input.classList.toggle('font-mono', bashMode);
+
+    // No commands available (all disabled) — don't show suggestions
+    if (!chatCommands.length) return;
 
     const match = trimmed.match(/^\/([\w-]*)$/);
     if (!match) {
@@ -5989,7 +6192,6 @@ function buildBgProcessesHtml(procs) {
 
 let _bgProcessModalJobId = null;
 let _bgLogPollTimer = null;
-let _bgElapsedTimer = null;
 let _bgProcessModalTrigger = null;
 
 function _formatBgProcessDuration(seconds) {
@@ -6009,56 +6211,7 @@ function openBgProcessModal(jobId) {
     const modal = document.getElementById('bg-process-modal');
     const body = document.getElementById('bg-process-modal-body');
     const title = document.getElementById('bg-process-modal-title');
-    const subtitle = document.getElementById('bg-process-modal-subtitle');
-    const kindColors = {
-        wrapper: 'border-gray-300 text-gray-600 dark:border-white/15 dark:text-gray-300',
-        tmux: 'border-amber-300 text-amber-600 dark:border-amber-500/40 dark:text-amber-400',
-        screen: 'border-purple-300 text-purple-600 dark:border-purple-500/40 dark:text-purple-400',
-        nohup: 'border-sky-300 text-sky-600 dark:border-sky-500/40 dark:text-sky-400'
-    };
-    const pillStyles = {
-        running: { text: 'Running • Live', cls: 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300 dark:shadow-lg dark:shadow-emerald-500/30', dot: 'bg-emerald-500 dark:bg-emerald-400', ping: true },
-        done: { text: 'Done', cls: 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300', dot: 'bg-sky-500 dark:bg-sky-400', ping: false },
-        timeout: { text: 'Timeout', cls: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300', dot: 'bg-amber-500 dark:bg-amber-400', ping: false },
-        failed: { text: 'Failed', cls: 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300', dot: 'bg-red-500 dark:bg-red-400', ping: false }
-    };
-
-    const startedDate = new Date(p.started_at * 1000);
-    const finishedDate = p.finished_at ? new Date(p.finished_at * 1000) : null;
-    const elapsed = _formatBgProcessDuration((p.finished_at || Date.now() / 1000) - p.started_at);
-    const status = p.status || 'running';
-    const isRunning = status === 'running' && !p.finished_at;
-    const exitCode = !isRunning && p.exit_code != null ? String(p.exit_code) : null;
-    const kindColor = kindColors[p.kind] || kindColors.wrapper;
-    const pill = pillStyles[status] || pillStyles.failed;
-    const dateOptions = { year: 'numeric', month: 'short', day: 'numeric' };
-    const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit' };
-    const startedDay = startedDate.toLocaleDateString([], dateOptions);
-    const startedTime = startedDate.toLocaleTimeString([], timeOptions);
-
-    const iconClock = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l2.5 2.5"/></svg>';
-    const iconRefresh = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>';
-    const iconTerminal = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg>';
-
-    // Header subtitle (job id + kind + status text) and status pill.
-    const subtitleHtml = `<span class="font-mono text-gray-700 dark:text-gray-200">${escapeHtml(p.job_id)}</span>`
-        + `<span class="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${kindColor}">${escapeHtml(p.kind || 'wrapper')}</span>`
-        + '<span class="text-gray-300 dark:text-gray-600" aria-hidden="true">•</span>'
-        + `<span>${isRunning ? 'Running in the background' : 'Process ' + escapeHtml(status)}</span>`;
-    const pillDot = pill.ping
-        ? `<span class="relative flex h-2 w-2" aria-hidden="true"><span class="absolute inline-flex h-full w-full animate-ping rounded-full ${pill.dot} opacity-70"></span><span class="relative inline-flex h-2 w-2 rounded-full ${pill.dot}"></span></span>`
-        : `<span class="h-2 w-2 rounded-full ${pill.dot}" aria-hidden="true"></span>`;
-    const pillHtml = `<span class="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-bold uppercase tracking-wider ${pill.cls}" role="status">${pillDot}${escapeHtml(pill.text)}</span>`;
-
     let html = '<div class="space-y-6">';
-
-    // Execution stats — four columns split by vertical dividers on desktop.
-    html += '<div class="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-4 sm:gap-x-0 sm:gap-y-0 sm:divide-x sm:divide-gray-200 sm:dark:divide-white/10">';
-    html += `<div class="sm:px-6 sm:first:pl-0"><div class="flex items-center gap-2 text-gray-500 dark:text-gray-400">${iconClock}<span class="text-sm font-medium">Started</span></div><p class="mt-2 text-lg font-bold text-gray-900 dark:text-white">${escapeHtml(startedDay)}</p><p class="mt-1 text-sm tabular-nums text-gray-400 dark:text-gray-500">${escapeHtml(startedTime)}</p></div>`;
-    html += `<div class="sm:px-6"><div class="flex items-center gap-2 text-gray-500 dark:text-gray-400">${iconClock}<span class="text-sm font-medium">Elapsed</span></div><p class="bg-process-elapsed mt-2 font-mono text-lg font-bold tabular-nums text-gray-900 dark:text-white" data-started="${p.started_at}" data-finished="${p.finished_at || 0}">${escapeHtml(elapsed)}</p><p class="mt-1 text-sm ${isRunning ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'}">${isRunning ? 'Updating live' : 'Total runtime'}</p></div>`;
-    html += `<div class="sm:px-6"><div class="flex items-center gap-2 text-gray-500 dark:text-gray-400">${iconRefresh}<span class="text-sm font-medium">Finished</span></div><p class="mt-2 text-lg font-bold ${finishedDate ? 'text-gray-900 dark:text-white' : 'text-emerald-600 dark:text-emerald-400'}">${finishedDate ? escapeHtml(finishedDate.toLocaleDateString([], dateOptions)) : 'In progress'}</p><p class="mt-1 text-sm tabular-nums text-gray-400 dark:text-gray-500">${finishedDate ? escapeHtml(finishedDate.toLocaleTimeString([], timeOptions)) : 'Waiting for completion'}</p></div>`;
-    html += `<div class="sm:px-6 sm:last:pr-0"><div class="flex items-center gap-2 text-gray-500 dark:text-gray-400">${iconTerminal}<span class="text-sm font-medium">Exit code</span></div><p class="mt-2 text-lg font-bold ${exitCode === '0' ? 'text-emerald-600 dark:text-emerald-400' : (exitCode ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-300')}">${escapeHtml(exitCode || 'Pending')}</p><p class="mt-1 text-sm text-gray-400 dark:text-gray-500">${exitCode == null ? 'Available when finished' : (exitCode === '0' ? 'Completed successfully' : 'Process returned an error')}</p></div>`;
-    html += '</div>';
 
     // Command block — kept dark in both themes (terminal aesthetic).
     html += '<div class="border-t border-gray-200 pt-5 dark:border-white/10">';
@@ -6078,14 +6231,10 @@ function openBgProcessModal(jobId) {
     }
 
     html += '</div>';
-    title.textContent = p.session_name || 'Background Process';
-    subtitle.innerHTML = subtitleHtml;
-    const pillEl = document.getElementById('bg-process-status-pill');
-    if (pillEl) pillEl.innerHTML = pillHtml;
+    title.textContent = 'Background Process';
     body.innerHTML = html;
     backdrop.classList.remove('hidden');
     modal.classList.remove('hidden');
-    if (isRunning) _startBgElapsedTimer();
     if (p.log_file) _fetchBgLog();
     setTimeout(() => {
         const closeButton = modal.querySelector('button[aria-label="Close background process details"]');
@@ -6129,34 +6278,18 @@ function closeBgProcessModal() {
     backdrop.classList.add('hidden');
     modal.classList.add('hidden');
     _bgProcessModalJobId = null;
-    _stopBgElapsedTimer();
     _stopBgLogPolling();
     if (_bgProcessModalTrigger && document.contains(_bgProcessModalTrigger)) _bgProcessModalTrigger.focus();
     _bgProcessModalTrigger = null;
-}
-
-function _startBgElapsedTimer() {
-    _stopBgElapsedTimer();
-    _bgElapsedTimer = setInterval(() => {
-        const modal = document.getElementById('bg-process-modal');
-        const el = modal ? modal.querySelector('.bg-process-elapsed') : null;
-        if (!el) { _stopBgElapsedTimer(); return; }
-        const started = parseFloat(el.dataset.started) || 0;
-        const finished = parseFloat(el.dataset.finished) || 0;
-        if (finished) { _stopBgElapsedTimer(); return; }
-        el.textContent = _formatBgProcessDuration(Date.now() / 1000 - started);
-    }, 1000);
-}
-
-function _stopBgElapsedTimer() {
-    if (_bgElapsedTimer) { clearInterval(_bgElapsedTimer); _bgElapsedTimer = null; }
 }
 
 function _fetchBgLog() {
     const p = _bgProcessesData[_bgProcessModalJobId];
     if (!p || !p.log_file) return;
 
-    fetch(`/api/agents/${AGENT_ID}/bg-job/log?file=${encodeURIComponent(p.log_file)}&lines=200`)
+    let logUrl = `/api/agents/${AGENT_ID}/bg-job/log?file=${encodeURIComponent(p.log_file)}&lines=200`;
+    if (p.session_id) logUrl += `&session_id=${encodeURIComponent(p.session_id)}`;
+    fetch(logUrl)
         .then(res => {
             if (!res.ok) throw new Error('Failed to load log');
             return res.json();
@@ -7011,6 +7144,11 @@ async function doClone() {
 function cloneAgent() {
     document.getElementById('gear-dropdown').classList.add('hidden');
     showCloneModal();
+}
+
+function exportAgent() {
+    document.getElementById('gear-dropdown').classList.add('hidden');
+    window.location.href = `/api/agents/${encodeURIComponent(AGENT_ID)}/export`;
 }
 
 // ==================== Delete Agent ====================
@@ -7984,17 +8122,15 @@ document.addEventListener('keydown', function(e) {
 
 <!-- Background Process Modal -->
 <div id="bg-process-modal-backdrop" class="hidden fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-sm sm:items-center sm:p-4" onclick="closeBgProcessModal()" role="presentation">
-    <div id="bg-process-modal" class="hidden flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 sm:max-h-[90vh] sm:rounded-2xl" role="dialog" aria-modal="true" aria-labelledby="bg-process-modal-title" aria-describedby="bg-process-modal-subtitle" onclick="event.stopPropagation()">
+    <div id="bg-process-modal" class="hidden flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 sm:max-h-[90vh] sm:rounded-2xl" role="dialog" aria-modal="true" aria-labelledby="bg-process-modal-title" onclick="event.stopPropagation()">
         <header class="relative flex flex-shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-white/10 sm:px-6 sm:py-5">
             <div class="flex min-w-0 items-center gap-4">
                 <span class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl border border-gray-200 bg-gray-100 text-gray-600 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 sm:h-12 sm:w-12"><svg class="h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></span>
                 <div class="min-w-0">
                     <h3 id="bg-process-modal-title" class="truncate text-lg font-bold tracking-tight text-gray-900 dark:text-white sm:text-xl">Background Process</h3>
-                    <p id="bg-process-modal-subtitle" class="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400">Process execution details</p>
                 </div>
             </div>
             <div class="flex flex-shrink-0 items-center gap-2 sm:gap-3">
-                <span id="bg-process-status-pill" class="hidden sm:inline-flex"></span>
                 <button type="button" onclick="closeBgProcessModal()" class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-300 dark:hover:bg-white/10 dark:hover:text-white dark:focus:ring-white/40" aria-label="Close background process details" title="Close (Esc)">
                     <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>

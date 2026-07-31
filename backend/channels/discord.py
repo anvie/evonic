@@ -412,6 +412,7 @@ class DiscordChannel(BaseChannel):
         result = agent_runtime.handle_message(
             agent_id, user_id, final_text, channel_id,
             image_url=image_url, video_url=video_url,
+            metadata={"channel_message_id": str(message.id)},
         )
         if result.get('buffered'):
             return  # response will be delivered by the buffering path

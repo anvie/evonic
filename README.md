@@ -289,7 +289,7 @@ When enabled, one record is written **per LLM call** (each tool-loop iteration) 
 per-session staging file, then committed to `shared/db/session_archive.db` when a
 session is archived:
 
-- **Main agent sessions** are archived when the user runs **`/clear`**.
+- **Main agent sessions** are archived only when the user runs **`/clear ar`**. Plain **`/clear`** clears the session without archiving it.
 - **Sub-agent sessions** (explorers, KB Organizer, and spawned sub-agents) are archived
   at **turn-end**, as soon as they finish — only when they are **single-turn**. A
   sub-agent that continues into a second turn is *not* recorded, since its later turns

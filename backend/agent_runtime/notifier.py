@@ -97,23 +97,17 @@ def notify_agent(agent_id: str, tag: str, message: str,
             target_session_id = session_id
 
             if channel_id and not _is_channel_route_available(channel_id, agent_id):
+                # An explicit, ownership-validated session is a caller's context
+                # contract.  Keep it intact even when its external channel is down;
+                # moving it to an unrelated web session contaminates that conversation.
                 fallback_reason = 'inactive_channel'
-                fallback = _resolve_web_fallback(agent_id, exclude_session_id=session_id)
-                if not fallback:
-                    _logger.warning(
-                        "notify_agent: inactive channel '%s' for session '%s' and agent '%s'; "
-                        "no safe web fallback is available.",
-                        channel_id, session_id, agent_id,
-                    )
-                    return {
-                        "success": False,
-                        "session_id": None,
-                        "reason": "inactive_channel_no_fallback",
-                    }
-                target_session_id = fallback['id']
-                external_user_id = fallback['external_user_id']
-                channel_id = None
-                route_kind = 'web_fallback'
+                _logger.warning(
+                    "notify_agent: channel '%s' for explicit session '%s' and agent '%s' "
+                    "is inactive; preserving the explicit session.",
+                    channel_id, session_id, agent_id,
+                )
+                metadata = dict(metadata) if metadata else {}
+                metadata['notification_channel_unavailable'] = True
         else:
             explicit_route = external_user_id is not None or channel_id is not None
             if not external_user_id:
@@ -192,7 +186,7 @@ def notify_agent(agent_id: str, tag: str, message: str,
             from backend.agent_runtime import agent_runtime
             agent_runtime.handle_message(
                 agent_id, external_user_id, full_message, channel_id,
-                metadata=metadata,
+                metadata=metadata, session_id=target_session_id,
             )
         else:
             meta = dict(metadata) if metadata else {}

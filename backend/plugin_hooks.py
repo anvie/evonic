@@ -11,6 +11,87 @@ from typing import Dict, Optional, Callable
 
 _logger = logging.getLogger(__name__)
 
+# Generic synchronous short-circuit hooks. Context is trusted runtime data.
+_turn_gates: list = []
+_tool_result_gates: list = []
+
+# Attachment-policy hooks run after send_file canonicalizes a path and before
+# file metadata or bytes are exposed. Hooks receive (agent, canonical_path) and
+# return None to allow or {"error": "..."} to reject the attachment.
+_attachment_policies: list = []
+
+
+def register_attachment_policy(fn: Callable) -> None:
+    """Register a synchronous attachment policy hook."""
+    if fn not in _attachment_policies:
+        _attachment_policies.append(fn)
+
+
+def unregister_attachment_policy(fn: Callable) -> None:
+    """Remove a previously registered attachment policy hook."""
+    if fn in _attachment_policies:
+        _attachment_policies.remove(fn)
+
+
+def check_attachment_policies(agent: dict, canonical_path: str) -> Optional[dict]:
+    """Return the first rejection from attachment policy hooks."""
+    for policy in list(_attachment_policies):
+        try:
+            result = policy(agent, canonical_path)
+            if result:
+                return result
+        except Exception:
+            _logger.exception("Plugin attachment policy failed")
+    return None
+
+
+def register_turn_gate(fn: Callable) -> None:
+    if fn not in _turn_gates:
+        _turn_gates.append(fn)
+
+
+def unregister_turn_gate(fn: Callable) -> None:
+    if fn in _turn_gates:
+        _turn_gates.remove(fn)
+
+
+def run_turn_gates(context: dict) -> Optional[dict]:
+    directives = {}
+    for gate in list(_turn_gates):
+        try:
+            result = gate(context)
+            if not result:
+                continue
+            if result.get('handled'):
+                return {**directives, **result}
+            if result.get('suppress_intermediate'):
+                directives['suppress_intermediate'] = True
+        except Exception:
+            _logger.exception("Plugin turn gate failed")
+    return directives or None
+
+
+def register_tool_result_gate(fn: Callable) -> None:
+    if fn not in _tool_result_gates:
+        _tool_result_gates.append(fn)
+
+
+def unregister_tool_result_gate(fn: Callable) -> None:
+    if fn in _tool_result_gates:
+        _tool_result_gates.remove(fn)
+
+
+def run_tool_result_gates(context: dict, tool_name: str, args: dict,
+                          result) -> Optional[dict]:
+    for gate in list(_tool_result_gates):
+        try:
+            decision = gate(context, tool_name, args, result)
+            if decision and decision.get('terminate_turn'):
+                return decision
+        except Exception:
+            _logger.exception("Plugin tool-result gate failed")
+    return None
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Tool Guard Registry
@@ -35,11 +116,15 @@ def unregister_tool_guard(fn: Callable) -> None:
         _tool_guards.remove(fn)
 
 
-def check_tool_guards(agent_id: str, tool_name: str, args: dict) -> Optional[dict]:
-    """Run all registered guards. Returns the first blocking result, or None."""
+def check_tool_guards(agent_id: str, tool_name: str, args: dict,
+                      context: dict = None) -> Optional[dict]:
+    """Run guards, passing trusted context to guards that accept it."""
     for guard in list(_tool_guards):
         try:
-            result = guard(agent_id, tool_name, args)
+            try:
+                result = guard(agent_id, tool_name, args, context or {})
+            except TypeError:
+                result = guard(agent_id, tool_name, args)
             if result and (result.get('block') or result.get('level') == 'requires_approval'):
                 return result
         except Exception:
@@ -273,4 +358,5 @@ def get_state_summary(agent_state) -> dict:
 # Re-export registry lists for lifecycle cleanup (plugin unload)
 def _get_all_registries():
     return (_tool_guards, _message_interceptors, _builtin_suppressors,
-            _turn_context_providers, _busy_message_providers)
+            _turn_context_providers, _busy_message_providers, _turn_gates,
+            _tool_result_gates, _attachment_policies)

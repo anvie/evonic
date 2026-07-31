@@ -81,11 +81,11 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
-        <div class="setting-row stacked" data-search="vision model describe image analysis multimodal">
+        <div class="setting-row stacked" data-search="vision primary fallback describe image analysis multimodal">
             <div class="setting-row-text">
-                <div class="setting-row-title">Vision Model</div>
+                <div class="setting-row-title">Vision Model (Primary)</div>
                 <div class="setting-row-desc">
-                    Vision-capable model used by the <code>describe_image</code>
+                    First vision-capable model used by the <code>describe_image</code>
                     tool. Only models with vision support are listed.
                 </div>
             </div>
@@ -97,17 +97,31 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
-        <div class="setting-row stacked" data-search="vision fallback model secondary backup describe image">
+        <div class="setting-row stacked" data-search="vision fallback 1 model secondary backup describe image">
             <div class="setting-row-text">
-                <div class="setting-row-title">Vision Fallback Model</div>
+                <div class="setting-row-title">Vision Fallback 1</div>
                 <div class="setting-row-desc">
-                    Secondary vision-capable model used when the primary vision model
-                    fails. Leave unset to use the standard fallback priority chain.
+                    First backup model used when the primary vision model fails.
                 </div>
             </div>
             <div class="setting-row-control">
                 <select id="vision-fallback-model-select" class="setting-select"
                         data-setting-key="vision_fallback_model_id">
+                    <option value="">Loading models…</option>
+                </select>
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row stacked" data-search="vision fallback 2 model tertiary backup describe image">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Vision Fallback 2</div>
+                <div class="setting-row-desc">
+                    Second backup model used when the primary model and Fallback 1 fail.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <select id="vision-fallback-model-2-select" class="setting-select"
+                        data-setting-key="vision_fallback_model_2_id">
                     <option value="">Loading models…</option>
                 </select>
                 <span class="save-status" aria-live="polite"></span>
@@ -340,6 +354,118 @@
                 <input type="number" id="agent-queue-workers-input" class="setting-num"
                        min="1" max="32"
                        data-setting-key="agent_queue_workers" data-setting-type="int" />
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ================= WhatsApp Safe Delivery ================= -->
+<section class="setting-group" id="group-whatsapp-safe-delivery">
+    <div class="setting-group-head">
+        <i data-lucide="shield-check"></i>
+        <h3>WhatsApp Safe Delivery</h3>
+    </div>
+    <div class="setting-group-body">
+        <div class="setting-row" data-search="whatsapp safe delivery outbound queue pacing suspension protection">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Safe Delivery</div>
+                <div class="setting-row-desc">
+                    Queue and pace outbound WhatsApp messages to reduce bursty delivery.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="whatsapp-safe-delivery-toggle" class="sr-only peer"
+                           data-setting-key="whatsapp_safe_delivery_enabled" data-setting-type="bool">
+                    <span class="dyn-toggle"></span>
+                </label>
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row" data-search="whatsapp pool window intermediate final response merge seconds">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Pooling Window</div>
+                <div class="setting-row-desc">
+                    Merge intermediate output arriving within this window before sending. Range: 0.1&ndash;30 seconds.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <input type="number" id="whatsapp-pool-window-input" class="setting-num"
+                       min="0.1" max="30" step="0.1"
+                       data-setting-key="whatsapp_pool_window_seconds" data-setting-type="float">
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row" data-search="whatsapp minimum send interval per chat pacing seconds">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Minimum Send Interval</div>
+                <div class="setting-row-desc">
+                    Minimum time between messages to the same chat. Range: 0.1&ndash;60 seconds.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <input type="number" id="whatsapp-min-send-interval-input" class="setting-num"
+                       min="0.1" max="60" step="0.1"
+                       data-setting-key="whatsapp_min_send_interval_seconds" data-setting-type="float">
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row" data-search="whatsapp typing characters per second adaptive delay">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Typing Speed</div>
+                <div class="setting-row-desc">
+                    Characters per second used to estimate typing delay. Range: 1&ndash;100.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <input type="number" id="whatsapp-typing-speed-input" class="setting-num"
+                       min="1" max="100" step="1"
+                       data-setting-key="whatsapp_typing_chars_per_second" data-setting-type="float">
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row" data-search="whatsapp maximum typing delay wait seconds">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Maximum Typing Delay</div>
+                <div class="setting-row-desc">
+                    Cap the calculated typing delay for a single response. Range: 1&ndash;120 seconds.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <input type="number" id="whatsapp-max-typing-delay-input" class="setting-num"
+                       min="1" max="120" step="1"
+                       data-setting-key="whatsapp_max_typing_delay_seconds" data-setting-type="float">
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row" data-search="whatsapp outbound quota circuit breaker messages minute throttling">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Outbound Limit per Minute</div>
+                <div class="setting-row-desc">
+                    Per-channel rolling quota. Delivery pauses and requeues when this limit is reached. Range: 1&ndash;600.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <input type="number" id="whatsapp-outbound-limit-input" class="setting-num"
+                       min="1" max="600" step="1"
+                       data-setting-key="whatsapp_max_outbound_per_minute" data-setting-type="int">
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row" data-search="whatsapp natural formatting markdown headings lists links code">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Natural Text Formatting</div>
+                <div class="setting-row-desc">
+                    Normalize Markdown-heavy responses into WhatsApp-friendly conversational text.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="whatsapp-natural-formatting-toggle" class="sr-only peer"
+                           data-setting-key="whatsapp_natural_formatting_enabled" data-setting-type="bool">
+                    <span class="dyn-toggle"></span>
+                </label>
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>

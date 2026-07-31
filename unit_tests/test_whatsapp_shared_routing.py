@@ -172,3 +172,55 @@ def test_base_resolve_agent_returns_bound_agent():
         '628111', False, '628111@s.whatsapp.net') == 'agent-x'
     assert channel._resolve_agent(
         '628111', True, '12036000@g.us', alt_sender='628999') == 'agent-x'
+
+
+# ── Inbound callback ──────────────────────────────────────────────────────────
+
+_IMAGE = {'base64': 'aW1hZ2UtYnl0ZXM=', 'mimetype': 'image/jpeg'}
+
+
+def _capture_callback(monkeypatch, shared_channel, payload):
+    from backend.agent_runtime import agent_runtime
+    from models.db import db
+
+    db.update_agent('agent-a', {'vision_enabled': False})
+    captured = {'saved': []}
+
+    def save_attachment(session_id, sender, image_bytes, mime_type, agent_id=None):
+        captured['saved'].append((session_id, sender, image_bytes, mime_type, agent_id))
+        return {'attachment_id': 42, 'filename': 'image.jpg', 'is_image': True}
+
+    monkeypatch.setattr(shared_channel, '_save_image_attachment', save_attachment)
+    monkeypatch.setattr(agent_runtime, 'handle_message',
+                        lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs) or {'buffered': True})
+    shared_channel.handle_callback({
+        'from': '628111',
+        'jid': '628111@s.whatsapp.net',
+        'message_id': 'msg-1',
+        **payload,
+    })
+    return captured
+
+
+def test_captionless_image_reaches_routed_vision_disabled_agent(monkeypatch, shared_channel):
+    captured = _capture_callback(monkeypatch, shared_channel, {'text': '', 'image': _IMAGE})
+
+    assert captured['args'][0:4] == ('agent-a', '628111', '[Image]', shared_channel.channel_id)
+    assert captured['kwargs']['image_url'] is None
+    assert captured['kwargs']['metadata']['attachment_info']['attachment_id'] == 42
+    assert captured['saved'][0][1:] == ('628111', b'image-bytes', 'image/jpeg', 'agent-a')
+
+
+def test_captioned_image_preserves_caption(monkeypatch, shared_channel):
+    captured = _capture_callback(
+        monkeypatch, shared_channel, {'text': 'Please inspect this receipt', 'image': _IMAGE})
+
+    assert captured['args'][2] == 'Please inspect this receipt'
+    assert captured['kwargs']['metadata']['attachment_info']['attachment_id'] == 42
+
+
+def test_empty_payload_remains_dropped(monkeypatch, shared_channel):
+    captured = _capture_callback(monkeypatch, shared_channel, {'text': ''})
+
+    assert 'args' not in captured
+    assert captured['saved'] == []

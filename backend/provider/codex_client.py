@@ -25,11 +25,21 @@ def _map_usage(usage) -> Dict[str, Any]:
         return {}
     prompt = usage.get("input_tokens", 0) or 0
     completion = usage.get("output_tokens", 0) or 0
-    return {
+    input_details = usage.get("input_tokens_details") or {}
+    output_details = usage.get("output_tokens_details") or {}
+    mapped = {
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "total_tokens": usage.get("total_tokens", 0) or (prompt + completion),
     }
+    if input_details or output_details:
+        mapped["prompt_tokens_details"] = {
+            "cached_tokens": input_details.get("cached_tokens", 0) or 0,
+        }
+        mapped["completion_tokens_details"] = {
+            "reasoning_tokens": output_details.get("reasoning_tokens", 0) or 0,
+        }
+    return mapped
 
 
 class CodexClient:
@@ -363,7 +373,22 @@ class CodexClient:
                 })
             elif role == "user":
                 if isinstance(content, list):
-                    converted.append({"role": "user", "content": content})
+                    # Convert Chat Completions content block types to Responses API format.
+                    # Chat Completions: "text" / "image_url" → Responses: "input_text" / "input_image"
+                    converted_content = []
+                    for block in content:
+                        btype = block.get("type", "")
+                        if btype == "text":
+                            block = {**block, "type": "input_text"}
+                        elif btype == "image_url":
+                            # Chat Completions: {"image_url": {"url": "..."}}
+                            # Responses API:    {"image_url": "..."}
+                            url = block.get("image_url", {})
+                            if isinstance(url, dict):
+                                url = url.get("url", "")
+                            block = {"type": "input_image", "image_url": url}
+                        converted_content.append(block)
+                    converted.append({"role": "user", "content": converted_content})
                 else:
                     converted.append({"role": "user", "content": str(content)})
             elif role == "assistant":

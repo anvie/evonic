@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -9,6 +10,7 @@ from flask import Blueprint, render_template, jsonify, request, Response, stream
 
 from backend.audit_logger import audit
 import config
+from models.boolean import FALSE_VALUES, TRUE_VALUES
 from models.db import db
 
 _logger = logging.getLogger(__name__)
@@ -32,6 +34,19 @@ def _sanitize_model(model: Dict[str, Any]) -> Dict[str, Any]:
     for key in _SENSITIVE_MODEL_KEYS:
         model.pop(key, None)
     return model
+
+
+def _coerce_boolean(value: Any) -> bool:
+    """Convert an API boolean value, rejecting ambiguous input."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in TRUE_VALUES:
+            return True
+        if normalized in FALSE_VALUES:
+            return False
+    raise ValueError('must be a boolean')
 
 
 @settings_bp.route('/system')
@@ -268,8 +283,22 @@ def api_list_tools():
     from backend.skills_manager import skills_manager
     from backend.tools import tool_registry
     from backend.tools.agent_messaging import get_agent_messaging_tool_defs
-    # Built-in tools always appear first
-    tools = tool_registry.get_builtin_tool_defs()
+
+    agent_context = None
+    agent_id = request.args.get('agent_id')
+    if agent_id:
+        agent = db.get_agent(agent_id)
+        if not agent:
+            return jsonify({'error': 'Agent not found'}), 404
+        agent_context = {
+            'id': agent['id'],
+            'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
+            'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
+            'always_execute': bool(agent.get('always_execute')),
+        }
+
+    # Built-ins are filtered by the selected agent's feature settings when supplied.
+    tools = tool_registry.get_builtin_tool_defs(agent_context)
     tools += test_manager.list_tools()
     # Append agent messaging tools (auto-loaded when agent_messaging_enabled)
     for tool_def in get_agent_messaging_tool_defs():
@@ -843,7 +872,25 @@ def api_get_general_settings():
         'theme': db.get_setting('theme', 'system'),
         'vision_model_id': db.get_setting('vision_model_id', ''),
         'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
+        'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
+        # ── WhatsApp Safe Delivery (global) ──
+        'whatsapp_safe_delivery_enabled': db.get_setting('whatsapp_safe_delivery_enabled',
+                                                         '1' if config.WHATSAPP_SAFE_DELIVERY_ENABLED else '0') == '1',
+        'whatsapp_pool_window_seconds': float(db.get_setting('whatsapp_pool_window_seconds',
+                                                             str(config.WHATSAPP_POOL_WINDOW_SECONDS))),
+        'whatsapp_min_send_interval_seconds': float(db.get_setting('whatsapp_min_send_interval_seconds',
+                                                                    str(config.WHATSAPP_MIN_SEND_INTERVAL_SECONDS))),
+        'whatsapp_typing_chars_per_second': float(db.get_setting('whatsapp_typing_chars_per_second',
+                                                                  str(config.WHATSAPP_TYPING_CHARS_PER_SECOND))),
+        'whatsapp_max_typing_delay_seconds': float(db.get_setting('whatsapp_max_typing_delay_seconds',
+                                                                   str(config.WHATSAPP_MAX_TYPING_DELAY_SECONDS))),
+        'whatsapp_delay_jitter_ratio': float(db.get_setting('whatsapp_delay_jitter_ratio',
+                                                            str(config.WHATSAPP_DELAY_JITTER_RATIO))),
+        'whatsapp_max_outbound_per_minute': int(db.get_setting('whatsapp_max_outbound_per_minute',
+                                                               str(config.WHATSAPP_MAX_OUTBOUND_PER_MINUTE))),
+        'whatsapp_natural_formatting_enabled': db.get_setting('whatsapp_natural_formatting_enabled',
+                                                               '1' if config.WHATSAPP_NATURAL_FORMATTING_ENABLED else '0') == '1',
     })
 
 
@@ -985,6 +1032,44 @@ def api_batch_save():
         except (ValueError, TypeError) as e:
             errors.append(f'message_wrapper_enabled: {e}')
 
+    # ── WhatsApp Safe Delivery (global) ──
+    _whatsapp_bool_keys = ('whatsapp_safe_delivery_enabled', 'whatsapp_natural_formatting_enabled')
+    for key in _whatsapp_bool_keys:
+        if key in settings:
+            try:
+                enabled = '1' if _coerce_boolean(settings[key]) else '0'
+                db.set_setting(key, enabled)
+                results[key] = enabled == '1'
+            except (ValueError, TypeError) as e:
+                errors.append(f'{key}: {e}')
+
+    _whatsapp_float_keys = (
+        ('whatsapp_pool_window_seconds', 0.1, 30.0),
+        ('whatsapp_min_send_interval_seconds', 0.1, 60.0),
+        ('whatsapp_typing_chars_per_second', 1.0, 100.0),
+        ('whatsapp_max_typing_delay_seconds', 1.0, 120.0),
+        ('whatsapp_delay_jitter_ratio', 0.0, 0.5),
+    )
+    for key, lo, hi in _whatsapp_float_keys:
+        if key in settings:
+            try:
+                value = float(settings[key])
+                if not math.isfinite(value):
+                    raise ValueError('must be a finite number')
+                value = max(lo, min(hi, value))
+                db.set_setting(key, str(value))
+                results[key] = value
+            except (ValueError, TypeError) as e:
+                errors.append(f'{key}: {e}')
+
+    if 'whatsapp_max_outbound_per_minute' in settings:
+        try:
+            value = max(1, min(600, int(settings['whatsapp_max_outbound_per_minute'])))
+            db.set_setting('whatsapp_max_outbound_per_minute', str(value))
+            results['whatsapp_max_outbound_per_minute'] = value
+        except (ValueError, TypeError) as e:
+            errors.append(f'whatsapp_max_outbound_per_minute: {e}')
+
     # Default Model
     if 'default_model_id' in settings:
         model_id = settings['default_model_id']
@@ -999,38 +1084,40 @@ def api_batch_save():
             else:
                 errors.append('default_model_id: Model not found')
 
-    # Vision Model
-    if 'vision_model_id' in settings:
-        vision_model_id = settings['vision_model_id']
-        if vision_model_id:
-            model = db.get_model_by_id(vision_model_id)
-            if model and model.get('vision_supported'):
-                db.set_setting('vision_model_id', model['id'])
-                results['vision_model_id'] = model['id']
-            elif model:
-                errors.append('vision_model_id: Model does not support vision')
+    # Vision routing chain (primary + two fallbacks)
+    vision_setting_keys = (
+        'vision_model_id',
+        'vision_fallback_model_id',
+        'vision_fallback_model_2_id',
+    )
+    if any(key in settings for key in vision_setting_keys):
+        vision_ids = {
+            key: settings.get(key, db.get_setting(key, ''))
+            for key in vision_setting_keys
+        }
+        duplicate_vision_ids = {
+            model_id for model_id in vision_ids.values() if model_id
+            and list(vision_ids.values()).count(model_id) > 1
+        }
+        for key in vision_setting_keys:
+            if key not in settings:
+                continue
+            model_id = vision_ids[key]
+            if model_id in duplicate_vision_ids:
+                errors.append(f'{key}: Must differ from the other configured vision models')
+                continue
+            if model_id:
+                model = db.get_model_by_id(model_id)
+                if model and model.get('vision_supported'):
+                    db.set_setting(key, model['id'])
+                    results[key] = model['id']
+                elif model:
+                    errors.append(f'{key}: Model does not support vision')
+                else:
+                    errors.append(f'{key}: Model not found')
             else:
-                errors.append('vision_model_id: Model not found')
-        else:
-            # Allow clearing the setting
-            db.set_setting('vision_model_id', '')
-            results['vision_model_id'] = ''
-
-    # Vision Fallback Model
-    if 'vision_fallback_model_id' in settings:
-        fallback_model_id = settings['vision_fallback_model_id']
-        if fallback_model_id:
-            model = db.get_model_by_id(fallback_model_id)
-            if model and model.get('vision_supported'):
-                db.set_setting('vision_fallback_model_id', model['id'])
-                results['vision_fallback_model_id'] = model['id']
-            elif model:
-                errors.append('vision_fallback_model_id: Model does not support vision')
-            else:
-                errors.append('vision_fallback_model_id: Model not found')
-        else:
-            db.set_setting('vision_fallback_model_id', '')
-            results['vision_fallback_model_id'] = ''
+                db.set_setting(key, '')
+                results[key] = ''
 
     # KB Organizer Model — global default for the KB organizer background sub-agent
     if 'kb_organizer_model_id' in settings:

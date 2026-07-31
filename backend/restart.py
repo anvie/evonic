@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+import shutil
 
 log = logging.getLogger(__name__)
 
@@ -85,8 +86,18 @@ def _systemd_command(action: str) -> None:
         raise RuntimeError(
             "SYSTEMD_SERVICE_NAME is required when SERVICE_SYSTEM=systemd"
         )
+    command = []
 
-    command = ["systemctl", action, service_name]
+    # Check if we are NOT root (UID 0)
+    if os.geteuid() != 0:
+        # Check if sudo is installed and in the PATH
+        if shutil.which("sudo"):
+            command.append("sudo")
+        else:
+            log.warning("Not running as root and 'sudo' is not installed. Command will likely fail.")
+
+    command.extend(["systemctl", action, service_name])
+
     log.info("Managing Evonic via systemd: %s", " ".join(command))
     try:
         subprocess.run(command, check=True)

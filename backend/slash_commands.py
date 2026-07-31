@@ -44,6 +44,19 @@ class SlashCommandRegistry:
         return [(cmd.name, cmd.description) for cmd in self._commands.values()]
 
 
+def _expand_slash_list(raw_value: str, all_names: set) -> set:
+    """Expand comma-separated list with wildcard '*' and inverse mode '!' support."""
+    if not raw_value or not raw_value.strip():
+        return set()
+    raw = raw_value.strip()
+    if raw == '*':
+        return set(all_names)
+    if raw.startswith('!'):
+        allowed = {c.strip() for c in raw[1:].split(',') if c.strip()}
+        return set(all_names) - allowed
+    return {c.strip() for c in raw.split(',') if c.strip()}
+
+
 def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> list:
     """Return registered commands available to an agent on the given channel."""
     commands = command_registry.list_commands()
@@ -56,8 +69,12 @@ def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> 
         workplace = db.get_workplace(workplace_id) if workplace_id else None
         can_cd = is_super or bool(workplace and workplace.get('type') in ('remote', 'tunnel'))
         has_subagent = is_super or 'subagent' in db.get_agent_skills(agent_id)
+        disabled_raw = (agent.get('disabled_slash_commands') or '') if agent else ''
     except Exception:
         is_super = can_cd = has_subagent = False
+        disabled_raw = ''
+
+    disabled_set = _expand_slash_list(disabled_raw, {name for name, _desc in commands})
 
     available = []
     for name, description in commands:
@@ -66,6 +83,8 @@ def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> 
         if name in {'restart', 'shutdown'} and not is_super:
             continue
         if name == 'sub' and not has_subagent:
+            continue
+        if not is_super and name in disabled_set:
             continue
         available.append((name, description))
     return sorted(available, key=lambda command: command[0])
@@ -134,7 +153,7 @@ def execute_command(
 def _register_builtins():
     """Register all built-in slash commands."""
 
-    # /clear — Clear chat history and agent llm log
+    # /clear [ar] — Clear chat history and agent LLM log; `ar` also archives it.
     def clear_handler(
         session_id: str,
         agent_id: str,
@@ -146,8 +165,9 @@ def _register_builtins():
         import os
         import config
 
-        # Optional `noa`/`noarchive` arg skips writing the session to the archive DB.
-        no_archive = bool({"noa", "noarchive"} & set(args.strip().lower().split()))
+        # Archive only when explicitly requested with the `ar` argument.
+        archive_requested = "ar" in set(args.strip().lower().split())
+        no_archive = not archive_requested
 
         db.clear_session(session_id, agent_id, no_archive=no_archive)
 
@@ -203,7 +223,7 @@ def _register_builtins():
     command_registry.register(
         "clear",
         clear_handler,
-        "Clear chat history for this session",
+        "Clear chat history (`/clear ar` archives it)",
     )
 
     # /help — Show available commands
@@ -268,6 +288,8 @@ def _register_builtins():
         if not parts or not parts[0]:
             return "Usage: /investigate <agent-id> <context>"
         target_agent_id = parts[0].strip().lower()
+        if target_agent_id == agent_id.lower():
+            return "Cannot investigate the current agent. Choose a different agent."
         context = parts[1].strip() if len(parts) > 1 else ""
 
         # Validate context
@@ -684,7 +706,11 @@ def _register_builtins():
             ms = AgentState()  # fresh plan-mode state
 
         # Transition to execute mode
-        result = ms.set_mode("execute", reason="slash command /exec")
+        result = ms.set_mode(
+            "execute",
+            reason="slash command /exec",
+            bypass_plan_requirement=True,
+        )
         if "error" in result:
             return f"Error: {result['error']}"
 
@@ -919,27 +945,6 @@ def _register_builtins():
         "Show agent status information",
     )
 
-    # /clear-memory — Delete all memories for current agent
-    def clear_memory_handler(
-        session_id: str,
-        agent_id: str,
-        external_user_id: str,
-        channel_id: Optional[str],
-        args: str,
-    ) -> str:
-        from models.db import db
-
-        count = db.clear_all_memories(agent_id)
-        if count == 0:
-            return "No memories to clear."
-        return f"{count} memories deleted."
-
-    command_registry.register(
-        "clear-memory",
-        clear_memory_handler,
-        "Delete all long-term memories for current agent",
-    )
-
     # /model — Show or set the agent's LLM model
     def model_handler(
         session_id: str,
@@ -998,7 +1003,7 @@ def _register_builtins():
                     "Type /model list to see all available models. /model <number> to switch."
                 )
 
-        if args.strip().lower() == "list":
+        if args.strip().lower() in ("list", "ls"):
             # Full listing grouped by provider
             current = db.get_agent_model(agent_id)
             current_id = current.get("id") if current else None
@@ -1085,7 +1090,7 @@ def _register_builtins():
     command_registry.register(
         "model",
         model_handler,
-        "Show or switch LLM model — /model, /model list, /model [number|provider/model]",
+        "Show or switch LLM model — /model, /model list|ls, /model [number|provider/model]",
     )
 
 

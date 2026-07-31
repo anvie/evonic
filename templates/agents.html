@@ -33,6 +33,11 @@
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                 New Agent
             </button>
+            <button onclick="showImportAgentModal()"
+                    class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                <i data-lucide="upload" class="w-4 h-4"></i>
+                Import Agent
+            </button>
         </div>
 
         <!-- Agents Grid -->
@@ -115,6 +120,55 @@
         <div class="flex gap-3 justify-end px-6 pb-5">
             <button onclick="closeCreateAgentModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Cancel</button>
             <button onclick="createAgent()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- Import Agent Modal -->
+<div id="import-agent-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="closeImportAgentModal()"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-xl w-[92%] max-w-xl shadow-xl">
+        <div class="p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Import Agent</h3>
+                <button onclick="closeImportAgentModal()" title="Close" class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="flex border-b border-gray-200 dark:border-gray-700 mb-4" role="tablist">
+                <button id="import-file-tab" onclick="setImportMode('file')" class="px-4 py-2 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600">File</button>
+                <button id="import-paste-tab" onclick="setImportMode('paste')" class="px-4 py-2 text-sm font-medium text-gray-500 border-b-2 border-transparent">Paste JSON</button>
+            </div>
+            <div id="import-file-panel">
+                <input id="import-agent-file" type="file" accept="application/json,.json" class="hidden" onchange="selectImportFile(this.files[0])">
+                <button id="import-drop-zone" type="button" onclick="document.getElementById('import-agent-file').click()"
+                        ondragover="handleImportDrag(event)" ondragleave="handleImportDrag(event)" ondrop="handleImportDrop(event)"
+                        class="w-full min-h-32 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 transition-colors">
+                    <i data-lucide="file-json" class="w-7 h-7"></i>
+                    <span id="import-file-label" class="text-sm font-medium">Choose or drop a JSON file</span>
+                </button>
+            </div>
+            <div id="import-paste-panel" class="hidden">
+                <textarea id="import-agent-json" rows="8" spellcheck="false" placeholder="Paste exported agent JSON"
+                          class="w-full p-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md font-mono text-xs focus:border-indigo-500 focus:outline-none"></textarea>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700 dark:text-gray-300">Agent ID</label>
+                    <input id="import-agent-id" type="text" placeholder="e.g., customer_service" pattern="[a-z0-9_]+" autocapitalize="none" spellcheck="false"
+                           title="Use lowercase letters, numbers, and underscores only"
+                           oninput="enforceLowerSnakeCase(this)"
+                           class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700 dark:text-gray-300">Name override</label>
+                    <input id="import-agent-name" type="text" placeholder="Use exported name" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+            </div>
+            <p id="import-agent-error" class="hidden mt-3 text-sm text-red-600 dark:text-red-400"></p>
+            <div id="import-agent-warning" class="hidden mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></div>
+        </div>
+        <div class="flex gap-3 justify-end px-6 pb-5">
+            <button onclick="closeImportAgentModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
+            <button id="import-agent-submit" onclick="importAgent()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md text-sm font-medium">Import</button>
         </div>
     </div>
 </div>
@@ -466,6 +520,115 @@ function showCreateAgentModal() {
 
 function closeCreateAgentModal() {
     document.getElementById('create-agent-modal').classList.add('hidden');
+}
+
+let importMode = 'file';
+let importFileText = '';
+
+function showImportAgentModal() {
+    window.importMissingConfirmed = false;
+    document.getElementById('import-agent-modal').classList.remove('hidden');
+    document.getElementById('import-agent-id').value = '';
+    document.getElementById('import-agent-name').value = '';
+    document.getElementById('import-agent-json').value = '';
+    document.getElementById('import-agent-file').value = '';
+    document.getElementById('import-file-label').textContent = 'Choose or drop a JSON file';
+    importFileText = '';
+    setImportMode('file');
+    setImportError('');
+}
+
+function closeImportAgentModal() {
+    window.importMissingConfirmed = false;
+    document.getElementById('import-agent-warning').classList.add('hidden');
+    document.getElementById('import-agent-modal').classList.add('hidden');
+}
+
+function setImportMode(mode) {
+    importMode = mode;
+    const fileMode = mode === 'file';
+    document.getElementById('import-file-panel').classList.toggle('hidden', !fileMode);
+    document.getElementById('import-paste-panel').classList.toggle('hidden', fileMode);
+    document.getElementById('import-file-tab').className = `px-4 py-2 text-sm font-medium border-b-2 ${fileMode ? 'text-indigo-600 border-indigo-600' : 'text-gray-500 border-transparent'}`;
+    document.getElementById('import-paste-tab').className = `px-4 py-2 text-sm font-medium border-b-2 ${fileMode ? 'text-gray-500 border-transparent' : 'text-indigo-600 border-indigo-600'}`;
+    setImportError('');
+    if (!fileMode) document.getElementById('import-agent-json').focus();
+}
+
+function setImportError(message) {
+    const error = document.getElementById('import-agent-error');
+    error.textContent = message;
+    error.classList.toggle('hidden', !message);
+}
+
+function handleImportDrag(event) {
+    event.preventDefault();
+    event.currentTarget.classList.toggle('border-indigo-500', event.type === 'dragover');
+    event.currentTarget.classList.toggle('bg-indigo-50', event.type === 'dragover');
+}
+
+function handleImportDrop(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('border-indigo-500', 'bg-indigo-50');
+    selectImportFile(event.dataTransfer.files[0]);
+}
+
+async function selectImportFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.json')) {
+        importFileText = '';
+        return setImportError('Select a .json file.');
+    }
+    try {
+        importFileText = await file.text();
+        document.getElementById('import-file-label').textContent = file.name;
+        setImportError('');
+    } catch (error) {
+        importFileText = '';
+        setImportError('The selected file could not be read.');
+    }
+}
+
+function enforceLowerSnakeCase(input) {
+    input.value = input.value.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/_+/g, '_');
+}
+
+async function importAgent() {
+    const id = document.getElementById('import-agent-id').value.trim();
+    const name = document.getElementById('import-agent-name').value.trim();
+    const source = importMode === 'file' ? importFileText : document.getElementById('import-agent-json').value.trim();
+    if (!source) return setImportError(importMode === 'file' ? 'Select a JSON file.' : 'Paste exported agent JSON.');
+    if (id && !/^[a-z0-9_]+$/.test(id)) return setImportError('Agent ID must use lowercase letters, numbers, and underscores.');
+    let payload;
+    try {
+        payload = JSON.parse(source);
+    } catch (error) {
+        return setImportError(`Invalid JSON: ${error.message}`);
+    }
+    const button = document.getElementById('import-agent-submit');
+    const warning = document.getElementById('import-agent-warning');
+    button.disabled = true;
+    setImportError('');
+    try {
+        const response = await fetch('/api/agents/import', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({payload, ...(id ? {id} : {}), ...(name ? {name} : {}), ...(window.importMissingConfirmed ? {confirm_missing: true} : {})})
+        });
+        const data = await response.json();
+        if (response.status === 409 && data.warning) {
+            warning.textContent = `Unavailable dependencies will be skipped. Skills: ${(data.warning.skills || []).join(', ') || 'none'}. Tools: ${(data.warning.tools || []).join(', ') || 'none'}. Click Import again to confirm.`;
+            warning.classList.remove('hidden');
+            window.importMissingConfirmed = true;
+            return;
+        }
+        if (!response.ok) return setImportError(data.error || 'Agent import failed.');
+        window.location.href = `/agents/${encodeURIComponent(data.agent_id)}`;
+    } catch (error) {
+        setImportError('Network error. Please try again.');
+    } finally {
+        button.disabled = false;
+    }
 }
 
 async function createAgent() {

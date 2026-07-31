@@ -102,6 +102,69 @@ def test_compile_task_graph_exposed_when_flagged():
     assert 'compile_task_graph' in names
 
 
+def test_builtin_executor_hides_compile_task_graph_without_flag():
+    from backend.tools.registry import ToolRegistry
+    executor = ToolRegistry().get_builtin_executor({'id': 'a1'})
+    assert executor('compile_task_graph', {'goal': 'do something'}) is None
+
+
+def test_builtin_executor_exposes_compile_task_graph_when_flagged():
+    from backend.tools.registry import ToolRegistry
+    executor = ToolRegistry().get_builtin_executor({'id': 'a1', 'enable_atg': True})
+    result = executor('compile_task_graph', {'goal': 'do something'})
+    assert result is not None
+    assert 'error' in result
+
+
+def test_always_execute_hides_plan_workflow_builtins_everywhere():
+    from backend.agent_runtime.context import build_tools
+    from backend.tools.registry import ToolRegistry
+
+    hidden = {'save_plan', 'set_mode', 'state'}
+    agent = {
+        'id': 'always_execute_agent',
+        'is_super': False,
+        'builtin_tools_enabled': True,
+        'always_execute': True,
+    }
+    context = {'id': agent['id'], 'always_execute': True}
+
+    ui_names = {tool['name'] for tool in ToolRegistry().get_builtin_tool_defs(context)}
+    runtime_names = {
+        tool['function']['name'] for tool in ToolRegistry().get_builtin_tools(context)
+    }
+    built_names = {
+        tool['function']['name'] for tool in build_tools(agent)
+        if tool.get('function', {}).get('name')
+    }
+    executor = ToolRegistry().get_builtin_executor(context)
+
+    assert hidden.isdisjoint(ui_names)
+    assert hidden.isdisjoint(runtime_names)
+    assert hidden.isdisjoint(built_names)
+    assert all(executor(tool_name, {}) is None for tool_name in hidden)
+
+
+def test_muktamar_registrasi_hides_disabled_atg_and_cmp_builtins():
+    from backend.tools.registry import ToolRegistry
+
+    disabled = {
+        'compile_task_graph', 'forget_memory', 'new_path', 'read_transcript',
+    }
+    context = {
+        'id': 'muktamar_registrasi',
+        'enable_atg': False,
+        'enable_cmp': False,
+    }
+
+    ui_names = {tool['name'] for tool in ToolRegistry().get_builtin_tool_defs(context)}
+    runtime_names = {
+        tool['function']['name'] for tool in ToolRegistry().get_builtin_tools(context)
+    }
+    assert disabled.isdisjoint(ui_names)
+    assert disabled.isdisjoint(runtime_names)
+
+
 def test_compile_executor_defends_when_disabled():
     from backend.tools.registry import _builtin_compile_task_graph_factory
     _, executor = _builtin_compile_task_graph_factory({'id': 'a1'})

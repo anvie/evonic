@@ -251,11 +251,25 @@ class ToolRegistry:
 
         return real_executor
 
-    def get_builtin_tool_defs(self) -> List[Dict[str, Any]]:
-        """Return UI-facing tool definitions for all built-in tools (with _builtin metadata)."""
+    @staticmethod
+    def _is_builtin_enabled(builtin_id: str, agent_context: dict) -> bool:
+        """Return whether a feature-gated built-in is available to an agent."""
+        if builtin_id in ('builtin:save_plan', 'builtin:set_mode', 'builtin:state'):
+            return not bool(agent_context.get('always_execute'))
+        if builtin_id == 'builtin:compile_task_graph':
+            return bool(agent_context.get('enable_atg'))
+        if builtin_id in ('builtin:switch_path', 'builtin:new_path',
+                          'builtin:read_transcript', 'builtin:forget_memory'):
+            return bool(agent_context.get('enable_cmp'))
+        return True
+
+    def get_builtin_tool_defs(self, agent_context: Optional[dict] = None) -> List[Dict[str, Any]]:
+        """Return UI-facing built-in definitions, optionally scoped to an agent."""
         defs = []
         for builtin_id, factory in self._builtins.items():
-            tool_def, _ = factory({'agent_id': ''})
+            if agent_context is not None and not self._is_builtin_enabled(builtin_id, agent_context):
+                continue
+            tool_def, _ = factory(agent_context or {})
             fn = tool_def.get('function', {})
             defs.append({
                 'id': builtin_id,          # e.g. 'builtin:remember'
@@ -272,13 +286,8 @@ class ToolRegistry:
         agent_id = agent_context.get('id', '')
         tools = []
         for builtin_id, factory in self._builtins.items():
-            # ATG/CMP tools are opt-in per agent — never expose the defs
-            # otherwise, so non-flagged agents keep a byte-identical tool list.
-            if builtin_id == 'builtin:compile_task_graph' and not agent_context.get('enable_atg'):
-                continue
-            if (builtin_id in ('builtin:switch_path', 'builtin:new_path',
-                               'builtin:read_transcript')
-                    and not agent_context.get('enable_cmp')):
+            # Feature-gated built-ins must be absent from the agent's tool list.
+            if not self._is_builtin_enabled(builtin_id, agent_context):
                 continue
             tool_def, _ = factory(agent_context)
             if should_suppress_builtin(agent_id, builtin_id, tool_def):
@@ -292,6 +301,9 @@ class ToolRegistry:
         """
         executors: Dict[str, Callable] = {}
         for builtin_id, factory in self._builtins.items():
+            # Keep executor availability aligned with definition exposure.
+            if not self._is_builtin_enabled(builtin_id, agent_context):
+                continue
             tool_def, executor = factory(agent_context)
             fn_name = tool_def['function']['name']  # e.g. 'remember'
             executors[fn_name] = executor
@@ -571,10 +583,16 @@ def _builtin_update_tasks_factory(agent_context: dict):
             "name": "update_tasks",
             "description": (
                 "Manage your implementation task list "
-                "(set, add, update status, remove). Each entry must describe "
-                "exactly one concrete action or outcome that can be completed "
-                "independently. Split multi-action work into separate entries; "
-                "never batch several actions into one task."
+                "(set, add, update status, remove). CRITICAL: Each entry must be "
+                "ATOMIC — exactly one concrete action or outcome that can be "
+                "completed independently. Split multi-action work into separate "
+                "entries; never batch several actions into one task.\n"
+                "Example: a 3-phase plan needs at least 3 separate tasks:\n"
+                "✓ 'Audit existing API endpoints'\n"
+                "✓ 'Create sandbox environment'\n"
+                "✓ 'Implement database schema'\n"
+                "✗ 'Audit API, create env, implement schema' — BAD: 3 actions in 1 task\n"
+                "Only one implementation task may be in_progress at a time."
             ),
             "parameters": {
                 "type": "object",
@@ -585,8 +603,9 @@ def _builtin_update_tasks_factory(agent_context: dict):
                         "description": (
                             "'set': replace entire task list (provide 'tasks' array). "
                             "'add': add one atomic task. "
-                            "'done'/'in_progress': update status. "
-                            "'remove': delete a task."
+                            "'done': mark a task complete. 'in_progress': make the "
+                            "selected task the sole active task; this returns every "
+                            "other active task to pending. 'remove': delete a task."
                         )
                     },
                     "task_id": {
@@ -1084,10 +1103,18 @@ def _builtin_read_transcript_factory(agent_context: dict):
         # rehydrating the raw transcript.
         BUDGET_CHARS, PER_MSG = 4000, 500
         lines, used = [], 0
+        from backend.agent_runtime.context import (
+            attachment_infos_from_metadata, build_attachment_notes,
+        )
         for e in entries:
             if e.get('type') not in ('user', 'final', 'intermediate'):
                 continue
             content = (e.get('content') or '').strip()
+            if e.get('type') == 'user':
+                infos = attachment_infos_from_metadata(e.get('metadata') or {})
+                if infos:
+                    content = content.rstrip() + build_attachment_notes(
+                        infos, has_describe_image=False, audio_enabled=False)
             if not content:
                 continue
             role = 'User' if e.get('type') == 'user' else 'Agent'
