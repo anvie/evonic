@@ -2711,6 +2711,7 @@ function switchKBTab(tab) {
         // Re-render preview from current textarea content
         const textarea = document.getElementById('kb-editor-content');
         document.getElementById('kb-editor-preview').innerHTML = renderKBPreview(textarea.value);
+        ui.addCopyButtons(document.getElementById('kb-editor-preview'));
         editPanel.classList.add('hidden');
         previewPanel.classList.remove('hidden');
         editBtn.className = editBtn.className.replace(activeClass, inactiveClass);
@@ -2864,6 +2865,7 @@ async function editFile(filename) {
     document.getElementById('kb-editor-modal').classList.remove('hidden');
     // Render preview and show Preview tab by default
     document.getElementById('kb-editor-preview').innerHTML = renderKBPreview(data.content);
+    ui.addCopyButtons(document.getElementById('kb-editor-preview'));
     document.getElementById('kb-editor-preview').classList.remove('hidden');
     document.getElementById('kb-editor-edit-panel').classList.add('hidden');
     document.getElementById('kb-tab-preview').className = 'px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 transition-colors';
@@ -6449,9 +6451,11 @@ const _refreshSessionStateImpl = async function() {
             content.innerHTML = html;
             meta.textContent = metaText;
             meta.classList.remove('hidden');
+            ui.addCopyButtons(content);
             mobileContent.innerHTML = html;
             mobileMeta.textContent = metaText;
             mobileMeta.classList.remove('hidden');
+            ui.addCopyButtons(mobileContent);
         } else if (headerHtml) {
             // Show state-only card when no summary yet
             content.innerHTML = `<div>${headerHtml}</div>`;
@@ -7002,6 +7006,7 @@ async function renderArtifactContent(filename, category, fileUrl, ext) {
             const text = await res.text();
             _artifactRawContent = text;
             body.innerHTML = '<div class="recap-prose max-w-none">' + marked.parse(text) + '</div>';
+            ui.addCopyButtons(body);
         } else if (ext === 'pdf') {
             // Embed PDF viewer
             body.innerHTML = `<iframe src="${fileUrl}" class="w-full rounded-md border border-gray-200 dark:border-gray-600" style="min-height: 70vh;"></iframe>`;

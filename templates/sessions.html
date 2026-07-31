@@ -2071,6 +2071,7 @@ function _renderSessionSummary(data) {
         const meta = document.getElementById(prefix + 'summary-meta');
         if (summaryEl && data.summary) {
             summaryEl.innerHTML = '<div class="recap-prose">' + marked.parse(data.summary) + '</div>';
+            ui.addCopyButtons(summaryEl);
             if (meta) {
                 meta.textContent = metaText || '';
                 meta.classList.remove('hidden');
@@ -2552,6 +2553,7 @@ function openPlanModal(planFile) {
                 return;
             }
             content.innerHTML = '<div class="recap-prose">' + marked.parse(data.content) + '</div>';
+            ui.addCopyButtons(content);
         })
         .catch(function(err) {
             content.innerHTML = '<div class="flex items-center justify-center py-12 text-red-400"><span class="text-sm">\u26A0\uFE0F Failed to load plan file: ' + esc(err.message) + '</span></div>';
