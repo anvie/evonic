@@ -77,3 +77,35 @@ def test_legacy_state_event_keeps_http_fallback_for_atg_and_non_stream_callers()
     assert "if (hasStateSnapshot)" in listener
     assert "else {" in listener
     assert "loadAgentState();" in listener
+
+
+def test_whatsapp_restriction_warning_is_replayable_and_frontend_registered():
+    stream = EventStream()
+    session_id = "restricted-session"
+    stream.emit("whatsapp_restriction_warning", {
+        "session_id": session_id,
+        "content": "WhatsApp reach-out restriction",
+        "metadata": {
+            "reachout_enforcement_type": "RESTRICT_ALL_COMPANIONS",
+            "reachout_enforcement_ends": "2026-07-30T06:59:55Z",
+        },
+    })
+
+    events = stream.get_session_events(session_id)
+    assert "whatsapp_restriction_warning" in CHAT_FORWARDED_EVENTS
+    assert events[0]["event"] == "whatsapp_restriction_warning"
+    assert events[0]["chat_seq"] == 1
+
+    realtime_route = read_repo_file("routes/realtime.py")
+    realtime_client = read_repo_file("static/js/realtime.js")
+    transport = read_repo_file("static/js/chat-ui/transport.js")
+    bundle = read_repo_file("static/js/chat-ui.js")
+    sessions = read_repo_file("templates/sessions.html")
+
+    assert "'whatsapp_restriction_warning': ('whatsapp_restriction_warning'" in realtime_route
+    assert realtime_client.count("'whatsapp_restriction_warning'") >= 2
+    assert "'whatsapp_restriction_warning'" in transport
+    assert "'whatsapp_restriction_warning'" in bundle
+    assert sessions.count("function formatWhatsAppRestriction(") == 1
+    assert "whatsapp_restriction_warning" in sessions
+    assert "meta.whatsapp_restriction_key" in sessions

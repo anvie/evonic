@@ -35,7 +35,8 @@ def render_cmp_section(cmp: dict, agent_name: str = "Agent") -> str:
     return _render(cmp, agent_name)
 
 
-def on_turn_boundary(agent: dict, ms, chatlog, user_text: str):
+def on_turn_boundary(agent: dict, ms, chatlog, user_text: str,
+                     session_id: str = None, agent_id: str = None):
     """Per-turn CMP orchestration: first-path init, boundary detection,
     path ops (switch/branch), lifecycle decay. Called from the runtime at
     the re-arm slot; subsumes maybe_rearm_atg for cmp agents (a new branch
@@ -60,8 +61,9 @@ def on_turn_boundary(agent: dict, ms, chatlog, user_text: str):
         ms.cmp = store.new_cmp(ms, title=title or text[:60] or 'Session start',
                                goal=text[:300], now_ts=user_ts)
         if not title:  # raw message as title reads badly on the map — name it
-            named = detector.detect(ms.cmp, ms, text,
-                                    initializing=True).get('new_path')
+            named = detector.detect(
+                ms.cmp, ms, text, initializing=True,
+                session_id=session_id, agent_id=agent_id).get('new_path')
             _apply_naming(ms.cmp['paths'][ms.cmp['active_id']], named)
         _emit(agent, 'cmp_path_created',
               {'path_id': ms.cmp['active_id'],
@@ -71,7 +73,8 @@ def on_turn_boundary(agent: dict, ms, chatlog, user_text: str):
 
     decision = detector.detect(ms.cmp, ms, text,
                                recent_tail=_last_final_excerpt(chatlog),
-                               recent_dialogue=_recent_dialogue(chatlog))
+                               recent_dialogue=_recent_dialogue(chatlog),
+                               session_id=session_id, agent_id=agent_id)
     d, target = decision['decision'], decision.get('target')
     # The delta describes the just-completed turn on the (still) active path;
     # apply it before any switch/branch suspends that path.

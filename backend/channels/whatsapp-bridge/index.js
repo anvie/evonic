@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
+const { normalizeRecipientJid } = require('./jid');
 const { OutboundLifecycle } = require('./outbound-lifecycle');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -39,6 +40,7 @@ const outboundLifecycle = new OutboundLifecycle({
         }
         return sock.sendMessage(jid, content);
     },
+    diagnoseFailure: diagnoseReachoutTimelock,
     emit: (payload) => {
         const level = payload.status === 'failed' ? 'error' : 'log';
         console[level](
@@ -47,7 +49,6 @@ const outboundLifecycle = new OutboundLifecycle({
             payload.retry_count, payload.reason || '');
         if (CALLBACK_URL) postCallback(payload);
     },
-    maxRetries: 1,
 });
 
 // Hook Baileys' internal pino logger so ACK 463 (and other bad-ack errors)
@@ -131,6 +132,28 @@ function queueCredsSave(saveCreds) {
 async function flushCreds() {
     if (saveCredsNow) await queueCredsSave(saveCredsNow);
     await pendingCredsSave;
+}
+
+async function diagnoseReachoutTimelock() {
+    if (!sock?.fetchAccountReachoutTimelock) return {};
+    try {
+        const state = await sock.fetchAccountReachoutTimelock();
+        const ends = state?.timeEnforcementEnds;
+        const diagnostic = {
+            reachout_timelocked: Boolean(state?.isActive),
+            reachout_enforcement_type: state?.enforcementType || '',
+            reachout_enforcement_ends: ends instanceof Date ? ends.toISOString() : '',
+        };
+        console.error(
+            '[whatsapp-bridge] ACK 463 reachout_timelocked=%s enforcement=%s ends=%s',
+            diagnostic.reachout_timelocked, diagnostic.reachout_enforcement_type,
+            diagnostic.reachout_enforcement_ends);
+        return diagnostic;
+    } catch (error) {
+        console.error('[whatsapp-bridge] ACK 463 reachout timelock lookup failed: %s',
+            error?.message || error);
+        return { reachout_timelock_lookup_failed: true };
+    }
 }
 
 // Reconnect control — a single-socket guard prevents overlapping sockets from
@@ -381,7 +404,14 @@ async function startBaileys() {
             }
             const altSender = altJid.includes('@') ? altJid.split('@')[0].split(':')[0] : altJid;
             const messageId = msg.key.id || '';
-            const content = unwrapMessage(msg.message);
+            const rawMessage = msg.message || {};
+            const content = unwrapMessage(rawMessage);
+            const wrapperTypes = Object.keys(rawMessage).filter((key) =>
+                key === 'ephemeralMessage' || key === 'viewOnceMessage'
+                || key === 'viewOnceMessageV2' || key === 'documentWithCaptionMessage');
+            const payloadKeys = Object.keys(content || {});
+            const contentType = payloadKeys[0] || 'unknown';
+            const messageTimestamp = Number(msg.messageTimestamp || 0) || null;
 
             // Remember display names of group members so quoted authors resolve
             if (isGroup && msg.pushName && sender) {
@@ -478,6 +508,10 @@ async function startBaileys() {
 
             postCallback({
                 from: sender, jid, message_id: messageId, text, image,
+                message_timestamp: messageTimestamp,
+                content_type: contentType,
+                wrapper_types: wrapperTypes,
+                payload_keys: payloadKeys,
                 alt_sender: altSender,
                 alt_jid: altJid,
                 // quoted_text remains for older channel consumers; quoted_message
@@ -540,11 +574,7 @@ app.get('/qr', async (req, res) => {
 });
 
 app.post('/send', async (req, res) => {
-    const {
-        to, text, retry_jid: requestedRetryJid,
-        correlation_id: requestedCorrelationId,
-        retry_eligible: retryEligible,
-    } = req.body || {};
+    const { to, text, correlation_id: requestedCorrelationId, session_id: sessionId } = req.body || {};
     if (!to || !text) return res.status(400).json({ error: 'to and text required' });
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
@@ -552,17 +582,15 @@ app.post('/send', async (req, res) => {
     if (!messageSendReady) {
         return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-    const retryJid = requestedRetryJid?.endsWith('@lid') ? requestedRetryJid : null;
+    const jid = normalizeRecipientJid(to);
     const correlationId = requestedCorrelationId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     console.log('[whatsapp-bridge] SEND requested correlationId=%s to=%s jid=%s len=%d', correlationId, to, jid, text.length);
     try {
         const result = await outboundLifecycle.accept({
             correlationId,
             jid,
-            retryJid,
             content: { text },
-            retryEligible: Boolean(retryEligible && retryJid),
+            metadata: sessionId ? { session_id: sessionId } : {},
         });
         if (result.status === 'failed') {
             return res.status(500).json({
@@ -587,7 +615,7 @@ app.post('/send-buttons', async (req, res) => {
         return res.status(503).json({ error: 'Not connected to WhatsApp' });
     }
     try {
-        const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+        const jid = normalizeRecipientJid(to);
         const waButtons = buttons.slice(0, 3).map((b) => ({
             buttonId: b.id,
             buttonText: { displayText: b.title.slice(0, 20) },
@@ -610,7 +638,7 @@ app.post('/typing', async (req, res) => {
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'Not connected to WhatsApp' });
     }
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+    const jid = normalizeRecipientJid(to);
     try {
         await sock.sendPresenceUpdate(state === 'paused' ? 'paused' : 'composing', jid);
         res.json({ success: true });
@@ -627,7 +655,7 @@ app.post('/send-file', async (req, res) => {
     if (!sock || connectionStatus !== 'connected') {
         return res.status(503).json({ error: 'Not connected to WhatsApp' });
     }
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+    const jid = normalizeRecipientJid(to);
     try {
         const fileBuffer = fs.readFileSync(filePath);
         await sock.sendMessage(jid, {

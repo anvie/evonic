@@ -19,6 +19,9 @@ _logger = logging.getLogger(__name__)
 # ── Import & re-export hooks ────────────────────────────────────────────────
 
 from backend.plugin_hooks import (  # noqa: F401
+    # Synchronous lifecycle gates
+    register_turn_gate, unregister_turn_gate, run_turn_gates,
+    register_tool_result_gate, unregister_tool_result_gate, run_tool_result_gates,
     # Tool Guard
     register_tool_guard, unregister_tool_guard, check_tool_guards,
     # Message Interceptor

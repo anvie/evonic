@@ -1,6 +1,8 @@
 """Skills management routes — list, upload, toggle, delete skills."""
 
+import ipaddress
 import os
+import secrets
 import tempfile
 import zipfile
 from flask import Blueprint, render_template, jsonify, request, redirect, url_for, send_file, after_this_request
@@ -119,6 +121,24 @@ def api_set_skill_config(skill_id):
     if 'error' in result:
         return jsonify(result), 400
     return jsonify(result)
+
+
+@skills_bp.route('/api/internal/skills/muktamar-agent/verify-token', methods=['POST'])
+def api_verify_muktamar_registration_token():
+    """Verify the registration credential directly against skill config storage."""
+    try:
+        source = ipaddress.ip_address(request.remote_addr or '')
+    except ValueError:
+        return jsonify({'valid': False}), 403
+    if not source.is_loopback:
+        return jsonify({'valid': False}), 403
+
+    supplied = request.headers.get('X-API-Token', '')
+    expected = str(
+        skills_manager.get_skill_config('muktamar-agent').get('REGISTRATION_API_TOKEN') or ''
+    ).strip()
+    valid = bool(supplied and expected and secrets.compare_digest(supplied, expected))
+    return jsonify({'valid': valid}), 200 if valid else 401
 
 
 @skills_bp.route('/api/skills/<skill_id>/system-prompt', methods=['GET'])

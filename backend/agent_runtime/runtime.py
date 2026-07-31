@@ -24,6 +24,7 @@ from typing import Callable, Any, Dict, Generator, List, Optional, TypeVar
 T = TypeVar('T')
 
 from models.db import db
+from models.boolean import message_wrapper_enabled
 from models.chatlog import chatlog_manager
 from config import AGENT_TIMEOUT_RETRIES as MAX_TIMEOUT_RETRIES, AGENT_QUEUE_WORKERS
 
@@ -119,17 +120,30 @@ SUBAGENT_EXECUTE_DIRECTIVE = (
 )
 
 
+def _apply_restart_origin_guard(agent_context: dict, assigned_tool_ids: list,
+                                tools: list, metadata: dict) -> tuple:
+    """Remove restart authorization from an automatic post-restart turn."""
+    if not isinstance(metadata, dict) or not metadata.get('restart_origin'):
+        return assigned_tool_ids, tools
+    agent_context['restart_origin'] = True
+    assigned_tool_ids = [
+        tool_id for tool_id in assigned_tool_ids
+        if tool_id != 'restart' and not tool_id.endswith(':restart')
+    ]
+    tools = [
+        tool for tool in tools
+        if tool.get('function', {}).get('name') != 'restart'
+    ]
+    agent_context['assigned_tool_ids'] = assigned_tool_ids
+    return assigned_tool_ids, tools
+
+
 def _should_wrap_user_message(agent: dict) -> bool:
     """Check if message wrapper is enabled for this agent.
 
     Priority: per-agent setting > global setting > default (True).
     """
-    per_agent = agent.get('message_wrapper_enabled')
-    if per_agent is not None:
-        return bool(per_agent)
-    from models.db import db as _db
-    global_val = _db.get_setting('message_wrapper_enabled', '1')
-    return global_val != '0'
+    return message_wrapper_enabled(agent, db)
 
 
 def _apply_wrapper_prefix(messages: list, enabled: bool,
@@ -1067,7 +1081,8 @@ class AgentRuntime:
                        audio_url: Optional[str] = None,
                        video_url: Optional[str] = None,
                        metadata: Optional[Dict[str, Any]] = None,
-                       skip_buffer: bool = False) -> Dict[str, Any]:
+                       skip_buffer: bool = False,
+                       session_id: Optional[str] = None) -> Dict[str, Any]:
         """Process an incoming user message. Always queued for processing.
 
         - With buffer: debounce rapid messages, queue when timer fires.
@@ -1081,6 +1096,8 @@ class AgentRuntime:
             skip_buffer: If True, bypass message buffering even if the agent has
                 message_buffer_seconds set. Used by API routes that need a synchronous
                 response (e.g. /chat/completions).
+            session_id: Existing owned session to use instead of resolving one from
+                external_user_id and channel_id.
         """
         # Normalize external_user_id — system-internal messages (e.g. restart
         # greeting) may arrive with None when no external user is associated.
@@ -1127,9 +1144,17 @@ class AgentRuntime:
         is_subagent = agent.get('is_subagent', False)
 
         # Get or create session (sub-agents store their own ID but use parent's DB)
-        session_id = _db_retry(db.get_or_create_session, agent_id, external_user_id,
-                               channel_id, db_agent_id=db_agent_id if is_subagent else None,
-                               label="get/create session")
+        if session_id:
+            session = _db_retry(db.get_session_with_details, session_id,
+                                label="get explicit session")
+            if not session or session.get('agent_id') != agent_id:
+                return {"response": "Session not found.", "tool_trace": []}
+            external_user_id = session.get('external_user_id') or external_user_id
+            channel_id = session.get('channel_id')
+        else:
+            session_id = _db_retry(db.get_or_create_session, agent_id, external_user_id,
+                                   channel_id, db_agent_id=db_agent_id if is_subagent else None,
+                                   label="get/create session")
 
         # Sub-agents always start fresh — clear any stale messages from a
         # previous spawn that reused the same session slug.
@@ -1663,7 +1688,8 @@ class AgentRuntime:
                     _cmp_user = _cmp_chatlog.get_last_entry(types=frozenset({'user'}))
                     _cmp_res = _cmp_pkg.on_turn_boundary(
                         agent, _cmp_ms, _cmp_chatlog,
-                        (_cmp_user or {}).get('content', ''))
+                        (_cmp_user or {}).get('content', ''),
+                        session_id=ctx.session_id, agent_id=agent['id'])
                     if _cmp_res is not None:
                         _cmp_early_handled = True
                         from backend.agent_runtime.llm_loop import _persist_agent_state_split
@@ -1944,8 +1970,8 @@ class AgentRuntime:
 
         # Build tool definitions (use prefetched if available)
         if _used_prefetch:
-            tools = _tools_prebuilt
-            assigned_tool_ids = _agent_ctx_prebuilt.get('assigned_tool_ids', [])
+            tools = list(_tools_prebuilt)
+            assigned_tool_ids = list(_agent_ctx_prebuilt.get('assigned_tool_ids', []))
             agent_context = dict(_agent_ctx_prebuilt)  # shallow copy to allow mutations
         else:
             tools = _ctx.build_tools(agent)
@@ -1957,6 +1983,13 @@ class AgentRuntime:
                 assigned_tool_ids = list(_explorer.tool_ids(agent))
             else:
                 assigned_tool_ids = db.get_agent_tools(db_agent_id)
+
+            # Inter-agent communication is enabled by the agent-level toggle;
+            # send_agent_message is therefore available without a separate tool
+            # assignment, matching build_tools() exposure.
+            if (agent.get('agent_messaging_enabled') != 0
+                    and 'send_agent_message' not in assigned_tool_ids):
+                assigned_tool_ids.append('send_agent_message')
 
             # Inject skill tool IDs from assigned skills into assigned_tool_ids.
             # This mirrors context.py build_tools() Layer 9 auto-injection and
@@ -2065,6 +2098,31 @@ class AgentRuntime:
                 'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
                 'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
             }
+        _last_user = chatlog.get_last_entry(types=frozenset({'user'}))
+        assigned_tool_ids, tools = _apply_restart_origin_guard(
+            agent_context, assigned_tool_ids, tools,
+            (_last_user or {}).get('metadata') or {},
+        )
+
+        # Propagate trusted identity metadata from the channel into agent_context
+        # so synchronous lifecycle gates (e.g. workflow_guard) receive stable,
+        # attested message/attachment identifiers.
+        _trusted_meta = (_last_user or {}).get('metadata') or {}
+        if isinstance(_trusted_meta, dict):
+            if _trusted_meta.get('channel_message_id'):
+                agent_context['trusted_message_id'] = str(_trusted_meta['channel_message_id'])
+            if _trusted_meta.get('attachment_info'):
+                _att_ids = []
+                _a_info = _trusted_meta['attachment_info']
+                if isinstance(_a_info, list):
+                    for _att in _a_info:
+                        if isinstance(_att, dict) and _att.get('id'):
+                            _att_ids.append(str(_att['id']))
+                elif isinstance(_a_info, dict) and _a_info.get('id'):
+                    _att_ids.append(str(_a_info['id']))
+                if _att_ids:
+                    agent_context['trusted_attachment_ids'] = _att_ids
+
         # Propagate agent_message_depth and from_agent_id from incoming message metadata
         if ctx.external_user_id.startswith("__agent__"):
             _last_user = chatlog.get_last_entry(types=frozenset({'user'}))
@@ -2165,8 +2223,9 @@ class AgentRuntime:
                 try:
                     from backend.agent_runtime import cmp as _cmp_pkg
                     _cmp_chatlog = chatlog_manager.get(db_agent_id, ctx.session_id)
-                    _cmp_res = _cmp_pkg.on_turn_boundary(agent, ms, _cmp_chatlog,
-                                                         _boundary_text)
+                    _cmp_res = _cmp_pkg.on_turn_boundary(
+                        agent, ms, _cmp_chatlog, _boundary_text,
+                        session_id=ctx.session_id, agent_id=agent['id'])
                     _cmp_handled = _cmp_res is not None
                     if _cmp_res and _cmp_res.get('decision') not in ('continue', 'init'):
                         _logger.info("CMP boundary: %s -> %s (layer %s) for session %s",

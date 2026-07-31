@@ -264,6 +264,88 @@ class TestSkillRestorationNextTurn:
         assert captured_tools == []
 
 
+class TestLazySkillToolsSurvivePruning:
+    """Lazy-loaded tools remain available after the normal pruning threshold."""
+
+    def test_late_load_keeps_new_skill_tools_on_next_iteration(self, rt):
+        captured_tool_names = []
+        warmup_tool = {
+            'type': 'function',
+            'function': {
+                'name': 'warmup_tool',
+                'parameters': {'type': 'object', 'properties': {}, 'required': []},
+            },
+        }
+        unused_tool = {
+            'type': 'function',
+            'function': {
+                'name': 'unused_tool',
+                'parameters': {'type': 'object', 'properties': {}, 'required': []},
+            },
+        }
+        responses = iter([
+            _llm_tool_call('warmup_tool', cid='warmup-1'),
+            _llm_tool_call('warmup_tool', cid='warmup-2'),
+            _llm_tool_call('use_skill', cid='late-load'),
+            _llm_text(),
+        ])
+
+        def capture_and_respond(*args, **kwargs):
+            captured_tool_names.append({
+                tool['function']['name'] for tool in (kwargs.get('tools') or [])
+            })
+            return next(responses)
+
+        rt._mock_llm.chat_completion.side_effect = capture_and_respond
+        rt._mock_tr.get_builtin_executor.return_value = _use_skill_executor()
+        agent = {'id': AGENT_ID}
+        ctx = {
+            'id': AGENT_ID, 'user_id': 'user-1', 'channel_id': None,
+            'session_id': SESSION_ID, 'assigned_tool_ids': [], 'is_super': False,
+        }
+        rt._run_tool_loop(agent, ctx, [{'role': 'user', 'content': 'hi'}],
+                          [warmup_tool, unused_tool], SESSION_ID)
+
+        assert 'skill_tool_a' in captured_tool_names[3]
+        assert 'warmup_tool' in captured_tool_names[3]
+        assert 'unused_tool' not in captured_tool_names[3]
+
+    def test_repeated_load_keeps_skill_tools_after_pruning_threshold(self, rt):
+        captured_tool_names = []
+        unused_tool = {
+            'type': 'function',
+            'function': {
+                'name': 'unused_tool',
+                'parameters': {'type': 'object', 'properties': {}, 'required': []},
+            },
+        }
+        responses = iter([
+            _llm_tool_call('use_skill', cid='load-1'),
+            _llm_tool_call('use_skill', cid='load-2'),
+            _llm_tool_call('use_skill', cid='load-3'),
+            _llm_text(),
+        ])
+
+        def capture_and_respond(*args, **kwargs):
+            captured_tool_names.append({
+                tool['function']['name'] for tool in (kwargs.get('tools') or [])
+            })
+            return next(responses)
+
+        rt._mock_llm.chat_completion.side_effect = capture_and_respond
+        rt._mock_tr.get_builtin_executor.return_value = _use_skill_executor()
+        agent = {'id': AGENT_ID}
+        ctx = {
+            'id': AGENT_ID, 'user_id': 'user-1', 'channel_id': None,
+            'session_id': SESSION_ID, 'assigned_tool_ids': [], 'is_super': False,
+        }
+        rt._run_tool_loop(agent, ctx, [{'role': 'user', 'content': 'hi'}],
+                          [unused_tool], SESSION_ID)
+
+        assert 'skill_tool_a' in captured_tool_names[3]
+        assert 'unused_tool' not in captured_tool_names[3]
+
+
 class TestUnloadSkillClearsSessionState:
     """unload_skill → skill removed from session dicts."""
 

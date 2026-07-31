@@ -51,7 +51,7 @@ class ChatDelegationMixin:
         session_id = self._chat_db(_db_id).get_or_create_session(
             agent_id, external_user_id, channel_id, channel_type=channel_type)
         self._refresh_session_count(_db_id)
-        self._sync_session_index(agent_id, session_id)
+        self._sync_session_index(agent_id, session_id, db_agent_id=_db_id)
         return session_id
 
     def get_session_messages(self, session_id: str, limit: int = 50,
@@ -90,7 +90,7 @@ class ChatDelegationMixin:
                 pass
             # Keep session_index in sync (message_count, last_message, last_message_role, updated_at).
             # Only user/assistant messages to avoid write amplification from tool calls.
-            self._sync_session_index(agent_id, session_id)
+            self._sync_session_index(agent_id, session_id, db_agent_id=_db_id)
         return result
 
     def touch_agent_active(self, agent_id: str) -> None:
@@ -295,12 +295,18 @@ class ChatDelegationMixin:
 
     # ---- Session Index helpers (materialized view in main DB) ----
 
-    def _sync_session_index(self, agent_id: str, session_id: str) -> None:
-        """Read session metadata from per-agent chat DB and upsert into main DB session_index."""
+    def _sync_session_index(self, agent_id: str, session_id: str,
+                            db_agent_id: str = None) -> None:
+        """Upsert session metadata while preserving its logical agent owner.
+
+        ``agent_id`` is written to ``session_index``. ``db_agent_id`` selects
+        the chat DB that physically stores the session, which is the parent for
+        ephemeral sub-agents.
+        """
         import logging
         logger = logging.getLogger(__name__)
         try:
-            chat_db = self._chat_db(agent_id)
+            chat_db = self._chat_db(db_agent_id or agent_id)
             session = chat_db.get_session(session_id)
             if not session:
                 # Session deleted concurrently — remove from index if it exists.

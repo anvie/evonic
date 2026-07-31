@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List
 
@@ -28,6 +29,7 @@ def _token_count(text: str) -> int:
     return len(_TIKTOKEN_ENCODING.encode(text))
 
 from models.db import db
+from models.boolean import message_wrapper_enabled
 from backend.tools import tool_registry
 from backend.tools.registry import BUILTIN_TOOL_IDS
 from backend.skills_manager import SkillsManager, skills_manager
@@ -307,22 +309,22 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
             "- Only durable, intentional deliverables belong outside the scratchpad."
         )
 
-    # Message Wrapper Protocol
-    parts.append("")
-    parts.append("## Message Wrapper Protocol")
-    parts.append(
-        "After EVERY user message, before your main response, you MUST:"
-    )
-    parts.append(
-        "1. Scan the message for any new preference, instruction, rule, or personal fact."
-    )
-    parts.append(
-        "2. If found: store it immediately via remember() (factual data), "
-        "store it as a preference via remember() for non-factual style notes, or update SYSTEM.md (critical rules)."
-    )
-    parts.append(
-        "3. This applies to BOTH explicit and implicit cues. Even casual mentions count."
-    )
+    if message_wrapper_enabled(agent, db):
+        parts.append("")
+        parts.append("## Message Wrapper Protocol")
+        parts.append(
+            "After EVERY user message, before your main response, you MUST:"
+        )
+        parts.append(
+            "1. Scan the message for any new preference, instruction, rule, or personal fact."
+        )
+        parts.append(
+            "2. If found: store it immediately via remember() (factual data), "
+            "store it as a preference via remember() for non-factual style notes, or update SYSTEM.md (critical rules)."
+        )
+        parts.append(
+            "3. This applies to BOTH explicit and implicit cues. Even casual mentions count."
+        )
 
     # Memory Retrieval Protocol — coach the agent on the retrieval side of
     # long-term memory (the capture side is covered above). Memories are NOT
@@ -543,6 +545,9 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
     if _resolve_workspace(agent) != cache_entry.get('workspace'):
         return False
 
+    if message_wrapper_enabled(agent, db) != cache_entry.get('message_wrapper_enabled'):
+        return False
+
     return True
 
 
@@ -608,6 +613,7 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
             'vars_hash': vars_hash,
             'run_as_user': agent.get('run_as_user'),
             'workspace': _resolve_workspace(agent),
+            'message_wrapper_enabled': message_wrapper_enabled(agent, db),
         }
 
     prompt = static_prompt
@@ -776,6 +782,28 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
         slash_commands.append(("/shutdown", "Shut down the Evonic server completely (super agent only)"))
     # /autopilot is not yet implemented, omit from listing
 
+    # Filter slash commands based on per-agent hidden/disabled settings.
+    # Super agents are exempt — they always see all commands.
+    if not is_super:
+        all_cmd_names = {name for name, _desc in slash_commands}
+
+        def _expand(raw_value: str) -> set:
+            if not raw_value or not raw_value.strip():
+                return set()
+            raw = raw_value.strip()
+            if raw == '*':
+                return set(all_cmd_names)
+            if raw.startswith('!'):
+                allowed = {c.strip() for c in raw[1:].split(',') if c.strip()}
+                return set(all_cmd_names) - allowed
+            return {c.strip() for c in raw.split(',') if c.strip()}
+
+        hidden = _expand(agent.get('hidden_slash_commands', ''))
+        disabled = _expand(agent.get('disabled_slash_commands', ''))
+        remove_set = hidden | disabled
+        if remove_set:
+            slash_commands = [(n, d) for n, d in slash_commands if n not in remove_set]
+
     if slash_commands:
         prompt += "\n\n## Slash Commands\n\n**Available commands:**\n"
         for name, desc in slash_commands:
@@ -836,6 +864,12 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
                 tools.append(tool_def)
         return tools
 
+    # Resolve explicit assignments before adding messaging definitions so the LLM
+    # sees only messaging tools the agent can actually execute. Sub-agents inherit
+    # their parent's assignments.
+    eid = _effective_id(agent)
+    assigned_ids = set(db.get_agent_tools(eid))
+
     # Built-in tools (use_skill, set_mode, remember, recall, etc.)
     # Can be disabled per-agent via builtin_tools_enabled advanced setting.
     agent_context = {
@@ -875,29 +909,27 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         from backend.tools.super_agent_tools import get_super_agent_tool_defs
         tools.extend(get_super_agent_tool_defs())
 
-    # Agent messaging tools — available to super agent and agents with messaging enabled
+    # Agent messaging tools are gated by messaging enablement and assignment.
+    # This keeps definitions advertised to the LLM aligned with runtime
+    # authorization, while super agents retain access to the full messaging set.
     if agent.get('is_super') or agent.get('agent_messaging_enabled') != 0:
         from backend.tools.agent_messaging import get_agent_messaging_tool_defs
-        tools.extend(get_agent_messaging_tool_defs())
-
-    # Explorers use their own configured tool set (no parent inheritance), and
-    # their tools may come from a LAZY skill — so resolve the defs directly
-    # (get_all_tool_defs omits lazy skills) and return.
-    if agent.get('is_explorer'):
-        from backend.agent_runtime import explorer as _explorer
         seen_fn_names = {t['function']['name'] for t in tools if t.get('function', {}).get('name')}
-        for tool_def in _explorer.tool_defs(agent):
+        for tool_def in get_agent_messaging_tool_defs():
             fn_name = tool_def.get('function', {}).get('name', '')
             if not fn_name or fn_name in seen_fn_names:
                 continue
+            # send_agent_message is the core inter-agent communication tool: an
+            # enabled agent receives it without a separate tool assignment. The
+            # remaining messaging tools retain assignment-based exposure.
+            if (not agent.get('is_super')
+                    and fn_name != 'send_agent_message'
+                    and fn_name not in assigned_ids):
+                continue
             seen_fn_names.add(fn_name)
             tools.append(tool_def)
-        return tools
 
-    # Add assigned tools from the registry (including skill tools)
-    # Sub-agents inherit parent's tool assignments.
-    eid = _effective_id(agent)
-    assigned_ids = set(db.get_agent_tools(eid))
+    # Add assigned tools from the registry (including skill tools).
 
     # Auto-assign describe_image for vision-enabled agents.
     # Mirrors the auto-assignment in runtime.py and prefetch.py so that
@@ -1110,35 +1142,94 @@ def build_attachment_note(attachment_info: dict,
 def build_attachment_notes(attachment_infos: list,
                            has_describe_image: bool = True,
                            audio_enabled: bool = False) -> str:
-    """Render notes for multiple attachments, numbered when more than one.
-
-    Mirrors ``runtime._append_attachment_context`` so a DB-reconstructed message
-    and a freshly-handled one produce identical model-visible context.  Each note
-    starts with ``\\n\\n`` so callers can append with ``content.rstrip() + notes``.
-    """
+    """Render notes for multiple attachments, numbered when more than one."""
     notes = []
     count = len(attachment_infos)
     for index, info in enumerate(attachment_infos, 1):
-        file_path = info.get('file_path', '')
-        if file_path and not os.path.isabs(file_path):
-            file_path = os.path.abspath(os.path.join(_BASE_DIR, file_path))
-        filename = info.get('filename', '')
-        mime_type = info.get('mime_type', '')
-        size_bytes = int(info.get('size_bytes', 0) or 0)
-        if size_bytes >= 1048576:
-            size_str = f"{size_bytes / 1048576:.1f} MB"
-        elif size_bytes >= 1024:
-            size_str = f"{size_bytes / 1024:.1f} KB"
-        else:
-            size_str = f"{size_bytes} B"
-        label = f"Attachment #{index}" if count > 1 else "Attachment"
-        note = f"\n\n[{label}: {filename} ({mime_type}, {size_str})]\nFile path: {file_path}"
-        if mime_type.startswith('image/') and has_describe_image:
-            note += "\nUse the `describe_image` tool to view and analyze this image."
-        if mime_type.startswith('audio/') and audio_enabled:
-            note += "\nUse the `transcribe_audio` tool to listen to this audio."
+        note = build_attachment_note(
+            info,
+            has_describe_image=has_describe_image,
+            audio_enabled=audio_enabled,
+        )
+        if count > 1:
+            note = note.replace('[Attachment:', f'[Attachment #{index}:', 1)
         notes.append(note)
     return ''.join(notes)
+
+
+def attachment_infos_from_metadata(metadata: dict) -> list:
+    """Return valid plural attachment metadata with a legacy singular fallback."""
+    if not isinstance(metadata, dict):
+        return []
+    infos = metadata.get('attachment_infos')
+    if not isinstance(infos, list):
+        infos = []
+    infos = [info for info in infos if isinstance(info, dict)]
+    legacy = metadata.get('attachment_info')
+    return infos or ([legacy] if isinstance(legacy, dict) else [])
+
+
+def build_session_attachment_manifest(session_id: str, agent_id: str,
+                                      exclude_ids=None) -> str:
+    """Build a compact, authoritative metadata-only index of live session files."""
+    excluded = {str(value) for value in (exclude_ids or ())}
+    lines = []
+    try:
+        records = reversed(db.list_session_attachments(session_id, agent_id))
+    except Exception:
+        _logger.warning("Failed to load attachment manifest for session %s", session_id,
+                        exc_info=True)
+        return ''
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        attachment_id = record.get('id')
+        if attachment_id is None or str(attachment_id) in excluded:
+            continue
+        file_path = record.get('file_path') or ''
+        if file_path and not os.path.isabs(file_path):
+            file_path = os.path.abspath(os.path.join(_BASE_DIR, file_path))
+        if not file_path or not os.path.isfile(file_path):
+            continue
+        filename = re.sub(r'[\r\n|]+', '_', str(
+            record.get('filename') or record.get('original_filename') or ''))
+        mime_type = re.sub(r'[\r\n|]+', '_', str(
+            record.get('mime_type') or 'application/octet-stream'))
+        size_bytes = int(record.get('size_bytes') or 0)
+        lines.append(
+            f"- id={attachment_id} | filename={filename} | mime={mime_type} | "
+            f"size={size_bytes} B | path={file_path}"
+        )
+    if not lines:
+        return ''
+    return (
+        "## Session Attachments\n"
+        "Persistent metadata for files uploaded in this session (no binary content):\n" +
+        '\n'.join(lines)
+    )
+
+
+def sync_session_attachment_manifest(messages: list, session_id: str,
+                                     agent_id: str) -> None:
+    """Replace any cached manifest with a fresh one, excluding visible attachment notes."""
+    messages[:] = [
+        msg for msg in messages
+        if not (msg.get('role') == 'system' and
+                str(msg.get('content') or '').startswith('## Session Attachments\n'))
+    ]
+    visible_ids = set()
+    pattern = re.compile(r'^Attachment ID:\s*(\d+)\s*$', re.MULTILINE)
+    for msg in messages:
+        content = msg.get('content')
+        if isinstance(content, str):
+            visible_ids.update(pattern.findall(content))
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get('text'), str):
+                    visible_ids.update(pattern.findall(part['text']))
+    manifest = build_session_attachment_manifest(session_id, agent_id, visible_ids)
+    if manifest:
+        messages.insert(1, {'role': 'system', 'content': manifest})
 
 
 def append_attachment_note(msg: dict,

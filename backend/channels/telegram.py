@@ -626,6 +626,7 @@ class TelegramChannel(BaseChannel):
                 result = agent_runtime.handle_message(
                     agent_id, user_id, final_text, channel_id,
                     image_url=image_url, video_url=video_url,
+                    metadata={"channel_message_id": str(update.message.message_id)},
                 )
                 if result.get('buffered'):
                     return  # message buffered, response will come from the first caller

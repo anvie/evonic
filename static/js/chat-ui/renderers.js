@@ -364,19 +364,111 @@ export function highlightPython(code) {
     return result;
 }
 
+function _diffTokens(text) {
+    return text.match(/\s+|[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]/gu) || [];
+}
+
+function _intralineDiff(oldText, newText) {
+    const oldTokens = _diffTokens(oldText);
+    const newTokens = _diffTokens(newText);
+    const cellCount = oldTokens.length * newTokens.length;
+
+    // Do not allocate a large LCS table for unusually long generated lines.
+    if (cellCount > 60000) return [escape(oldText), escape(newText)];
+
+    const dp = Array.from({ length: oldTokens.length + 1 }, () => new Int32Array(newTokens.length + 1));
+    for (let i = 1; i <= oldTokens.length; i++) {
+        for (let j = 1; j <= newTokens.length; j++) {
+            dp[i][j] = oldTokens[i - 1] === newTokens[j - 1]
+                ? dp[i - 1][j - 1] + 1
+                : Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+    }
+
+    const unchangedOld = new Set();
+    const unchangedNew = new Set();
+    for (let i = oldTokens.length, j = newTokens.length; i > 0 && j > 0;) {
+        if (oldTokens[i - 1] === newTokens[j - 1]) {
+            unchangedOld.add(--i);
+            unchangedNew.add(--j);
+        } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+            i--;
+        } else {
+            j--;
+        }
+    }
+
+    const render = (tokens, unchanged, className) => tokens.map((token, index) => {
+        const html = escape(token);
+        return unchanged.has(index) ? html : `<span class="${className}">${html}</span>`;
+    }).join('');
+    return [
+        render(oldTokens, unchangedOld, 'hl-diff-remove-change'),
+        render(newTokens, unchangedNew, 'hl-diff-add-change'),
+    ];
+}
+
+function _renderDiffLine(type, text, content = escape(text)) {
+    const className = type === 'add' ? 'hl-diff-add' : type === 'remove' ? 'hl-diff-remove' : 'hl-diff-context';
+    const prefix = type === 'add' ? '+' : type === 'remove' ? '-' : ' ';
+    return `<span class="${className}">${prefix}${content}</span>`;
+}
+
+function _renderDiffChangeBlock(removed, added) {
+    const rendered = [];
+    const pairs = Math.min(removed.length, added.length);
+    for (let i = 0; i < pairs; i++) {
+        const [oldHtml, newHtml] = _intralineDiff(removed[i], added[i]);
+        rendered.push(_renderDiffLine('remove', removed[i], oldHtml));
+        rendered.push(_renderDiffLine('add', added[i], newHtml));
+    }
+    for (let i = pairs; i < removed.length; i++) rendered.push(_renderDiffLine('remove', removed[i]));
+    for (let i = pairs; i < added.length; i++) rendered.push(_renderDiffLine('add', added[i]));
+    return rendered;
+}
+
 export function highlightDiff(patch) {
     if (!patch) return '';
-    return escape(patch).split('\n').map(line => {
-        if (line.startsWith('@@'))   return `<span class="hl-diff-header">${line}</span>`;
-        if (line.startsWith('--- ') || line.startsWith('+++ ')) return `<span class="hl-diff-filename">${line}</span>`;
-        if (line.startsWith('+'))   return `<span class="hl-diff-add">${line}</span>`;
-        if (line.startsWith('-'))   return `<span class="hl-diff-remove">${line}</span>`;
-        if (line.startsWith('\\')) return `<span class="hl-diff-meta">${line}</span>`;
-        return `<span class="hl-diff-context">${line}</span>`;
-    }).join('\n');
+    const lines = String(patch).split('\n');
+    const rendered = [];
+    for (let index = 0; index < lines.length;) {
+        const line = lines[index];
+        if (line.startsWith('-') && !line.startsWith('--- ')) {
+            const removed = [];
+            while (index < lines.length && lines[index].startsWith('-') && !lines[index].startsWith('--- ')) {
+                removed.push(lines[index++].slice(1));
+            }
+            const added = [];
+            while (index < lines.length && lines[index].startsWith('+') && !lines[index].startsWith('+++ ')) {
+                added.push(lines[index++].slice(1));
+            }
+            rendered.push(..._renderDiffChangeBlock(removed, added));
+            continue;
+        }
+        if (line.startsWith('@@')) rendered.push(`<span class="hl-diff-header">${escape(line)}</span>`);
+        else if (line.startsWith('--- ') || line.startsWith('+++ ')) rendered.push(`<span class="hl-diff-filename">${escape(line)}</span>`);
+        else if (line.startsWith('+')) rendered.push(_renderDiffLine('add', line.slice(1)));
+        else if (line.startsWith('\\')) rendered.push(`<span class="hl-diff-meta">${escape(line)}</span>`);
+        else rendered.push(_renderDiffLine('context', line.slice(1)));
+        index++;
+    }
+    return rendered.join('\n');
 }
 
 // ── Tool result rendering helpers ─────────────────────────────────────────────
+
+function _summarizeToolResultValue(value) {
+    // Preserve concise scalar arrays (such as validation reason_code) while
+    // continuing to suppress nested objects and potentially verbose payloads.
+    if (value === null || value === undefined || typeof value === 'object' && !Array.isArray(value)) return null;
+    if (Array.isArray(value)) {
+        const scalarValues = value.filter(item => item !== null && item !== undefined && typeof item !== 'object');
+        if (!scalarValues.length) return null;
+        const summary = scalarValues.slice(0, 4).map(String).join(', ');
+        return scalarValues.length > 4 ? `${summary}, …` : summary;
+    }
+    return String(value);
+}
 
 function summarizeToolResult(result) {
     if (result === null || result === undefined) return 'OK';
@@ -393,8 +485,8 @@ function summarizeToolResult(result) {
         if ('count'   in result && typeof result.count === 'number') return `${result.count} item${result.count !== 1 ? 's' : ''}`;
         const parts = [];
         for (const k of keys.slice(0, 3)) {
-            const v = result[k];
-            if (v !== null && v !== undefined && typeof v !== 'object') parts.push(`${k}: ${String(v)}`);
+            const summary = _summarizeToolResultValue(result[k]);
+            if (summary !== null) parts.push(`${k}: ${summary}`);
         }
         if (parts.length) return parts.join(' · ');
         return `${keys.length} field${keys.length !== 1 ? 's' : ''}`;
@@ -656,12 +748,18 @@ function _renderStrReplaceDiff(oldStr, newStr, filePath) {
         let oldC=0,newC=0;
         for (let k=lo;k<=hi;k++) { if(ops[k].type!=='add') oldC++; if(ops[k].type!=='remove') newC++; }
         html += `<span class="hl-diff-header">@@ -${oldLn},${oldC} +${newLn},${newC} @@</span>\n`;
-        for (let k=lo;k<=hi;k++) {
-            const {type,line} = ops[k];
-            const esc = escape(line);
-            if (type==='add') html += `<span class="hl-diff-add">+${esc}</span>\n`;
-            else if (type==='remove') html += `<span class="hl-diff-remove">-${esc}</span>\n`;
-            else html += `<span class="hl-diff-context"> ${esc}</span>\n`;
+        for (let k = lo; k <= hi;) {
+            const { type, line } = ops[k];
+            if (type === 'remove') {
+                const removed = [];
+                while (k <= hi && ops[k].type === 'remove') removed.push(ops[k++].line);
+                const added = [];
+                while (k <= hi && ops[k].type === 'add') added.push(ops[k++].line);
+                html += _renderDiffChangeBlock(removed, added).join('\n') + '\n';
+                continue;
+            }
+            html += _renderDiffLine(type, line) + '\n';
+            k++;
         }
     }
     return $('<pre class="diff-code-block mt-0.5" style="max-height:400px;overflow-y:auto">').html(html);

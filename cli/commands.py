@@ -1,6 +1,7 @@
 """Evonic CLI commands — start, stop, status, plugin, and skill management."""
 
 import fcntl
+import json
 import os
 import shutil
 import signal
@@ -1346,6 +1347,62 @@ def agent_get(agent_id):
             print(f"  - {cname}")
 
 
+def agent_export(agent_id, output=None):
+    """Export an agent as portable JSON."""
+    from backend.agent_portability import AgentPortabilityError, export_agent
+
+    try:
+        payload = export_agent(_get_db(), agent_id, ROOT)
+        content = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        if output:
+            output = os.path.abspath(os.path.expanduser(output))
+            parent = os.path.dirname(output)
+            if parent and not os.path.isdir(parent):
+                raise AgentPortabilityError(f"Output directory does not exist: {parent}.")
+            with open(output, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            print(f"Agent exported: {output}")
+        else:
+            sys.stdout.write(content)
+    except (AgentPortabilityError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def agent_import(source, agent_id=None, name=None, confirm=False):
+    """Import an agent from portable JSON in a file or stdin."""
+    from backend.agent_portability import AgentPortabilityError, import_agent, preflight_import
+
+    try:
+        if source == "-":
+            content = sys.stdin.read()
+        else:
+            with open(os.path.expanduser(source), "r", encoding="utf-8") as handle:
+                content = handle.read()
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise AgentPortabilityError(
+                f"Invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}."
+            ) from exc
+        db = _get_db()
+        preflight = preflight_import(db, payload)
+        warning = preflight["warning"]
+        if warning["skills"] or warning["tools"]:
+            print("Warning: unavailable dependencies will be skipped: " +
+                  ", ".join(warning["skills"] + warning["tools"]))
+            if not confirm and input("Continue with import? [y/N] ").strip().lower() not in ("y", "yes"):
+                print("Import cancelled.")
+                return
+        imported_id = import_agent(
+            db, payload, ROOT, agent_id=agent_id, name=name, confirm_missing=True
+        )
+        print(f"Agent imported: {imported_id}")
+    except (AgentPortabilityError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def agent_add(agent_id, name, description=None, model=None, skillset=None):
     """Create a new agent, optionally from a skillset template."""
     if not agent_id:
@@ -2220,6 +2277,25 @@ def setup_command(non_interactive=False):
             return
         language = lang if lang in ("english", "indonesian", "adaptive") else "english"
 
+    # --- Timezone ---
+    from backend.setup import validate_timezone
+    timezone_name = "Asia/Jakarta"
+    if non_interactive:
+        print(f"  [non-interactive] Using default timezone: {timezone_name}")
+    else:
+        while True:
+            try:
+                tz = input(f"  Timezone (default: {timezone_name}): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Setup aborted.")
+                return
+            tz = tz if tz else timezone_name
+            try:
+                timezone_name = validate_timezone(tz)
+                break
+            except ValueError:
+                print(f"  Invalid timezone: {tz} \u2014 must be a valid IANA name (e.g. Asia/Jakarta, Europe/London)")
+
     # --- Admin password ---
     password = ""
     if non_interactive:
@@ -2248,6 +2324,7 @@ def setup_command(non_interactive=False):
     print(f"    Model       : {model_name}")
     print(f"    Agent Name  : {agent_name}")
     print(f"    Language    : {language}")
+    print(f"    Timezone    : {timezone_name}")
     if password:
         print(f"    Admin Pass  : (set)")
     print()
@@ -2276,6 +2353,7 @@ def setup_command(non_interactive=False):
         language=language,
         sandbox_enabled=False,
         password=password,
+        timezone_name=timezone_name,
     )
 
     if "error" in result:
@@ -2553,15 +2631,18 @@ _PASS = f"{_G}✓{_RESET}"
 _FAIL = f"{_R}✗{_RESET}"
 _WARN = f"{_Y}⚠{_RESET}"
 _INFO = f"{_B}ℹ{_RESET}"
+_DOCTOR_COMPACT = False
 
 
 def _section(title):
-    print(f"\n{_BOLD}{_C}══ {title} ══{_RESET}")
+    if not _DOCTOR_COMPACT:
+        print(f"\n{_BOLD}{_C}══ {title} ══{_RESET}")
 
 
 def _ok(msg=""):
     line = f"  {_PASS}  {msg}" if msg else f"  {_PASS}"
-    print(line)
+    if not _DOCTOR_COMPACT:
+        print(line)
     return "pass"
 
 
@@ -2578,7 +2659,8 @@ def _warn(msg=""):
 
 
 def _info(msg):
-    print(f"  {_INFO}  {msg}")
+    if not _DOCTOR_COMPACT:
+        print(f"  {_INFO}  {msg}")
 
 
 def evomem_install(force=False):
@@ -2592,11 +2674,14 @@ def evomem_install(force=False):
     return 0 if result["ok"] else 1
 
 
-def doctor_command(quick=False, fix=False, with_llm_provider=False):
+def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=False):
     """Run comprehensive system health diagnostics."""
     import importlib
     import json
     import platform
+
+    global _DOCTOR_COMPACT
+    _DOCTOR_COMPACT = fix and not verbose
 
     if fix:
         print(f"\n{_BOLD}{_C}🩺  Evonic Doctor (fix mode){_RESET}")
@@ -4183,6 +4268,7 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False):
         print(f"\n  {_DIM}Tip: run{_RESET} {_BOLD}evonic doctor --fix{_RESET} {_DIM}to auto-fix fixable issues.{_RESET}")
 
     print()
+    _DOCTOR_COMPACT = False
     return 0 if failed == 0 else 1
 
 

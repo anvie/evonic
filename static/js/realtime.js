@@ -168,7 +168,7 @@ var RealtimeClient = (function () {
             'update_status', 'update_done',
             'turn_begin', 'thinking', 'tool_call_started', 'tool_executed',
             'response_chunk', 'done', 'retry', 'message_injected',
-            'message_injection_applied', 'session_clear', 'turn_split',
+            'message_injection_applied', 'whatsapp_restriction_warning', 'session_clear', 'turn_split',
             'connector_connected', 'connector_disconnected', 'connector_paired',
             'workplace_status_changed',
             'heartbeat', 'auth_expired', 'channel_disabled',
@@ -295,7 +295,8 @@ var RealtimeClient = (function () {
             evtName === 'tool_call_started' || evtName === 'tool_executed' ||
             evtName === 'response_chunk' || evtName === 'done' ||
             evtName === 'retry' || evtName === 'message_injected' ||
-            evtName === 'message_injection_applied' || evtName === 'session_clear' ||
+            evtName === 'message_injection_applied' ||
+            evtName === 'whatsapp_restriction_warning' || evtName === 'session_clear' ||
             evtName === 'turn_split') {
             return 'chat';
         }

@@ -65,18 +65,24 @@ class PanelDB:
         with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS panel_actions (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    agent_id    TEXT NOT NULL,
-                    label       TEXT NOT NULL,
-                    action_type TEXT NOT NULL CHECK(action_type IN ('script', 'prompt')),
-                    content     TEXT NOT NULL DEFAULT '',
-                    params      TEXT NOT NULL DEFAULT '[]',
-                    sort_order  INTEGER NOT NULL DEFAULT 0,
-                    enabled     INTEGER NOT NULL DEFAULT 1,
-                    created_at  TEXT NOT NULL,
-                    updated_at  TEXT NOT NULL
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id        TEXT NOT NULL,
+                    label           TEXT NOT NULL,
+                    action_type     TEXT NOT NULL CHECK(action_type IN ('script', 'prompt')),
+                    content         TEXT NOT NULL DEFAULT '',
+                    params          TEXT NOT NULL DEFAULT '[]',
+                    sort_order      INTEGER NOT NULL DEFAULT 0,
+                    enabled         INTEGER NOT NULL DEFAULT 1,
+                    confirm_dialog  INTEGER NOT NULL DEFAULT 0,
+                    created_at      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL
                 )
             """)
+            # Migration: add confirm_dialog column for existing databases
+            try:
+                conn.execute("ALTER TABLE panel_actions ADD COLUMN confirm_dialog INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS panel_execution_log (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,19 +128,20 @@ class PanelDB:
 
     def add_action(self, label: str, action_type: str, content: str = '',
                    params: str = '[]', sort_order: int = 0,
-                   enabled: bool = True) -> Dict[str, Any]:
+                   enabled: bool = True, confirm_dialog: bool = False) -> Dict[str, Any]:
         """Create a new action. Returns the created row as a dict."""
         if action_type not in self.VALID_ACTION_TYPES:
             raise ValueError(f"Invalid action_type: {action_type!r}. Must be one of {self.VALID_ACTION_TYPES}")
 
         now = _now()
         enabled_int = 1 if enabled else 0
+        confirm_int = 1 if confirm_dialog else 0
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO panel_actions
-                   (agent_id, label, action_type, content, params, sort_order, enabled, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (self.agent_id, label, action_type, content, params, sort_order, enabled_int, now, now)
+                   (agent_id, label, action_type, content, params, sort_order, enabled, confirm_dialog, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (self.agent_id, label, action_type, content, params, sort_order, enabled_int, confirm_int, now, now)
             )
             row = conn.execute(
                 "SELECT * FROM panel_actions WHERE id = ?", (cursor.lastrowid,)
@@ -146,7 +153,7 @@ class PanelDB:
 
         Allowed fields: label, action_type, content, params, sort_order, enabled.
         """
-        allowed = {'label', 'action_type', 'content', 'params', 'sort_order', 'enabled'}
+        allowed = {'label', 'action_type', 'content', 'params', 'sort_order', 'enabled', 'confirm_dialog'}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return self.get_action(action_id)
@@ -158,6 +165,9 @@ class PanelDB:
 
         if 'enabled' in updates:
             updates['enabled'] = 1 if updates['enabled'] else 0
+
+        if 'confirm_dialog' in updates:
+            updates['confirm_dialog'] = 1 if updates['confirm_dialog'] else 0
 
         updates['updated_at'] = _now()
 

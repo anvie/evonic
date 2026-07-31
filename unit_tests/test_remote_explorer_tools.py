@@ -74,6 +74,25 @@ def test_remote_read_glob_and_grep(remote):
     assert grep['matches'][0]['file'] == 'src/app.py'
 
 
+def test_remote_read_accepts_path_alias(remote):
+    _, agent = remote
+    result = TOOLS_MODULES['Read'].execute(agent, {'path': 'src/app.py'})
+    assert '1: alpha' in result['content']
+
+
+def test_remote_read_prefers_file_path_over_path(remote):
+    _, agent = remote
+    result = TOOLS_MODULES['Read'].execute(agent, {
+        'file_path': 'src/app.py', 'path': '../outside.txt'
+    })
+    assert '1: alpha' in result['content']
+
+
+def test_remote_read_requires_path_argument(remote):
+    _, agent = remote
+    assert TOOLS_MODULES['Read'].execute(agent, {}) == {'error': 'file_path is required'}
+
+
 def test_remote_boundary_rejects_traversal(remote):
     _, agent = remote
     result = TOOLS_MODULES['Read'].execute(agent, {'file_path': '../outside.txt'})

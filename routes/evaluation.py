@@ -43,6 +43,16 @@ def api_eval_settings():
             capped = max(1, min(16, raw_value))
             db.set_setting('evaluator_workers', str(capped))
             return jsonify({'success': True, 'value': capped})
+        if key == 'eval_model_id':
+            model_id = str(value or '').strip()
+            if model_id:
+                model = db.get_model_by_id(model_id)
+                if not model:
+                    return jsonify({'success': False, 'error': 'Model not found'}), 400
+                model_id = model['id']
+            db.set_setting('eval_model_id', model_id)
+            db.invalidate_settings_cache('eval_model_id')
+            return jsonify({'success': True, 'value': model_id})
         return jsonify({'success': False, 'error': f'Unknown setting: {key}'}), 400
     # GET
     evaluator_workers = os.environ.get('EVALUATOR_WORKERS', '4')
@@ -53,7 +63,8 @@ def api_eval_settings():
     except Exception:
         pass
     return jsonify({
-        'evaluator_workers': int(evaluator_workers)
+        'evaluator_workers': int(evaluator_workers),
+        'eval_model_id': db.get_setting('eval_model_id', '') or ''
     })
 
 

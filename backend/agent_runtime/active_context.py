@@ -2,7 +2,7 @@
 
 The projector is intentionally pure: callers retain the complete canonical
 transcript while this module builds a deep-copied, model-facing alternative.
-Phase 1 uses it for shadow metrics only; enforcement remains a later rollout.
+Shadow mode measures the projection; enforced mode sends the validated projection.
 """
 
 from __future__ import annotations

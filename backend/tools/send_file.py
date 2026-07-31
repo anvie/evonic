@@ -12,7 +12,29 @@ Usage:
 """
 
 import os
+import re
 import tempfile
+
+
+_POLICY_ERROR = "File attachment is not permitted by the configured policy."
+
+
+def _check_path_policy(agent: dict, canonical_path: str):
+    """Apply the core per-agent regex and generic attachment policies.
+
+    ``canonical_path`` must already be resolved by the relevant filesystem
+    backend. No file metadata or content should be exposed before this check.
+    """
+    pattern = str((agent or {}).get("send_file_allowed_path_regex") or "").strip()
+    if pattern:
+        try:
+            if not re.search(pattern, canonical_path):
+                return {"error": _POLICY_ERROR}
+        except (re.error, OSError, ValueError, TypeError):
+            return {"error": _POLICY_ERROR}
+
+    from backend.plugin_hooks import check_attachment_policies
+    return check_attachment_policies(agent or {}, canonical_path)
 
 try:
     from config import SANDBOX_WORKSPACE as _WORKSPACE_ROOT
@@ -71,10 +93,13 @@ def execute(agent: dict, args: dict) -> dict:
                 return {"error": f'File not found: "{file_path}"'}
             if not os.path.isfile(resolved):
                 return {"error": f'Path is not a file: "{file_path}"'}
+            policy_error = _check_path_policy(agent, os.path.realpath(resolved))
+            if policy_error:
+                return policy_error
             try:
                 file_size = os.path.getsize(resolved)
-            except OSError as e:
-                return {"error": f'Cannot access file "{file_path}": {e}'}
+            except OSError:
+                return {"error": "Unable to access the requested file."}
             file_path = resolved
 
     if not is_self:
@@ -95,6 +120,9 @@ def execute(agent: dict, args: dict) -> dict:
                 return {"error": f'Path is not a file: "{file_path}"'}
 
             file_size = st.get('size', 0)
+            policy_error = _check_path_policy(agent, os.path.realpath(target_path))
+            if policy_error:
+                return policy_error
 
             # Fetch file bytes from remote and stage locally for channel delivery
             result = backend.cat_file_bytes(target_path)
@@ -118,6 +146,10 @@ def execute(agent: dict, args: dict) -> dict:
             if not os.path.isfile(file_path):
                 return {"error": f'Path is not a file: "{file_path}"'}
 
+            file_path = os.path.realpath(file_path)
+            policy_error = _check_path_policy(agent, file_path)
+            if policy_error:
+                return policy_error
             try:
                 file_size = os.path.getsize(file_path)
             except OSError as e:
