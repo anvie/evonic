@@ -167,14 +167,9 @@ def validate_timezone(name: str) -> str:
     """Validate an IANA timezone name. Returns the name if valid, raises ValueError otherwise."""
     if not name or not isinstance(name, str):
         raise ValueError("IANA timezone name required")
-    # Normalize common aliases not in IANA
-    _aliases = {
-        "Asia/Jakarta": "Asia/Pontianak",
-    }
-    normalized = _aliases.get(name, name)
-    if normalized not in _available_timezones():
+    if name not in _available_timezones():
         raise ValueError(f"Not a valid IANA timezone: {name!r}")
-    return normalized
+    return name
 
 
 # ---------------------------------------------------------------------------

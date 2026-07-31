@@ -61,14 +61,14 @@ def test_explorer_backend_looks_up_parent_pool_entry(tmp_path):
     )
     calls = []
 
-    def fake_get(session_id, agent_id='', workspace=None):
-        calls.append((session_id, agent_id, workspace))
-        return 'parent-container', None
+    def fake_get(session_id, agent_id="", workspace=None, persistent=False):
+        calls.append((session_id, agent_id, workspace, persistent))
+        return "parent-container", None
 
-    result = {'stdout': '', 'stderr': '', 'exit_code': 0, 'execution_time': 0}
-    with patch.object(docker_backend, '_get_or_create_container', side_effect=fake_get), \
-         patch.object(backend, '_run_code', return_value=result):
-        assert backend.run_python('print(1)', 30, {}) == result
+    result = {"stdout": "", "stderr": "", "exit_code": 0, "execution_time": 0}
+    with patch.object(docker_backend, "_get_or_create_container", side_effect=fake_get), \
+         patch.object(backend, "_run_code", return_value=result):
+        assert backend.run_python("print(1)", 30, {}) == result
 
-    assert calls == [('parent-session', 'agent_explorer_1', parent_workspace)]
-    assert 'explorer-session' not in docker_backend._containers
+    assert calls == [("parent-session", "agent_explorer_1", parent_workspace, False)]
+    assert "explorer-session" not in docker_backend._containers
