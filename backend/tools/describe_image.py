@@ -283,7 +283,8 @@ def execute(agent: dict, args: dict) -> Any:
         return (
             "Error: Image analysis is not enabled for this agent "
             "(vision_enabled=0). Enable it in the agent's settings to use "
-            "the describe_image tool."
+            "the describe_image tool. "
+            "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/"
         )
 
     # --- Validate path ---
@@ -440,7 +441,8 @@ def execute(agent: dict, args: dict) -> Any:
     if result is None or not result.get("success"):
         return (
             "Error: All vision-capable models failed "
-            f"({failures} model(s) tried). Last error: {last_error or 'unknown error'}"
+            f"({failures} model(s) tried). Last error: {last_error or 'unknown error'}. "
+            "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/"
         )
 
     # Extract text content from the nested API response.
