@@ -277,7 +277,7 @@ def api_list_agent_commands(agent_id):
         return jsonify({'error': 'Agent not found'}), 404
     from backend.slash_commands import list_available_commands
 
-    commands = [command.to_dict() for command in list_available_commands(agent_id)]
+    commands = [cmd.to_dict() for cmd in list_available_commands(agent_id)]
     return jsonify({'commands': commands})
 
 

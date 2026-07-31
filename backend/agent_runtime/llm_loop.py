@@ -611,6 +611,7 @@ def run_tool_loop(agent: Dict[str, Any],
     # Resolve agent's default model for LLM calls
     agent_model_config = None
     _active_fallback_model_name = None  # for system message injection
+    _using_global_default_model = False
 
     # Step 1: Check agent_state for persisted fallback model (cross-session).
     # If a fallback was persisted from a prior session, PROBE the primary model
@@ -682,9 +683,10 @@ def run_tool_loop(agent: Dict[str, Any],
         try:
             from backend.agent_runtime import explorer as _explorer
             agent_model_id = agent.get('model_id') if agent else None
-            model = (_explorer.primary_model(agent)
-                     or (db.get_model_by_id(agent_model_id) if agent_model_id else None)
-                     or db.get_agent_model(agent_id))
+            _explicit_model = (_explorer.primary_model(agent)
+                               or (db.get_model_by_id(agent_model_id) if agent_model_id else None))
+            model = _explicit_model or db.get_agent_model(agent_id)
+            _using_global_default_model = model is not None and _explicit_model is None
             if model:
                 agent_model_config = _build_model_config(model)
                 _logger.info("%s using model: %s (%s)", agent_id, model.get('name'), model.get('model_name'))
@@ -1377,6 +1379,13 @@ def run_tool_loop(agent: Dict[str, Any],
             _fallback_vision_stripped = False
             from backend.agent_runtime import explorer as _explorer
             _fallback_model = _explorer.fallback_model(agent) or db.get_agent_fallback_model(agent_id)
+            _using_global_fallback = False
+            if not _fallback_model and _using_global_default_model:
+                _global_fallback_id = db.get_setting('default_model_fallback_id', '')
+                _global_fallback = db.get_model_by_id(_global_fallback_id) if _global_fallback_id else None
+                if _global_fallback and _global_fallback.get('enabled', True):
+                    _fallback_model = _global_fallback
+                    _using_global_fallback = True
             if _fallback_model:
                 _logger.warning(
                     "Primary model failed [%s] for agent %s — attempting fallback model %s (%s)",
@@ -1387,7 +1396,10 @@ def run_tool_loop(agent: Dict[str, Any],
                     'primary_error': error_type,
                     'fallback_model': _fallback_model.get('name'),
                     'restored_from_state': False,
-                    'user_message': 'Primary model failed. Switching to fallback model...',
+                    'global_default_fallback': _using_global_fallback,
+                    'user_message': ('Default model failed. Switching to its fallback model...'
+                                     if _using_global_fallback else
+                                     'Primary model failed. Switching to fallback model...'),
                 })
                 try:
                     _fallback_config = _build_model_config(_fallback_model)
@@ -1454,19 +1466,20 @@ def run_tool_loop(agent: Dict[str, Any],
                         result = _fallback_result
                         _request = _fallback_request
                         _fallback_succeeded = True
-                        # Persist fallback model ID to agent_state (cross-session)
-                        try:
-                            _as_raw = db.get_agent_state(agent_id)
-                            _as = json.loads(_as_raw) if _as_raw else {}
-                            _as['active_fallback_model_id'] = _fallback_model.get('id')
-                            db.upsert_agent_state(json.dumps(_as), agent_id=agent_id)
-                            _logger.info(
-                                "Persisted fallback model %s to agent_state for agent %s",
-                                _fallback_model.get('model_name'), agent_id)
-                        except Exception as _ase:
-                            _logger.warning(
-                                "Failed to persist fallback to agent_state for agent %s: %s",
-                                agent_id, _ase)
+                        if not _using_global_fallback:
+                            # Persist per-agent fallback model ID to agent_state.
+                            try:
+                                _as_raw = db.get_agent_state(agent_id)
+                                _as = json.loads(_as_raw) if _as_raw else {}
+                                _as['active_fallback_model_id'] = _fallback_model.get('id')
+                                db.upsert_agent_state(json.dumps(_as), agent_id=agent_id)
+                                _logger.info(
+                                    "Persisted fallback model %s to agent_state for agent %s",
+                                    _fallback_model.get('model_name'), agent_id)
+                            except Exception as _ase:
+                                _logger.warning(
+                                    "Failed to persist fallback to agent_state for agent %s: %s",
+                                    agent_id, _ase)
                     else:
                         _fb_err = _fallback_result.get('error_type', 'unknown')
                         _logger.error(

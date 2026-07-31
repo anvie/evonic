@@ -27,6 +27,7 @@ window.settingsGeneral = {
             this._fill(general);
             this._populateModelSelects(models, {
                 defaultModelId: defaultModel && defaultModel.model ? defaultModel.model.id : "",
+                defaultModelFallbackId: general.default_model_fallback_id || "",
                 visionModelId: general.vision_model_id || "",
                 visionFallbackModelId: general.vision_fallback_model_id || "",
                 visionFallbackModel2Id: general.vision_fallback_model_2_id || "",
@@ -94,6 +95,7 @@ window.settingsGeneral = {
         };
         return {
             defaultModelId: val("default-model-select"),
+            defaultModelFallbackId: val("default-model-fallback-select"),
             visionModelId: val("vision-model-select"),
             visionFallbackModelId: val("vision-fallback-model-select"),
             visionFallbackModel2Id: val("vision-fallback-model-2-select"),
@@ -136,6 +138,7 @@ window.settingsGeneral = {
 
         const enabled = models.filter((m) => m.enabled);
         fill("default-model-select", models, current.defaultModelId, "— Select model —");
+        fill("default-model-fallback-select", enabled, current.defaultModelFallbackId, "None / disabled");
         fill(
             "vision-model-select",
             enabled.filter((m) => m.vision_supported),

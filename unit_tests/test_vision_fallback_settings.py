@@ -36,6 +36,48 @@ def test_general_settings_returns_and_saves_second_vision_fallback():
     assert settings['vision_fallback_model_2_id'] == 'fallback_2'
 
 
+def test_general_settings_saves_and_clears_default_model_fallback():
+    _vision_model('fallback')
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['authenticated'] = True
+
+    response = client.post('/api/settings/batch', json={'settings': {
+        'default_model_fallback_id': 'fallback',
+    }})
+    assert response.status_code == 200
+    assert response.get_json() == {'success': True, 'results': {
+        'default_model_fallback_id': 'fallback',
+    }}
+    assert client.get('/api/settings/general').get_json()['default_model_fallback_id'] == 'fallback'
+
+    response = client.post('/api/settings/batch', json={'settings': {
+        'default_model_fallback_id': '',
+    }})
+    assert response.status_code == 200
+    assert response.get_json() == {'success': True, 'results': {
+        'default_model_fallback_id': '',
+    }}
+    assert db.get_setting('default_model_fallback_id', 'missing') == ''
+
+
+def test_general_settings_rejects_unknown_default_model_fallback():
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['authenticated'] = True
+
+    response = client.post('/api/settings/batch', json={'settings': {
+        'default_model_fallback_id': 'unknown',
+    }})
+    assert response.status_code == 200
+    assert response.get_json() == {
+        'success': True,
+        'partial': True,
+        'results': {},
+        'errors': ['default_model_fallback_id: Model not found'],
+    }
+
+
 def test_general_settings_rejects_duplicate_vision_models():
     _vision_model('vision')
     client = app.test_client()

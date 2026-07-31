@@ -34,7 +34,7 @@ class EvaluationResult:
 class CustomEvaluator:
     """Handle custom evaluator logic"""
     
-    def __init__(self, evaluator_config: Dict[str, Any]):
+    def __init__(self, evaluator_config: Dict[str, Any], llm_client_override=None):
         """
         Initialize custom evaluator with configuration.
         
@@ -54,6 +54,7 @@ class CustomEvaluator:
         self.eval_prompt = evaluator_config.get('eval_prompt')
         self.extraction_regex = evaluator_config.get('extraction_regex')
         self.evaluator_config = evaluator_config.get('config', {})
+        self.llm_client = llm_client_override or llm_client
     
     def evaluate(self, response: str, expected: Any, level: int = 1) -> EvaluationResult:
         """
@@ -276,8 +277,8 @@ class CustomEvaluator:
             
             # Send to LLM
             messages = [{"role": "user", "content": eval_prompt_text}]
-            llm_response = llm_client.chat_completion(messages)
-            llm_output = llm_client.extract_content(llm_response)
+            llm_response = self.llm_client.chat_completion(messages)
+            llm_output = self.llm_client.extract_content(llm_response)
             
             # Now use regex to extract score from LLM output
             pattern = self.extraction_regex
@@ -348,9 +349,9 @@ class CustomEvaluator:
             
             # Send to LLM
             messages = [{"role": "user", "content": eval_prompt_text}]
-            llm_response = llm_client.chat_completion(messages)
+            llm_response = self.llm_client.chat_completion(messages)
             
-            eval_response = llm_client.extract_content(llm_response)
+            eval_response = self.llm_client.extract_content(llm_response)
             
             # Try to parse as JSON
             try:

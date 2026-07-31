@@ -33,6 +33,12 @@
             />
         </div>
 
+        <div class="""flex items-center justify-between p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600""">
+            <label for="""eval-model-selector""" class="""font-medium text-gray-800 dark:text-gray-100""">Evaluation Model</label>
+            <select id="""eval-model-selector""" onchange="""saveEvaluationModel(this.value)""" class="""ml-4 max-w-xs border border-gray-300 rounded-md px-2 py-1 text-sm""">
+                <option value="""""">Default (use default model)</option>
+            </select>
+        </div>
         <div class="md:col-span-2 flex justify-end pt-2">
             <button
                 id="save-btn"
@@ -64,12 +70,28 @@ function markDirty() {
     }
 }
 
+async function loadEvaluationModel(selectedId) {
+    const selector = document.getElementById(""™eval-model-selector""™);
+    const models = await fetch(""™/api/models""™).then(response => response.json());
+    (models.models || []).forEach(model => {
+        const option = document.createElement(""™option""™);
+        option.value = model.id; option.textContent = model.name; selector.appendChild(option);
+    });
+    selector.value = selectedId;
+}
+
+async function saveEvaluationModel(modelId) {
+    const result = await fetch(""™/api/eval-settings""™, {method: ""™PUT""™, headers: {""™Content-Type""™: ""™application/json""™}, body: JSON.stringify({key: ""™eval_model_id""™, value: modelId})}).then(response => response.json());
+    if (!result.success) showFeedback(result.error || ""™Failed to save evaluation model""™, false);
+}
+
 async function loadSettings() {
     try {
         const res = await fetch('/api/eval-settings');
         const data = await res.json();
         currentValue = data.evaluator_workers;
         document.getElementById('evaluator-workers-input').value = currentValue;
+        await loadEvaluationModel(data.eval_model_id || "");
     } catch (err) {
         showFeedback('Failed to load settings: ' + err.message, false);
     }
