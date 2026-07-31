@@ -320,6 +320,28 @@ def test_ambiguous_send_error_is_not_retried():
     channel._do_send.assert_called_once()
 
 
+def test_throttled_delivery_requests_requeue_without_sending():
+    dispatcher, channel = _dispatcher(whatsapp_max_outbound_per_minute="1")
+    dispatcher._outbound_window.append(0)
+    dispatcher._interruptible_sleep = lambda _: None
+
+    with patch("backend.channels.whatsapp_dispatcher.time.monotonic", return_value=1):
+        retry = dispatcher._deliver({"text": "deferred", "session_id": "s-1"}, "user-1")
+
+    assert retry is True
+    assert channel.sent == []
+
+
+def test_restriction_after_delay_requests_requeue_and_pauses_presence():
+    dispatcher, channel = _dispatcher()
+    dispatcher._restriction_until = float("inf")
+    dispatcher._interruptible_sleep = lambda _: None
+
+    assert dispatcher._deliver({"text": "deferred"}, "user-1") is True
+    assert channel.sent == []
+    assert channel.presence == [("user-1", "composing"), ("user-1", "paused")]
+
+
 def test_queue_event_contains_depth_without_message_body():
     dispatcher, _ = _dispatcher()
     events = []
