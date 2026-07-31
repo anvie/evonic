@@ -1124,6 +1124,7 @@ html.dark .agent-tab.active {
                             oninput="chatInputChanged(this)"></textarea>
                             <div id="chat-bash-hint" class="hidden" aria-live="polite">! Bash mode: shell command</div>
                             <div id="chat-command-menu" class="hidden absolute left-0 right-0 z-50 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800" style="bottom: calc(100% + 0.5rem);" role="listbox" aria-label="Available slash commands"></div>
+                            <div id="chat-command-hint" class="hidden mt-1 text-xs text-gray-500 dark:text-gray-400" aria-live="polite"></div>
                         </div>
                         <button onclick="handleChatBtn()" id="chat-send-btn" title="Send" class="bg-indigo-500 hover:bg-indigo-600 text-white p-2.5 rounded-md text-sm transition-colors flex items-center justify-center"><svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
                     </div>
@@ -5223,9 +5224,41 @@ function closeChatCommandMenu() {
     chatCommandIndex = -1;
 }
 
+function commandInputContext(value) {
+    if (!value) return null;
+    const trimmed = value.trimStart();
+    if (!trimmed.startsWith('/')) return null;
+    const space = trimmed.indexOf(' ');
+    const cmdName = space > 0 ? trimmed.slice(1, space) : trimmed.slice(1);
+    const command = chatCommands.find(c => c.name === cmdName);
+    return command ? {command, args: space > 0 ? trimmed.slice(space + 1) : ''} : null;
+}
+
+function renderChatCommandHint(ctx) {
+    const hint = document.getElementById('chat-command-hint');
+    if (!hint) return;
+    if (!ctx || !ctx.command || !ctx.command.accepts_args) {
+        hint.classList.add('hidden');
+        return;
+    }
+    const cmd = ctx.command;
+    let text = '/' + cmd.name + ' ';
+    for (const parameter of cmd.parameters) {
+        if (parameter.options) {
+            text += '<' + parameter.options.join(' | ') + '> ';
+        } else {
+            text += parameter.required ? `<${parameter.placeholder || parameter.name}>` : `[${parameter.placeholder || parameter.name}]`;
+        }
+    }
+    text += '— ' + (cmd.description || '');
+    hint.textContent = text;
+    hint.classList.remove('hidden');
+}
+
 function updateChatComposer(input) {
     if (!input) return;
     const value = input.value;
+    renderChatCommandHint(commandInputContext(value));
     const trimmed = value.trimStart();
     const bashMode = BASH_EXEC_ENABLED && trimmed.startsWith('!');
     input.classList.toggle('chat-bash-input', bashMode);
@@ -5283,7 +5316,7 @@ function getVisibleChatCommands() {
     return chatCommands.filter(command => command.name.toLowerCase().includes(match[1].toLowerCase()));
 }
 
-function selectChatCommand(command) {
+function selectChatCommand(command, showHint) {
     const input = document.getElementById('chat-input');
     if (!input || !command) return;
     input.value = `/${command.name} `;
@@ -5291,6 +5324,10 @@ function selectChatCommand(command) {
     chatInputChanged(input);
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
+    if (showHint) {
+        const hint = document.getElementById('chat-command-hint');
+        if (hint) hint.classList.remove('hidden');
+    }
 }
 
 function chatInputKeydown(event) {
@@ -5304,7 +5341,11 @@ function chatInputKeydown(event) {
         }
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
-            selectChatCommand(choices[chatCommandIndex < 0 ? 0 : chatCommandIndex]);
+            const command = choices[chatCommandIndex < 0 ? 0 : chatCommandIndex];
+            const value = document.getElementById('chat-input').value;
+            const executeNoArgs = value.trimStart().replace(/^\//, '') === command.name;
+            if (executeNoArgs && !command.accepts_args) sendChat();
+            else selectChatCommand(choices[chatCommandIndex < 0 ? 0 : chatCommandIndex], true);
             return;
         }
         if (event.key === 'Escape') {

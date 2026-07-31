@@ -19,10 +19,21 @@ CommandHandler = Callable[[str, str, str, Optional[str], str], str]
 class SlashCommand:
     """Represents a single slash command."""
 
-    def __init__(self, name: str, handler: CommandHandler, description: str = ""):
+    def __init__(self, name: str, handler: CommandHandler, description: str = "", parameters: list = None):
         self.name = name
         self.handler = handler
         self.description = description
+        self.parameters = parameters or []
+        self.accepts_args = bool(self.parameters)
+
+    def to_dict(self) -> dict:
+        """Return a dict suitable for JSON serialization to the frontend."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+            "accepts_args": self.accepts_args,
+        }
 
 
 class SlashCommandRegistry:
@@ -31,17 +42,17 @@ class SlashCommandRegistry:
     def __init__(self):
         self._commands: Dict[str, SlashCommand] = {}
 
-    def register(self, name: str, handler: CommandHandler, description: str = ""):
+    def register(self, name: str, handler: CommandHandler, description: str = "", parameters: list = None):
         """Register a command handler."""
-        self._commands[name] = SlashCommand(name, handler, description)
+        self._commands[name] = SlashCommand(name, handler, description, parameters)
 
     def get(self, name: str) -> Optional[SlashCommand]:
         """Get a command by name."""
         return self._commands.get(name)
 
     def list_commands(self) -> list:
-        """Return list of (name, description) tuples."""
-        return [(cmd.name, cmd.description) for cmd in self._commands.values()]
+        """Return list of SlashCommand objects."""
+        return list(self._commands.values())
 
 
 def _expand_slash_list(raw_value: str, all_names: set) -> set:
@@ -74,20 +85,20 @@ def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> 
         is_super = can_cd = has_subagent = False
         disabled_raw = ''
 
-    disabled_set = _expand_slash_list(disabled_raw, {name for name, _desc in commands})
+    disabled_set = _expand_slash_list(disabled_raw, {cmd.name for cmd in commands})
 
     available = []
-    for name, description in commands:
-        if name in {'cd', 'cwd'} and not can_cd:
+    for cmd in commands:
+        if cmd.name in {'cd', 'cwd'} and not can_cd:
             continue
-        if name in {'restart', 'shutdown'} and not is_super:
+        if cmd.name in {'restart', 'shutdown'} and not is_super:
             continue
-        if name == 'sub' and not has_subagent:
+        if cmd.name == 'sub' and not has_subagent:
             continue
-        if not is_super and name in disabled_set:
+        if not is_super and cmd.name in disabled_set:
             continue
-        available.append((name, description))
-    return sorted(available, key=lambda command: command[0])
+        available.append(cmd)
+    return sorted(available, key=lambda c: c.name)
 
 
 # Global registry instance
@@ -224,6 +235,7 @@ def _register_builtins():
         "clear",
         clear_handler,
         "Clear chat history (`/clear ar` archives it)",
+        parameters=[{"name": "archive", "options": ["ar"]}],
     )
 
     # /help — Show available commands
@@ -235,8 +247,8 @@ def _register_builtins():
         args: str,
     ) -> str:
         lines = ["**Available commands:**"]
-        for name, desc in list_available_commands(agent_id, channel_id):
-            lines.append(f"- `/{name}` — {desc}")
+        for cmd in list_available_commands(agent_id, channel_id):
+            lines.append(f"- `/{cmd.name}` — {cmd.description}")
         return "\n".join(lines)
 
     command_registry.register(
@@ -390,6 +402,7 @@ def _register_builtins():
         "investigate",
         investigate_handler,
         "Send investigation request to another agent with session context",
+        parameters=[{"name": "agent_id"}, {"name": "context"}],
     )
 
 
@@ -462,6 +475,7 @@ def _register_builtins():
         "cwd",
         cwd_handler,
         "Show current workspace directory",
+        parameters=[],
     )
 
     # /cd — Change workspace directory (super agent or remote/tunnel workplace)
@@ -554,6 +568,7 @@ def _register_builtins():
         "cd",
         cd_handler,
         "Change workspace directory",
+        parameters=[{"name": "path"}],
     )
 
 
@@ -1091,6 +1106,7 @@ def _register_builtins():
         "model",
         model_handler,
         "Show or switch LLM model — /model, /model list|ls, /model [number|provider/model]",
+        parameters=[{"name": "action", "options": ["current", "list", "set"]}, {"name": "model"}],
     )
 
 
