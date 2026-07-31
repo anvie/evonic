@@ -870,6 +870,7 @@ def api_get_general_settings():
         'max_tool_iterations': int(db.get_setting('max_tool_iterations', str(config.AGENT_MAX_TOOL_ITERATIONS))),
         'agent_sidebar_limit': int(db.get_setting('agent_sidebar_limit', str(config.AGENT_SIDEBAR_LIMIT))),
         'theme': db.get_setting('theme', 'system'),
+        'default_model_fallback_id': db.get_setting('default_model_fallback_id', ''),
         'vision_model_id': db.get_setting('vision_model_id', ''),
         'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
         'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
@@ -1083,6 +1084,20 @@ def api_batch_save():
                 results['default_model_id'] = model['id']
             else:
                 errors.append('default_model_id: Model not found')
+
+    # Global default-model fallback. An empty value disables the fallback.
+    if 'default_model_fallback_id' in settings:
+        model_id = settings['default_model_fallback_id'] or ''
+        if model_id:
+            model = db.get_model_by_id(model_id)
+            if model:
+                db.set_setting('default_model_fallback_id', model['id'])
+                results['default_model_fallback_id'] = model['id']
+            else:
+                errors.append('default_model_fallback_id: Model not found')
+        else:
+            db.set_setting('default_model_fallback_id', '')
+            results['default_model_fallback_id'] = ''
 
     # Vision routing chain (primary + two fallbacks)
     vision_setting_keys = (

@@ -328,6 +328,7 @@ _DEFAULT_SETTINGS = [
     ("theme", "system"),
     # --- Models & Routing ---
     ("vision_model_id", ""),
+    ("default_model_fallback_id", ""),
     ("vision_fallback_model_id", ""),
     ("vision_fallback_model_2_id", ""),
     ("kb_organizer_model_id", ""),
