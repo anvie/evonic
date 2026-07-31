@@ -29,7 +29,10 @@ def test_model_without_arguments_reports_current_model(monkeypatch):
 
     result = execute_command("model", "", "session", "agent", "user")
 
-    assert result == "Current model: Primary Model (model-id) [#7, primary]"
+    assert result == (
+        "**Current model:** Primary Model (model-id) [#7]\n\n"
+        "Type /model list to see all available models. /model <number> to switch."
+    )
 
 
 def test_model_list_is_explicit(monkeypatch):
