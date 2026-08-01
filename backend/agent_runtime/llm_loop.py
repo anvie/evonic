@@ -554,6 +554,22 @@ def run_tool_loop(agent: Dict[str, Any],
     _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch',
                         'set_mode', 'save_plan', 'update_tasks'}
 
+    # Eager skill tools (e.g. explorer's Explore, direxplorer's Grep/Glob/Read)
+    # are advertised upfront by build_tools() — never prune them mid-turn, or the
+    # model loses them for the rest of the turn the moment they go uncalled past
+    # the prune threshold. Mirrors the existing loaded-lazy-skill protection.
+    _eager_skill_fns: set = set()
+    try:
+        from backend.skills_manager import skills_manager as _sm
+        _eager_skill_fns = {
+            td.get('function', {}).get('name', ' ').strip()
+            for td in _sm.get_all_skill_tool_defs()
+            if td.get('function', {}).get('name')
+        }
+        _eager_skill_fns.discard(' ')
+    except Exception:
+        pass
+
     def _prune_tools(tools_list: List[dict], iteration: int) -> List[dict]:
         """Prune zero-call tools after the threshold iteration.
         
@@ -574,6 +590,7 @@ def run_tool_loop(agent: Dict[str, Any],
             fn_name = t.get('function', {}).get('name', '')
             if (fn_name in _ESSENTIAL_TOOLS
                     or fn_name in _loaded_skill_fns
+                    or fn_name in _eager_skill_fns
                     or _tool_call_counts.get(fn_name, 0) > 0):
                 pruned.append(t)
         if len(pruned) < len(tools_list):
