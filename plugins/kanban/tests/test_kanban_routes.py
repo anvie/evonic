@@ -138,3 +138,87 @@ def test_enhance_does_not_retry_without_enabled_fallback():
     assert response.status_code == 500
     assert response.get_json()["error"] == "LLM API error"
     fallback_client.assert_not_called()
+
+
+def _scripted_client(replies):
+    """Fake LLM client returning one canned reply per call (last reply repeats)."""
+    class _ScriptedLLMClient:
+        def __init__(self):
+            self.calls = []
+
+        def chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            idx = min(len(self.calls) - 1, len(replies) - 1)
+            return {
+                "success": True,
+                "response": {"choices": [{"message": {"content": replies[idx]}}]},
+            }
+
+    return _ScriptedLLMClient()
+
+
+_ENGLISH_REPLY = (
+    "---TITLE---\n"
+    "Add PDF export for evaluation reports\n"
+    "---DESCRIPTION---\n"
+    "Add a PDF export feature so users can download model evaluation results."
+)
+
+_INDONESIAN_REPLY = (
+    "---TITLE---\n"
+    "Buatkan fitur export laporan ke PDF\n"
+    "---DESCRIPTION---\n"
+    "Tambahkan fitur export laporan ke PDF supaya user bisa mengunduh hasil evaluasi model."
+)
+
+
+def test_enhance_system_prompt_enforces_english():
+    client = _scripted_client([_ENGLISH_REPLY])
+    with patch("backend.llm_client.get_llm_client", return_value=client):
+        response = _client().post(
+            "/api/kanban/enhance",
+            json={"title": "", "description": "Buatkan fitur export laporan ke PDF."},
+        )
+
+    assert response.status_code == 200
+    assert len(client.calls) == 1  # English output -> no translation pass
+    system_content = client.calls[0]["messages"][0]["content"]
+    assert "ALWAYS write" in system_content and "English" in system_content
+    assert response.get_json() == {
+        "title": "Add PDF export for evaluation reports",
+        "description": "Add a PDF export feature so users can download model evaluation results.",
+    }
+
+
+def test_enhance_translates_non_english_output():
+    client = _scripted_client([_INDONESIAN_REPLY, _ENGLISH_REPLY])
+    with patch("backend.llm_client.get_llm_client", return_value=client):
+        response = _client().post(
+            "/api/kanban/enhance",
+            json={"title": "", "description": "Buatkan fitur export laporan ke PDF."},
+        )
+
+    assert response.status_code == 200
+    assert len(client.calls) == 2  # initial enhance + translation pass
+    assert "translator" in client.calls[1]["messages"][0]["content"].lower()
+    assert response.get_json() == {
+        "title": "Add PDF export for evaluation reports",
+        "description": "Add a PDF export feature so users can download model evaluation results.",
+    }
+
+
+def test_enhance_keeps_english_output_without_translation_pass():
+    client = _scripted_client([_ENGLISH_REPLY])
+    with patch("backend.llm_client.get_llm_client", return_value=client):
+        response = _client().post(
+            "/api/kanban/enhance",
+            json={"title": "PDF export", "description": "Add a PDF export feature."},
+        )
+
+    assert response.status_code == 200
+    assert len(client.calls) == 1
+
+
+def test_looks_non_english_heuristic():
+    assert routes._looks_non_english("Buatkan fitur export laporan ke PDF supaya user bisa unduh.") is True
+    assert routes._looks_non_english("Improve the task creator form.") is False

@@ -20,6 +20,7 @@ Agent Access Control:
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from flask import Blueprint, render_template, jsonify, request, send_file
@@ -176,6 +177,86 @@ def _enhance_completion(messages):
     return LLMClient(model_config=fallback_model).chat_completion(**completion_kwargs)
 
 
+def _extract_reply(result):
+    """Extract the text reply from an _enhance_completion result.
+
+    Handles the nested {response: {choices: ...}} structure, falls back to
+    reasoning_content when content is empty, and strips thinking tags.
+    Returns None when no usable reply is present.
+    """
+    inner = result.get("response", result)
+    choices = inner.get("choices", [])
+    if not choices:
+        return None
+    msg = choices[0].get("message", {})
+    reply = (msg.get("content") or "").strip()
+    if not reply:
+        reply = (msg.get("reasoning_content") or msg.get("reasoning") or "").strip()
+    if not reply:
+        return None
+    if "<think" in reply or "<reasoning" in reply:
+        reply = re.sub(r"<(?:think|thinking)>.*?</(?:think|thinking)>", "", reply, flags=re.DOTALL)
+        reply = re.sub(r"<reasoning>.*?</reasoning>", "", reply, flags=re.DOTALL)
+        reply = reply.strip()
+    return reply or None
+
+
+def _parse_enhance_reply(reply):
+    """Parse the ---TITLE--- / ---DESCRIPTION--- / ---END--- delimiter format.
+
+    Returns (title, description) or None when the format is invalid.
+    """
+    title_match = re.search(
+        r"^\s*---TITLE---\s*\n(.*?)(?=\n\s*---DESCRIPTION---)",
+        reply,
+        re.DOTALL | re.MULTILINE,
+    )
+    desc_match = re.search(
+        r"^\s*---DESCRIPTION---\s*\n(.*?)(?:\n\s*---END---\s*$|\Z)",
+        reply,
+        re.DOTALL | re.MULTILINE,
+    )
+    if not title_match or not desc_match:
+        return None
+    title = title_match.group(1).strip()
+    desc = desc_match.group(1).strip()
+    if not title or not desc:
+        return None
+    return title, desc
+
+
+# Indonesian stopwords used by _looks_non_english as a lightweight guard against
+# the LLM echoing non-English (e.g. Indonesian) input back verbatim.
+_ID_STOPWORDS = frozenset(
+    "yang untuk dengan dan dari agar supaya bisa dapat akan tidak jika pada ke di ini itu "
+    "juga sudah telah atau karena namun tetapi sesudah sebelum ketika saat sebagai secara "
+    "terhadap tentang antara bagi oleh membuat menjadi lebih sangat harus perlu ingin mau "
+    "ada adalah tersebut kamu saya kita kami anda sehingga maka pun ya belum pernah lagi "
+    "masih sedang memang walaupun meskipun kecuali tanpa hingga sampai sebab akibat "
+    "bagaimana mengapa kapan".split()
+)
+
+
+def _looks_non_english(text, threshold=0.15):
+    """Heuristic: text is probably not English when a large share of its words
+    are common Indonesian stopwords (the observed failure mode for this endpoint)."""
+    words = re.findall(r"[a-zA-Z]+", (text or "").lower())
+    if not words:
+        return False
+    return sum(1 for w in words if w in _ID_STOPWORDS) / len(words) >= threshold
+
+
+_ENGLISH_TRANSLATION_PROMPT = (
+    "You are a translator. Rewrite the following task title and description in clear, "
+    "natural English, preserving the exact meaning. Output ONLY the translated text in "
+    "this exact format:\n"
+    "---TITLE---\n<title in English>\n"
+    "---DESCRIPTION---\n<description in English>\n"
+    "---END---\n"
+    "Do NOT include any text before ---TITLE--- or after ---END---."
+)
+
+
 def create_blueprint():
     bp = Blueprint('kanban', __name__, template_folder=os.path.join(PLUGIN_DIR, 'templates'))
 
@@ -275,13 +356,16 @@ def create_blueprint():
             "You are a professional task-writing assistant. Your job is to:\n"
             "1. Enhance the user's task description to be more detailed, structured, and actionable, but not too much, simple and lean but descriptive.\n"
             "2. Generate a concise, descriptive title for the task.\n"
+            "3. ALWAYS write the enhanced title and description in English, regardless of the language of the user's input. "
+            "If the input is written in Indonesian or another language, translate and reformulate its meaning into clear, natural English.\n"
             "Return your answer in this exact format:\n"
             "---TITLE---\n"
-            "<your title here>\n"
+            "<your English title here>\n"
             "---DESCRIPTION---\n"
-            "<your enhanced description here>\n"
+            "<your enhanced English description here>\n"
             "---END---\n"
-            "Do NOT include any text before ---TITLE--- or after ---END---."
+            "Do NOT include any text before ---TITLE--- or after ---END---.\n"
+            "All of your output must be in English."
         )
 
         user_prompt = f"Title: {data.get('title', '').strip() or '(not provided)'}\n\nDescription: {description}"
@@ -300,52 +384,33 @@ def create_blueprint():
                 return jsonify({'error': 'LLM ran out of tokens. Please try a shorter description.'}), 500
             return jsonify({'error': 'LLM API error'}), 500
 
-        # Handle nested response structure
-        inner = result.get('response', result)
-        choices = inner.get('choices', [])
-        if not choices:
-            print("[ENHANCE] no choices in result")
+        reply = _extract_reply(result)
+        if not reply:
+            print("[ENHANCE] no usable reply in result")
             return jsonify({'error': 'LLM returned no choices'}), 500
 
-        msg = choices[0].get('message', {})
-        reply = (msg.get('content') or '').strip()
-
-        # Fallback: if content is empty, try reasoning_content
-        if not reply:
-            reasoning = (msg.get('reasoning_content') or msg.get('reasoning') or '').strip()
-            if reasoning:
-                print(f"[ENHANCE] content empty, falling back to reasoning_content ({len(reasoning)} chars)")
-                reply = reasoning
-
-        # Strip thinking/reasoning tags if present
-        if '<think' in reply or '<reasoning' in reply:
-            import re
-            reply = re.sub(r'<(?:think|thinking)>.*?</(?:think|thinking)>', '', reply, flags=re.DOTALL)
-            reply = re.sub(r'<reasoning>.*?</reasoning>', '', reply, flags=re.DOTALL)
-            reply = reply.strip()
-
-        # Parse the delimiter-based format
-        import re
-        title_match = re.search(
-            r'^\s*---TITLE---\s*\n(.*?)(?=\n\s*---DESCRIPTION---)',
-            reply,
-            re.DOTALL | re.MULTILINE,
-        )
-        desc_match = re.search(
-            r'^\s*---DESCRIPTION---\s*\n(.*?)(?:\n\s*---END---\s*$|\Z)',
-            reply,
-            re.DOTALL | re.MULTILINE,
-        )
-
-        if not title_match or not desc_match:
+        parsed = _parse_enhance_reply(reply)
+        if not parsed:
             print(f"[ENHANCE] delimiter parse failed, reply preview: {reply[:500]}")
             return jsonify({'error': 'Failed to parse LLM response'}), 500
 
-        enhanced_title = title_match.group(1).strip()
-        enhanced_desc = desc_match.group(1).strip()
+        enhanced_title, enhanced_desc = parsed
 
-        if not enhanced_title or not enhanced_desc:
-            return jsonify({'error': 'LLM returned empty result'}), 500
+        # Enforce English output: if the enhanced fields are not English (e.g. the model
+        # echoed Indonesian input), run a dedicated translation pass.
+        if _looks_non_english(enhanced_title) or _looks_non_english(enhanced_desc):
+            print("[ENHANCE] output not English, running translation pass")
+            translation = _enhance_completion([
+                {'role': 'system', 'content': _ENGLISH_TRANSLATION_PROMPT},
+                {
+                    'role': 'user',
+                    'content': f"---TITLE---\n{enhanced_title}\n---DESCRIPTION---\n{enhanced_desc}",
+                },
+            ])
+            translated_reply = _extract_reply(translation) if translation.get('success') else None
+            reparsed = _parse_enhance_reply(translated_reply) if translated_reply else None
+            if reparsed:
+                enhanced_title, enhanced_desc = reparsed
 
         return jsonify({'title': enhanced_title, 'description': enhanced_desc})
 
