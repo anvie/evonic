@@ -79,6 +79,10 @@
                 <input id="cfg-tunnel-workspace" type="text" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
             </div>
             <button onclick="saveConfig()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Save</button>
+            <button onclick="showCloneModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-md text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ml-2">
+                <svg class="w-4 h-4 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                Clone
+            </button>
         </div>
 
         <!-- Tunnel Pairing Card -->
@@ -606,6 +610,90 @@ function deleteWorkplace() {
             error: function(xhr) { showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Delete failed', 'error'); }
         });
     });
+}
+
+// ==================== Clone Workplace ====================
+let cloneEscHandler = null;
+
+function showCloneModal() {
+    const existing = document.getElementById('clone-modal');
+    if (existing) existing.remove();
+
+    const sourceName = (homeData && homeData.name) || '{{ workplace.name }}';
+
+    const html = `
+    <div id="clone-modal" class="fixed inset-0 z-[200] flex items-center justify-center bg-black/50" onclick="if(event.target===this)closeCloneModal()">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md mx-4 scale-100 opacity-100 transition-all duration-150" id="clone-box">
+            <div class="flex items-center gap-3 px-6 pt-6 pb-2">
+                <span class="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </span>
+                <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">Clone Workplace</h3>
+            </div>
+            <div class="px-6 pb-5">
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Create a copy of <strong>${sourceName}</strong>. Type and connection config are duplicated; the clone starts disconnected and must be reconnected (or re-paired for tunnel workplaces).</p>
+                <div class="mb-4">
+                    <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">New Name <span class="text-red-500">*</span></label>
+                    <input type="text" id="clone-name" value="${sourceName} (Clone)" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:text-gray-100">
+                </div>
+            </div>
+            <div class="flex gap-3 justify-end px-6 pb-5">
+                <button onclick="closeCloneModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Cancel</button>
+                <button id="clone-submit-btn" onclick="doClone()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Clone</button>
+            </div>
+        </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+
+    setTimeout(() => document.getElementById('clone-name')?.focus(), 100);
+    cloneEscHandler = function(e) {
+        if (e.key === 'Escape') { closeCloneModal(); }
+    };
+    document.addEventListener('keydown', cloneEscHandler);
+}
+
+function closeCloneModal() {
+    const modal = document.getElementById('clone-modal');
+    if (modal) modal.remove();
+    if (cloneEscHandler) {
+        document.removeEventListener('keydown', cloneEscHandler);
+        cloneEscHandler = null;
+    }
+}
+
+async function doClone() {
+    const btn = document.getElementById('clone-submit-btn');
+    const newName = document.getElementById('clone-name').value.trim();
+
+    if (!newName) {
+        showToast('Name is required.', 'error');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Cloning...';
+
+    try {
+        const res = await fetch(`/api/workplaces/${HOME_ID}/clone`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: newName})
+        });
+        const data = await res.json();
+        if (data.error) {
+            showToast(data.error, 'error');
+            btn.disabled = false;
+            btn.textContent = 'Clone';
+            return;
+        }
+        closeCloneModal();
+        showToast('Workplace cloned successfully!', 'success');
+        setTimeout(() => { window.location.href = `/workplaces/${data.id}`; }, 800);
+    } catch (err) {
+        showToast('Network error. Please try again.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Clone';
+    }
 }
 
 $(document).ready(function() {
