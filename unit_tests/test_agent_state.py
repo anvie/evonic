@@ -195,6 +195,245 @@ class TestUpdateTasks:
         result = ms.update_tasks("explode")
         assert "error" in result
 
+    def test_replace_preserves_id_and_status(self):
+        ms = AgentState(tasks=[{
+            "id": 7, "text": "Original", "status": "done",
+        }])
+
+        result = ms.update_tasks("replace", task_id=7, text="Updated")
+
+        assert "error" not in result
+        assert ms.tasks == [{"id": 7, "text": "Updated", "status": "done"}]
+
+    def test_set_preserves_valid_structured_ids_and_statuses(self):
+        ms = AgentState()
+
+        ms.update_tasks("set", tasks=[
+            {"id": 9, "text": "Done step", "status": "done"},
+            {"id": 4, "text": "Pending step", "status": "pending"},
+        ])
+
+        assert [(task["id"], task["status"]) for task in ms.tasks] == [(9, "done"), (4, "pending")]
+
+
+class TestTaskLifecycle:
+    def test_auto_activate_starts_first_pending_task(self):
+        ms = AgentState(tasks=["First", "Second"])
+
+        result = ms.auto_activate(now=100)
+
+        assert result == {
+            "transitioned": True, "task_id": 1,
+            "from": "pending", "to": "in_progress",
+        }
+        assert ms.tasks[0]["status"] == "in_progress"
+        assert ms.tasks[0]["in_progress_since"] == 100
+
+    def test_auto_activate_preserves_existing_active_task(self):
+        ms = AgentState(tasks=[
+            {"id": 4, "text": "Active", "status": "in_progress"},
+            {"id": 5, "text": "Pending", "status": "pending"},
+        ])
+
+        result = ms.auto_activate(now=100)
+
+        assert result == {"transitioned": False, "task_id": 4}
+        assert ms.tasks[1]["status"] == "pending"
+
+    @pytest.mark.parametrize("kwargs", [
+        {"tool_errors": True, "mutated": True},
+        {"stopped": True, "mutated": True},
+        {"final_text": "Can you approve this?", "mutated": True},
+        {"mutated": False},
+    ])
+    def test_completion_eligible_rejects_ambiguous_or_incomplete_turns(self, kwargs):
+        ms = AgentState(tasks=[{"id": 1, "text": "Active", "status": "in_progress"}])
+
+        result = ms.completion_eligible(**kwargs)
+
+        assert result["eligible"] is False
+        assert result["task_id"] == 1
+
+    def test_completion_eligible_accepts_completed_successful_turn(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "Active", "status": "in_progress"}])
+
+        result = ms.completion_eligible(mutated=True, final_text="Implemented and verified.")
+
+        assert result == {"eligible": True, "task_id": 1, "reason": None}
+
+    def test_completion_eligible_rejects_multiple_active_tasks(self):
+        ms = AgentState()
+        ms.tasks = [
+            {"id": 1, "text": "One", "status": "in_progress"},
+            {"id": 2, "text": "Two", "status": "in_progress"},
+        ]
+
+        result = ms.completion_eligible(mutated=True)
+
+        assert result["eligible"] is False
+        assert result["task_id"] is None
+
+    def test_reconcile_tasks_reports_stale_active_task_without_mutating_it(self):
+        ms = AgentState(tasks=[{
+            "id": 2, "text": "Long task", "status": "in_progress",
+            "in_progress_since": 100,
+        }])
+
+        assert ms.reconcile_tasks(now=400, stale_after=300) == [
+            {"id": 2, "text": "Long task", "age": 300},
+        ]
+        assert ms.tasks[0]["status"] == "in_progress"
+
+
+class TestAutomaticTaskLifecycle:
+    def test_auto_activate_selects_first_pending_task(self):
+        ms = AgentState(mode="execute")
+        ms.update_tasks("set", tasks=["First", "Second"])
+
+        result = ms.auto_activate(now=100.0)
+
+        assert result["transitioned"] is True
+        assert ms.tasks[0]["status"] == "in_progress"
+        assert ms.tasks[0]["in_progress_since"] == 100.0
+
+    def test_auto_activate_does_not_replace_existing_active_task(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "First", "status": "in_progress"},
+                               {"id": 2, "text": "Second", "status": "pending"}])
+
+        result = ms.auto_activate(now=100.0)
+
+        assert result["transitioned"] is False
+        assert result["task_id"] == 1
+        assert ms.tasks[1]["status"] == "pending"
+
+    def test_completion_eligibility_rejects_tool_error(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "Work", "status": "in_progress"}])
+
+        assert ms.completion_eligible(tool_errors=True, mutated=True)["eligible"] is False
+
+    def test_completion_eligibility_rejects_approval_question(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "Work", "status": "in_progress"}])
+
+        result = ms.completion_eligible(mutated=True, final_text="Please confirm before I continue.")
+
+        assert result["eligible"] is False
+
+    def test_completion_eligibility_accepts_successful_mutating_turn(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "Work", "status": "in_progress"}])
+
+        result = ms.completion_eligible(mutated=True, final_text="Implemented and tested.")
+
+        assert result == {"eligible": True, "task_id": 1, "reason": None}
+
+    def test_reconcile_tasks_reports_stale_without_mutating(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "Work", "status": "in_progress",
+                                "in_progress_since": 10.0}])
+
+        stale = ms.reconcile_tasks(now=400.0, stale_after=300.0)
+
+        assert stale == [{"id": 1, "text": "Work", "age": 390.0}]
+        assert ms.tasks[0]["status"] == "in_progress"
+
+    def test_structured_set_preserves_status_and_ids(self):
+        ms = AgentState()
+        result = ms.update_tasks("set", tasks=[
+            {"id": 4, "text": "Done work", "status": "done"},
+            {"id": 9, "text": "Active work", "status": "in_progress",
+             "in_progress_since": 12.0},
+        ])
+
+        assert result["tasks"] == [
+            {"id": 4, "text": "Done work", "status": "done"},
+            {"id": 9, "text": "Active work", "status": "in_progress"},
+        ]
+        assert ms.tasks[1]["in_progress_since"] == 12.0
+        assert ms._next_task_id == 10
+
+    def test_replace_preserves_task_id_and_status(self):
+        ms = AgentState(tasks=[{"id": 7, "text": "Old", "status": "done"}])
+
+        result = ms.update_tasks("replace", task_id=7, text="New")
+
+        assert result["tasks"] == [{"id": 7, "text": "New", "status": "done"}]
+
+
+class TestAutomaticTaskLifecycle:
+    def test_auto_activate_selects_first_pending_task(self):
+        ms = AgentState(mode="execute")
+        ms.update_tasks("set", tasks=["First", "Second"])
+
+        result = ms.auto_activate(now=100.0)
+
+        assert result["transitioned"] is True
+        assert ms.tasks[0]["status"] == "in_progress"
+        assert ms.tasks[0]["in_progress_since"] == 100.0
+
+    def test_auto_activate_does_not_replace_existing_active_task(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "First", "status": "in_progress"},
+                               {"id": 2, "text": "Second", "status": "pending"}])
+
+        result = ms.auto_activate(now=100.0)
+
+        assert result["transitioned"] is False
+        assert result["task_id"] == 1
+        assert ms.tasks[1]["status"] == "pending"
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"tool_errors": True, "mutated": True},
+            {"stopped": True, "mutated": True},
+            {"final_text": "Please confirm before I continue.", "mutated": True},
+            {"mutated": False},
+        ],
+    )
+    def test_completion_eligibility_rejects_unsafe_completion(self, kwargs):
+        ms = AgentState(tasks=[{"id": 1, "text": "Work", "status": "in_progress"}])
+
+        assert ms.completion_eligible(**kwargs)["eligible"] is False
+
+    def test_completion_eligibility_accepts_successful_mutating_turn(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "Work", "status": "in_progress"}])
+
+        result = ms.completion_eligible(mutated=True, final_text="Implemented and tested.")
+
+        assert result == {"eligible": True, "task_id": 1, "reason": None}
+
+    def test_reconcile_tasks_reports_stale_tasks_without_mutating_state(self):
+        ms = AgentState(tasks=[{"id": 1, "text": "Work", "status": "in_progress",
+                                "in_progress_since": 10.0}])
+
+        stale = ms.reconcile_tasks(now=400.0, stale_after=300.0)
+
+        assert stale == [{"id": 1, "text": "Work", "age": 390.0}]
+        assert ms.tasks[0]["status"] == "in_progress"
+
+
+class TestLosslessTaskUpdates:
+    def test_structured_set_preserves_ids_statuses_and_timestamp(self):
+        ms = AgentState()
+        result = ms.update_tasks(
+            "set",
+            tasks=[
+                {"id": 4, "text": "Done work", "status": "done"},
+                {"id": 9, "text": "Active work", "status": "in_progress", "in_progress_since": 12.0},
+            ],
+        )
+
+        assert result["tasks"] == [
+            {"id": 4, "text": "Done work", "status": "done"},
+            {"id": 9, "text": "Active work", "status": "in_progress"},
+        ]
+        assert ms.tasks[1]["in_progress_since"] == 12.0
+        assert ms._next_task_id == 10
+
+    def test_replace_preserves_task_id_and_status(self):
+        ms = AgentState(tasks=[{"id": 7, "text": "Old", "status": "done"}])
+
+        result = ms.update_tasks("replace", task_id=7, text="New")
+
+        assert result["tasks"] == [{"id": 7, "text": "New", "status": "done"}]
+
 
 class TestRender:
     def test_plan_mode_shows_blocked_note(self):

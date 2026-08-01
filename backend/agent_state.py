@@ -32,7 +32,6 @@ from typing import Optional, Union
 import ast
 import json
 import os
-import random
 import re
 import time
 
@@ -45,6 +44,7 @@ _PLAN_FILE_MAX_CHARS = 15000
 GUARDED_TOOLS = {"write_file", "str_replace", "patch"}
 
 VALID_MODES = {"plan", "execute"}
+VALID_TASK_STATUSES = {"pending", "in_progress", "done"}
 
 STATUS_ICON = {
     "pending": "[ ]",
@@ -89,6 +89,12 @@ _DONE_INDICATORS = re.compile(
     r'\u2705|\u2713|\u2714|\u2611|\u2612'                    # ✅✓✔☑☒
     r'|\[(?:x|X|DONE|done)\]'
     r'|\((?:complete|completed|done|finished)\)',
+    re.IGNORECASE,
+)
+
+_USER_INPUT_MARKERS = re.compile(
+    r'\?|\b(?:approval|approve|confirm|confirmation|please confirm|'
+    r'can you|could you|would you|should i|apakah|boleh|setuju|lanjutkan)\b',
     re.IGNORECASE,
 )
 
@@ -168,8 +174,8 @@ class AgentState:
         self.always_execute: bool = always_execute
         if self.always_execute:
             self.mode = "execute"
-        self.tasks: list[dict] = tasks or []
-        self._next_task_id = next_task_id
+        self.tasks, self._next_task_id = self._normalize_task_list(
+            tasks, next_task_id)
         self.plan_file: str | None = plan_file  # relative path e.g. "plan/my-plan.md"
         # Namespace-keyed state slots registered by system/plugins via the `state` tool.
         # Each slot: {state: str, data: any, blocked_tools: list|None, allowed_tools: list|None}
@@ -284,35 +290,105 @@ class AgentState:
 
     # ── Task management ─────────────────────────────────────────────────────
 
+    @staticmethod
+    def _normalize_task_list(tasks: list, next_task_id: int = 1) -> tuple[list, int]:
+        """Normalize persisted or model-produced tasks without losing valid state."""
+        normalized = []
+        used_ids = set()
+        next_id = 1
+        for item in tasks if isinstance(tasks, list) else []:
+            if isinstance(item, dict):
+                raw_text = item.get("text", "")
+                raw_id = item.get("id")
+                raw_status = item.get("status", "pending")
+            else:
+                raw_text, raw_id, raw_status = item, None, "pending"
+            clean, inferred = _sanitize_task_text(str(raw_text))
+            if not clean:
+                continue
+            status = (raw_status if isinstance(raw_status, str)
+                      and raw_status in VALID_TASK_STATUSES
+                      else inferred or "pending")
+            try:
+                task_id = int(raw_id)
+            except (TypeError, ValueError):
+                task_id = 0
+            if task_id <= 0 or task_id in used_ids:
+                task_id = next_id
+                while task_id in used_ids:
+                    task_id += 1
+            used_ids.add(task_id)
+            next_id = max(next_id, task_id + 1)
+            task = {"id": task_id, "text": clean, "status": status}
+            if status == "in_progress" and isinstance(item, dict):
+                started = item.get("in_progress_since")
+                if isinstance(started, (int, float)):
+                    task["in_progress_since"] = started
+            normalized.append(task)
+        active_seen = False
+        for task in normalized:
+            if task["status"] == "in_progress":
+                if active_seen:
+                    task["status"] = "pending"
+                    task.pop("in_progress_since", None)
+                else:
+                    active_seen = True
+        try:
+            requested_next = int(next_task_id)
+        except (TypeError, ValueError):
+            requested_next = 1
+        return normalized, max(next_id, requested_next, 1)
+
+    def auto_activate(self, now: float = None) -> dict:
+        """Activate the first pending task when no task is currently active."""
+        active = [t for t in self.tasks if t.get("status") == "in_progress"]
+        if active:
+            return {"transitioned": False, "task_id": active[0]["id"]}
+        task = next((t for t in self.tasks if t.get("status") == "pending"), None)
+        if task is None:
+            return {"transitioned": False, "task_id": None}
+        task["status"] = "in_progress"
+        task["in_progress_since"] = time.time() if now is None else now
+        return {"transitioned": True, "task_id": task["id"], "from": "pending", "to": "in_progress"}
+
+    def completion_eligible(self, tool_errors: bool = False,
+                            final_text: str = "", stopped: bool = False,
+                            mutated: bool = False) -> dict:
+        """Return whether the current task may be completed conservatively."""
+        active = [t for t in self.tasks if t.get("status") == "in_progress"]
+        eligible = bool(active) and len(active) == 1 and mutated and not tool_errors and not stopped
+        if final_text and _USER_INPUT_MARKERS.search(final_text):
+            eligible = False
+        return {"eligible": eligible, "task_id": active[0]["id"] if len(active) == 1 else None,
+                "reason": None if eligible else "completion conditions not met"}
+
+    def reconcile_tasks(self, now: float = None, stale_after: float = 300) -> list:
+        """Return stale active tasks without changing their explicit status."""
+        current = time.time() if now is None else now
+        return [{"id": t["id"], "text": t["text"], "age": current - t["in_progress_since"]}
+                for t in self.tasks
+                if t.get("status") == "in_progress"
+                and isinstance(t.get("in_progress_since"), (int, float))
+                and current - t["in_progress_since"] >= stale_after]
+
     def update_tasks(self, action: str, task_id: int = None,
                      text: str = None, tasks: list = None) -> dict:
         """
         Manage the task list.
 
         Actions:
-            "set"         — Replace the entire task list with a list of text strings.
+            "set"         — Replace the entire task list with text strings or task objects.
             "add"         — Add a single new task (requires text).
             "done"        — Mark a task as done (requires task_id).
             "in_progress" — Mark a task as the sole in_progress task (requires task_id).
                             Any other active task returns to pending.
+            "replace"     — Update task text while preserving its ID and status.
             "remove"      — Remove a task (requires task_id).
         """
         if action == "set":
             if not isinstance(tasks, list):
-                return {"error": "Action 'set' requires a 'tasks' list of strings."}
-            self._next_task_id = len(tasks) + 1  # will be incremented by the loop below, but we recalc at the end
-
-            # reset IDs and rebuild
-            self.tasks = []
-            self._next_task_id = 1
-            for t in tasks:
-                clean, inferred = _sanitize_task_text(str(t))
-                self.tasks.append({
-                    "id": self._next_task_id,
-                    "text": clean,
-                    "status": inferred or "pending",
-                })
-                self._next_task_id += 1
+                return {"error": "Action 'set' requires a 'tasks' list."}
+            self.tasks, self._next_task_id = self._normalize_task_list(tasks)
 
             # Atomicity heuristic: warn if 1-2 tasks look too monolithic
             atomicity_warning = self._check_atomicity(tasks)
@@ -350,6 +426,16 @@ class AgentState:
                 task.pop("in_progress_since", None)
             return {"result": f"Task #{task_id} marked as {task['status']}.", "tasks": self._task_summary()}
 
+        if action == "replace":
+            if task_id is None or not text:
+                return {"error": "Action 'replace' requires 'task_id' and 'text'."}
+            task = self._find_task(task_id)
+            if task is None:
+                return {"error": f"Task #{task_id} not found."}
+            clean, _ = _sanitize_task_text(str(text))
+            task["text"] = clean
+            return {"result": f"Task #{task_id} text replaced.", "tasks": self._task_summary()}
+
         if action == "remove":
             if task_id is None:
                 return {"error": "Action 'remove' requires 'task_id'."}
@@ -359,7 +445,7 @@ class AgentState:
                 return {"error": f"Task #{task_id} not found."}
             return {"result": f"Task #{task_id} removed.", "tasks": self._task_summary()}
 
-        return {"error": f"Unknown action '{action}'. Valid: set, add, done, in_progress, remove"}
+        return {"error": f"Unknown action '{action}'. Valid: set, add, done, in_progress, replace, remove"}
 
     def _find_task(self, task_id: int):
         for t in self.tasks:
@@ -509,15 +595,11 @@ class AgentState:
                         "few tasks.** Consider breaking each phase into its own atomic "
                         "task entry for clearer tracking."
                     )
-            # Nudge (random): stale in_progress tasks (>3 min)
-            now = time.time()
-            stale = []
-            for t in self.tasks:
-                if t.get("status") == "in_progress" and "in_progress_since" in t:
-                    if now - t["in_progress_since"] > 180:
-                        stale.append(t)
-            if stale and random.random() < 0.33:
-                task_refs = ", ".join(f"#{t['id']}" for t in stale)
+            # Deterministic stale-task reminder. The runtime may use reconcile_tasks()
+            # for structured events; rendering must remain a reliable prompt signal.
+            stale = self.reconcile_tasks(stale_after=180)
+            if stale:
+                task_refs = ", ".join(f"#{task['id']}" for task in stale)
                 plural = "s" if len(stale) > 1 else ""
                 lines.append("")
                 lines.append(
