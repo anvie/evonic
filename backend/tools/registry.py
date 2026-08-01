@@ -599,13 +599,14 @@ def _builtin_update_tasks_factory(agent_context: dict):
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["set", "add", "done", "in_progress", "remove"],
+                        "enum": ["set", "add", "done", "in_progress", "replace", "remove"],
                         "description": (
-                            "'set': replace entire task list (provide 'tasks' array). "
+                            "'set': replace the entire task list (provide a structured 'tasks' array). "
                             "'add': add one atomic task. "
                             "'done': mark a task complete. 'in_progress': make the "
                             "selected task the sole active task; this returns every "
-                            "other active task to pending. 'remove': delete a task."
+                            "other active task to pending. 'replace': update task text "
+                            "while preserving its ID and status. 'remove': delete a task."
                         )
                     },
                     "task_id": {
@@ -622,11 +623,21 @@ def _builtin_update_tasks_factory(agent_context: dict):
                     "tasks": {
                         "type": "array",
                         "items": {
-                            "type": "string",
-                            "description": (
-                                "Exactly one concrete, independently completable "
-                                "action or outcome."
-                            )
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer"},
+                                "text": {
+                                    "type": "string",
+                                    "description": "Exactly one concrete, independently completable action or outcome."
+                                },
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "done"]
+                                }
+                            },
+                            "required": ["text"],
+                            "additionalProperties": False,
+                            "description": "Structured task item; exactly one concrete, independently completable action or outcome. ID and status preserve existing task state when provided."
                         },
                         "description": (
                             "Atomic task descriptions for the 'set' action. "

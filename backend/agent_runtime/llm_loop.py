@@ -444,6 +444,28 @@ def run_tool_loop(agent: Dict[str, Any],
 
     tool_trace = []
     timeline = []
+    # Lifecycle bookkeeping is scoped to this turn. Explicit update_tasks calls
+    # always win over the conservative automatic transitions below.
+    _explicit_task_update = False
+    _successful_mutation = False
+    _tool_errors = False
+
+    def _is_mutating_tool(tool_name: str) -> bool:
+        """Return whether a tool represents implementation work."""
+        return tool_name not in _READ_ONLY_TOOLS and tool_name not in {
+            'set_mode', 'save_plan', 'update_tasks', 'state',
+            'compile_task_graph', 'switch_path', 'new_path',
+            'use_skill', 'unload_skill', 'remember', 'recall',
+        }
+
+    def _emit_task_state_change(ms):
+        _persist_agent_state_split(ms, agent_id, session_id, db_agent_id)
+        event_stream.emit('state:changed', {
+            'agent_id': agent_id, 'session_id': session_id,
+            'mode': ms.mode, 'plan_file': ms.plan_file,
+            'tasks': list(ms.tasks),
+        })
+
     _loop_start_time = time.time()
     _gate_context = {
         'agent_id': agent_id, 'session_id': session_id,
@@ -1861,6 +1883,15 @@ def run_tool_loop(agent: Dict[str, Any],
                 continue  # re-enter loop so LLM can act on the injected reminder
 
             # Final response — save with timeline metadata
+            ms = agent_context.get('agent_state')
+            if (ms is not None and ms.mode == 'execute' and _successful_mutation
+                    and not _explicit_task_update and not stop_event.is_set()):
+                completion = ms.completion_eligible(
+                    tool_errors=_tool_errors, final_text=content, mutated=True)
+                if completion['eligible']:
+                    ms.update_tasks('done', task_id=completion['task_id'])
+                    _emit_task_state_change(ms)
+
             meta = {"timeline": timeline} if timeline else None
             if meta:
                 meta['thinking_duration'] = round(time.time() - _loop_start_time, 1)
@@ -2019,6 +2050,8 @@ def run_tool_loop(agent: Dict[str, Any],
 
         for tc_idx, tc in enumerate(tool_calls):
             fn_name = tc['function']['name']
+            if fn_name == 'update_tasks':
+                _explicit_task_update = True
 
             # --- Quality Monitor: hallucinated tool check ---
             _qm_hallucinated = _qm_check_hallucinated(
@@ -2063,6 +2096,11 @@ def run_tool_loop(agent: Dict[str, Any],
 
             if fn_name in _READ_ONLY_TOOLS and fn_name not in _ALWAYS_SERIAL_TOOLS:
                 _parallel_indices.add(tc_idx)
+
+        # Inspect the complete batch before executing it so an explicit task
+        # update later in the batch always suppresses automatic transitions.
+        _explicit_task_update = any(
+            fn_name == 'update_tasks' for _, fn_name, _, _ in _tool_records)
 
         # Phase 2: Submit and boundedly collect read-only tools (if enabled).
         _parallel_results = {}  # tc_idx -> real or synthetic result
@@ -2110,6 +2148,7 @@ def run_tool_loop(agent: Dict[str, Any],
             # Check B after this loop then ends the turn cleanly.
             if (stop_event.is_set() and i not in _parse_failed
                     and i not in _parallel_results):
+                _tool_errors = True
                 result_str = json.dumps({'error': 'Execution stopped by user'})
                 db.add_chat_message(session_id, 'tool', result_str,
                                     tool_call_id=_tc['id'], agent_id=db_agent_id)
@@ -2132,6 +2171,7 @@ def run_tool_loop(agent: Dict[str, Any],
 
             # --- Parse-failure fast path ---
             if i in _parse_failed:
+                _tool_errors = True
                 result_str = _parse_failed[i]
                 db.add_chat_message(session_id, 'tool', result_str,
                                     tool_call_id=_tc['id'], agent_id=db_agent_id)
@@ -2190,6 +2230,7 @@ def run_tool_loop(agent: Dict[str, Any],
                         'level': 'rejected',
                         'original_reasons': tool_result.get('reasons', []),
                     }
+                    _tool_errors = True
                     # Record the auto-rejection as a completed tool_call result
                     _tc_result = {_tc['id']: tool_result}
                     messages.append({'role': 'tool', 'tool_call_id': _tc['id'],
@@ -2556,6 +2597,17 @@ def run_tool_loop(agent: Dict[str, Any],
                 result_dict = {"data": result_str}
 
             has_error = isinstance(tool_result, dict) and ('error' in tool_result or tool_result.get('status') == 'error')
+
+            _tool_errors = _tool_errors or has_error
+            if (not has_error and not stop_event.is_set()
+                    and _is_mutating_tool(fn_name)):
+                ms = agent_context.get('agent_state')
+                if ms is not None and ms.mode == 'execute':
+                    if not _successful_mutation and not _explicit_task_update:
+                        activated = ms.auto_activate()
+                        if activated['transitioned']:
+                            _emit_task_state_change(ms)
+                    _successful_mutation = True
 
             timeline.append({"type": "tool_result", "tool": fn_name, "result": result_dict, "error": has_error})
 
