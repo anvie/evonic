@@ -228,6 +228,18 @@ function renderSidebar(agents) {
         });
 
         sidebar.appendChild(avatar);
+
+        // Page-load race: apply any busy event that arrived while this agent's
+        // avatar did not exist yet. The API snapshot (agent.busy above) is
+        // newer than buffered events, so only promote a buffered busy:true —
+        // i.e. show the spinning ring when the agent was working during load
+        // even if it has since gone idle (BUSY_HOLD_MS / resyncBusyState then
+        // reconcile it with the authoritative server state).
+        if (_pendingBusyState[agent.id] && _pendingBusyState[agent.id].busy &&
+                avatar.getAttribute('data-busy') !== 'true') {
+            updateBusyAvatar({ agent_id: agent.id, busy: true });
+        }
+        delete _pendingBusyState[agent.id];
     });
 
     // Apply saved sidebar state after all elements (including burger) are rendered
@@ -535,12 +547,25 @@ var _busyReconnectTimer = null;
 var _busyClearTimers = {};  // agent_id -> setTimeout id for minimum busy-hold debounce
 var BUSY_HOLD_MS = 300;    // minimum visible duration for the spinning ring
 
+/** Busy events received before the avatar was rendered (page-load race). */
+var _pendingBusyState = {};  // agent_id -> { busy: bool, ts: number }
+
 function updateBusyAvatar(payload) {
     if (!payload || !payload.agent_id) return;
     var avatar = document.querySelector(
         '#agent-sidebar .agent-avatar[data-agent-id="' + CSS.escape(payload.agent_id) + '"]'
     );
-    if (!avatar) return;
+    if (!avatar) {
+        // Page-load race: the sidebar is still showing skeleton placeholders,
+        // so there is no avatar to apply this event to yet. Buffer it instead
+        // of dropping it — renderSidebar() applies pending state as soon as
+        // the avatar exists. Without this, a busy event that arrives during
+        // page load is lost forever and the spinning ring never appears, even
+        // though the agent was working (inconsistent ring on refresh).
+        _pendingBusyState[payload.agent_id] = { busy: !!payload.busy, ts: Date.now() };
+        return;
+    }
+    delete _pendingBusyState[payload.agent_id];
     if (payload.busy) {
         // Cancel any pending clear — agent is still busy
         if (_busyClearTimers[payload.agent_id]) {
@@ -615,6 +640,13 @@ function resyncBusyState() {
                 var agentId = avatar.getAttribute('data-agent-id');
                 var busy = !!(data.busy || {})[agentId];
                 avatar.setAttribute('data-busy', busy ? 'true' : 'false');
+                // The authoritative server snapshot wins: cancel any stale
+                // hold-clear timer so it cannot flip a confirmed-busy avatar
+                // back to idle (stale BUSY_HOLD_MS debounce race).
+                if (busy && _busyClearTimers[agentId]) {
+                    clearTimeout(_busyClearTimers[agentId]);
+                    delete _busyClearTimers[agentId];
+                }
             });
             document.dispatchEvent(new CustomEvent('evonic:agent-busy-resync', { detail: data.busy || {} }));
         })
