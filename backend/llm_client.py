@@ -269,6 +269,11 @@ class LLMClient:
         self._codex_provider_id = self.provider or "codex"
         # Cache for global LLM settings (avoids repeated DB reads in hot path).
         # TTL-based, simple dict — intentionally lock-free (worst case: 1 extra DB read).
+        # Optional per-call retry override. When set (not None), it takes
+        # precedence over the global llm_max_retries setting. Callers that
+        # need bounded latency (e.g. photo validation fallback chains) set
+        # this to 0 so one slow provider cannot stall the whole request.
+        self.max_retries: Optional[int] = None
         self._settings_cache = {}
         self._settings_cache_time = 0
 
@@ -691,9 +696,9 @@ class LLMClient:
             from models.db import db as _db
 
             _val = self._get_cached_setting("llm_max_retries", _db.get_setting, "llm_max_retries", None)
-            max_retries = int(_val) if _val is not None else 5
+            max_retries = self.max_retries if self.max_retries is not None else (int(_val) if _val is not None else 5)
         except Exception:
-            max_retries = 5
+            max_retries = self.max_retries if self.max_retries is not None else 5
         last_error_result = None
 
         for attempt in range(1 + max_retries):
