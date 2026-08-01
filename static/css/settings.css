@@ -329,6 +329,7 @@ html.dark {
     padding: 1px 4px;
 }
 .setting-subgroup-body {
+    min-width: 0;
     border: 1px solid var(--border-color);
     border-radius: 10px;
     overflow: hidden;
@@ -339,6 +340,16 @@ html.dark {
 }
 .setting-subgroup-body .setting-row:hover {
     background: var(--bg-hover);
+}
+.vision-models-group .setting-row-control {
+    width: min(100%, 420px);
+    min-width: 0;
+    max-width: 100%;
+}
+.vision-models-group .setting-select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
 }
 
 /* ---------- Setting rows ---------- */
