@@ -77,6 +77,28 @@ def test_persist_split_carries_atg(tmp_path):
     assert data['atg'] == ms.atg
 
 
+def test_completed_atg_nodes_advance_only_unique_matching_tasks():
+    ms = AgentState(tasks=[
+        {'id': 1, 'text': 'Inspect configuration', 'status': 'in_progress',
+         'in_progress_since': 10.0},
+        {'id': 2, 'text': 'Unrelated user task', 'status': 'pending'},
+        {'id': 3, 'text': 'Duplicate task', 'status': 'pending'},
+        {'id': 4, 'text': 'Duplicate task', 'status': 'pending'},
+    ])
+    ms.atg = {'dag': {'nodes': {
+        'n1': {'goal': 'inspect configuration', 'status': 'done'},
+        'n2': {'goal': 'Unrelated graph goal', 'status': 'done'},
+        'n3': {'goal': 'Duplicate task', 'status': 'done'},
+        'n4': {'goal': 'Pending graph work', 'status': 'pending'},
+    }}}
+
+    assert ms.sync_completed_atg_tasks() == [1]
+    assert [(task['id'], task['status']) for task in ms.tasks] == [
+        (1, 'done'), (2, 'pending'), (3, 'pending'), (4, 'pending'),
+    ]
+    assert 'in_progress_since' not in ms.tasks[0]
+
+
 # ── Tool exposure gate ───────────────────────────────────────────────────────
 
 def test_compile_task_graph_hidden_without_flag():

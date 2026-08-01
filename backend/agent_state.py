@@ -371,6 +371,42 @@ class AgentState:
                 and isinstance(t.get("in_progress_since"), (int, float))
                 and current - t["in_progress_since"] >= stale_after]
 
+    def sync_completed_atg_tasks(self) -> list[int]:
+        """Mark unambiguously matched AgentState tasks complete from ATG results.
+
+        ATG node goals are independently generated and therefore must not seed
+        or broadly reconcile the user-owned task list. Only completed nodes
+        whose normalized goal has one exact match among existing incomplete
+        tasks are allowed to advance that task.
+        """
+        dag = self.atg.get("dag") if isinstance(self.atg, dict) else None
+        nodes = dag.get("nodes") if isinstance(dag, dict) else None
+        if not isinstance(nodes, dict):
+            return []
+
+        completed_goals = set()
+        for node in nodes.values():
+            if not isinstance(node, dict) or node.get("status") not in ("done", "frozen"):
+                continue
+            goal, _ = _sanitize_task_text(str(node.get("goal", "")))
+            if goal:
+                completed_goals.add(goal.casefold())
+
+        completed_task_ids = []
+        for goal in completed_goals:
+            matches = [
+                task for task in self.tasks
+                if task.get("status") != "done"
+                and task.get("text", "").casefold() == goal
+            ]
+            if len(matches) != 1:
+                continue
+            task = matches[0]
+            task["status"] = "done"
+            task.pop("in_progress_since", None)
+            completed_task_ids.append(task["id"])
+        return completed_task_ids
+
     def update_tasks(self, action: str, task_id: int = None,
                      text: str = None, tasks: list = None) -> dict:
         """

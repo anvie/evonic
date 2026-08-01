@@ -68,6 +68,31 @@ def _expand_slash_list(raw_value: str, all_names: set) -> set:
     return {c.strip() for c in raw.split(',') if c.strip()}
 
 
+def _persist_session_agent_state(chat_db, session_id: str, ms) -> None:
+    """Merge-write session-scoped AgentState fields for slash commands."""
+    import json
+
+    raw = chat_db.get_session_state(session_id)
+    try:
+        session_data = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        session_data = {}
+    if not isinstance(session_data, dict):
+        session_data = {}
+    data = json.loads(ms.serialize())
+    session_data.update({
+        'mode': data.get('mode', 'plan'),
+        'tasks': data.get('tasks', []),
+        'next_task_id': data.get('next_task_id', 1),
+        'plan_file': data.get('plan_file'),
+        'states': data.get('states', {}),
+        'auto_trivial': data.get('auto_trivial', False),
+        'atg': data.get('atg'),
+        'cmp': data.get('cmp'),
+    })
+    chat_db.upsert_session_state(session_id, json.dumps(session_data))
+
+
 def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> list:
     """Return registered commands available to an agent on the given channel."""
     commands = command_registry.list_commands()
@@ -666,22 +691,11 @@ def _register_builtins():
         # Create a fresh AgentState in plan mode
         ms = AgentState()
 
-        # Save per-session state (mode/tasks/plan_file) to session_state
         _db = agent_chat_manager.get(agent_id)
-        session_data = {
-            'mode': ms.mode,
-            'tasks': ms.tasks,
-            'next_task_id': ms._next_task_id,
-            'plan_file': ms.plan_file,
-            'states': ms.states,
-            'auto_trivial': ms.auto_trivial,
-        }
-        import json
-        _db.upsert_session_state(session_id, json.dumps(session_data))
+        _persist_session_agent_state(_db, session_id, ms)
 
-        # Reset focus in global agent_state (focus is cross-session)
-        global_data = {'focus': ms.focus, 'focus_reason': ms.focus_reason}
-        _db.upsert_agent_state(json.dumps(global_data))
+        # Reset focus in global agent_state (focus is cross-session).
+        _db.upsert_agent_state(ms.serialize())
 
         return "Switched to plan mode."
 
@@ -729,17 +743,7 @@ def _register_builtins():
         if "error" in result:
             return f"Error: {result['error']}"
 
-        # Save per-session state (mode changed to execute)
-        import json
-        session_data = {
-            "mode": ms.mode,
-            "tasks": ms.tasks,
-            "next_task_id": ms._next_task_id,
-            "plan_file": ms.plan_file,
-            "states": ms.states,
-            "auto_trivial": ms.auto_trivial,
-        }
-        _db.upsert_session_state(session_id, json.dumps(session_data))
+        _persist_session_agent_state(_db, session_id, ms)
 
         return "Switched to execute mode."
 
@@ -828,6 +832,14 @@ def _register_builtins():
         if session_content:
             sess_ms = AgentState.deserialize(session_content)
             lines.append(f"Mode: {sess_ms.mode}")
+            task_counts = {
+                status: sum(1 for task in sess_ms.tasks if task.get("status") == status)
+                for status in ("pending", "in_progress", "done")
+            }
+            lines.append(
+                f"Tasks: {task_counts['pending']} pending, "
+                f"{task_counts['in_progress']} in progress, {task_counts['done']} done"
+            )
             if sess_ms.cmp and sess_ms.cmp.get('paths'):
                 _paths = sess_ms.cmp['paths']
                 _active = _paths.get(sess_ms.cmp.get('active_id')) or {}

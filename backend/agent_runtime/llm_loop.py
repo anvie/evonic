@@ -900,6 +900,7 @@ def run_tool_loop(agent: Dict[str, Any],
         except Exception:
             _logger.exception("ATG execution crashed — falling back to plain loop")
         if _atg_outcome is not None:
+            _atg_ms.sync_completed_atg_tasks()
             try:
                 _persist_agent_state_split(_atg_ms, agent_id, session_id, db_agent_id)
             except Exception:
