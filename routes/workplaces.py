@@ -133,6 +133,26 @@ def api_delete_workplace(workplace_id):
     return jsonify({'ok': True})
 
 
+@workplaces_bp.route('/api/workplaces/<workplace_id>/clone', methods=['POST'])
+def api_clone_workplace(workplace_id):
+    """Clone a workplace: copy type and config into a new disconnected workplace."""
+    source = db.get_workplace(workplace_id)
+    if not source:
+        return jsonify({'error': 'Workplace not found'}), 404
+
+    data = request.get_json() or {}
+    new_name = (data.get('name') or '').strip()
+    if not new_name:
+        new_name = f"{source.get('name', workplace_id)} (Clone)"
+
+    new_id = db.clone_workplace(workplace_id, new_name)
+    if not new_id:
+        return jsonify({'error': 'Failed to clone workplace'}), 500
+
+    workplace = db.get_workplace(new_id)
+    return jsonify(workplace), 201
+
+
 # ---------------------------------------------------------------------------
 # API — Workplace connection control
 # ---------------------------------------------------------------------------
