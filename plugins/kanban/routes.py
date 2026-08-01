@@ -20,13 +20,20 @@ Agent Access Control:
 
 import json
 import os
+import uuid
 from datetime import datetime, timezone
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, send_file
+from werkzeug.utils import secure_filename
 
-from plugins.kanban.db import kanban_db
+from plugins.kanban.db import ATTACHMENTS_DIR, kanban_db
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SUPER_AGENT_ID = 'super'
+
+# --- Attachment upload policy -------------------------------------------------
+ALLOWED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+ALLOWED_IMAGE_MIMES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 def _now():
@@ -49,6 +56,38 @@ def _get_owner_name():
         return db.get_setting('owner_name') or 'UI User'
     except Exception:
         return 'UI User'
+
+
+def _attachment_file_path(task_id, stored_name: str) -> str:
+    """Absolute path of a stored attachment file on disk."""
+    return os.path.join(ATTACHMENTS_DIR, f'task_{task_id}', stored_name)
+
+
+def _attachment_with_url(att: dict) -> dict:
+    """Return an attachment dict enriched with its public file URL."""
+    att = dict(att)
+    att['url'] = f'/api/kanban/attachments/{att["id"]}/file'
+    return att
+
+
+def _task_with_attachments(task: dict) -> dict:
+    """Return a task dict enriched with its attachment list (with URLs)."""
+    task = dict(task)
+    task['attachments'] = [_attachment_with_url(a) for a in kanban_db.get_attachments(task['id'])]
+    return task
+
+
+def _remove_attachment_file(att: dict) -> None:
+    """Best-effort removal of an attachment's file and its (now possibly empty) task dir."""
+    try:
+        path = _attachment_file_path(att.get('task_id'), att.get('stored_name'))
+        if path and os.path.isfile(path):
+            os.remove(path)
+        task_dir = os.path.dirname(path)
+        if task_dir and os.path.isdir(task_dir) and not os.listdir(task_dir):
+            os.rmdir(task_dir)
+    except OSError:
+        pass
 
 
 def _is_super_agent(agent_id):
@@ -150,6 +189,7 @@ def create_blueprint():
             deps = all_deps.get(tid, [])
             task['deps'] = deps
             task['deps_met'] = all(d in done_ids for d in deps)
+        tasks = [_task_with_attachments(t) for t in tasks]
         return jsonify({'tasks': tasks})
 
     @bp.route('/api/kanban/tasks/available-deps', methods=['GET'])
@@ -207,6 +247,7 @@ def create_blueprint():
                 return jsonify({'error': str(e)}), 400
         task['deps'] = kanban_db.get_dependencies(task['id'])
         task['deps_met'] = not kanban_db.has_unmet_dependencies(task['id'])
+        task = _task_with_attachments(task)
         _emit('kanban_task_created', task)
         return jsonify({'task': task}), 201
 
@@ -361,6 +402,7 @@ def create_blueprint():
                 return jsonify({'error': str(e)}), 400
         updated['deps'] = kanban_db.get_dependencies(task_id)
         updated['deps_met'] = not kanban_db.has_unmet_dependencies(task_id)
+        updated = _task_with_attachments(updated)
         _emit('kanban_task_updated', updated)
         return jsonify({'task': updated})
 
@@ -482,7 +524,113 @@ def create_blueprint():
         if agent_id and not _is_super_agent(agent_id):
             return jsonify({'error': 'Forbidden: only super agent or UI can delete tasks'}), 403
 
+        # Remove attachment files from disk before deleting the task row.
+        for att in kanban_db.delete_attachments_for_task(task_id):
+            _remove_attachment_file(att)
         kanban_db.delete(task_id)
+        return jsonify({'success': True})
+
+    # ──────── Attachments ───────────────────────────────────────────────────────
+
+    @bp.route('/api/kanban/tasks/<int:task_id>/attachments', methods=['GET'])
+    def kanban_api_list_attachments(task_id):
+        task = kanban_db.get(task_id)
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+        attachments = [_attachment_with_url(a) for a in kanban_db.get_attachments(task_id)]
+        return jsonify({'attachments': attachments})
+
+    @bp.route('/api/kanban/tasks/<int:task_id>/attachments', methods=['POST'])
+    def kanban_api_upload_attachments(task_id):
+        task = kanban_db.get(task_id)
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+
+        is_allowed, error = _check_write_access(task)
+        if not is_allowed:
+            return jsonify({'error': error}), 403
+
+        files = request.files.getlist('files')
+        files = [f for f in files if f and f.filename]
+        if not files:
+            return jsonify({'error': 'No files selected. Please choose at least one image file.'}), 400
+
+        agent_id = _get_request_agent_id()
+        uploaded_by = agent_id or _get_owner_name()
+        task_dir = os.path.join(ATTACHMENTS_DIR, f'task_{task_id}')
+
+        # Validate everything first so a bad file never leaves partial uploads behind.
+        validated = []
+        for f in files:
+            filename = f.filename or ''
+            ext = os.path.splitext(filename)[1].lower()
+            mime = (f.mimetype or '').lower()
+            ext_ok = ext in ALLOWED_IMAGE_EXTENSIONS
+            mime_ok = mime in ALLOWED_IMAGE_MIMES or mime in ('', 'application/octet-stream')
+            if not (ext_ok and mime_ok):
+                return jsonify({
+                    'error': f'Invalid file type: "{filename}". Only image files are supported (PNG, JPG, JPEG, GIF, WEBP, BMP).'
+                }), 400
+            f.stream.seek(0, os.SEEK_END)
+            size = f.stream.tell()
+            f.stream.seek(0)
+            if size > MAX_FILE_SIZE:
+                return jsonify({
+                    'error': f'File too large: "{filename}" ({size // (1024 * 1024)} MB). Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB per file.'
+                }), 400
+            validated.append((f, filename, ext, mime, size))
+
+        os.makedirs(task_dir, exist_ok=True)
+        saved = []
+        for f, filename, ext, mime, size in validated:
+            stored_name = f'{uuid.uuid4().hex}_{secure_filename(filename)}'
+            f.save(os.path.join(task_dir, stored_name))
+            att = kanban_db.add_attachment(task_id, filename, stored_name, mime, size, uploaded_by)
+            if att:
+                kanban_db.add_activity(task_id, 'attachment_added', f'{filename} uploaded by {uploaded_by}')
+                saved.append(_attachment_with_url(att))
+
+        if not saved:
+            return jsonify({'error': 'No valid image files were uploaded.'}), 400
+        return jsonify({'attachments': saved}), 201
+
+    @bp.route('/api/kanban/attachments/<int:attachment_id>/file', methods=['GET'])
+    def kanban_api_get_attachment_file(attachment_id):
+        att = kanban_db.get_attachment(attachment_id)
+        if not att:
+            return jsonify({'error': 'Attachment not found'}), 404
+        path = _attachment_file_path(att['task_id'], att['stored_name'])
+        if not os.path.isfile(path):
+            return jsonify({'error': 'Attachment file is missing on disk'}), 404
+        return send_file(
+            path,
+            mimetype=att.get('mime_type') or 'application/octet-stream',
+            as_attachment=False,
+            download_name=att['filename'],
+        )
+
+    @bp.route('/api/kanban/attachments/<int:attachment_id>', methods=['DELETE'])
+    def kanban_api_delete_attachment(attachment_id):
+        att = kanban_db.get_attachment(attachment_id)
+        if not att:
+            return jsonify({'error': 'Attachment not found'}), 404
+
+        task = kanban_db.get(att['task_id'])
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+
+        is_allowed, error = _check_write_access(task)
+        if not is_allowed:
+            return jsonify({'error': error}), 403
+
+        deleted = kanban_db.delete_attachment(attachment_id)
+        if deleted:
+            _remove_attachment_file(deleted)
+            kanban_db.add_activity(
+                att['task_id'],
+                'attachment_removed',
+                f'{deleted["filename"]} removed by {_get_request_agent_id() or _get_owner_name()}',
+            )
         return jsonify({'success': True})
 
     # ───────── Archive ─────────
@@ -519,7 +667,7 @@ def create_blueprint():
 
     @bp.route('/api/kanban/archived', methods=['GET'])
     def kanban_api_get_archived():
-        tasks = kanban_db.get_archived()
+        tasks = [_task_with_attachments(t) for t in kanban_db.get_archived()]
         return jsonify({'tasks': tasks})
 
     @bp.route('/api/kanban/archived/count', methods=['GET'])

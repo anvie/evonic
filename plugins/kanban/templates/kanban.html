@@ -245,6 +245,14 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
                 </div>
                 <ul id="task-deps-selected" class="mt-2 flex flex-col gap-1"></ul>
             </div>
+            <div class="mb-5">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="task-files">Attachments (images, optional)</label>
+                <input type="file" id="task-files" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple
+                    class="w-full text-sm text-gray-700 dark:text-gray-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 dark:file:bg-indigo-900/30 dark:file:text-indigo-400 transition"
+                    onchange="handleFilesSelected(this)">
+                <div id="task-files-error" class="hidden mt-1.5 text-xs text-red-600 dark:text-red-400"></div>
+                <ul id="task-files-list" class="mt-2 flex flex-col gap-1"></ul>
+            </div>
             <div class="flex justify-end gap-2">
                 <button type="button" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition" onclick="closeModal()">Cancel</button>
                 <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 dark:bg-indigo-500 rounded-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 transition" id="modal-submit">Create Task</button>
@@ -307,6 +315,10 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
                 <div id="detail-deps-section" class="hidden mt-4">
                     <div class="text-xs font-semibold uppercase text-gray-400 dark:text-gray-500 mb-1">Depends On</div>
                     <div class="text-sm text-gray-700 dark:text-gray-300" id="detail-deps"></div>
+                </div>
+                <div id="detail-attachments-section" class="hidden mt-4">
+                    <div class="text-xs font-semibold uppercase text-gray-400 dark:text-gray-500 mb-1">Attachments</div>
+                    <div id="detail-attachments" class="grid grid-cols-2 sm:grid-cols-3 gap-2"></div>
                 </div>
 
                 <div class="flex justify-between items-center mb-3 mt-10">
@@ -372,6 +384,15 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
                             <ul id="detail-deps-dropdown" class="hidden absolute z-50 w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg mt-1 shadow-lg max-h-48 overflow-y-auto text-sm"></ul>
                         </div>
                         <ul id="detail-deps-selected" class="mt-2 flex flex-col gap-1"></ul>
+                    </div>
+                    <div class="mb-5">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Attachments (optional)</label>
+                        <div id="detail-existing-attachments" class="flex flex-col gap-1 mb-2"></div>
+                        <input type="file" id="detail-task-files" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple
+                            class="w-full text-sm text-gray-700 dark:text-gray-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 dark:file:bg-indigo-900/30 dark:file:text-indigo-400 transition"
+                            onchange="handleDetailFilesSelected(this)">
+                        <div id="detail-task-files-error" class="hidden mt-1.5 text-xs text-red-600 dark:text-red-400"></div>
+                        <ul id="detail-task-files-list" class="mt-2 flex flex-col gap-1"></ul>
                     </div>
                     <div class="flex justify-end gap-2">
                         <button type="button" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition" onclick="cancelEditFromDetail()">Cancel</button>
@@ -978,6 +999,219 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         return _depsSelected.map(d => d.id);
     }
 
+    // ---- Attachments (create/edit form) ----
+    let _pendingFiles = [];
+    let _pendingDetailFiles = [];
+    const _ALLOWED_IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
+    const _MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+    function _validateImageFile(file) {
+        if (!_ALLOWED_IMAGE_RE.test(file.name)) {
+            return `"${file.name}" is not a supported image. Only PNG, JPG, JPEG, GIF, WEBP and BMP are allowed.`;
+        }
+        if (file.size > _MAX_FILE_SIZE) {
+            return `"${file.name}" is too large (${Math.ceil(file.size / (1024 * 1024))} MB). Maximum size is 10 MB per file.`;
+        }
+        return null;
+    }
+
+    function _fileThumbHtml(f) {
+        if (f.preview) {
+            return `<img src="${f.preview}" class="w-8 h-8 object-cover rounded border border-gray-200 dark:border-gray-600 flex-shrink-0">`;
+        }
+        return '<span class="w-8 h-8 rounded bg-gray-100 dark:bg-gray-700 flex-shrink-0 flex items-center justify-center text-gray-400">\uD83D\uDCC4</span>';
+    }
+
+    function _renderPendingFiles(listId, errorId, arr, removeFn) {
+        const $list = $(`#${listId}`);
+        const $err = $(`#${errorId}`);
+        $err.addClass('hidden').text('');
+        if (!arr.length) {
+            $list.html('<li class="text-xs text-gray-400 dark:text-gray-500">No files selected.</li>');
+            return;
+        }
+        $list.html(arr.map(function(f, i) {
+            return `<li class="flex items-center gap-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-2 py-1.5">
+                ${_fileThumbHtml(f)}
+                <span class="text-xs text-gray-700 dark:text-gray-300 truncate flex-1" title="${esc(f.name)}">${esc(f.name)}</span>
+                <button type="button" class="text-gray-400 hover:text-red-500 text-sm leading-none flex-shrink-0" title="Remove" onclick="${removeFn}(${i})">&times;</button>
+            </li>`;
+        }).join(''));
+    }
+
+    function _removePendingFile(index) {
+        const f = _pendingFiles[index];
+        if (f && f.preview) URL.revokeObjectURL(f.preview);
+        _pendingFiles.splice(index, 1);
+        _renderPendingFiles('task-files-list', 'task-files-error', _pendingFiles, '_removePendingFile');
+    }
+
+    function _removePendingDetailFile(index) {
+        const f = _pendingDetailFiles[index];
+        if (f && f.preview) URL.revokeObjectURL(f.preview);
+        _pendingDetailFiles.splice(index, 1);
+        _renderPendingFiles('detail-task-files-list', 'detail-task-files-error', _pendingDetailFiles, '_removePendingDetailFile');
+    }
+
+    function _collectSelectedFiles(input, arr, renderFn, errorId) {
+        const files = Array.from(input.files || []);
+        if (!files.length) return;
+        const errors = [];
+        files.forEach(function(f) {
+            const err = _validateImageFile(f);
+            if (err) {
+                errors.push(err);
+            } else {
+                if (f.type && f.type.indexOf('image/') === 0 && typeof URL !== 'undefined') {
+                    f.preview = URL.createObjectURL(f);
+                }
+                arr.push(f);
+            }
+        });
+        renderFn();
+        if (errors.length) {
+            $('#' + errorId).removeClass('hidden').text(errors.join(' '));
+        }
+        $(input).val('');
+    }
+
+    function handleFilesSelected(input) {
+        _collectSelectedFiles(
+            input,
+            _pendingFiles,
+            function() { _renderPendingFiles('task-files-list', 'task-files-error', _pendingFiles, '_removePendingFile'); },
+            'task-files-error'
+        );
+    }
+
+    function handleDetailFilesSelected(input) {
+        _collectSelectedFiles(
+            input,
+            _pendingDetailFiles,
+            function() { _renderPendingFiles('detail-task-files-list', 'detail-task-files-error', _pendingDetailFiles, '_removePendingDetailFile'); },
+            'detail-task-files-error'
+        );
+    }
+
+    function _clearPendingFiles(arr) {
+        arr.forEach(function(f) { if (f.preview) URL.revokeObjectURL(f.preview); });
+        arr.length = 0;
+    }
+
+    function uploadAttachments(taskId, files, done) {
+        if (!files || !files.length) { done([]); return; }
+        const fd = new FormData();
+        files.forEach(f => fd.append('files', f, f.name));
+        $.ajax({
+            url: `${API}/tasks/${taskId}/attachments`,
+            method: 'POST',
+            data: fd,
+            processData: false,
+            contentType: false,
+            success: function() { done([]); },
+            error: function(xhr) {
+                done([xhr.responseJSON?.error || 'Attachment upload failed. Please try again.']);
+            }
+        });
+    }
+
+    function afterSave(taskId) {
+        if (!taskId || !_pendingFiles.length) {
+            _clearPendingFiles(_pendingFiles);
+            closeModal();
+            loadTasks();
+            return;
+        }
+        const files = _pendingFiles.slice();
+        _pendingFiles = [];
+        uploadAttachments(taskId, files, function(errors) {
+            if (errors && errors.length) {
+                alert('Task saved, but some attachments failed:\n' + errors.join('\n'));
+            }
+            closeModal();
+            loadTasks();
+        });
+    }
+
+    // ---- Attachments (detail modal) ----
+
+    function renderAttachmentCard(a) {
+        return `<div class="relative group bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
+            <a href="${esc(a.url)}" target="_blank" rel="noopener" class="block" title="${esc(a.filename)}">
+                <img src="${esc(a.url)}" alt="${esc(a.filename)}" class="w-full h-24 object-cover bg-gray-100 dark:bg-gray-800" loading="lazy"
+                    onerror="this.style.display='none'">
+                <div class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 truncate">${esc(a.filename)}</div>
+            </a>
+            <button type="button" onclick="deleteAttachment(${a.id})" title="Delete attachment"
+                class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 text-white text-xs opacity-0 group-hover:opacity-100 hover:bg-red-600 transition flex items-center justify-center">&times;</button>
+        </div>`;
+    }
+
+    function renderDetailExistingAttachments(task) {
+        const atts = task.attachments || [];
+        const $el = $('#detail-existing-attachments');
+        if (!atts.length) {
+            $el.html('<div class="text-xs text-gray-400 dark:text-gray-500">No attachments yet.</div>');
+            return;
+        }
+        $el.html(atts.map(a => `<div class="flex items-center gap-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-2 py-1.5">
+            <a href="${esc(a.url)}" target="_blank" rel="noopener" class="flex items-center gap-2 flex-1 min-w-0" title="${esc(a.filename)}">
+                <img src="${esc(a.url)}" alt="" class="w-8 h-8 object-cover rounded border border-gray-200 dark:border-gray-600 flex-shrink-0" loading="lazy" onerror="this.style.display='none'">
+                <span class="text-xs text-gray-700 dark:text-gray-300 truncate">${esc(a.filename)}</span>
+            </a>
+            <button type="button" class="text-gray-400 hover:text-red-500 text-sm leading-none flex-shrink-0" title="Delete attachment" onclick="deleteAttachmentFromEdit(${a.id})">&times;</button>
+        </div>`).join(''));
+    }
+
+    function _refreshDetailAttachments() {
+        const task = tasks.find(t => t.id === currentDetailId);
+        if (!task) return;
+        const atts = task.attachments || [];
+        if (atts.length) {
+            $('#detail-attachments').html(atts.map(renderAttachmentCard).join(''));
+            $('#detail-attachments-section').removeClass('hidden');
+        } else {
+            $('#detail-attachments-section').addClass('hidden');
+            $('#detail-attachments').empty();
+        }
+    }
+
+    function deleteAttachment(attachmentId) {
+        if (!confirm('Delete this attachment?')) return;
+        const taskId = currentDetailId;
+        $.ajax({
+            url: `${API}/attachments/${attachmentId}`,
+            method: 'DELETE',
+            success: function() {
+                const task = tasks.find(t => t.id === taskId);
+                if (task && task.attachments) {
+                    task.attachments = task.attachments.filter(a => a.id !== attachmentId);
+                }
+                _refreshDetailAttachments();
+                loadActivity(taskId);
+            },
+            error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to delete attachment'); }
+        });
+    }
+
+    function deleteAttachmentFromEdit(attachmentId) {
+        if (!confirm('Delete this attachment?')) return;
+        const taskId = currentDetailId;
+        $.ajax({
+            url: `${API}/attachments/${attachmentId}`,
+            method: 'DELETE',
+            success: function() {
+                const task = tasks.find(t => t.id === taskId);
+                if (task && task.attachments) {
+                    task.attachments = task.attachments.filter(a => a.id !== attachmentId);
+                }
+                renderDetailExistingAttachments(task);
+                loadActivity(taskId);
+            },
+            error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to delete attachment'); }
+        });
+    }
+
     function openCreateModal() {
         _isEditing = false;
         $('#task-id').val('');
@@ -987,6 +1221,9 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         $('#modal-submit').text('Create Task');
         populateAgentSelect('#task-assignee');
         initDepsWidget(null, []);
+        _clearPendingFiles(_pendingFiles);
+        $('#task-files-error').addClass('hidden').text('');
+        $('#task-files-list').empty();
         $('#kb-modal').removeClass('hidden').addClass('flex');
     }
 
@@ -1001,6 +1238,9 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         $('#task-priority').val(task.priority || 'low');
         populateAgentSelect('#task-assignee', task.assignee || '');
         initDepsWidget(task.id, task.deps || []);
+        _clearPendingFiles(_pendingFiles);
+        $('#task-files-error').addClass('hidden').text('');
+        $('#task-files-list').empty();
         $('#modal-title').text('Edit Task');
         $('#modal-submit').text('Save Changes');
         $('#kb-modal').removeClass('hidden').addClass('flex');
@@ -1008,6 +1248,9 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
 
     function closeModal() {
         _isEditing = false;
+        _clearPendingFiles(_pendingFiles);
+        $('#task-files-error').addClass('hidden').text('');
+        $('#task-files-list').empty();
         $('#kb-modal').removeClass('flex').addClass('hidden');
     }
 
@@ -1034,14 +1277,14 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         if (taskId) {
             $.ajax({ url: `${API}/tasks/${taskId}`, method: 'PUT',
                 contentType: 'application/json', data: JSON.stringify(payload),
-                success: function() { closeModal(); loadTasks(); },
+                success: function() { afterSave(taskId); },
                 error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to update'); },
                 complete: function() { $btn.prop('disabled', false).text(origText); }
             });
         } else {
             $.ajax({ url: `${API}/tasks`, method: 'POST',
                 contentType: 'application/json', data: JSON.stringify(payload),
-                success: function() { closeModal(); loadTasks(); },
+                success: function(resp) { afterSave(resp && resp.task ? String(resp.task.id) : null); },
                 error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to create'); },
                 complete: function() { $btn.prop('disabled', false).text(origText); }
             });
@@ -1131,6 +1374,9 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         } else {
             $('#detail-deps-section').addClass('hidden');
         }
+
+        // Attachments
+        _refreshDetailAttachments();
 
         switchTab('details');
         $('#kb-detail-modal').removeClass('hidden').addClass('flex');
@@ -1385,6 +1631,13 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
             selectedId: 'detail-deps-selected',
         });
 
+        // Attachments: show existing ones and reset the "add new" picker
+        renderDetailExistingAttachments(task);
+        _clearPendingFiles(_pendingDetailFiles);
+        $('#detail-task-files-list').empty();
+        $('#detail-task-files-error').addClass('hidden').text('');
+        $('#detail-task-files').val('');
+
         $('#panel-details').addClass('hidden');
         $('#panel-edit').removeClass('hidden');
     }
@@ -1410,10 +1663,17 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
             data: JSON.stringify(payload),
             success: function() {
                 const taskIdNum = Number(taskId);
-                $('#panel-edit').addClass('hidden');
-                $('#panel-details').removeClass('hidden');
-                loadTasks(function() {
-                    openDetailModal(taskIdNum);
+                const newFiles = _pendingDetailFiles.slice();
+                _clearPendingFiles(_pendingDetailFiles);
+                uploadAttachments(String(taskIdNum), newFiles, function(errors) {
+                    if (errors && errors.length) {
+                        alert('Task updated, but some attachments failed:\n' + errors.join('\n'));
+                    }
+                    $('#panel-edit').addClass('hidden');
+                    $('#panel-details').removeClass('hidden');
+                    loadTasks(function() {
+                        openDetailModal(taskIdNum);
+                    });
                 });
             },
             error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to update'); }

@@ -20,6 +20,9 @@ _shared_data = os.path.join(BASE_DIR, 'shared', 'data')
 _data_root = _shared_data if os.path.isdir(_shared_data) else os.path.join(BASE_DIR, 'data')
 PLUGIN_DB_DIR = os.path.join(_data_root, 'db', 'plugins')
 DB_PATH = os.path.join(PLUGIN_DB_DIR, 'kanban.db')
+# Directory where uploaded task attachment files are stored on disk.
+# Lives next to the plugin DB so it survives plugin reinstall.
+ATTACHMENTS_DIR = os.path.join(_data_root, 'uploads', 'kanban')
 TASKS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tasks.json')
 
 
@@ -38,6 +41,7 @@ class KanbanDB:
         self._migrate_paused_at()
         self._migrate_started_at()
         self._migrate_task_dependencies()
+        self._migrate_attachments()
         self._migrate_from_json()
 
     @contextmanager
@@ -199,6 +203,31 @@ class KanbanDB:
                 )
             """)
 
+    def _migrate_attachments(self):
+        """Create attachments table if it doesn't exist.
+
+        Each row references a task and points to a stored file on disk under
+        the plugin's uploads directory. The stored filename is generated
+        server-side (uuid prefix) so it is safe to use on any filesystem.
+        """
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS attachments (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id     INTEGER NOT NULL,
+                    filename    TEXT NOT NULL,
+                    stored_name TEXT NOT NULL,
+                    mime_type   TEXT,
+                    size        INTEGER,
+                    uploaded_by TEXT,
+                    created_at  TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_attachments_task_id ON attachments(task_id)"
+            )
+
     # ── Dependencies ─────────────────────────────────────────────────────────
 
     def _detect_cycle(self, task_id: int, new_dep_ids: list) -> bool:
@@ -305,6 +334,58 @@ class KanbanDB:
         for row in rows:
             result.setdefault(row[0], []).append(row[1])
         return result
+
+    # ── Attachments ─────────────────────────────────────────────────────────
+
+    def add_attachment(self, task_id: str, filename: str, stored_name: str,
+                       mime_type: str = None, size: int = None,
+                       uploaded_by: str = None) -> Optional[dict]:
+        """Record a file attachment for a task. Returns the new attachment dict."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO attachments (task_id, filename, stored_name, mime_type, size, uploaded_by, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (task_id, filename, stored_name, mime_type, size, uploaded_by, _now()),
+            )
+            new_id = cur.lastrowid
+        return self.get_attachment(new_id)
+
+    def get_attachment(self, attachment_id: int) -> Optional[dict]:
+        """Return a single attachment by ID, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM attachments WHERE id = ?", (attachment_id,)
+            ).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def get_attachments(self, task_id: str) -> list:
+        """Return all attachments for a task, oldest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM attachments WHERE task_id = ? ORDER BY id ASC",
+                (task_id,),
+            ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def delete_attachment(self, attachment_id: int) -> Optional[dict]:
+        """Delete an attachment row. Returns the deleted row (for file cleanup) or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM attachments WHERE id = ?", (attachment_id,)
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+        return self._row_to_dict(row)
+
+    def delete_attachments_for_task(self, task_id: str) -> list:
+        """Delete all attachment rows for a task. Returns the deleted rows for file cleanup."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM attachments WHERE task_id = ?", (task_id,)
+            ).fetchall()
+            conn.execute("DELETE FROM attachments WHERE task_id = ?", (task_id,))
+        return [self._row_to_dict(r) for r in rows]
 
     def _migrate_from_json(self):
         """Import tasks.json into DB on first run, then rename it."""
