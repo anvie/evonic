@@ -215,17 +215,25 @@ class KanbanDB:
                 CREATE TABLE IF NOT EXISTS attachments (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id     INTEGER NOT NULL,
+                    comment_id  INTEGER,
                     filename    TEXT NOT NULL,
                     stored_name TEXT NOT NULL,
                     mime_type   TEXT,
                     size        INTEGER,
                     uploaded_by TEXT,
                     created_at  TEXT NOT NULL,
-                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE CASCADE
                 )
             """)
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(attachments)").fetchall()}
+            if 'comment_id' not in cols:
+                conn.execute("ALTER TABLE attachments ADD COLUMN comment_id INTEGER")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_attachments_task_id ON attachments(task_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_attachments_comment_id ON attachments(comment_id)"
             )
 
     # ── Dependencies ─────────────────────────────────────────────────────────
@@ -339,13 +347,13 @@ class KanbanDB:
 
     def add_attachment(self, task_id: str, filename: str, stored_name: str,
                        mime_type: str = None, size: int = None,
-                       uploaded_by: str = None) -> Optional[dict]:
-        """Record a file attachment for a task. Returns the new attachment dict."""
+                       uploaded_by: str = None, comment_id: int = None) -> Optional[dict]:
+        """Record a file attachment for a task or task comment."""
         with self._connect() as conn:
             cur = conn.execute(
-                "INSERT INTO attachments (task_id, filename, stored_name, mime_type, size, uploaded_by, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (task_id, filename, stored_name, mime_type, size, uploaded_by, _now()),
+                "INSERT INTO attachments (task_id, comment_id, filename, stored_name, mime_type, size, uploaded_by, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (task_id, comment_id, filename, stored_name, mime_type, size, uploaded_by, _now()),
             )
             new_id = cur.lastrowid
         return self.get_attachment(new_id)
@@ -367,6 +375,15 @@ class KanbanDB:
             ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
+    def get_attachments_for_comment(self, comment_id: int) -> list:
+        """Return all attachments belonging to one comment, oldest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM attachments WHERE comment_id = ? ORDER BY id ASC",
+                (comment_id,),
+            ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
     def delete_attachment(self, attachment_id: int) -> Optional[dict]:
         """Delete an attachment row. Returns the deleted row (for file cleanup) or None."""
         with self._connect() as conn:
@@ -377,6 +394,15 @@ class KanbanDB:
                 return None
             conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
         return self._row_to_dict(row)
+
+    def delete_attachments_for_comment(self, comment_id: int) -> list:
+        """Delete comment attachment rows and return them for file cleanup."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM attachments WHERE comment_id = ?", (comment_id,)
+            ).fetchall()
+            conn.execute("DELETE FROM attachments WHERE comment_id = ?", (comment_id,))
+        return [self._row_to_dict(r) for r in rows]
 
     def delete_attachments_for_task(self, task_id: str) -> list:
         """Delete all attachment rows for a task. Returns the deleted rows for file cleanup."""

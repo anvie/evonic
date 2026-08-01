@@ -127,6 +127,59 @@ class TestKanbanAttachmentsAPI(unittest.TestCase):
         resp = self._upload(9999, {'files': (io.BytesIO(_PNG_BYTES), 'a.png')})
         self.assertEqual(resp.status_code, 404)
 
+    # ---- comment attachments ----
+
+    def _add_comment(self, task_id, data, json=False):
+        return self.client.post(
+            f'/api/kanban/tasks/{task_id}/comments',
+            json=data if json else None,
+            data=None if json else data,
+            content_type=None if json else 'multipart/form-data',
+        )
+
+    def test_add_text_comment_with_json(self):
+        task = self._create_task()
+        resp = self._add_comment(task['id'], {'content': 'Text only'}, json=True)
+        self.assertEqual(resp.status_code, 201)
+        comment = resp.get_json()['comment']
+        self.assertEqual(comment['content'], 'Text only')
+        self.assertEqual(comment['attachments'], [])
+
+    def test_add_comment_with_image_attachment(self):
+        task = self._create_task()
+        resp = self._add_comment(task['id'], {
+            'content': 'See this image',
+            'files': (io.BytesIO(_PNG_BYTES), 'comment.png'),
+        })
+        self.assertEqual(resp.status_code, 201)
+        comment = resp.get_json()['comment']
+        self.assertEqual(comment['content'], 'See this image')
+        self.assertEqual(len(comment['attachments']), 1)
+        attachment = comment['attachments'][0]
+        self.assertEqual(attachment['filename'], 'comment.png')
+        self.assertEqual(attachment['comment_id'], comment['id'])
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.uploads_dir, f'task_{task["id"]}', attachment['stored_name']
+        )))
+
+    def test_comment_attachments_are_returned_and_removed_with_comment(self):
+        task = self._create_task()
+        added = self._add_comment(task['id'], {
+            'files': (io.BytesIO(_PNG_BYTES), 'reference.png'),
+        }).get_json()['comment']
+        attachment = added['attachments'][0]
+
+        listed = self.client.get(f'/api/kanban/tasks/{task["id"]}/comments').get_json()
+        self.assertEqual(listed['comments'][0]['attachments'][0]['id'], attachment['id'])
+        self.assertEqual(self.client.get(attachment['url']).status_code, 200)
+
+        deleted = self.client.delete(f'/api/kanban/comments/{added["id"]}')
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(os.path.exists(os.path.join(
+            self.uploads_dir, f'task_{task["id"]}', attachment['stored_name']
+        )))
+        self.assertIsNone(self.db.get_attachment(attachment['id']))
+
     # ---- list / serve / delete ----
 
     def test_list_attachments(self):

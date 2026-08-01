@@ -337,6 +337,12 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
                 <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
                     <textarea id="comment-input" rows="3" placeholder="Add a comment..."
                         class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm resize-y bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400 dark:focus:border-indigo-500"></textarea>
+                    <div class="mt-2">
+                        <label for="comment-files" class="text-xs font-medium text-gray-500 dark:text-gray-400">Attach images</label>
+                        <input type="file" id="comment-files" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple
+                            class="block w-full mt-1 text-xs text-gray-600 dark:text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-indigo-50 file:text-indigo-600 dark:file:bg-indigo-900/30 dark:file:text-indigo-300">
+                        <div id="comment-files-list" class="mt-1 text-xs text-gray-500 dark:text-gray-400"></div>
+                    </div>
                     <div class="flex justify-end mt-2">
                         <button id="comment-submit-btn" onclick="submitComment()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 dark:bg-indigo-500 rounded-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                             <svg class="hidden animate-spin w-4 h-4" id="comment-spinner" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
@@ -1437,30 +1443,34 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         });
     }
 
+    function renderCommentAttachments(attachments) {
+        if (!attachments || !attachments.length) return '';
+        return `<div class="mt-2 flex flex-wrap gap-2">${attachments.map(a => `
+            <a href="${esc(a.url)}" target="_blank" rel="noopener" download="${esc(a.filename)}"
+                class="block max-w-full border border-gray-200 dark:border-gray-600 rounded overflow-hidden hover:border-indigo-400" title="Open or download ${esc(a.filename)}">
+                <img src="${esc(a.url)}" alt="${esc(a.filename)}" class="w-32 h-20 object-cover bg-gray-100 dark:bg-gray-800" loading="lazy" onerror="this.remove()">
+                <span class="block max-w-32 px-2 py-1 text-xs text-gray-600 dark:text-gray-300 truncate">${esc(a.filename)}</span>
+            </a>`).join('')}</div>`;
+    }
+
+    function renderCommentCard(c, taskId) {
+        return `<div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 group relative">
+            <button class="absolute top-2 right-2 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Delete comment" onclick="deleteComment(${c.id}, ${taskId})">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+            <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1 pr-5">${esc(c.author || 'Anonymous')}</div>
+            ${c.content ? `<div class="text-sm text-gray-700 dark:text-gray-300 break-words kb-markdown">${DOMPurify.sanitize(marked.parse(c.content))}</div>` : ''}
+            ${renderCommentAttachments(c.attachments)}
+            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">${fmtShort(c.created_at)}</div>
+        </div>`;
+    }
+
     function loadComments(taskId) {
         $('#comment-list').html('<div class="text-sm text-gray-400 text-center py-4">Loading...</div>');
         $.get(`${API}/tasks/${taskId}/comments`, function(data) {
             const items = data.comments || [];
-            if (items.length) {
-                $('#comment-count').text(`(${items.length})`).removeClass('hidden');
-            } else {
-                $('#comment-count').addClass('hidden');
-            }
-            if (!items.length) {
-                $('#comment-list').html('<div class="text-sm text-gray-400 text-center py-4">No comments yet</div>');
-                return;
-            }
-            const html = items.map(c => `
-                <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 group relative">
-                    <button class="absolute top-2 right-2 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Delete comment" onclick="deleteComment(${c.id}, ${taskId})">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                    </button>
-                    <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1 pr-5">${esc(c.author || 'Anonymous')}</div>
-                    <div class="text-sm text-gray-700 dark:text-gray-300 break-words kb-markdown">${DOMPurify.sanitize(marked.parse(c.content))}</div>
-                    <div class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">${fmtShort(c.created_at)}</div>
-                </div>`).join('');
-            $('#comment-list').html(html);
+            $('#comment-count').toggleClass('hidden', !items.length).text(items.length ? `(${items.length})` : '');
+            $('#comment-list').html(items.length ? items.map(c => renderCommentCard(c, taskId)).join('') : '<div class="text-sm text-gray-400 text-center py-4">No comments yet</div>');
         }).fail(function() {
             $('#comment-list').html('<div class="text-sm text-red-400 text-center py-4">Failed to load comments</div>');
         });
@@ -1541,39 +1551,32 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
     function submitComment() {
         if (!currentDetailId) return;
         const content = $('#comment-input').val().trim();
-        if (!content) return;
+        const files = Array.from($('#comment-files')[0].files || []);
+        if (!content && !files.length) return;
         const $btn = $('#comment-submit-btn');
         const $spinner = $('#comment-spinner');
         const $btnText = $('#comment-btn-text');
-        // Loading state
+        const formData = new FormData();
+        formData.append('content', content);
+        files.forEach(file => formData.append('files', file));
         $btn.prop('disabled', true);
         $spinner.removeClass('hidden');
         $btnText.text('Posting...');
         $.ajax({
             url: `${API}/tasks/${currentDetailId}/comments`,
             method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({ content }),
+            data: formData,
+            contentType: false,
+            processData: false,
             success: function(data) {
                 $('#comment-input').val('');
-                // Optimistic append — build card from response data
+                $('#comment-files').val('');
+                $('#comment-files-list').empty();
                 const c = data.comment;
                 if (c) {
-                    const card = `
-                        <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 group relative">
-                            <button class="absolute top-2 right-2 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Delete comment" onclick="deleteComment(${c.id}, ${currentDetailId})">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            </button>
-                            <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1 pr-5">${esc(c.author || 'Anonymous')}</div>
-                            <div class="text-sm text-gray-700 dark:text-gray-300 break-words kb-markdown">${DOMPurify.sanitize(marked.parse(c.content))}</div>
-                            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">${fmtShort(c.created_at)}</div>
-                        </div>`;
-                    // Remove "No comments yet" placeholder if present
                     const $list = $('#comment-list');
                     $list.children('.text-sm.text-center.py-4').remove();
-                    $list.append(card);
-                    // Update comment count badge
+                    $list.append(renderCommentCard(c, currentDetailId));
                     const $count = $('#comment-count');
                     const current = parseInt($count.text().replace(/[()]/g, '')) || 0;
                     $count.text(`(${current + 1})`).removeClass('hidden');

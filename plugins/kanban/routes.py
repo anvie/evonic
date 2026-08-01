@@ -70,6 +70,15 @@ def _attachment_with_url(att: dict) -> dict:
     return att
 
 
+def _comment_with_attachments(comment: dict) -> dict:
+    comment = dict(comment)
+    comment['attachments'] = [
+        _attachment_with_url(att)
+        for att in kanban_db.get_attachments_for_comment(comment['id'])
+    ]
+    return comment
+
+
 def _task_with_attachments(task: dict) -> dict:
     """Return a task dict enriched with its attachment list (with URLs)."""
     task = dict(task)
@@ -418,16 +427,45 @@ def create_blueprint():
         if not is_allowed:
             return jsonify({'error': error}), 403
 
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        content = data.get('content', '').strip()
-        if not content:
-            return jsonify({'error': 'Content is required'}), 400
+        if request.mimetype == 'application/json':
+            data = request.get_json(silent=True) or {}
+            content = (data.get('content') or '').strip()
+            files = []
+        else:
+            content = (request.form.get('content') or '').strip()
+            files = [f for f in request.files.getlist('files') if f and f.filename]
+        if not content and not files:
+            return jsonify({'error': 'Content or at least one attachment is required'}), 400
+
+        validated = []
+        for f in files:
+            filename = f.filename or ''
+            ext = os.path.splitext(filename)[1].lower()
+            mime = (f.mimetype or '').lower()
+            if ext not in ALLOWED_IMAGE_EXTENSIONS or (
+                mime and mime not in ALLOWED_IMAGE_MIMES and mime != 'application/octet-stream'
+            ):
+                return jsonify({'error': f'Invalid file type: "{filename}". Only image files are supported.'}), 400
+            f.stream.seek(0, os.SEEK_END)
+            size = f.stream.tell()
+            f.stream.seek(0)
+            if size > MAX_FILE_SIZE:
+                return jsonify({'error': f'File too large: "{filename}"'}), 400
+            validated.append((f, filename, mime, size))
 
         agent_id = _get_request_agent_id()
         author = agent_id or _get_owner_name()
         comment = kanban_db.add_comment(task_id, content, author)
+        if validated:
+            task_dir = os.path.join(ATTACHMENTS_DIR, f'task_{task_id}')
+            os.makedirs(task_dir, exist_ok=True)
+            for f, filename, mime, size in validated:
+                stored_name = f'{uuid.uuid4().hex}_{secure_filename(filename)}'
+                f.save(os.path.join(task_dir, stored_name))
+                kanban_db.add_attachment(
+                    task_id, filename, stored_name, mime, size, author, comment_id=comment['id']
+                )
+        comment = _comment_with_attachments(comment)
         kanban_db.add_activity(task_id, 'commented', f'Comment added by {author}')
         return jsonify({'comment': comment}), 201
 
@@ -437,7 +475,7 @@ def create_blueprint():
         if not task:
             return jsonify({'error': 'Task not found'}), 404
 
-        comments = kanban_db.get_comments(task_id)
+        comments = [_comment_with_attachments(c) for c in kanban_db.get_comments(task_id)]
         return jsonify({'comments': comments})
 
     @bp.route('/api/kanban/comments/<int:comment_id>', methods=['DELETE'])
@@ -462,6 +500,8 @@ def create_blueprint():
         if not is_owner and not (agent_id and _is_super_agent(agent_id)):
             return jsonify({'error': 'You can only delete your own comments'}), 403
 
+        for att in kanban_db.delete_attachments_for_comment(comment_id):
+            _remove_attachment_file(att)
         deleted = kanban_db.delete_comment(comment_id)
         if not deleted:
             return jsonify({'error': 'Failed to delete comment'}), 500
