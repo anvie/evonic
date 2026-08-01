@@ -444,9 +444,9 @@ def run_tool_loop(agent: Dict[str, Any],
 
     tool_trace = []
     timeline = []
-    # Lifecycle bookkeeping is scoped to this turn. Explicit update_tasks calls
-    # always win over the conservative automatic transitions below.
-    _explicit_task_update = False
+    # Lifecycle bookkeeping is scoped to this turn. Explicit task transitions
+    # remain authoritative through the current AgentState status; they must not
+    # disable later automatic transitions for unrelated implementation tools.
     _successful_mutation = False
     _tool_errors = False
 
@@ -481,6 +481,16 @@ def run_tool_loop(agent: Dict[str, Any],
 
     _initial_state = agent_context.get('agent_state')
     if _initial_state is not None:
+        # Self-heal stale task state on every session wake. Active tasks that
+        # predate lifecycle tracking (no in_progress_since) or that have been
+        # in progress across a very long wall-clock window are demoted to
+        # pending. Conservative: never auto-completes, never drops pending/done
+        # entries, keeps the task text so the agent can re-activate it.
+        _resolved = _initial_state.resolve_stale_tasks()
+        if _resolved:
+            _emit_task_state_change(_initial_state)
+            _emit_task_lifecycle_event(
+                'tasks:auto_transition', [r['id'] for r in _resolved])
         _emit_task_lifecycle_event(
             'tasks:stale',
             [task['id'] for task in _initial_state.reconcile_tasks(stale_after=180)],
@@ -1906,7 +1916,7 @@ def run_tool_loop(agent: Dict[str, Any],
             # Final response — save with timeline metadata
             ms = agent_context.get('agent_state')
             if (ms is not None and ms.mode == 'execute' and _successful_mutation
-                    and not _explicit_task_update and not stop_event.is_set()):
+                    and not stop_event.is_set()):
                 completion = ms.completion_eligible(
                     tool_errors=_tool_errors, final_text=content, mutated=True)
                 if completion['eligible']:
@@ -2626,6 +2636,10 @@ def run_tool_loop(agent: Dict[str, Any],
                     and _is_mutating_tool(fn_name)):
                 ms = agent_context.get('agent_state')
                 if ms is not None and ms.mode == 'execute':
+                    # The first successful mutation in a turn auto-activates the
+                    # next pending task only when the agent has not explicitly
+                    # managed its own task list this turn. Explicit updates
+                    # always win for selecting which task is active.
                     if not _successful_mutation and not _explicit_task_update:
                         activated = ms.auto_activate()
                         if activated['transitioned']:

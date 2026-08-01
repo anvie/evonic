@@ -41,6 +41,11 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..'))
 # Maximum characters of plan file content injected into each LLM call
 _PLAN_FILE_MAX_CHARS = 15000
 
+# Conservative wall-clock threshold after which a managed in-progress task is
+# considered stale and demoted to pending on session wake. Long enough for
+# legit multi-turn work; short enough to catch leftovers from abandoned plans.
+_MANAGED_TASK_STALE_AFTER = 6 * 3600  # 6 hours
+
 GUARDED_TOOLS = {"write_file", "str_replace", "patch"}
 
 VALID_MODES = {"plan", "execute"}
@@ -363,13 +368,59 @@ class AgentState:
                 "reason": None if eligible else "completion conditions not met"}
 
     def reconcile_tasks(self, now: float = None, stale_after: float = 300) -> list:
-        """Return stale active tasks without changing their explicit status."""
+        """Return stale active tasks without changing their explicit status.
+
+        Reporting-only helper (used by render() to prompt the agent and by the
+        runtime to emit ``tasks:stale`` events). Use :meth:`resolve_stale_tasks`
+        when the state should actually be repaired.
+        """
         current = time.time() if now is None else now
         return [{"id": t["id"], "text": t["text"], "age": current - t["in_progress_since"]}
                 for t in self.tasks
                 if t.get("status") == "in_progress"
                 and isinstance(t.get("in_progress_since"), (int, float))
                 and current - t["in_progress_since"] >= stale_after]
+
+    def resolve_stale_tasks(self, now: float = None,
+                            stale_after: float = _MANAGED_TASK_STALE_AFTER) -> list:
+        """Demote stale in-progress tasks to pending without destroying state.
+
+        Conservative self-healing for task lists that predate lifecycle
+        tracking. An in-progress task is demoted when:
+
+        * ``in_progress_since`` is missing (legacy/unmanaged tasks created
+          before automatic lifecycle tracking stamped timestamps); or
+        * ``in_progress_since`` is older than ``stale_after`` (no completion
+          evidence across a very long wall-clock window).
+
+        This never auto-completes a task, never touches pending/done entries,
+        and keeps the task id/text intact so the agent can re-activate or
+        complete it explicitly. Returns a list of transition records::
+
+            {"id": ..., "text": ..., "age": float|None,
+             "action": "demote", "reason": "legacy"|"stale"}
+        """
+        current = time.time() if now is None else now
+        transitions = []
+        for task in self.tasks:
+            if task.get("status") != "in_progress":
+                continue
+            started = task.get("in_progress_since")
+            if not isinstance(started, (int, float)):
+                reason = "legacy"
+                age = None
+            else:
+                age = current - started
+                if age < stale_after:
+                    continue  # still being worked on
+                reason = "stale"
+            task["status"] = "pending"
+            task.pop("in_progress_since", None)
+            transitions.append({
+                "id": task["id"], "text": task["text"], "age": age,
+                "action": "demote", "reason": reason,
+            })
+        return transitions
 
     def sync_completed_atg_tasks(self) -> list[int]:
         """Mark unambiguously matched AgentState tasks complete from ATG results.
