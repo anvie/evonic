@@ -322,6 +322,11 @@ export class Turn {
             return;
         }
 
+        if (evtName === 'tasks:auto_transition' || evtName === 'tasks:stale') {
+            this._onTrigger(evtName, data);
+            return;
+        }
+
         if (evtName === 'response_chunk' && data.content) {
             // Render every response chunk in the trace (intermediate + final), matching
             // the history-render view. Only the FINAL chunk is stashed for the final

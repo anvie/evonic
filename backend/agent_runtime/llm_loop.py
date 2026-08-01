@@ -466,6 +466,26 @@ def run_tool_loop(agent: Dict[str, Any],
             'tasks': list(ms.tasks),
         })
 
+    def _emit_task_lifecycle_event(event_name, task_ids):
+        """Emit a task-only lifecycle event without tool or model internals."""
+        visible_ids = {task_id for task_id in task_ids if isinstance(task_id, int)}
+        if not visible_ids:
+            return
+        ms = agent_context.get('agent_state')
+        event_stream.emit(event_name, {
+            'agent_id': agent_id,
+            'session_id': session_id,
+            'task_ids': sorted(visible_ids),
+            'tasks': list(ms.tasks) if ms is not None else [],
+        })
+
+    _initial_state = agent_context.get('agent_state')
+    if _initial_state is not None:
+        _emit_task_lifecycle_event(
+            'tasks:stale',
+            [task['id'] for task in _initial_state.reconcile_tasks(stale_after=180)],
+        )
+
     _loop_start_time = time.time()
     _gate_context = {
         'agent_id': agent_id, 'session_id': session_id,
@@ -1892,6 +1912,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 if completion['eligible']:
                     ms.update_tasks('done', task_id=completion['task_id'])
                     _emit_task_state_change(ms)
+                    _emit_task_lifecycle_event(
+                        'tasks:auto_transition', [completion['task_id']])
 
             meta = {"timeline": timeline} if timeline else None
             if meta:
@@ -2608,6 +2630,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         activated = ms.auto_activate()
                         if activated['transitioned']:
                             _emit_task_state_change(ms)
+                            _emit_task_lifecycle_event(
+                                'tasks:auto_transition', [activated['task_id']])
                     _successful_mutation = True
 
             timeline.append({"type": "tool_result", "tool": fn_name, "result": result_dict, "error": has_error})
