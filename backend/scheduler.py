@@ -49,9 +49,29 @@ log = logging.getLogger(__name__)
 class Scheduler:
     def __init__(self):
         self._timezone = os.getenv("EVONIC_TIMEZONE", "Asia/Jakarta")
+        self._kb_organizer_hour, self._kb_organizer_minute = (
+            self._parse_kb_organizer_time()
+        )
         self._scheduler = BackgroundScheduler(daemon=True, timezone=self._timezone)
         self._started = False
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _parse_kb_organizer_time() -> tuple[int, int]:
+        """Return the global KB Janitor time, defaulting to 03:00 if invalid."""
+        value = os.getenv("EVOMEM_KB_ORGANIZER_NIGHTLY_TIME", "03:00").strip()
+        try:
+            hour_text, minute_text = value.split(":", 1)
+            hour, minute = int(hour_text), int(minute_text)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+            return hour, minute
+        except (ValueError, TypeError):
+            log.warning(
+                "Invalid EVOMEM_KB_ORGANIZER_NIGHTLY_TIME=%r; using 03:00",
+                value,
+            )
+            return 3, 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -81,7 +101,11 @@ class Scheduler:
         try:
             self._scheduler.add_job(
                 self._sefton_tidy_all,
-                CronTrigger(hour=3, minute=0, timezone=self._timezone),
+                CronTrigger(
+                    hour=self._kb_organizer_hour,
+                    minute=self._kb_organizer_minute,
+                    timezone=self._timezone,
+                ),
                 id='builtin:sefton_tidy',
                 replace_existing=True,
                 misfire_grace_time=3600,
