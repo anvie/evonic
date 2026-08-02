@@ -19,10 +19,22 @@ def _run_python_json(backend, code: str, timeout: int = 30):
         raise RuntimeError(result['error'])
     if result.get('exit_code', 0) != 0:
         raise RuntimeError(result.get('stderr') or 'backend path operation failed')
+    stdout = result.get('stdout') or ''
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode('utf-8', errors='replace')
+    # Backends append '\n[truncated]' when stdout exceeds the 64KB cap.
+    # JSON cut mid-stream can never be parsed; surface the real cause.
+    if stdout.rstrip().endswith('[truncated]'):
+        raise RuntimeError(
+            'backend output exceeded the 64KB stdout limit and was truncated; '
+            'narrow the pattern or reduce the result set and retry'
+        )
     try:
-        return json.loads(result.get('stdout', '').strip())
+        return json.loads(stdout.strip())
     except (TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError('backend returned invalid path metadata') from exc
+        raise RuntimeError(
+            f'backend returned unparseable output ({len(stdout)} bytes): {exc}'
+        ) from exc
 
 
 def _path_info(backend, path: str) -> dict:
