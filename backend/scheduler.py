@@ -153,12 +153,13 @@ class Scheduler:
             log.error("Attachments cleanup failed: %s", e, exc_info=True)
 
     def _sefton_tidy_all(self):
-        """Nightly SEFTON tidy: run KB Janitor for sefton-mode agents active in last 24h."""
+        """Nightly SEFTON tidy: run KB Janitor for sefton-mode agents whose
+        last KB filing was within the last 24h."""
         try:
-            from datetime import datetime, timedelta, timezone
             from models.db import db
             from backend.agent_runtime.memory_manager import (
                 resolve_kb_organizer_mode, sefton_tidy_agent,
+                _load_sefton_last_filing,
             )
             agents = db.get_agents()
             sefton_agents = [a for a in agents
@@ -166,28 +167,23 @@ class Scheduler:
             if not sefton_agents:
                 return
 
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            cutoff = time.time() - 24 * 3600
             log.info("SEFTON tidy: %d sefton agent(s), cutoff %s",
-                     len(sefton_agents), cutoff.isoformat())
+                     len(sefton_agents),
+                     datetime.fromtimestamp(cutoff, timezone.utc).isoformat())
 
             for agent in sefton_agents:
                 if not agent.get('enabled'):
                     log.info("SEFTON tidy [%s]: skipped (agent disabled)", agent['id'])
                     continue
-                last_active = agent.get('last_active_at')
-                if not last_active:
-                    log.info("SEFTON tidy [%s]: skipped (never active)", agent['id'])
+                last_filing = _load_sefton_last_filing(agent['id'])
+                if last_filing <= 0:
+                    log.info("SEFTON tidy [%s]: skipped (never filed)", agent['id'])
                     continue
-                if isinstance(last_active, str):
-                    last_active_dt = datetime.fromisoformat(
-                        last_active.replace('Z', '+00:00'))
-                else:
-                    last_active_dt = last_active
-                if last_active_dt.tzinfo is None:
-                    last_active_dt = last_active_dt.replace(tzinfo=timezone.utc)
-                if last_active_dt < cutoff:
-                    log.info("SEFTON tidy [%s]: skipped (last active %s)",
-                             agent['id'], last_active_dt.isoformat())
+                if last_filing < cutoff:
+                    log.info("SEFTON tidy [%s]: skipped (last filing %s)",
+                             agent['id'],
+                             datetime.fromtimestamp(last_filing, timezone.utc).isoformat())
                     continue
                 try:
                     result = sefton_tidy_agent(agent['id'])
