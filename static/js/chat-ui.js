@@ -1037,6 +1037,8 @@ function highlightDiff(patch) {
 // ── Tool result rendering helpers ─────────────────────────────────────────────
 
 function _summarizeToolResultValue(value) {
+    // Preserve concise scalar arrays (such as validation reason_code) while
+    // continuing to suppress nested objects and potentially verbose payloads.
     if (value === null || value === undefined || typeof value === 'object' && !Array.isArray(value)) return null;
     if (Array.isArray(value)) {
         const scalarValues = value.filter(item => item !== null && item !== undefined && typeof item !== 'object');
