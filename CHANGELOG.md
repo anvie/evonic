@@ -27,6 +27,7 @@
 - fix(kanban): use global fallback for enhance (task #734) (373fed8)
 - fix(kanban): restore task creator controls (task #734) (2ba95b1)
 - fix(templates): repair corrupted quotes in evaluate settings page (7ec212e)
+- fix(scheduler): SEFTON tidy trigger uses last KB filing instead of last active (b2eca83)
 
 ### Chores
 
