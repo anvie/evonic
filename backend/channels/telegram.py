@@ -434,6 +434,9 @@ class TelegramChannel(BaseChannel):
             "- Use indentation with spaces for structure\n"
             "- Use plain URLs without markdown link syntax\n"
             "- Write code inline with clear labels like \"CODE:\" prefix\n"
+            "- NEVER embed images with HTML `<img>` tags or Markdown image embeds "
+            "(`![alt](url)`) - Telegram renders them as raw text. To send images or files, "
+            "ALWAYS use the `send_file` tool so they arrive as attachments\n"
             "- Keep responses clean and readable in plain text"
         )
 
