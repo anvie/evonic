@@ -821,6 +821,33 @@ class TelegramChannel(BaseChannel):
         self._llm_thinking_handler = _on_llm_thinking
         event_stream.on('llm_thinking', _on_llm_thinking)
 
+        # Tool-call notification: post a compact one-liner when a tool finishes.
+        # Debounced per user (2s) so a 100-tool loop doesn't spam the chat.
+        _tool_notify_last: dict = {}  # external_user_id -> timestamp
+        _TOOL_NOTIFY_DEBOUNCE = 2.0
+
+        def _on_tool_executed(data):
+            if data.get('channel_id') != channel_id:
+                return
+            user_id = data.get('external_user_id')
+            if not user_id:
+                return
+            now = time.time()
+            if now - _tool_notify_last.get(user_id, 0) < _TOOL_NOTIFY_DEBOUNCE:
+                return
+            _tool_notify_last[user_id] = now
+            tool_name = data.get('tool_name', '')
+            has_error = data.get('has_error', False)
+            icon = '\u26a0\ufe0f' if has_error else '\U0001f6e0\ufe0f'
+            text = f"{icon} Tool: `{tool_name}`"
+            try:
+                self.send_message(user_id, text)
+            except Exception as e:
+                _logger.error("Failed to send tool notification: %s", e)
+
+        self._tool_executed_handler = _on_tool_executed
+        event_stream.on('tool_executed', _on_tool_executed)
+
         def run_polling():
             import asyncio
             loop = asyncio.new_event_loop()
@@ -866,6 +893,8 @@ class TelegramChannel(BaseChannel):
             event_stream.off('approval_resolved', self._approval_resolved_handler)
         if self._llm_thinking_handler:
             event_stream.off('llm_thinking', self._llm_thinking_handler)
+        if self._tool_executed_handler:
+            event_stream.off('tool_executed', self._tool_executed_handler)
         import asyncio
         loop = self._loop
         if loop and loop.is_running():
