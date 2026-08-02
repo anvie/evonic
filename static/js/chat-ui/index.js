@@ -157,6 +157,9 @@ export class ChatUI {
                     // not migrated to the more specific SSE event name yet.
                     document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', { detail: data }));
                 }
+                if (evtName === 'tasks:auto_transition' || evtName === 'tasks:stale') {
+                    document.dispatchEvent(new CustomEvent('evonic:' + evtName, { detail: data }));
+                }
                 if (evtName === 'approval:required') {
                     document.dispatchEvent(new CustomEvent('evonic:approval-required', { detail: data }));
                 }

@@ -61,6 +61,49 @@ def test_general_settings_saves_and_clears_default_model_fallback():
     assert db.get_setting('default_model_fallback_id', 'missing') == ''
 
 
+def test_general_settings_saves_kb_organizer_schedule_and_refreshes_scheduler():
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['authenticated'] = True
+
+    with patch('backend.scheduler.scheduler.refresh_kb_organizer_schedule') as refresh:
+        response = client.post('/api/settings/batch', json={'settings': {
+            'kb_organizer_nightly_time': '14:25',
+        }})
+
+    assert response.status_code == 200
+    assert response.get_json() == {'success': True, 'results': {
+        'kb_organizer_nightly_time': '14:25',
+    }}
+    refresh.assert_called_once_with('14:25')
+    assert db.get_setting('kb_organizer_nightly_time') == '14:25'
+    assert client.get('/api/settings/general').get_json()['kb_organizer_nightly_time'] == '14:25'
+
+
+def test_general_settings_rejects_invalid_kb_organizer_schedule():
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['authenticated'] = True
+
+    with patch(
+        'backend.scheduler.scheduler.refresh_kb_organizer_schedule',
+        side_effect=ValueError('must be in HH:MM format'),
+    ) as refresh:
+        response = client.post('/api/settings/batch', json={'settings': {
+            'kb_organizer_nightly_time': 'invalid',
+        }})
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        'success': True,
+        'partial': True,
+        'results': {},
+        'errors': ['kb_organizer_nightly_time: must be in HH:MM format'],
+    }
+    refresh.assert_called_once_with('invalid')
+    assert db.get_setting('kb_organizer_nightly_time') != 'invalid'
+
+
 def test_general_settings_rejects_unknown_default_model_fallback():
     client = app.test_client()
     with client.session_transaction() as session:

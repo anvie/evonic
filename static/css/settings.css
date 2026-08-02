@@ -282,6 +282,76 @@ html.dark {
     overflow: hidden;
 }
 
+/* ---------- Setting subgroups (nested section inside a group) ---------- */
+.setting-subgroup {
+    padding: 16px 18px 14px;
+    border-bottom: 1px solid var(--border-color);
+}
+.setting-subgroup:last-child {
+    border-bottom: none;
+    padding-bottom: 18px;
+}
+.setting-subgroup-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    margin-bottom: 8px;
+}
+.setting-subgroup-head svg {
+    width: 14px;
+    height: 14px;
+    color: var(--st-accent);
+    align-self: center;
+}
+.setting-subgroup-head h4 {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--st-accent-strong);
+}
+.setting-subgroup-head p {
+    margin: 0 0 12px;
+    flex-basis: 100%;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    max-width: 60ch;
+}
+.setting-subgroup-head p code {
+    font-family: var(--st-mono);
+    font-size: 0.72rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 1px 4px;
+}
+.setting-subgroup-body {
+    min-width: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+}
+.setting-subgroup-body .setting-row {
+    padding: 12px 14px;
+}
+.setting-subgroup-body .setting-row:hover {
+    background: var(--bg-hover);
+}
+.vision-models-group .setting-row-control {
+    width: min(100%, 420px);
+    min-width: 0;
+    max-width: 100%;
+}
+.vision-models-group .setting-select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+}
+
 /* ---------- Setting rows ---------- */
 .setting-row {
     display: flex;

@@ -875,6 +875,10 @@ def api_get_general_settings():
         'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
         'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
+        'kb_organizer_nightly_time': db.get_setting(
+            'kb_organizer_nightly_time',
+            os.getenv('EVOMEM_KB_ORGANIZER_NIGHTLY_TIME', '03:00'),
+        ),
         # ── WhatsApp Safe Delivery (global) ──
         'whatsapp_safe_delivery_enabled': db.get_setting('whatsapp_safe_delivery_enabled',
                                                          '1' if config.WHATSAPP_SAFE_DELIVERY_ENABLED else '0') == '1',
@@ -1148,6 +1152,19 @@ def api_batch_save():
             # Allow clearing the setting (falls back to env / agent default)
             db.set_setting('kb_organizer_model_id', '')
             results['kb_organizer_model_id'] = ''
+
+    # KB Organizer nightly schedule — global time for the Vault Janitor.
+    if 'kb_organizer_nightly_time' in settings:
+        value = str(settings['kb_organizer_nightly_time']).strip()
+        try:
+            from backend.scheduler import scheduler
+            scheduler.refresh_kb_organizer_schedule(value)
+            old_value = db.get_setting('kb_organizer_nightly_time', '')
+            db.set_setting('kb_organizer_nightly_time', value)
+            _audit_setting_change('kb_organizer_nightly_time', old_value, value)
+            results['kb_organizer_nightly_time'] = value
+        except ValueError as e:
+            errors.append(f'kb_organizer_nightly_time: {e}')
 
     if errors:
         return jsonify({

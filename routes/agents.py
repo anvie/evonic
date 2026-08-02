@@ -2409,6 +2409,12 @@ def api_chat_stream(agent_id):
             key: d[key] for key in ('mode', 'plan_file', 'tasks', 'loaded_skills')
             if key in d
         }),
+        'tasks:auto_transition': ('tasks:auto_transition', lambda d: {
+            key: d[key] for key in ('task_ids', 'tasks') if key in d
+        }),
+        'tasks:stale': ('tasks:stale', lambda d: {
+            key: d[key] for key in ('task_ids', 'tasks') if key in d
+        }),
         'llm_response_chunk': ('response_chunk',  lambda d: {
             'content': d.get('content', ''),
             'is_final': d.get('is_final', False),
@@ -2689,6 +2695,8 @@ def api_chat_events(agent_id):
         'tool_call_started': ('tool_call_started', lambda d: {'tool': d.get('tool_name', ''), 'args': d.get('tool_args', {}), 'param_types': d.get('param_types', {})}),
         'tool_executed':     ('tool_executed',    lambda d: {'tool': d.get('tool_name', ''), 'args': d.get('tool_args', {}), 'result': d.get('tool_result', {}), 'error': d.get('has_error', False)}),
         'state:changed':     ('state:changed',    lambda d: {key: d[key] for key in ('mode', 'plan_file', 'tasks', 'loaded_skills') if key in d}),
+        'tasks:auto_transition': ('tasks:auto_transition', lambda d: {key: d[key] for key in ('task_ids', 'tasks') if key in d}),
+        'tasks:stale':       ('tasks:stale',       lambda d: {key: d[key] for key in ('task_ids', 'tasks') if key in d}),
         'llm_response_chunk':('response_chunk',  lambda d: {'content': d.get('content', ''), 'is_final': d.get('is_final', False), 'send_as_message': d.get('send_as_message', False)}),
         'turn_complete':     ('done',             lambda d: {
             'thinking_duration': d.get('thinking_duration'),

@@ -1,5 +1,6 @@
 """Focused regression coverage for built-in slash commands."""
 
+import json
 from unittest.mock import patch
 
 from backend.slash_commands import execute_command
@@ -74,6 +75,28 @@ def test_exec_bypasses_plan_file_requirement_for_fresh_session():
     assert response == "Switched to execute mode."
     saved_state = chat_db.upsert_session_state.call_args.args[1]
     assert '"mode": "execute"' in saved_state
+
+
+def test_exec_preserves_atg_cmp_and_unrelated_session_state():
+    from backend.agent_state import AgentState
+
+    state = AgentState(mode="plan")
+    state.atg = {"status": "executing", "dag": {"nodes": {}}}
+    state.cmp = {"version": 1, "paths": {}}
+    session_state = json.loads(state.serialize())
+    session_state["workspace_marker"] = "preserve"
+    with patch("models.db.db.get_agent", return_value={"enable_agent_state": True}), \
+         patch("models.chat.agent_chat_manager.get") as get_chat:
+        chat_db = get_chat.return_value
+        chat_db.get_session_state.return_value = json.dumps(session_state)
+
+        response = execute_command("exec", "", "session-123", "agent-123", "user-123")
+
+    assert response == "Switched to execute mode."
+    saved_state = json.loads(chat_db.upsert_session_state.call_args.args[1])
+    assert saved_state["atg"] == state.atg
+    assert saved_state["cmp"] == state.cmp
+    assert saved_state["workspace_marker"] == "preserve"
 
 
 def test_agent_mode_transition_still_requires_plan_file():

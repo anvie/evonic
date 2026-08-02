@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.1.2] - 2026-08-02
+
+### Features
+
+- feat: add AgentState task lifecycle foundation (#742) (1030932)
+- feat(agent-state): enforce task lifecycle in tool loop (11f53b6)
+- Task 744 synchronize agent state execution paths (fb1bbdf)
+- Task 745 add task lifecycle feedback (05c9e70)
+- Task 746: configure Vault Janitor schedule (c6e26c9)
+- Task 746: expose Vault Janitor schedule in settings (53fbaaa)
+- feat(kanban): add image attachments to kanban tasks (task #739) (c60816a)
+- feat(kanban): modernize task image picker for task 739 (1ce20bf)
+- feat(kanban): enforce English output for AI task enhancer (#740) (b59f4fd)
+- feat(kanban): add comment attachments for task 741 (126635c)
+- Forward Kanban follow-up attachments (e7e0837)
+- feat(settings): group vision model dropdowns under Vision Models section (task #737) (305bca5)
+- feat(#735): add copy code block buttons to article/document/artifact viewers (dc9ed2f)
+
+### Bug Fixes
+
+- fix(agent-state): self-heal stale task state on session wake (b456105)
+- fix(llm_loop): protect eager skill tools (Explore) from mid-turn pruning (30712fb)
+- fix(settings): prevent Vision Models mobile overflow (#737) (804c04c)
+- fix(agent-sidebar): buffer busy events lost in page-load race (#738) (92b1c24)
+- fix(kanban): use global fallback for enhance (task #734) (373fed8)
+- fix(kanban): restore task creator controls (task #734) (2ba95b1)
+- fix(templates): repair corrupted quotes in evaluate settings page (7ec212e)
+
+### Chores
+
+- chore: rebuild evonic.css via doctor and document scalar-array summarization (f326709)
+
 ## [1.1.0] - 2026-07-31
 
 ### Features

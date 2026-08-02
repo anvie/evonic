@@ -1037,6 +1037,8 @@ function highlightDiff(patch) {
 // ── Tool result rendering helpers ─────────────────────────────────────────────
 
 function _summarizeToolResultValue(value) {
+    // Preserve concise scalar arrays (such as validation reason_code) while
+    // continuing to suppress nested objects and potentially verbose payloads.
     if (value === null || value === undefined || typeof value === 'object' && !Array.isArray(value)) return null;
     if (Array.isArray(value)) {
         const scalarValues = value.filter(item => item !== null && item !== undefined && typeof item !== 'object');
@@ -2297,7 +2299,7 @@ async function _renderViewerContent($body, url, filename, category) {
 
 const SSE_EVENTS = [
     'turn_begin', 'turn_split', 'thinking', 'tool_call_started', 'tool_executed',
-    'state:changed', 'response_chunk', 'done', 'approval_required', 'approval_resolved', 'retry',
+    'state:changed', 'tasks:auto_transition', 'tasks:stale', 'response_chunk', 'done', 'approval_required', 'approval_resolved', 'retry',
     'message_injected', 'message_injection_applied', 'message_received', 'whatsapp_restriction_warning', 'session_clear',
     'state_changed',
     'heartbeat',
@@ -2953,6 +2955,11 @@ class Turn {
             return;
         }
 
+        if (evtName === 'tasks:auto_transition' || evtName === 'tasks:stale') {
+            this._onTrigger(evtName, data);
+            return;
+        }
+
         if (evtName === 'response_chunk' && data.content) {
             // Render every response chunk in the trace (intermediate + final), matching
             // the history-render view. Only the FINAL chunk is stashed for the final
@@ -3461,6 +3468,9 @@ class ChatUI {
                     // Keep the established page-level event for consumers that have
                     // not migrated to the more specific SSE event name yet.
                     document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', { detail: data }));
+                }
+                if (evtName === 'tasks:auto_transition' || evtName === 'tasks:stale') {
+                    document.dispatchEvent(new CustomEvent('evonic:' + evtName, { detail: data }));
                 }
                 if (evtName === 'approval:required') {
                     document.dispatchEvent(new CustomEvent('evonic:approval-required', { detail: data }));

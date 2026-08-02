@@ -444,6 +444,58 @@ def run_tool_loop(agent: Dict[str, Any],
 
     tool_trace = []
     timeline = []
+    # Lifecycle bookkeeping is scoped to this turn. Explicit task transitions
+    # remain authoritative through the current AgentState status; they must not
+    # disable later automatic transitions for unrelated implementation tools.
+    _successful_mutation = False
+    _tool_errors = False
+
+    def _is_mutating_tool(tool_name: str) -> bool:
+        """Return whether a tool represents implementation work."""
+        return tool_name not in _READ_ONLY_TOOLS and tool_name not in {
+            'set_mode', 'save_plan', 'update_tasks', 'state',
+            'compile_task_graph', 'switch_path', 'new_path',
+            'use_skill', 'unload_skill', 'remember', 'recall',
+        }
+
+    def _emit_task_state_change(ms):
+        _persist_agent_state_split(ms, agent_id, session_id, db_agent_id)
+        event_stream.emit('state:changed', {
+            'agent_id': agent_id, 'session_id': session_id,
+            'mode': ms.mode, 'plan_file': ms.plan_file,
+            'tasks': list(ms.tasks),
+        })
+
+    def _emit_task_lifecycle_event(event_name, task_ids):
+        """Emit a task-only lifecycle event without tool or model internals."""
+        visible_ids = {task_id for task_id in task_ids if isinstance(task_id, int)}
+        if not visible_ids:
+            return
+        ms = agent_context.get('agent_state')
+        event_stream.emit(event_name, {
+            'agent_id': agent_id,
+            'session_id': session_id,
+            'task_ids': sorted(visible_ids),
+            'tasks': list(ms.tasks) if ms is not None else [],
+        })
+
+    _initial_state = agent_context.get('agent_state')
+    if _initial_state is not None:
+        # Self-heal stale task state on every session wake. Active tasks that
+        # predate lifecycle tracking (no in_progress_since) or that have been
+        # in progress across a very long wall-clock window are demoted to
+        # pending. Conservative: never auto-completes, never drops pending/done
+        # entries, keeps the task text so the agent can re-activate it.
+        _resolved = _initial_state.resolve_stale_tasks()
+        if _resolved:
+            _emit_task_state_change(_initial_state)
+            _emit_task_lifecycle_event(
+                'tasks:auto_transition', [r['id'] for r in _resolved])
+        _emit_task_lifecycle_event(
+            'tasks:stale',
+            [task['id'] for task in _initial_state.reconcile_tasks(stale_after=180)],
+        )
+
     _loop_start_time = time.time()
     _gate_context = {
         'agent_id': agent_id, 'session_id': session_id,
@@ -554,6 +606,22 @@ def run_tool_loop(agent: Dict[str, Any],
     _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch',
                         'set_mode', 'save_plan', 'update_tasks'}
 
+    # Eager skill tools (e.g. explorer's Explore, direxplorer's Grep/Glob/Read)
+    # are advertised upfront by build_tools() — never prune them mid-turn, or the
+    # model loses them for the rest of the turn the moment they go uncalled past
+    # the prune threshold. Mirrors the existing loaded-lazy-skill protection.
+    _eager_skill_fns: set = set()
+    try:
+        from backend.skills_manager import skills_manager as _sm
+        _eager_skill_fns = {
+            td.get('function', {}).get('name', ' ').strip()
+            for td in _sm.get_all_skill_tool_defs()
+            if td.get('function', {}).get('name')
+        }
+        _eager_skill_fns.discard(' ')
+    except Exception:
+        pass
+
     def _prune_tools(tools_list: List[dict], iteration: int) -> List[dict]:
         """Prune zero-call tools after the threshold iteration.
         
@@ -574,6 +642,7 @@ def run_tool_loop(agent: Dict[str, Any],
             fn_name = t.get('function', {}).get('name', '')
             if (fn_name in _ESSENTIAL_TOOLS
                     or fn_name in _loaded_skill_fns
+                    or fn_name in _eager_skill_fns
                     or _tool_call_counts.get(fn_name, 0) > 0):
                 pruned.append(t)
         if len(pruned) < len(tools_list):
@@ -861,6 +930,7 @@ def run_tool_loop(agent: Dict[str, Any],
         except Exception:
             _logger.exception("ATG execution crashed — falling back to plain loop")
         if _atg_outcome is not None:
+            _atg_ms.sync_completed_atg_tasks()
             try:
                 _persist_agent_state_split(_atg_ms, agent_id, session_id, db_agent_id)
             except Exception:
@@ -1844,6 +1914,17 @@ def run_tool_loop(agent: Dict[str, Any],
                 continue  # re-enter loop so LLM can act on the injected reminder
 
             # Final response — save with timeline metadata
+            ms = agent_context.get('agent_state')
+            if (ms is not None and ms.mode == 'execute' and _successful_mutation
+                    and not stop_event.is_set()):
+                completion = ms.completion_eligible(
+                    tool_errors=_tool_errors, final_text=content, mutated=True)
+                if completion['eligible']:
+                    ms.update_tasks('done', task_id=completion['task_id'])
+                    _emit_task_state_change(ms)
+                    _emit_task_lifecycle_event(
+                        'tasks:auto_transition', [completion['task_id']])
+
             meta = {"timeline": timeline} if timeline else None
             if meta:
                 meta['thinking_duration'] = round(time.time() - _loop_start_time, 1)
@@ -2002,6 +2083,8 @@ def run_tool_loop(agent: Dict[str, Any],
 
         for tc_idx, tc in enumerate(tool_calls):
             fn_name = tc['function']['name']
+            if fn_name == 'update_tasks':
+                _explicit_task_update = True
 
             # --- Quality Monitor: hallucinated tool check ---
             _qm_hallucinated = _qm_check_hallucinated(
@@ -2046,6 +2129,11 @@ def run_tool_loop(agent: Dict[str, Any],
 
             if fn_name in _READ_ONLY_TOOLS and fn_name not in _ALWAYS_SERIAL_TOOLS:
                 _parallel_indices.add(tc_idx)
+
+        # Inspect the complete batch before executing it so an explicit task
+        # update later in the batch always suppresses automatic transitions.
+        _explicit_task_update = any(
+            fn_name == 'update_tasks' for _, fn_name, _, _ in _tool_records)
 
         # Phase 2: Submit and boundedly collect read-only tools (if enabled).
         _parallel_results = {}  # tc_idx -> real or synthetic result
@@ -2093,6 +2181,7 @@ def run_tool_loop(agent: Dict[str, Any],
             # Check B after this loop then ends the turn cleanly.
             if (stop_event.is_set() and i not in _parse_failed
                     and i not in _parallel_results):
+                _tool_errors = True
                 result_str = json.dumps({'error': 'Execution stopped by user'})
                 db.add_chat_message(session_id, 'tool', result_str,
                                     tool_call_id=_tc['id'], agent_id=db_agent_id)
@@ -2115,6 +2204,7 @@ def run_tool_loop(agent: Dict[str, Any],
 
             # --- Parse-failure fast path ---
             if i in _parse_failed:
+                _tool_errors = True
                 result_str = _parse_failed[i]
                 db.add_chat_message(session_id, 'tool', result_str,
                                     tool_call_id=_tc['id'], agent_id=db_agent_id)
@@ -2173,6 +2263,7 @@ def run_tool_loop(agent: Dict[str, Any],
                         'level': 'rejected',
                         'original_reasons': tool_result.get('reasons', []),
                     }
+                    _tool_errors = True
                     # Record the auto-rejection as a completed tool_call result
                     _tc_result = {_tc['id']: tool_result}
                     messages.append({'role': 'tool', 'tool_call_id': _tc['id'],
@@ -2539,6 +2630,23 @@ def run_tool_loop(agent: Dict[str, Any],
                 result_dict = {"data": result_str}
 
             has_error = isinstance(tool_result, dict) and ('error' in tool_result or tool_result.get('status') == 'error')
+
+            _tool_errors = _tool_errors or has_error
+            if (not has_error and not stop_event.is_set()
+                    and _is_mutating_tool(fn_name)):
+                ms = agent_context.get('agent_state')
+                if ms is not None and ms.mode == 'execute':
+                    # The first successful mutation in a turn auto-activates the
+                    # next pending task only when the agent has not explicitly
+                    # managed its own task list this turn. Explicit updates
+                    # always win for selecting which task is active.
+                    if not _successful_mutation and not _explicit_task_update:
+                        activated = ms.auto_activate()
+                        if activated['transitioned']:
+                            _emit_task_state_change(ms)
+                            _emit_task_lifecycle_event(
+                                'tasks:auto_transition', [activated['task_id']])
+                    _successful_mutation = True
 
             timeline.append({"type": "tool_result", "tool": fn_name, "result": result_dict, "error": has_error})
 

@@ -76,6 +76,7 @@ window.settingsGeneral = {
         set("agent-queue-workers-input", s.agent_queue_workers);
         set("max-tool-iterations-input", s.max_tool_iterations);
         set("agent-sidebar-limit-input", s.agent_sidebar_limit);
+        set("kb-organizer-nightly-time-input", s.kb_organizer_nightly_time);
         check("public-history-toggle", s.public_history);
         check("long-running-guard-toggle", s.long_running_guard_enabled);
         check("message-wrapper-toggle", s.message_wrapper_enabled);

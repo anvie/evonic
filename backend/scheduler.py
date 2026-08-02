@@ -49,9 +49,54 @@ log = logging.getLogger(__name__)
 class Scheduler:
     def __init__(self):
         self._timezone = os.getenv("EVONIC_TIMEZONE", "Asia/Jakarta")
+        self._kb_organizer_hour, self._kb_organizer_minute = (
+            self._parse_kb_organizer_time()
+        )
         self._scheduler = BackgroundScheduler(daemon=True, timezone=self._timezone)
         self._started = False
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _parse_kb_organizer_time_value(value: str) -> tuple[int, int]:
+        """Parse a HH:MM value, raising ValueError for invalid values."""
+        try:
+            hour_text, minute_text = value.split(":", 1)
+            hour, minute = int(hour_text), int(minute_text)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+            return hour, minute
+        except (ValueError, TypeError):
+            raise ValueError("must be in HH:MM format") from None
+
+    @classmethod
+    def _parse_kb_organizer_time(cls) -> tuple[int, int]:
+        """Return the persisted or environment KB Janitor time, defaulting to 03:00."""
+        default = os.getenv("EVOMEM_KB_ORGANIZER_NIGHTLY_TIME", "03:00").strip()
+        try:
+            from models.db import db
+            value = db.get_setting("kb_organizer_nightly_time", default).strip()
+        except Exception as e:  # pragma: no cover - scheduler must still initialize
+            log.warning("Failed to read KB Janitor schedule setting: %s", e)
+            value = default
+        try:
+            return cls._parse_kb_organizer_time_value(value)
+        except ValueError:
+            log.warning("Invalid KB Janitor schedule %r; using 03:00", value)
+            return 3, 0
+
+    def refresh_kb_organizer_schedule(self, value: str) -> None:
+        """Replace the running KB Janitor job with a validated daily schedule."""
+        hour, minute = self._parse_kb_organizer_time_value(value)
+        self._kb_organizer_hour, self._kb_organizer_minute = hour, minute
+        if not self._started:
+            return
+        self._scheduler.add_job(
+            self._sefton_tidy_all,
+            CronTrigger(hour=hour, minute=minute, timezone=self._timezone),
+            id="builtin:sefton_tidy",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -81,7 +126,11 @@ class Scheduler:
         try:
             self._scheduler.add_job(
                 self._sefton_tidy_all,
-                CronTrigger(hour=3, minute=0, timezone=self._timezone),
+                CronTrigger(
+                    hour=self._kb_organizer_hour,
+                    minute=self._kb_organizer_minute,
+                    timezone=self._timezone,
+                ),
                 id='builtin:sefton_tidy',
                 replace_existing=True,
                 misfire_grace_time=3600,

@@ -20,6 +20,17 @@ def execute(agent: dict, args: dict) -> dict:
             'message': f'Task with id "{task_id}" not found',
         }
 
+    # Enrich the task with its attachments (metadata + public file URL)
+    # so agents can view or download any images attached to the task.
+    task = dict(task)
+    task['attachments'] = [
+        {
+            **att,
+            'url': f'/api/kanban/attachments/{att["id"]}/file',
+        }
+        for att in kanban_db.get_attachments(str(task_id))
+    ]
+
     last_comment = kanban_db.get_last_comment(str(task_id))
     return {
         'status': 'success',

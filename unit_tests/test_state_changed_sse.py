@@ -52,11 +52,14 @@ def test_frontend_consumes_snapshot_without_state_polling():
     sessions = read_repo_file("templates/sessions.html")
     bundle = read_repo_file("static/js/chat-ui.js")
 
-    assert "'state:changed', 'response_chunk'" in transport
+    # #745 inserted lifecycle events between state:changed and response_chunk in
+    # the SSE list; the guard verifies state snapshots flow through the same
+    # transport as response chunks.
+    assert "'state:changed', 'tasks:auto_transition', 'tasks:stale', 'response_chunk'" in transport
     assert "this._onTrigger('state:changed', data);" in turn
     assert "new CustomEvent('evonic:state-changed', { detail: data })" in chat_ui
     assert "new CustomEvent('evonic:agent-state-changed', { detail: data })" in chat_ui
-    assert "'state:changed', 'response_chunk'" in bundle
+    assert "'state:changed', 'tasks:auto_transition', 'tasks:stale', 'response_chunk'" in bundle
 
     listener_start = sessions.index("document.addEventListener('evonic:agent-state-changed'")
     listener_end = sessions.index("function toggleMobileSummary()", listener_start)
