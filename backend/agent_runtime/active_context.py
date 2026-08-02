@@ -189,7 +189,9 @@ def _receipt_line(sequence: int, group: _ToolGroup) -> str:
         for result in group.results
     )
     digest = hashlib.sha256(digest_input.encode("utf-8", errors="replace")).hexdigest()[:12]
-    return f"- #{sequence} {labels} — success ({kind}); result-ref sha256:{digest}"
+    # Keep the same model-visible facts in a denser receipt. These lines recur once
+    # per compacted group, so even small reductions materially bound long loops.
+    return f"- #{sequence} {labels}: success/{kind}; ref:{digest}"
 
 
 def _bounded_ledger(entries: Sequence[str], max_chars: int) -> str:
