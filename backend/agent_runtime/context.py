@@ -868,6 +868,7 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         'id': agent['id'],
         'is_super': bool(agent.get('is_super')),
         'workplace_id': agent.get('workplace_id'),
+        'send_file_allowed_path_regex': agent.get('send_file_allowed_path_regex', ''),
         'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
         'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
         'always_execute': bool(agent.get('always_execute')),

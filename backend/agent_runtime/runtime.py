@@ -2090,6 +2090,7 @@ class AgentRuntime:
                 'assigned_tool_ids': assigned_tool_ids,
                 'workspace': _workspace,
                 'workplace_id': _workplace_id,
+                'send_file_allowed_path_regex': agent.get('send_file_allowed_path_regex', ''),
                 'is_super': bool(agent.get('is_super')),
                 'is_subagent': bool(agent.get('is_subagent')),
                 'is_explorer': bool(agent.get('is_explorer')),
