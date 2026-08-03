@@ -116,6 +116,11 @@ def _read_global_setting(key: str, default: str) -> str:
         return default
 
 
+def _is_status_broadcast(sender: str, jid: str) -> bool:
+    """Return whether an inbound payload represents a WhatsApp Status update."""
+    return sender in {"status", "status@broadcast"} or jid == "status@broadcast"
+
+
 def _format_quoted_context(quoted_text=None, quoted_message=None,
                            quoted_is_bot=False, quoted_sender_name='',
                            quoted_sender='', is_group=False) -> str:
@@ -678,6 +683,14 @@ class WhatsAppChannel(BaseChannel):
         group_name = payload.get('group_name') or ''
         quoted_sender = payload.get('quoted_sender') or ''
         quoted_sender_name = payload.get('quoted_sender_name') or ''
+
+        # WhatsApp Status updates are broadcasts, not direct user messages.
+        # Routing them into an agent creates synthetic conversations and can
+        # pull workflow-specific agents away from their assigned domain.
+        if _is_status_broadcast(sender, jid):
+            _logger.info("WhatsApp status broadcast dropped (channel %s)",
+                         self.channel_id)
+            return
 
         # Reply through the exact namespace used by the inbound conversation.
         # Baileys may also resolve the peer's alternate PN/LID identity; retain it
