@@ -6,7 +6,9 @@ from backend.plugin_hooks import (
     register_attachment_policy,
     unregister_attachment_policy,
 )
-from backend.tools.send_file import _check_path_policy
+from backend.tools.send_file import (
+    _check_path_policy, _check_self_request_policy, execute,
+)
 
 
 def test_empty_regex_preserves_existing_behavior():
@@ -27,6 +29,50 @@ def test_non_matching_path_is_rejected_without_path_disclosure():
 
 def test_invalid_regex_fails_closed_when_policy_is_enabled():
     assert _check_path_policy({"send_file_allowed_path_regex": "["}, "/tmp/report.pdf")
+
+
+def test_self_request_is_rejected_when_policy_denies_virtual_prefix():
+    agent = {"send_file_allowed_path_regex": r"^(?!/_self).*$"}
+    result = _check_self_request_policy(agent, "/_self/SYSTEM.md")
+    assert result == {"error": "File attachment is not permitted by the configured policy."}
+
+
+def test_self_request_is_allowed_when_policy_accepts_virtual_prefix():
+    agent = {"send_file_allowed_path_regex": r"^/_self/artifacts/"}
+    assert _check_self_request_policy(agent, "/_self/artifacts/report.pdf") is None
+
+
+def test_canonical_only_policy_is_not_applied_to_virtual_request():
+    agent = {"send_file_allowed_path_regex": r"^/agents/agent/artifacts/"}
+    assert _check_self_request_policy(agent, "/_self/artifacts/report.pdf") is None
+
+
+def test_empty_policy_preserves_self_request_behavior():
+    assert _check_self_request_policy({}, "/_self/SYSTEM.md") is None
+
+
+def test_self_request_policy_invalid_regex_fails_closed():
+    agent = {"send_file_allowed_path_regex": r"/_self["}
+    assert _check_self_request_policy(agent, "/_self/report.pdf")
+
+
+def test_execute_rejects_denied_self_request_before_resolution(monkeypatch):
+    agent = {
+        "id": "agent",
+        "session_id": "session",
+        "send_file_allowed_path_regex": r"^(?!/_self).*$",
+    }
+
+    def fail_resolution(*args, **kwargs):
+        raise AssertionError("denied virtual path must not be resolved")
+
+    monkeypatch.setattr("backend.tools._workspace.resolve_self_path", fail_resolution)
+
+    result = execute(agent, {"file_path": "/_self/SYSTEM.md"})
+
+    assert result == {
+        "error": "File attachment is not permitted by the configured policy."
+    }
 
 
 def test_traversal_is_checked_after_canonicalization(tmp_path):

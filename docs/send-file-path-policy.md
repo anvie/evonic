@@ -2,8 +2,12 @@
 
 Agents can restrict `send_file` in **Agent detail → Advanced Settings** with the
 optional **Allowed send_file path regex** setting. An empty value preserves the
-existing behavior. When configured, the regex is matched against the canonical
-(realpath) path after traversal and symlink resolution.
+existing behavior. For ordinary paths, the regex is matched against the
+canonical (realpath) path after traversal and symlink resolution. For `/_self/`
+requests, expressions that mention `/_self` are also matched against the
+original virtual request before resolution; this prevents canonicalization from
+bypassing an explicit virtual-path restriction. The canonical-path check still
+runs afterward.
 
 The check runs before file metadata or bytes are exposed. Rejections use a
 generic error and do not disclose the rejected path or contents. Invalid regex
