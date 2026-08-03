@@ -1285,6 +1285,25 @@ def api_user_audit(user_id):
 # inbound senders are routed per-user/group via config.routes and unknown
 # senders land in shared_channel_inbox for capture-and-assign.
 
+_SHARED_ACCESS_MODES = {'assigned_only', 'unrestricted'}
+
+
+def _validate_shared_access_config(channel, data):
+    """Return validated access settings, or an API error response tuple."""
+    config = dict(channel.get('config') or {})
+    mode = data.get('access_mode', config.get('access_mode', 'assigned_only'))
+    default_agent_id = data.get(
+        'default_agent_id', config.get('default_agent_id') or '')
+    if mode not in _SHARED_ACCESS_MODES:
+        return None, (jsonify({
+            'error': 'access_mode must be assigned_only or unrestricted'}), 400)
+    if mode == 'unrestricted':
+        agent = db.get_agent(default_agent_id)
+        if not agent or not agent.get('enabled'):
+            return None, (jsonify({
+                'error': 'default_agent_id must identify an enabled agent'}), 400)
+    return {'access_mode': mode, 'default_agent_id': default_agent_id}, None
+
 def _shared_channel_or_404(channel_id):
     channel = db.get_channel(channel_id)
     if not channel or channel.get('agent_id') is not None:
@@ -1322,7 +1341,8 @@ def api_create_shared_channel():
         'agent_id': None,
         'type': 'whatsapp_shared',
         'name': name,
-        'config': {'mode': 'open', 'routes': {}},
+        'config': {'mode': 'open', 'access_mode': 'assigned_only',
+                   'default_agent_id': '', 'routes': {}},
     })
     try:
         channel_manager.start_channel(chan_id)
@@ -1338,10 +1358,20 @@ def api_create_shared_channel():
 @settings_bp.route('/api/shared-channels/<channel_id>', methods=['PUT'])
 def api_update_shared_channel(channel_id):
     from backend.channels.registry import channel_manager
-    if not _shared_channel_or_404(channel_id):
+    channel = _shared_channel_or_404(channel_id)
+    if not channel:
         return jsonify({'error': 'Shared channel not found'}), 404
     data = request.get_json() or {}
-    db.update_channel(channel_id, {k: v for k, v in data.items() if k in ('name', 'enabled')})
+    access, error = _validate_shared_access_config(channel, data)
+    if error:
+        return error
+    updates = {k: v for k, v in data.items() if k in ('name', 'enabled')}
+    if 'access_mode' in data or 'default_agent_id' in data:
+        config = dict(channel.get('config') or {})
+        config.update(access)
+        updates['config'] = config
+    if updates:
+        db.update_channel(channel_id, updates)
     if 'enabled' in data:
         try:
             if data['enabled']:

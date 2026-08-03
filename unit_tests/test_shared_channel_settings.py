@@ -128,6 +128,8 @@ def test_create_list_delete_shared_channel(client, monkeypatch):
     chan = resp.get_json()['channel']
     assert chan['agent_id'] is None
     assert chan['config']['mode'] == 'open'
+    assert chan['config']['access_mode'] == 'assigned_only'
+    assert chan['config']['default_agent_id'] == ''
 
     # Duplicate name rejected app-side (UNIQUE treats NULLs as distinct)
     assert client.post('/api/shared-channels',
@@ -159,6 +161,43 @@ def test_routes_add_and_remove(client, chan_id, agent_a):
     config = db.get_channel(chan_id)['config']
     assert config['routes'] == {}
     assert config['user_names'] == {}
+
+
+def test_access_settings_validate_and_preserve_routes(client, chan_id, agent_a):
+    db.update_channel(chan_id, {'config': {
+        'mode': 'open', 'routes': {'628111': agent_a},
+        'user_names': {'628111': 'Budi'}, 'bridge_port': 3001,
+    }})
+    response = client.put(f'/api/shared-channels/{chan_id}', json={
+        'access_mode': 'unrestricted', 'default_agent_id': agent_a})
+    assert response.status_code == 200
+    config = db.get_channel(chan_id)['config']
+    assert config['access_mode'] == 'unrestricted'
+    assert config['default_agent_id'] == agent_a
+    assert config['routes'] == {'628111': agent_a}
+    assert config['user_names'] == {'628111': 'Budi'}
+    assert config['bridge_port'] == 3001
+
+
+def test_access_settings_reject_invalid_or_disabled_default(client, chan_id):
+    db.create_agent({'id': 'agent-off', 'name': 'Disabled', 'enabled': False})
+    assert client.put(f'/api/shared-channels/{chan_id}', json={
+        'access_mode': 'unknown'}).status_code == 400
+    assert client.put(f'/api/shared-channels/{chan_id}', json={
+        'access_mode': 'unrestricted', 'default_agent_id': 'ghost'}).status_code == 400
+    assert client.put(f'/api/shared-channels/{chan_id}', json={
+        'access_mode': 'unrestricted', 'default_agent_id': 'agent-off'}).status_code == 400
+
+
+def test_access_settings_are_independent_per_number(client, agent_a):
+    first = db.create_channel({'agent_id': None, 'type': 'whatsapp_shared', 'name': 'One',
+                               'config': {'routes': {}}})
+    second = db.create_channel({'agent_id': None, 'type': 'whatsapp_shared', 'name': 'Two',
+                                'config': {'routes': {}}})
+    assert client.put(f'/api/shared-channels/{first}', json={
+        'access_mode': 'unrestricted', 'default_agent_id': agent_a}).status_code == 200
+    assert db.get_channel(second)['config'].get('access_mode') is None
+    assert db.get_channel(first)['config']['default_agent_id'] == agent_a
 
 
 def test_route_removal_cleans_orphaned_names(client, chan_id, agent_a):

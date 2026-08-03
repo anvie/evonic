@@ -67,3 +67,24 @@ def test_route_pagination_filters_resets_and_clamps_data_changes():
     assert "sharedChannel.routesPage = Math.min(sharedChannel.routesPage, totalPages);" in markup
     assert "filteredRows.slice(start, start + sharedChannel.routesPageSize)" in markup
     assert "No routes match your filter." in markup
+
+
+def test_shared_channel_access_controls_are_per_number_and_persisted_live():
+    markup = TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="sc-access-mode"' in markup
+    assert 'id="sc-default-agent"' in markup
+    assert 'value="assigned_only"' in markup
+    assert 'value="unrestricted"' in markup
+    assert 'sharedChannel.saveAccess()' in markup
+    assert 'access_mode: mode' in markup
+    assert 'default_agent_id: defaultAgentId' in markup
+    assert 'Select an enabled default agent for unrestricted access.' in markup
+    assert 'groups still require an explicit route.' in markup
+
+
+def test_shared_channel_access_controls_handle_api_errors():
+    markup = TEMPLATE.read_text(encoding="utf-8")
+
+    assert "sharedChannel.showToast(data.error, 'error')" in markup
+    assert "Unable to save direct-message access settings." in markup

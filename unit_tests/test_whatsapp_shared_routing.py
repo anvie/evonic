@@ -158,6 +158,51 @@ def test_resolve_reads_routes_fresh_from_db(shared_channel):
         '628555', False, '628555@s.whatsapp.net') == 'agent-b'
 
 
+def test_unrestricted_dm_fallback_uses_default_agent_without_inbox(shared_channel):
+    from models.db import db
+    config = db.get_channel(shared_channel.channel_id)['config']
+    config.update({'access_mode': 'unrestricted', 'default_agent_id': 'agent-a'})
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '620000', False, '620000@s.whatsapp.net', payload={'text': 'hello'}) == 'agent-a'
+    assert db.get_inbox(shared_channel.channel_id) == []
+
+
+def test_unrestricted_explicit_route_and_lid_route_keep_precedence(shared_channel):
+    from models.db import db
+    config = db.get_channel(shared_channel.channel_id)['config']
+    config.update({'access_mode': 'unrestricted', 'default_agent_id': 'agent-b'})
+    config['routes']['628777'] = 'agent-a'
+    config['routes']['628888'] = 'agent-a'
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '628777', False, '628777@s.whatsapp.net') == 'agent-a'
+    assert shared_channel._resolve_agent(
+        '999888', False, '999888@lid', alt_sender='628888') == 'agent-a'
+
+
+def test_unrestricted_missing_or_disabled_default_fails_closed(shared_channel):
+    from models.db import db
+    config = db.get_channel(shared_channel.channel_id)['config']
+    config.update({'access_mode': 'unrestricted', 'default_agent_id': 'agent-off'})
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '620000', False, '620000@s.whatsapp.net') is None
+    config['default_agent_id'] = 'agent-ghost'
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '620001', False, '620001@s.whatsapp.net') is None
+
+
+def test_unrestricted_group_still_requires_explicit_group_route(shared_channel):
+    from models.db import db
+    config = db.get_channel(shared_channel.channel_id)['config']
+    config.update({'access_mode': 'unrestricted', 'default_agent_id': 'agent-a'})
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '628111', True, '120369999999999999@g.us') is None
+
+
 # ── Gate + base behavior ────────────────────────────────────────────────────
 
 def test_shared_gate_sender_always_true(shared_channel):

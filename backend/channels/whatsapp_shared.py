@@ -38,13 +38,37 @@ class SharedWhatsAppChannel(WhatsAppChannel):
         # Read routes fresh from the DB so admin edits apply without restart
         # (config PUTs do not restart running channels).
         channel = db.get_channel(self.channel_id)
-        routes = (channel or {}).get('config', {}).get('routes') or {}
+        config = (channel or {}).get('config') or {}
+        routes = config.get('routes') or {}
         if is_group:
             group_id = jid.split('@')[0] if '@' in jid else jid
             agent_id = routes.get(group_id)
         else:
             agent_id = _lookup_route(routes, sender, alt_sender)
         if not agent_id:
+            # Unrestricted mode accepts only unmatched direct messages. Groups
+            # remain route-only so their mention/reply security is unchanged.
+            if not is_group and config.get('access_mode', 'assigned_only') == 'unrestricted':
+                agent_id = config.get('default_agent_id') or None
+                # A malformed runtime config fails closed and must not fall
+                # through to the assigned-senders inbox workflow.
+                if not agent_id:
+                    _logger.warning(
+                        'Shared unrestricted channel %s has no default agent',
+                        self.channel_id)
+                    return None
+                if agent_id:
+                    _logger.info(
+                        'Shared unrestricted fallback: channel=%s sender=%s agent=%s',
+                        self.channel_id, sender, agent_id)
+            if agent_id:
+                agent = db.get_agent(agent_id)
+                if not agent or not agent.get('enabled'):
+                    _logger.warning(
+                        'Shared WhatsApp default agent %s is missing/disabled (channel %s)',
+                        agent_id, self.channel_id)
+                    return None
+                return agent_id
             # DIAGNOSTIC: show the active channel_id and its actual route keys
             # so a route-on-the-wrong-channel (or unsaved route) is obvious.
             _logger.info(
