@@ -158,6 +158,51 @@ def test_resolve_reads_routes_fresh_from_db(shared_channel):
         '628555', False, '628555@s.whatsapp.net') == 'agent-b'
 
 
+def test_unrestricted_dm_fallback_uses_default_agent_without_inbox(shared_channel):
+    from models.db import db
+    config = db.get_channel(shared_channel.channel_id)['config']
+    config.update({'access_mode': 'unrestricted', 'default_agent_id': 'agent-a'})
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '620000', False, '620000@s.whatsapp.net', payload={'text': 'hello'}) == 'agent-a'
+    assert db.get_inbox(shared_channel.channel_id) == []
+
+
+def test_unrestricted_explicit_route_and_lid_route_keep_precedence(shared_channel):
+    from models.db import db
+    config = db.get_channel(shared_channel.channel_id)['config']
+    config.update({'access_mode': 'unrestricted', 'default_agent_id': 'agent-b'})
+    config['routes']['628777'] = 'agent-a'
+    config['routes']['628888'] = 'agent-a'
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '628777', False, '628777@s.whatsapp.net') == 'agent-a'
+    assert shared_channel._resolve_agent(
+        '999888', False, '999888@lid', alt_sender='628888') == 'agent-a'
+
+
+def test_unrestricted_missing_or_disabled_default_fails_closed(shared_channel):
+    from models.db import db
+    config = db.get_channel(shared_channel.channel_id)['config']
+    config.update({'access_mode': 'unrestricted', 'default_agent_id': 'agent-off'})
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '620000', False, '620000@s.whatsapp.net') is None
+    config['default_agent_id'] = 'agent-ghost'
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '620001', False, '620001@s.whatsapp.net') is None
+
+
+def test_unrestricted_group_still_requires_explicit_group_route(shared_channel):
+    from models.db import db
+    config = db.get_channel(shared_channel.channel_id)['config']
+    config.update({'access_mode': 'unrestricted', 'default_agent_id': 'agent-a'})
+    db.update_channel(shared_channel.channel_id, {'config': config})
+    assert shared_channel._resolve_agent(
+        '628111', True, '120369999999999999@g.us') is None
+
+
 # ── Gate + base behavior ────────────────────────────────────────────────────
 
 def test_shared_gate_sender_always_true(shared_channel):
@@ -172,3 +217,55 @@ def test_base_resolve_agent_returns_bound_agent():
         '628111', False, '628111@s.whatsapp.net') == 'agent-x'
     assert channel._resolve_agent(
         '628111', True, '12036000@g.us', alt_sender='628999') == 'agent-x'
+
+
+# ── Inbound callback ──────────────────────────────────────────────────────────
+
+_IMAGE = {'base64': 'aW1hZ2UtYnl0ZXM=', 'mimetype': 'image/jpeg'}
+
+
+def _capture_callback(monkeypatch, shared_channel, payload):
+    from backend.agent_runtime import agent_runtime
+    from models.db import db
+
+    db.update_agent('agent-a', {'vision_enabled': False})
+    captured = {'saved': []}
+
+    def save_attachment(session_id, sender, image_bytes, mime_type, agent_id=None):
+        captured['saved'].append((session_id, sender, image_bytes, mime_type, agent_id))
+        return {'attachment_id': 42, 'filename': 'image.jpg', 'is_image': True}
+
+    monkeypatch.setattr(shared_channel, '_save_image_attachment', save_attachment)
+    monkeypatch.setattr(agent_runtime, 'handle_message',
+                        lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs) or {'buffered': True})
+    shared_channel.handle_callback({
+        'from': '628111',
+        'jid': '628111@s.whatsapp.net',
+        'message_id': 'msg-1',
+        **payload,
+    })
+    return captured
+
+
+def test_captionless_image_reaches_routed_vision_disabled_agent(monkeypatch, shared_channel):
+    captured = _capture_callback(monkeypatch, shared_channel, {'text': '', 'image': _IMAGE})
+
+    assert captured['args'][0:4] == ('agent-a', '628111', '[Image]', shared_channel.channel_id)
+    assert captured['kwargs']['image_url'] is None
+    assert captured['kwargs']['metadata']['attachment_info']['attachment_id'] == 42
+    assert captured['saved'][0][1:] == ('628111', b'image-bytes', 'image/jpeg', 'agent-a')
+
+
+def test_captioned_image_preserves_caption(monkeypatch, shared_channel):
+    captured = _capture_callback(
+        monkeypatch, shared_channel, {'text': 'Please inspect this receipt', 'image': _IMAGE})
+
+    assert captured['args'][2] == 'Please inspect this receipt'
+    assert captured['kwargs']['metadata']['attachment_info']['attachment_id'] == 42
+
+
+def test_empty_payload_remains_dropped(monkeypatch, shared_channel):
+    captured = _capture_callback(monkeypatch, shared_channel, {'text': ''})
+
+    assert 'args' not in captured
+    assert captured['saved'] == []

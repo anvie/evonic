@@ -27,6 +27,17 @@ from evaluator.logger import test_logger
 from models.db import db
 import config
 
+def _build_evaluation_llm_client():
+    """Return the configured evaluation client or the global default client."""
+    model_id = db.get_setting("eval_model_id", "") or ""
+    if not model_id:
+        return llm_client
+    model_config = db.get_model_by_id(model_id)
+    if not model_config:
+        return llm_client
+    from evaluator.llm_client import LLMClient
+    return LLMClient(model_config)
+
 # Maximum iterations for multi-turn tool calling (configurable via EVAL_MAX_TOOL_ITERATIONS env var)
 MAX_TOOL_ITERATIONS = config.EVAL_MAX_TOOL_ITERATIONS
 
@@ -222,6 +233,9 @@ class EvaluationEngine:
             self._log(f"[INFO] Using custom LLM endpoint: {model_config.get('base_url', 'N/A')}")
         else:
             from evaluator.llm_client import llm_client as run_llm_client
+        self.evaluation_llm_client = _build_evaluation_llm_client()
+        from evaluator.answer_extractor import answer_extractor as _ae
+        _ae.client = self.evaluation_llm_client
         
         try:
             from backend.llm_usage_events import usage_context
@@ -240,7 +254,7 @@ class EvaluationEngine:
 
                 # Generate summary after all tests
                 if self.is_running:
-                    self._generate_summary(run_id, model_name, run_llm_client)
+                    self._generate_summary(run_id, model_name, self.evaluation_llm_client)
 
         except Exception as e:
             import traceback
@@ -409,10 +423,11 @@ class EvaluationEngine:
         else:
             from evaluator.llm_client import llm_client as run_llm_client
 
-        # Point pass2 evaluator at the same model used for this run,
-        # so it doesn't fall back to the (possibly offline) global default.
+        self.evaluation_llm_client = _build_evaluation_llm_client()
+
+        # Point pass2 extraction at the configured evaluation model.
         from evaluator.answer_extractor import answer_extractor as _ae
-        _ae.client = run_llm_client
+        _ae.client = self.evaluation_llm_client
 
         try:
             from backend.llm_usage_events import usage_context
@@ -424,7 +439,7 @@ class EvaluationEngine:
 
                 # Generate summary after all tests
                 if self.is_running:
-                    self._generate_summary(run_id, model_name, run_llm_client)
+                    self._generate_summary(run_id, model_name, self.evaluation_llm_client)
 
         except Exception as e:
             import traceback
@@ -1178,7 +1193,7 @@ class EvaluationEngine:
         evaluator_config = test_loader.get_evaluator(evaluator_id) if evaluator_id else None
         
         if evaluator_config and evaluator_config.type in ('custom', 'regex', 'hybrid'):
-            custom_eval = CustomEvaluator(evaluator_config.to_dict())
+            custom_eval = CustomEvaluator(evaluator_config.to_dict(), llm_client_override=self.evaluation_llm_client)
             self._log(f'[EVAL] Using custom evaluator: {evaluator_config.name} (type: {evaluator_config.type})')
             result = custom_eval.evaluate(response_content, expected, level)
         elif evaluator_id:

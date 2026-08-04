@@ -19,6 +19,8 @@ Supported methods:
   write_file   params: {path, content, mode}
 """
 
+import base64
+import binascii
 import json
 import os
 import shlex
@@ -256,8 +258,13 @@ class TunnelWorkplaceBackend(ExecutionBackend):
         if not data:
             return {'bytes': b''}
         try:
-            return {'bytes': base64.b64decode(data)}
-        except Exception as e:
+            # RPC transports may wrap Base64 output or omit optional terminal
+            # padding. Remove transport whitespace and restore only that padding
+            # before using strict decoding, so malformed data remains rejected.
+            normalized = ''.join(data.split())
+            normalized += '=' * (-len(normalized) % 4)
+            return {'bytes': base64.b64decode(normalized, validate=True)}
+        except (TypeError, ValueError, binascii.Error) as e:
             return {'error': f'base64 decode failed: {e}'}
 
     def delete_file(self, path: str) -> dict:

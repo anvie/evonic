@@ -6,6 +6,7 @@
     "threshold": 25,
     "counter_strategy": "cumulative",
     "identity_resolver": "trusted_channel_identity",
+    "image_attachment_required_tool": "validate_photo",
     "monitored_tools": ["registration_draft", "person_data_match", "validate_photo", "register", "cek_status"],
     "mutating_tools": ["registration_draft", "person_data_match", "validate_photo", "register", "cek_status"],
     "countable_reason_codes": [

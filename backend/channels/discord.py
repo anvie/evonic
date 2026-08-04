@@ -160,7 +160,10 @@ class DiscordChannel(BaseChannel):
         return (
             "You are responding via Discord. Discord supports Markdown, so you may "
             "use **bold**, *italic*, `inline code`, and ```code blocks```. Keep each "
-            "message under 2000 characters; very long answers are split automatically."
+            "message under 2000 characters; very long answers are split automatically.\n"
+            "- Images and files: ALWAYS deliver them with the `send_file` tool so they arrive "
+            "as attachments. NEVER embed images with HTML `<img>` tags or Markdown image "
+            "embeds (`![alt](url)`) - Discord does not render them in chat; they arrive as raw text."
         )
 
     # ------------------------------------------------------------------ lifecycle

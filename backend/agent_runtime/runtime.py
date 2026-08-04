@@ -51,6 +51,14 @@ _LOGS_DIR = os.path.join(_BASE_DIR, 'logs')
 
 _logger = logging.getLogger(__name__)
 
+# Image-embed detection for external channels (web renders these fine; chat
+# clients like WhatsApp/Telegram/Discord do not). Used by the final-message
+# safety net in AgentRuntime._strip_media_embeds().
+_IMG_EMBED_RE = re.compile(r'<img\b[^>]*\bsrc=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
+_MD_IMG_EMBED_RE = re.compile(r'!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+_ARTIFACT_URL_RE = re.compile(r'^/api/agents/([^/]+)/artifacts/(.+)$')
+_ATTACHMENT_URL_RE = re.compile(r'^/api/attachments/(\d+)(?:/view)?$')
+
 
 def _append_attachment_context(content: str, attachment_infos, attachment_info,
                                agent: dict, has_describe_image: bool) -> str:
@@ -839,7 +847,12 @@ class AgentRuntime:
                         task.ctx.external_user_id, task.ctx.session_id)
                     if instance and instance.is_running:
                         try:
-                            instance.send_message(task.ctx.external_user_id, result['response'])
+                            _out_text = result['response']
+                            # External channels do not render HTML <img>/Markdown image
+                            # embeds: deliver resolvable media via send_file and strip
+                            # the embed markup from the outgoing text.
+                            _out_text = self._strip_media_embeds(_out_text, task.ctx.session_id)
+                            instance.send_message(task.ctx.external_user_id, _out_text)
                             # Check for async send errors (channel records failures internally)
                             if isinstance(instance, BaseChannel) and instance.has_send_error(task.ctx.external_user_id):
                                 send_err = instance.get_send_error(task.ctx.external_user_id)
@@ -2077,6 +2090,7 @@ class AgentRuntime:
                 'assigned_tool_ids': assigned_tool_ids,
                 'workspace': _workspace,
                 'workplace_id': _workplace_id,
+                'send_file_allowed_path_regex': agent.get('send_file_allowed_path_regex', ''),
                 'is_super': bool(agent.get('is_super')),
                 'is_subagent': bool(agent.get('is_subagent')),
                 'is_explorer': bool(agent.get('is_explorer')),
@@ -2112,16 +2126,28 @@ class AgentRuntime:
             if _trusted_meta.get('channel_message_id'):
                 agent_context['trusted_message_id'] = str(_trusted_meta['channel_message_id'])
             if _trusted_meta.get('attachment_info'):
-                _att_ids = []
                 _a_info = _trusted_meta['attachment_info']
-                if isinstance(_a_info, list):
-                    for _att in _a_info:
-                        if isinstance(_att, dict) and _att.get('id'):
-                            _att_ids.append(str(_att['id']))
-                elif isinstance(_a_info, dict) and _a_info.get('id'):
-                    _att_ids.append(str(_a_info['id']))
+                _att_infos = _a_info if isinstance(_a_info, list) else [_a_info]
+                _att_ids = []
+                _att_mime_types = []
+                _att_paths = []
+                for _att in _att_infos:
+                    if not isinstance(_att, dict):
+                        continue
+                    _att_id = _att.get('id') or _att.get('attachment_id')
+                    if _att_id is not None:
+                        _att_ids.append(str(_att_id))
+                    if _att.get('mime_type'):
+                        _att_mime_types.append(str(_att['mime_type']))
+                    _att_path = _att.get('workplace_path') or _att.get('file_path')
+                    if _att_path:
+                        _att_paths.append(str(_att_path))
                 if _att_ids:
                     agent_context['trusted_attachment_ids'] = _att_ids
+                if _att_mime_types:
+                    agent_context['trusted_attachment_mime_types'] = _att_mime_types
+                if _att_paths:
+                    agent_context['trusted_attachment_paths'] = _att_paths
 
         # Propagate agent_message_depth and from_agent_id from incoming message metadata
         if ctx.external_user_id.startswith("__agent__"):
@@ -2741,6 +2767,67 @@ class AgentRuntime:
                             metadata={'attachment_info': attachment_info})
 
         return True
+
+    def _resolve_media_url(self, url: str) -> Optional[str]:
+        """Resolve an internal media URL to a local file path, or None.
+
+        Supports artifact URLs (/api/agents/<aid>/artifacts/<filename>) and
+        attachment URLs (/api/attachments/<id>/view). Only returns paths that
+        exist on disk and stay inside the artifact directory (no traversal).
+        """
+        if not url:
+            return None
+        url = url.split('?')[0].split('#')[0]
+
+        m = _ARTIFACT_URL_RE.match(url)
+        if m:
+            aid, filename = m.group(1), m.group(2)
+            if '..' in filename or '/' in filename:
+                return None
+            safe_root = os.path.realpath(
+                os.path.join(_BASE_DIR, 'shared', 'agents', aid, 'artifacts'))
+            candidate = os.path.realpath(os.path.join(safe_root, filename))
+            if candidate.startswith(safe_root + os.sep) and os.path.isfile(candidate):
+                return candidate
+            return None
+
+        m = _ATTACHMENT_URL_RE.match(url)
+        if m:
+            try:
+                row = db.get_attachment(int(m.group(1)))
+            except Exception:
+                return None
+            if row and row.get('file_path') and os.path.isfile(row['file_path']):
+                return row['file_path']
+        return None
+
+    def _strip_media_embeds(self, text: str, session_id: str) -> str:
+        """Safety net for external channels: convert HTML/Markdown image embeds
+        in a final reply into real file attachments.
+
+        Resolvable artifact/attachment URLs are delivered via send_file_as_bot()
+        and the embed markup is removed from the outgoing text so the chat client
+        shows a clean message plus the attachment. Unresolvable embeds are also
+        stripped (they would otherwise arrive as raw text).
+        """
+        if not text:
+            return text
+
+        def _handle(url: str) -> str:
+            path = self._resolve_media_url(url)
+            if path:
+                try:
+                    self.send_file_as_bot(session_id, path)
+                except Exception as e:
+                    _logger.warning("send_file_as_bot failed for embed %s: %s", url, e)
+            else:
+                _logger.info(
+                    "Stripped unresolvable media embed from outgoing channel text: %s", url)
+            return ''
+
+        text = _IMG_EMBED_RE.sub(lambda m: _handle(m.group(1)), text)
+        text = _MD_IMG_EMBED_RE.sub(lambda m: _handle(m.group(1)), text)
+        return text
 
     def send_as_user(self, session_id: str, text: str,
                      image_url: str | None = None,

@@ -2031,16 +2031,21 @@ function _renderSessionStateSnapshot(stateData) {
     if (stateData.tasks && stateData.tasks.length > 0) {
         const icons = {pending: '\u2610', in_progress: '\u27f3', done: '\u2713'};
         const iconColors = {pending: 'text-gray-400', in_progress: 'text-amber-500', done: 'text-green-500'};
+        const staleTaskIds = new Set(Array.isArray(stateData.stale_task_ids) ? stateData.stale_task_ids : []);
+        const staleBefore = Date.now() - 180000;
         planHtml += '<div class="mt-2"><div class="text-gray-500 dark:text-gray-400 font-medium mb-1 text-xs uppercase tracking-wide">Tasks</div><ul class="space-y-0.5">';
         for (const t of stateData.tasks) {
             const active = t.status === 'in_progress';
+            const startedAt = Number(t.in_progress_since);
+            const stale = active && (staleTaskIds.has(t.id) || (startedAt > 0 && startedAt * 1000 <= staleBefore));
             const spinnerSvg = '<svg class="task-active-icon animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-opacity="0.2"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="40 60"/></svg>';
             const icon = active ? spinnerSvg : (icons[t.status] || '\u2610');
             const color = iconColors[t.status] || 'text-gray-400';
             const textClass = t.status === 'done' ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200';
             const iconCls = `${color} inline-flex items-center justify-center w-4 h-4 text-xs flex-shrink-0`;
             const textCls = active ? 'task-active-text text-xs' : `${textClass} text-xs`;
-            planHtml += `<li class="flex items-start gap-1.5"><span class="${iconCls}">${icon}</span><span class="${textCls}">${esc(t.text)}</span></li>`;
+            const staleBadge = stale ? '<span class="text-[10px] font-medium text-amber-700 dark:text-amber-300" title="This task has been in progress for a while">stale</span>' : '';
+            planHtml += `<li class="flex items-start gap-1.5"><span class="${iconCls}">${icon}</span><span class="${textCls}">${esc(t.text)}</span>${staleBadge}</li>`;
         }
         planHtml += '</ul></div>';
     }
@@ -2071,6 +2076,7 @@ function _renderSessionSummary(data) {
         const meta = document.getElementById(prefix + 'summary-meta');
         if (summaryEl && data.summary) {
             summaryEl.innerHTML = '<div class="recap-prose">' + marked.parse(data.summary) + '</div>';
+            ui.addCopyButtons(summaryEl);
             if (meta) {
                 meta.textContent = metaText || '';
                 meta.classList.remove('hidden');
@@ -2162,6 +2168,24 @@ function clearAgentStatePanel() {
     _sessionStateData = {};
     clearAgentState(['agent-state-content', 'mobile-agent-state-content']);
 }
+
+function _refreshTaskLifecycleSnapshot(detail) {
+    if (Array.isArray(detail.tasks)) _sessionStateData.tasks = detail.tasks;
+    if (Array.isArray(detail.task_ids)) _sessionStateData.stale_task_ids = detail.task_ids;
+    else if (Array.isArray(detail.tasks)) _sessionStateData.stale_task_ids = [];
+    _renderSessionStateSnapshot(_sessionStateData);
+}
+
+document.addEventListener('evonic:task-auto-transition', function(event) {
+    const detail = event.detail || {};
+    _refreshTaskLifecycleSnapshot(detail);
+    const count = Array.isArray(detail.task_ids) ? detail.task_ids.length : 0;
+    showToast(count === 1 ? 'Task status updated automatically' : 'Task statuses updated automatically');
+});
+
+document.addEventListener('evonic:tasks-stale', function(event) {
+    _refreshTaskLifecycleSnapshot(event.detail || {});
+});
 
 document.addEventListener('evonic:agent-state-changed', function(event) {
     const detail = event.detail || {};
@@ -2516,19 +2540,28 @@ window.addEventListener('beforeunload', () => { stopPolling(); disconnectSession
 // ==================== Plan File Modal ====================
 
 let _planModalFetchedFor = null; // track which plan file was last fetched (avoid re-fetch on re-open)
+let _planModalRawContent = null;  // raw markdown content for edit mode
+let _planModalCurrentTab = 'preview';  // active tab
 
 function openPlanModal(planFile) {
     if (!currentAgentId || !currentSessionId) return;
     const backdrop = document.getElementById('plan-modal-backdrop');
     const modal = document.getElementById('plan-modal');
-    const title = document.getElementById('plan-modal-title');
     const content = document.getElementById('plan-modal-content');
+    const textarea = document.getElementById('plan-modal-textarea');
+    const saveBtn = document.getElementById('plan-modal-save-btn');
+
+    // Reset to preview tab on open
+    switchPlanTab('preview', /* silent */ true);
 
     // Show modal immediately with loading state
     backdrop.classList.remove('hidden');
     modal.classList.remove('hidden');
-    title.textContent = '\uD83D\uDCCB ' + (planFile || 'Plan File');
     content.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-400"><svg class="animate-spin h-6 w-6 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span class="text-sm">Loading plan...</span></div>';
+    textarea.value = '';
+    textarea.classList.add('hidden');
+    content.classList.remove('hidden');
+    saveBtn.classList.add('hidden');
 
     // Focus trap: focus the close button inside modal
     setTimeout(function() {
@@ -2537,7 +2570,11 @@ function openPlanModal(planFile) {
     }, 50);
 
     // Fetch plan file content from API (cache per file to avoid re-fetch)
-    if (_planModalFetchedFor === planFile) return;
+    if (_planModalFetchedFor === planFile) {
+        // Already cached — just re-render preview
+        textarea.value = _planModalRawContent || '';
+        return;
+    }
     _planModalFetchedFor = planFile;
 
     var url = '/api/agents/' + encodeURIComponent(currentAgentId) + '/plan-file?session_id=' + encodeURIComponent(currentSessionId);
@@ -2547,14 +2584,109 @@ function openPlanModal(planFile) {
             return res.json();
         })
         .then(function(data) {
+            _planModalRawContent = data.content || '';
+            textarea.value = _planModalRawContent;
             if (!data.content) {
                 content.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-400"><span class="text-sm">\u26A0\uFE0F Plan file is empty.</span></div>';
                 return;
             }
             content.innerHTML = '<div class="recap-prose">' + marked.parse(data.content) + '</div>';
+            ui.addCopyButtons(content);
         })
         .catch(function(err) {
+            _planModalRawContent = null;
+            textarea.value = '';
             content.innerHTML = '<div class="flex items-center justify-center py-12 text-red-400"><span class="text-sm">\u26A0\uFE0F Failed to load plan file: ' + esc(err.message) + '</span></div>';
+        });
+}
+
+function switchPlanTab(tab, silent) {
+    var previewTab = document.getElementById('plan-tab-preview');
+    var editTab = document.getElementById('plan-tab-edit');
+    var content = document.getElementById('plan-modal-content');
+    var textarea = document.getElementById('plan-modal-textarea');
+    var saveBtn = document.getElementById('plan-modal-save-btn');
+    var closeBtn = document.getElementById('plan-modal-close-btn');
+
+    if (!previewTab || !editTab) return;
+
+    if (tab === 'edit') {
+        _planModalCurrentTab = 'edit';
+        previewTab.className = 'px-3 py-1 text-xs font-medium rounded-md text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors';
+        editTab.className = 'px-3 py-1 text-xs font-medium rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 transition-colors';
+        content.classList.add('hidden');
+        textarea.classList.remove('hidden');
+        saveBtn.classList.remove('hidden');
+        if (closeBtn) closeBtn.classList.add('hidden');
+        // Populate textarea from cache if not already loaded
+        if (!textarea.value && _planModalRawContent) textarea.value = _planModalRawContent;
+        setTimeout(function() { textarea.focus(); }, 50);
+    } else {
+        _planModalCurrentTab = 'preview';
+        previewTab.className = 'px-3 py-1 text-xs font-medium rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 transition-colors';
+        editTab.className = 'px-3 py-1 text-xs font-medium rounded-md text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors';
+        content.classList.remove('hidden');
+        textarea.classList.add('hidden');
+        saveBtn.classList.add('hidden');
+        if (closeBtn) closeBtn.classList.remove('hidden');
+    }
+}
+
+function savePlanFile() {
+    var textarea = document.getElementById('plan-modal-textarea');
+    var saveBtn = document.getElementById('plan-modal-save-btn');
+    var newContent = textarea.value;
+
+    if (!currentAgentId || !currentSessionId) {
+        alert('No active session.');
+        return;
+    }
+
+    // Show saving state
+    var originalText = saveBtn.textContent;
+    saveBtn.textContent = 'Saving\u2026';
+    saveBtn.disabled = true;
+
+    var url = '/api/agents/' + encodeURIComponent(currentAgentId) + '/plan-file?session_id=' + encodeURIComponent(currentSessionId);
+    fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newContent })
+    })
+        .then(function(res) {
+            if (!res.ok) return res.json().then(function(err) { throw new Error(err.error || 'Save failed'); });
+            return res.json();
+        })
+        .then(function() {
+            _planModalRawContent = newContent;
+            // Re-render preview
+            var content = document.getElementById('plan-modal-content');
+            if (newContent) {
+                content.innerHTML = '<div class="recap-prose">' + marked.parse(newContent) + '</div>';
+                ui.addCopyButtons(content);
+            } else {
+                content.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-400"><span class="text-sm">\u26A0\uFE0F Plan file is empty.</span></div>';
+            }
+            // Flash save button
+            var btnClasses = saveBtn.className;
+            saveBtn.textContent = '\u2713 Saved!';
+            saveBtn.style.backgroundColor = '#22c55e';
+            saveBtn.style.color = '#fff';
+            setTimeout(function() {
+                saveBtn.textContent = originalText;
+                saveBtn.disabled = false;
+                saveBtn.style.backgroundColor = '';
+                saveBtn.style.color = '';
+            }, 1500);
+            // Refresh session state
+            if (typeof refreshSessionState === 'function') {
+                refreshSessionState();
+            }
+        })
+        .catch(function(err) {
+            saveBtn.textContent = originalText;
+            saveBtn.disabled = false;
+            alert('Failed to save plan: ' + (err.message || 'Unknown error'));
         });
 }
 
@@ -2562,9 +2694,14 @@ function closePlanModal() {
     document.getElementById('plan-modal-backdrop').classList.add('hidden');
     document.getElementById('plan-modal').classList.add('hidden');
     _planModalFetchedFor = null;
+    _planModalRawContent = null;
+    // Reset to preview tab for next open
+    if (_planModalCurrentTab !== 'preview') {
+        switchPlanTab('preview', /* silent */ true);
+    }
 }
 
-// Escape key to close modals
+// Escape key to close modals, Ctrl+S / Cmd+S to save plan
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         var bgBackdrop = document.getElementById('bg-process-modal-backdrop');
@@ -2577,26 +2714,49 @@ document.addEventListener('keydown', function(e) {
             closePlanModal();
         }
     }
+    // Ctrl+S / Cmd+S to save in edit mode
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        var planBackdrop = document.getElementById('plan-modal-backdrop');
+        if (planBackdrop && !planBackdrop.classList.contains('hidden') && _planModalCurrentTab === 'edit') {
+            e.preventDefault();
+            savePlanFile();
+        }
+    }
 });
 </script>
 
 <!-- Plan File Modal -->
 <div id="plan-modal-backdrop" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4" onclick="closePlanModal()" role="presentation">
-    <div id="plan-modal" class="hidden bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-label="Plan file viewer" onclick="event.stopPropagation()">
+    <div id="plan-modal" class="hidden bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden" style="max-height: 90vh;" role="dialog" aria-modal="true" aria-label="Plan file viewer" onclick="event.stopPropagation()">
+        <!-- Header with tabs -->
         <div class="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-            <h3 id="plan-modal-title" class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">📋 Plan File</h3>
-            <button onclick="closePlanModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" aria-label="Close plan modal" title="Close (Esc)">
+            <div class="flex items-center gap-2 min-w-0">
+                <h3 id="plan-modal-title" class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">📋 Plan File</h3>
+                <div class="flex items-center ml-3 bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5 flex-shrink-0">
+                    <button id="plan-tab-preview" onclick="switchPlanTab('preview')" class="px-3 py-1 text-xs font-medium rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 transition-colors">Preview</button>
+                    <button id="plan-tab-edit" onclick="switchPlanTab('edit')" class="px-3 py-1 text-xs font-medium rounded-md text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">Edit</button>
+                </div>
+            </div>
+            <button onclick="closePlanModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 flex-shrink-0" aria-label="Close plan modal" title="Close (Esc)">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
         </div>
+        <!-- Preview content area -->
         <div id="plan-modal-content" class="p-5 overflow-y-auto flex-1">
             <div class="flex items-center justify-center py-12 text-gray-400">
                 <svg class="animate-spin h-6 w-6 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                 <span class="text-sm">Loading plan...</span>
             </div>
         </div>
-        <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end flex-shrink-0">
-            <button onclick="closePlanModal()" class="px-4 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors">Close</button>
+        <!-- Edit textarea -->
+        <textarea id="plan-modal-textarea" class="hidden flex-1 p-5 font-mono text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-0 outline-none resize-none overflow-y-auto" placeholder="Write your plan in Markdown..."></textarea>
+        <!-- Footer -->
+        <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center flex-shrink-0">
+            <span class="text-xs text-gray-400 dark:text-gray-500">Ctrl+S to save</span>
+            <div class="flex gap-2">
+                <button id="plan-modal-close-btn" onclick="closePlanModal()" class="px-4 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors">Close</button>
+                <button id="plan-modal-save-btn" onclick="savePlanFile()" class="hidden px-4 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors">Save</button>
+            </div>
         </div>
     </div>
 </div>

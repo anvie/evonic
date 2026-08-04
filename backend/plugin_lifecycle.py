@@ -733,7 +733,7 @@ class PluginManager:
         return manifest.get('variables', [])
 
     def get_plugin_config(self, plugin_id: str) -> Dict[str, Any]:
-        """Load config from DB merged with defaults from variables schema."""
+        """Load raw configuration from DB merged with defaults from variables schema."""
         variables = self.get_plugin_variables(plugin_id)
         config = {}
         for v in variables:
@@ -763,20 +763,16 @@ class PluginManager:
             key = f'plugin_config:{plugin_id}:{v["name"]}'
             stored = db.get_setting(key)
             if stored is not None:
-                # Mask secret values in API responses
-                if v.get('secret', False):
-                    config[v['name']] = '••••••••'
+                var_type = v.get('type', 'string')
+                if var_type == 'boolean':
+                    config[v['name']] = stored in ('1', 'true', 'True')
+                elif var_type == 'number':
+                    try:
+                        config[v['name']] = float(stored) if '.' in stored else int(stored)
+                    except ValueError:
+                        pass
                 else:
-                    var_type = v.get('type', 'string')
-                    if var_type == 'boolean':
-                        config[v['name']] = stored in ('1', 'true', 'True')
-                    elif var_type == 'number':
-                        try:
-                            config[v['name']] = float(stored) if '.' in stored else int(stored)
-                        except ValueError:
-                            pass
-                    else:
-                        config[v['name']] = stored
+                    config[v['name']] = stored
 
         return config
 

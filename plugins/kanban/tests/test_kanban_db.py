@@ -498,6 +498,73 @@ class TestKanbanDB(unittest.TestCase):
         self.assertEqual(count, 2)
 
 
+    # ------------------------------------------------------------------ Attachments
+
+    def _create_attachment_task(self):
+        task = {
+            'title': 'Attachment task',
+            'description': '',
+            'created_at': '2026-01-01T00:00:00+00:00',
+            'updated_at': '2026-01-01T00:00:00+00:00',
+        }
+        return self.db.create(task)
+
+    def test_add_and_get_attachment(self):
+        task = self._create_attachment_task()
+        att = self.db.add_attachment(
+            task['id'], 'photo.png', 'abc_photo.png', 'image/png', 1024, 'richard'
+        )
+        self.assertIsNotNone(att)
+        self.assertEqual(att['task_id'], task['id'])
+        self.assertEqual(att['filename'], 'photo.png')
+        self.assertEqual(att['stored_name'], 'abc_photo.png')
+        self.assertEqual(att['mime_type'], 'image/png')
+        self.assertEqual(att['size'], 1024)
+        self.assertEqual(att['uploaded_by'], 'richard')
+        self.assertIsNotNone(att['created_at'])
+
+        fetched = self.db.get_attachment(att['id'])
+        self.assertEqual(fetched['filename'], 'photo.png')
+
+    def test_get_attachments_ordered_oldest_first(self):
+        task = self._create_attachment_task()
+        a1 = self.db.add_attachment(task['id'], 'a.png', 'a.png', 'image/png', 1, None)
+        a2 = self.db.add_attachment(task['id'], 'b.png', 'b.png', 'image/png', 2, None)
+        a3 = self.db.add_attachment(task['id'], 'c.png', 'c.png', 'image/png', 3, None)
+        atts = self.db.get_attachments(task['id'])
+        self.assertEqual([a['id'] for a in atts], [a1['id'], a2['id'], a3['id']])
+
+    def test_get_attachments_scoped_to_task(self):
+        t1 = self._create_attachment_task()
+        t2 = self.db.create({
+            'title': 'Other task',
+            'created_at': '2026-01-01T00:00:00+00:00',
+            'updated_at': '2026-01-01T00:00:00+00:00',
+        })
+        self.db.add_attachment(t1['id'], 'a.png', 'a.png', 'image/png', 1, None)
+        self.assertEqual(self.db.get_attachments(t2['id']), [])
+        self.assertEqual(len(self.db.get_attachments(t1['id'])), 1)
+
+    def test_delete_attachment_returns_row(self):
+        task = self._create_attachment_task()
+        att = self.db.add_attachment(task['id'], 'a.png', 'a.png', 'image/png', 1, None)
+        deleted = self.db.delete_attachment(att['id'])
+        self.assertIsNotNone(deleted)
+        self.assertEqual(deleted['id'], att['id'])
+        self.assertIsNone(self.db.get_attachment(att['id']))
+
+    def test_delete_attachment_missing_returns_none(self):
+        self.assertIsNone(self.db.delete_attachment(999))
+
+    def test_delete_attachments_for_task(self):
+        task = self._create_attachment_task()
+        self.db.add_attachment(task['id'], 'a.png', 'a.png', 'image/png', 1, None)
+        self.db.add_attachment(task['id'], 'b.png', 'b.png', 'image/png', 2, None)
+        deleted = self.db.delete_attachments_for_task(task['id'])
+        self.assertEqual(len(deleted), 2)
+        self.assertEqual(self.db.get_attachments(task['id']), [])
+
+
 class TestKanbanDBJsonMigration(unittest.TestCase):
     """Tests for JSON-to-DB migration."""
 
@@ -596,6 +663,8 @@ class TestKanbanDBJsonMigration(unittest.TestCase):
 
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 
 
 if __name__ == '__main__':

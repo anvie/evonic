@@ -68,3 +68,32 @@ def test_shadow_mode_records_without_lock(tmp_path):
     assert result["count"] == 1 and not result["locked"]
     assert repo.subject(p, "subject", "***1234", create=False)["status"] == "open"
     assert repo.list_outbox() == []
+
+
+def test_image_attachment_requires_configured_validator(tmp_path):
+    guard = WorkflowGuard.__new__(WorkflowGuard)
+    guard.policies = {
+        "a": {
+            **policy(),
+            "image_attachment_required_tool": "validate_photo",
+        }
+    }
+    guard.repo = Repository(str(tmp_path / "policy.db"))
+    guard.config = {"ENFORCEMENT_ENABLED": True}
+    guard.log = lambda *_args, **_kwargs: None
+    guard.secret = b"x" * 32
+
+    decision = guard.turn_gate({
+        "agent_id": "a",
+        "external_user_id": "6281234",
+        "channel_id": "wa",
+        "attachment_ids": ["318"],
+        "attachment_mime_types": ["image/jpeg"],
+    })
+
+    assert decision["required_tool"] == "validate_photo"
+    assert decision["suppress_intermediate"] is True
+    assert "required_tool" not in guard.turn_gate({
+        "agent_id": "a", "external_user_id": "6281234", "channel_id": "wa",
+        "attachment_ids": ["319"], "attachment_mime_types": ["application/pdf"],
+    })

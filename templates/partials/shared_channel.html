@@ -26,6 +26,24 @@
         <div id="sc-channels"></div>
     </section>
 
+    <section class="setting-group">
+        <div class="setting-group-head">
+            <i data-lucide="clock-3"></i>
+            <h3>Unassigned Sender Retention</h3>
+        </div>
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-xs text-gray-400 dark:text-gray-500">Automatically remove unassigned senders from every shared channel after this many hours without a new message.</p>
+            <div class="flex shrink-0 items-center gap-2">
+                <label for="sc-inbox-retention-hours" class="sr-only">Retention period in hours</label>
+                <input id="sc-inbox-retention-hours" type="number" min="1" max="8760" step="1" inputmode="numeric"
+                    class="w-24 rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                <span class="text-xs text-gray-500 dark:text-gray-400">hours</span>
+                <button type="button" onclick="sharedChannel.saveInboxRetention()"
+                    class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">Save</button>
+            </div>
+        </div>
+    </section>
+
     <!-- Unassigned senders -->
     <section id="sc-inbox-section" class="setting-group hidden">
         <div class="setting-group-head">
@@ -265,6 +283,32 @@
             if (sharedChannel._qrTimer) { clearInterval(sharedChannel._qrTimer); sharedChannel._qrTimer = null; }
         },
 
+        loadInboxRetention: function() {
+            fetch('/api/shared-channels/settings').then(function(r) { return r.json(); }).then(function(data) {
+                var input = document.getElementById('sc-inbox-retention-hours');
+                if (input && document.activeElement !== input) input.value = data.unassigned_sender_retention_hours;
+            });
+        },
+
+        saveInboxRetention: function() {
+            var input = document.getElementById('sc-inbox-retention-hours');
+            if (!input) return;
+            fetch('/api/shared-channels/settings', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({unassigned_sender_retention_hours: input.value})
+            }).then(function(r) { return r.json().then(function(data) { return {ok: r.ok, data: data}; }); })
+              .then(function(result) {
+                  if (!result.ok) throw new Error(result.data.error || 'Failed to save retention period');
+                  input.value = result.data.unassigned_sender_retention_hours;
+                  sharedChannel.showToast('Unassigned sender retention saved.');
+                  sharedChannel.resetSigs();
+                  sharedChannel.load();
+              }).catch(function(err) {
+                  sharedChannel.showToast(err.message, 'error');
+              });
+        },
+
         loadAgents: function() {
             return fetch('/api/agents').then(function(r) { return r.json(); }).then(function(data) {
                 sharedChannel.agentsById = {};
@@ -280,6 +324,7 @@
         load: function() {
             fetch('/api/shared-channels').then(function(r) { return r.json(); }).then(function(data) {
                 var previousActiveId = sharedChannel.activeId;
+                sharedChannel.loadInboxRetention();
                 sharedChannel.channels = data.channels || [];
                 // Keep the current selection if it still exists; otherwise fall
                 // back to the first channel (or none).
@@ -377,7 +422,8 @@
             var el = document.getElementById('sc-channels');
             var ch = sharedChannel.active();
             var st = ch ? sharedChannel.statusOf(ch) : null;
-            var sig = ch ? [ch.id, ch.name, ch.running, st.status].join('|') : 'empty';
+            var sig = ch ? [ch.id, ch.name, ch.running, st.status,
+                (ch.config || {}).access_mode, (ch.config || {}).default_agent_id].join('|') : 'empty';
             if (sig === sharedChannel._chanSig) {
                 // Nothing changed — leave the DOM (and any typing) alone,
                 // but keep the QR poller alive while waiting for a scan.
@@ -419,6 +465,14 @@
             var trashIcon =
                 '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">' +
                 '<path d="M19 7l-.867 12.142A2 2 0 0 1 16.138 21H7.862a2 2 0 0 1-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16"/></svg>';
+            var config = ch.config || {};
+            var accessMode = config.access_mode || 'assigned_only';
+            var agentOptions = '<option value="">Select an agent</option>';
+            Object.keys(sharedChannel.agentsById).forEach(function(id) {
+                agentOptions += '<option value="' + sharedChannel.escAttr(id) + '"' +
+                    (id === config.default_agent_id ? ' selected' : '') + '>' +
+                    sharedChannel.esc(sharedChannel.agentsById[id]) + '</option>';
+            });
             var html =
                 '<div class="setting-group-body">' +
                 '<div class="p-4 flex items-center justify-between gap-3 flex-wrap">' +
@@ -436,6 +490,21 @@
                 '<div class="flex items-center gap-2 flex-shrink-0">' + toggleBtn +
                 '<button onclick="sharedChannel.remove()" title="Delete channel" class="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-200 dark:border-gray-600 text-gray-400 hover:text-red-600 hover:border-red-300 dark:hover:text-red-400 dark:hover:border-red-700 transition-colors">' + trashIcon + '</button>' +
                 '</div></div>' +
+                '<div class="px-4 pb-4 border-t border-gray-100 dark:border-gray-700 pt-4">' +
+                '<div class="flex items-start justify-between gap-4 flex-wrap">' +
+                '<div class="min-w-[240px] flex-1">' +
+                '<label for="sc-access-mode" class="block text-xs font-semibold text-gray-700 dark:text-gray-200">Direct message access</label>' +
+                '<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Assigned only keeps unmatched senders in the inbox. Unrestricted sends unmatched direct messages to the selected agent; groups still require an explicit route.</p>' +
+                '<select id="sc-access-mode" class="mt-2 w-full max-w-xs px-3 py-1.5 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600">' +
+                '<option value="assigned_only"' + (accessMode === 'assigned_only' ? ' selected' : '') + '>Assigned senders only</option>' +
+                '<option value="unrestricted"' + (accessMode === 'unrestricted' ? ' selected' : '') + '>Unrestricted direct messages</option>' +
+                '</select></div>' +
+                '<div class="min-w-[240px] flex-1">' +
+                '<label for="sc-default-agent" class="block text-xs font-semibold text-gray-700 dark:text-gray-200">Default direct-message agent</label>' +
+                '<select id="sc-default-agent" class="mt-2 w-full max-w-xs px-3 py-1.5 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600">' + agentOptions + '</select>' +
+                '<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Required when unrestricted access is selected. The agent must be enabled.</p></div>' +
+                '<button onclick="sharedChannel.saveAccess()" class="inline-flex items-center h-8 text-xs font-medium px-3 rounded-md border border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-900/30 transition-colors flex-shrink-0">Save access settings</button>' +
+                '</div></div>' +
                 '<div id="sc-qr-area" class="px-4 pb-5 border-t border-gray-100 dark:border-gray-700 ' + (connecting ? '' : 'hidden') + ' text-center">' +
                 '<img id="sc-qr-image" class="mx-auto w-52 h-52 mt-4 rounded-lg border border-gray-200 dark:border-gray-600 bg-white p-2 hidden" alt="WhatsApp QR">' +
                 '<p id="sc-qr-hint" class="text-xs text-gray-400 mt-3">Preparing QR code...</p>' +
@@ -443,6 +512,28 @@
             el.innerHTML = html;
             if (connecting) { sharedChannel.pollQr(); }
             else if (sharedChannel._qrTimer) { clearInterval(sharedChannel._qrTimer); sharedChannel._qrTimer = null; }
+        },
+
+        saveAccess: function() {
+            var ch = sharedChannel.active();
+            var mode = document.getElementById('sc-access-mode').value;
+            var defaultAgentId = document.getElementById('sc-default-agent').value;
+            if (mode === 'unrestricted' && !defaultAgentId) {
+                sharedChannel.showToast('Select an enabled default agent for unrestricted access.', 'error');
+                return;
+            }
+            fetch('/api/shared-channels/' + ch.id, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({access_mode: mode, default_agent_id: defaultAgentId})
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.error) { sharedChannel.showToast(data.error, 'error'); return; }
+                sharedChannel.showToast('Direct-message access settings saved.', 'success');
+                sharedChannel._chanSig = null;
+                sharedChannel.load();
+            }).catch(function() {
+                sharedChannel.showToast('Unable to save direct-message access settings.', 'error');
+            });
         },
 
         pollQr: function() {

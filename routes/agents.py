@@ -277,10 +277,7 @@ def api_list_agent_commands(agent_id):
         return jsonify({'error': 'Agent not found'}), 404
     from backend.slash_commands import list_available_commands
 
-    commands = [
-        {'name': name, 'description': description}
-        for name, description in list_available_commands(agent_id)
-    ]
+    commands = [cmd.to_dict() for cmd in list_available_commands(agent_id)]
     return jsonify({'commands': commands})
 
 
@@ -1256,6 +1253,58 @@ def api_list_channels(agent_id):
     return jsonify({'channels': channels})
 
 
+@agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/debug/listen', methods=['GET'])
+def api_channel_debug_listen(agent_id, channel_id):
+    """Stream inbound WhatsApp diagnostics only for this agent-owned channel."""
+    channel = db.get_channel(channel_id)
+    if not channel or channel.get('agent_id') != agent_id:
+        return jsonify({'error': 'Channel not found'}), 404
+    if channel.get('type') not in ('whatsapp', 'whatsapp_shared'):
+        return jsonify({'error': 'Debug listener is only available for WhatsApp channels'}), 400
+
+    from backend.event_stream import event_stream
+
+    event_queue = queue.Queue(maxsize=500)
+
+    def handler(data):
+        if data.get('channel_id') != channel_id:
+            return
+        try:
+            event_queue.put_nowait(('whatsapp_inbound', data))
+        except queue.Full:
+            pass
+
+    event_stream.on('whatsapp_inbound', handler)
+
+    def generate():
+        yield (
+            'event: connected\n'
+            f"data: {json.dumps({'type': 'connected', 'message': 'Listening for WhatsApp inbound messages...'})}\n\n"
+        )
+        try:
+            while True:
+                try:
+                    event_name, payload = event_queue.get(timeout=30)
+                except queue.Empty:
+                    yield ': heartbeat\n\n'
+                    continue
+                yield f'event: {event_name}\ndata: {json.dumps(payload)}\n\n'
+        except GeneratorExit:
+            pass
+        finally:
+            event_stream.off('whatsapp_inbound', handler)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
+
+
 @agents_bp.route('/api/agents/<agent_id>/channels', methods=['POST'])
 def api_create_channel(agent_id):
     if not db.get_agent(agent_id):
@@ -1320,6 +1369,22 @@ def api_start_channel(agent_id, channel_id):
         return jsonify({'success': True, 'running': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/resume-outbound', methods=['POST'])
+def api_resume_whatsapp_outbound(agent_id, channel_id):
+    """Clear a live WhatsApp reach-out pause after operator review."""
+    from backend.channels.registry import channel_manager
+    from backend.channels.whatsapp import WhatsAppChannel
+
+    channel = db.get_channel(channel_id)
+    if not channel or channel['agent_id'] != agent_id:
+        return jsonify({'error': 'Channel not found for this agent'}), 404
+    instance = channel_manager.get_channel_instance(channel_id)
+    if not isinstance(instance, WhatsAppChannel) or not instance._dispatcher:
+        return jsonify({'error': 'WhatsApp channel not running'}), 409
+    instance._dispatcher.resume_after_restriction()
+    return jsonify({'success': True})
 
 
 @agents_bp.route('/api/agents/<agent_id>/channels/<channel_id>/stop', methods=['POST'])
@@ -2344,6 +2409,12 @@ def api_chat_stream(agent_id):
             key: d[key] for key in ('mode', 'plan_file', 'tasks', 'loaded_skills')
             if key in d
         }),
+        'tasks:auto_transition': ('tasks:auto_transition', lambda d: {
+            key: d[key] for key in ('task_ids', 'tasks') if key in d
+        }),
+        'tasks:stale': ('tasks:stale', lambda d: {
+            key: d[key] for key in ('task_ids', 'tasks') if key in d
+        }),
         'llm_response_chunk': ('response_chunk',  lambda d: {
             'content': d.get('content', ''),
             'is_final': d.get('is_final', False),
@@ -2624,6 +2695,8 @@ def api_chat_events(agent_id):
         'tool_call_started': ('tool_call_started', lambda d: {'tool': d.get('tool_name', ''), 'args': d.get('tool_args', {}), 'param_types': d.get('param_types', {})}),
         'tool_executed':     ('tool_executed',    lambda d: {'tool': d.get('tool_name', ''), 'args': d.get('tool_args', {}), 'result': d.get('tool_result', {}), 'error': d.get('has_error', False)}),
         'state:changed':     ('state:changed',    lambda d: {key: d[key] for key in ('mode', 'plan_file', 'tasks', 'loaded_skills') if key in d}),
+        'tasks:auto_transition': ('tasks:auto_transition', lambda d: {key: d[key] for key in ('task_ids', 'tasks') if key in d}),
+        'tasks:stale':       ('tasks:stale',       lambda d: {key: d[key] for key in ('task_ids', 'tasks') if key in d}),
         'llm_response_chunk':('response_chunk',  lambda d: {'content': d.get('content', ''), 'is_final': d.get('is_final', False), 'send_as_message': d.get('send_as_message', False)}),
         'turn_complete':     ('done',             lambda d: {
             'thinking_duration': d.get('thinking_duration'),

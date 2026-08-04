@@ -72,12 +72,12 @@ def test_explicit_session_owned_by_another_agent_is_rejected(routing_env):
     [(False, False), (True, False)],
     ids=["disabled", "stopped"],
 )
-def test_inactive_external_session_falls_back_to_owned_web_session(
+def test_inactive_explicit_session_is_preserved_without_web_fallback(
     routing_env, enabled, running,
 ):
     fake_db, channel_manager, event_stream = routing_env
     fake_db.get_session_with_details.return_value = {
-        "id": "external-session",
+        "id": "originating-session",
         "agent_id": "target_agent",
         "external_user_id": "external-user",
         "channel_id": "channel-1",
@@ -90,73 +90,77 @@ def test_inactive_external_session_falls_back_to_owned_web_session(
     }
     channel_manager.is_running.return_value = running
     fake_db.get_web_fallback_session.return_value = {
-        "id": "web-session",
+        "id": "unrelated-web-session",
         "agent_id": "target_agent",
         "external_user_id": "web-user",
         "channel_id": None,
     }
 
-    result = _notify(session_id="external-session")
+    result = _notify(session_id="originating-session")
 
     assert result == {
         "success": True,
-        "session_id": "web-session",
+        "session_id": "originating-session",
         "reason": None,
-        "route": "web_fallback",
+        "route": "direct",
         "fallback_reason": "inactive_channel",
         "delivery": "web",
     }
+    fake_db.get_web_fallback_session.assert_not_called()
     fake_db.add_chat_message.assert_called_once()
-    assert fake_db.add_chat_message.call_args.args[0] == "web-session"
+    assert fake_db.add_chat_message.call_args.args[0] == "originating-session"
+    assert fake_db.add_chat_message.call_args.kwargs["metadata"] == {
+        "notification_channel_unavailable": True,
+    }
     emitted = event_stream.emit.call_args.args[1]
-    assert emitted["session_id"] == "web-session"
-    assert emitted["external_user_id"] == "web-user"
-    assert emitted["channel_id"] is None
+    assert emitted["session_id"] == "originating-session"
+    assert emitted["external_user_id"] == "external-user"
+    assert emitted["channel_id"] == "channel-1"
 
 
-def test_inactive_external_session_without_safe_fallback_is_rejected(routing_env):
+def test_inactive_explicit_session_remains_available_without_web_fallback(routing_env):
     fake_db, _, event_stream = routing_env
     fake_db.get_session_with_details.return_value = {
-        "id": "external-session",
+        "id": "originating-session",
         "agent_id": "target_agent",
         "external_user_id": "external-user",
         "channel_id": "channel-1",
     }
     fake_db.get_channel.return_value = {"id": "channel-1", "enabled": False}
 
-    result = _notify(session_id="external-session")
+    result = _notify(session_id="originating-session")
 
-    assert result == {
-        "success": False,
-        "session_id": None,
-        "reason": "inactive_channel_no_fallback",
-    }
-    fake_db.add_chat_message.assert_not_called()
-    event_stream.emit.assert_not_called()
+    assert result["success"] is True
+    assert result["session_id"] == "originating-session"
+    assert result["fallback_reason"] == "inactive_channel"
+    fake_db.get_web_fallback_session.assert_not_called()
+    fake_db.add_chat_message.assert_called_once()
+    event_stream.emit.assert_called_once()
 
 
-def test_internal_session_is_not_accepted_as_web_fallback(routing_env):
+def test_inter_agent_reply_with_inactive_origin_session_never_uses_web_fallback(routing_env):
     fake_db, _, event_stream = routing_env
     fake_db.get_session_with_details.return_value = {
-        "id": "external-session",
+        "id": "originating-whatsapp-session",
         "agent_id": "target_agent",
         "external_user_id": "external-user",
         "channel_id": "channel-1",
     }
     fake_db.get_channel.return_value = {"id": "channel-1", "enabled": False}
     fake_db.get_web_fallback_session.return_value = {
-        "id": "inter-agent-session",
+        "id": "unrelated-web-session",
         "agent_id": "target_agent",
-        "external_user_id": "__agent__sender_agent",
+        "external_user_id": "web-user",
         "channel_id": None,
     }
 
-    result = _notify(session_id="external-session")
+    result = _notify(session_id="originating-whatsapp-session")
 
-    assert result["success"] is False
-    assert result["reason"] == "inactive_channel_no_fallback"
-    fake_db.add_chat_message.assert_not_called()
-    event_stream.emit.assert_not_called()
+    assert result["success"] is True
+    assert result["session_id"] == "originating-whatsapp-session"
+    fake_db.get_web_fallback_session.assert_not_called()
+    assert fake_db.add_chat_message.call_args.args[0] == "originating-whatsapp-session"
+    assert event_stream.emit.call_args.args[1]["session_id"] == "originating-whatsapp-session"
 
 
 def test_channel_owned_by_another_agent_is_not_available(routing_env):
@@ -177,10 +181,13 @@ def test_channel_owned_by_another_agent_is_not_available(routing_env):
 
     result = _notify(session_id="external-session")
 
-    assert result["success"] is False
-    assert result["reason"] == "inactive_channel_no_fallback"
+    assert result["success"] is True
+    assert result["session_id"] == "external-session"
+    assert result["fallback_reason"] == "inactive_channel"
     channel_manager.is_running.assert_not_called()
-    event_stream.emit.assert_not_called()
+    fake_db.get_web_fallback_session.assert_not_called()
+    assert fake_db.add_chat_message.call_args.args[0] == "external-session"
+    assert event_stream.emit.call_args.args[1]["session_id"] == "external-session"
 
 
 def test_external_delivery_sends_through_active_channel(routing_env):

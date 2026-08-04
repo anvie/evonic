@@ -168,6 +168,7 @@ class TurnPrefetcher:
                 'assigned_tool_ids': assigned_tool_ids,
                 'workspace': agent.get('workspace') or None,
                 'workplace_id': agent.get('workplace_id') or None,
+                'send_file_allowed_path_regex': agent.get('send_file_allowed_path_regex', ''),
                 'is_super': bool(agent.get('is_super')),
                 'is_subagent': bool(agent.get('is_subagent')),
                 'is_explorer': bool(agent.get('is_explorer')),

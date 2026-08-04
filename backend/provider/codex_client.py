@@ -72,6 +72,7 @@ class CodexClient:
         reasoning: bool = False,
         stream: bool = True,
         timeout: int = 120,
+        tool_choice: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a request to the Codex Responses API."""
         payload: Dict[str, Any] = {
@@ -84,6 +85,9 @@ class CodexClient:
             payload["reasoning"] = {"summary": "auto"}
         if tools:
             payload["tools"] = self._convert_tools(tools)
+            if tool_choice:
+                payload["tool_choice"] = {
+                    "type": "function", "name": tool_choice}
 
         url = f"{self.base_url}/responses"
 

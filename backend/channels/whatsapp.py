@@ -12,6 +12,7 @@ import uuid
 import requests
 from typing import Dict, Any, Optional
 from backend.channels.base import BaseChannel, strip_system_tags
+from backend.channels.whatsapp_dispatcher import WhatsAppOutboundDispatcher
 
 _logger = logging.getLogger(__name__)
 # Bridge (Node/Baileys) stdout is routed to logs/baileys.log via EVONIC_LOG_ROUTES
@@ -20,10 +21,67 @@ _bridge_logger = logging.getLogger('baileys')
 _BRIDGE_DIR = os.path.join(os.path.dirname(__file__), 'whatsapp-bridge')
 
 
-def _strip_markdown(text: str) -> str:
-    """Remove markdown symbols from text for plain WhatsApp messages."""
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\*+', '', text)
+def _whatsapp_format(text: str) -> str:
+    """Convert Markdown/rich text to WhatsApp-native conversational formatting.
+
+    Unlike _strip_markdown (which deleted markup destructively), this formatter:
+    - Converts headings to plain-text labels.
+    - Converts unordered-list bullets to '•'.
+    - Preserves numbered lists.
+    - Converts [label](url) → "label: url".
+    - Converts fenced code blocks to compact "CODE:" sections.
+    - Removes unsupported inline markup (**, __, ~~, `) without harming
+      punctuation, URLs, or literal content.
+    - Collapses excessive blank lines and trims leading/trailing whitespace.
+    - Is deterministic and safe for noncompliant LLM output.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+
+    # ── 1. Convert fenced code blocks into compact "CODE:" sections ──────────
+    #     (process before inline rules so content inside blocks is untouched)
+    text = re.sub(
+        r'```[a-zA-Z]*\n(.*?)```',
+        lambda m: 'CODE:\n' + m.group(1).rstrip() + '\n',
+        text, flags=re.DOTALL
+    )
+
+    # ── 2. Convert headings (# ## ### …) to plain-text labels ────────────────
+    text = re.sub(r'^######\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^#####\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^####\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^###\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^##\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^#\s+', '', text, flags=re.MULTILINE)
+
+    # ── 3. Convert [label](url) → "label: url" ───────────────────────────────
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1: \2', text)
+
+    # ── 4. Convert bold (**text** or __text__) – strip markers ─────────────
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+
+    # ── 5. Convert italic (_text_ or *text*) – strip markers ─────────────────
+    #     Single * or _ wrapped text, but not double. Must not destroy URLs.
+    text = re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'\1', text)
+    text = re.sub(r'(?<!\*)\*([^*\n]+)\*(?!\*)', r'\1', text)
+
+    # ── 6. Convert strikethrough (~~text~~) – strip markers ──────────────────
+    text = re.sub(r'~~(.+?)~~', r'\1', text)
+
+    # ── 7. Convert inline code (`text`) – strip backticks ────────────────────
+    text = re.sub(r'`([^`\n]+)`', r'\1', text)
+
+    # ── 8. Convert unordered-list markers (- or * at line start) to '•' ──────
+    #     Preserves indentation via leading spaces capture.
+    text = re.sub(r'^(\s*)[-*]\s+', r'\1• ', text, flags=re.MULTILINE)
+
+    # ── 9. Collapse 3+ consecutive blank lines to at most 2 ──────────────────
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # ── 10. Remove leading/trailing blank lines and whitespace ───────────────
+    text = text.strip()
+
     return text
 
 
@@ -47,6 +105,20 @@ def _split_message(text: str, max_len: int = 4096) -> list:
         chunks.append(text[:split_at])
         text = text[split_at:].lstrip('\n')
     return chunks
+
+
+def _read_global_setting(key: str, default: str) -> str:
+    """Read a WhatsApp safe-delivery setting from the global app_settings table."""
+    try:
+        from models.db import db
+        return db.get_setting(key, default) or default
+    except Exception:
+        return default
+
+
+def _is_status_broadcast(sender: str, jid: str) -> bool:
+    """Return whether an inbound payload represents a WhatsApp Status update."""
+    return sender in {"status", "status@broadcast"} or jid == "status@broadcast"
 
 
 def _format_quoted_context(quoted_text=None, quoted_message=None,
@@ -126,6 +198,9 @@ class WhatsAppChannel(BaseChannel):
         # events from re-scheduling typing right after a response was sent
         self._typing_suppress_until: Dict[str, float] = {}
 
+        # ── Outbound dispatcher (lazy-init in start()) ──
+        self._dispatcher: Optional[WhatsAppOutboundDispatcher] = None
+
     def _load_persisted_jid_routes(self, config: dict) -> None:
         """Restore reply JIDs learned from inbound traffic before a restart."""
         for user_id, route in (config.get('jid_routes') or {}).items():
@@ -186,18 +261,19 @@ class WhatsAppChannel(BaseChannel):
 
     def get_system_instructions(self) -> Optional[str]:
         return (
-            "IMPORTANT — WhatsApp Formatting Constraint:\n"
-            "You are responding via WhatsApp which uses PLAIN TEXT only. "
-            "Markdown formatting (bold, italic, code blocks, headers, bullet lists) "
-            "is NOT supported and will appear as raw symbols.\n\n"
-            "STRICTLY FOLLOW THESE RULES:\n"
-            "- NEVER use markdown symbols: **, *, `, ```, #, -, >, [], ()\n"
-            "- Use UPPERCASE for emphasis instead of bold/italic\n"
-            "- Use numbered lists (1. 2. 3.) for lists\n"
-            "- Use indentation with spaces for structure\n"
-            "- Use plain URLs without markdown link syntax\n"
-            "- Write code inline with clear labels like \"CODE:\" prefix\n"
-            "- Keep responses clean and readable in plain text"
+            "WhatsApp response style:\n"
+            "- Reply concisely, naturally, and conversationally. Avoid repetitive greetings, "
+            "signatures, and unnecessary ceremony.\n"
+            "- Prefer one complete combined answer over several fragmented messages.\n"
+            "- Use plain text that renders reliably in WhatsApp. Avoid Markdown constructs "
+            "such as heading markers, fenced code blocks, and Markdown links; use plain URLs.\n"
+            "- Images and files: ALWAYS deliver them with the `send_file` tool so they arrive "
+            "as attachments. NEVER embed images with HTML `<img>` tags or Markdown image "
+            "embeds (`![alt](url)`) — WhatsApp does not render them; they arrive as raw text.\n"
+            "- Do not claim to be human. Be transparent that you are an AI assistant when "
+            "identity is relevant.\n"
+            "- Preserve useful structure with short paragraphs or simple numbered items "
+            "when needed."
         )
 
     def _resolve_agent(self, sender: str, is_group: bool, jid: str,
@@ -372,6 +448,12 @@ class WhatsAppChannel(BaseChannel):
         event_stream.on('approval_resolved', _on_approval_resolved)
         event_stream.on('llm_thinking', _on_llm_thinking)
 
+        # ── Initialize outbound dispatcher ──
+        self._dispatcher = WhatsAppOutboundDispatcher(
+            self,
+            settings_getter=_read_global_setting,
+        )
+
         self._running = True
 
         # Start the bridge in a background thread so start() returns immediately
@@ -515,6 +597,9 @@ class WhatsAppChannel(BaseChannel):
         if not self._running:
             return
         self._running = False
+        if self._dispatcher:
+            self._dispatcher.shutdown()
+            self._dispatcher = None
 
         from backend.event_stream import event_stream
         if self._approval_required_handler:
@@ -571,6 +656,11 @@ class WhatsAppChannel(BaseChannel):
             })
             if (status == 'failed' and payload.get('terminal')
                     and payload.get('reachout_timelocked')):
+                if self._dispatcher:
+                    self._dispatcher.pause_for_restriction(
+                        payload.get('reachout_enforcement_ends'),
+                        payload.get('reachout_enforcement_type'),
+                    )
                 self._record_reachout_restriction(payload, db, event_stream)
             return
 
@@ -593,6 +683,14 @@ class WhatsAppChannel(BaseChannel):
         group_name = payload.get('group_name') or ''
         quoted_sender = payload.get('quoted_sender') or ''
         quoted_sender_name = payload.get('quoted_sender_name') or ''
+
+        # WhatsApp Status updates are broadcasts, not direct user messages.
+        # Routing them into an agent creates synthetic conversations and can
+        # pull workflow-specific agents away from their assigned domain.
+        if _is_status_broadcast(sender, jid):
+            _logger.info("WhatsApp status broadcast dropped (channel %s)",
+                         self.channel_id)
+            return
 
         # Reply through the exact namespace used by the inbound conversation.
         # Baileys may also resolve the peer's alternate PN/LID identity; retain it
@@ -724,8 +822,8 @@ class WhatsAppChannel(BaseChannel):
                         image_url = f"data:image/jpeg;base64,{b64}"
                     except Exception as e:
                         _logger.error("WhatsApp image conversion failed: %s", e)
-            elif not text:
-                return
+            if not text:
+                text = '[Image]'
 
         if audio_data:
             # Audio is attachment-only — agents listen to it via the
@@ -819,30 +917,12 @@ class WhatsAppChannel(BaseChannel):
         # after the response is sent (would show a phantom "typing" indicator).
         self._clear_typing(sender)
 
-        response = _strip_markdown(result.get('response') or '')
+        response = result.get('response') or ''
         if response and response != "(No response)":
-            # Human-like typing delay relative to response length
-            _TYPING_SPEED = 15   # chars/sec
-            _MIN_DELAY = 1.0     # seconds
-            _MAX_DELAY = 8.0     # seconds
-            _TYPING_REFRESH = 5.0  # re-send composing every N seconds during delay
-
-            delay = max(_MIN_DELAY, min(len(response) / _TYPING_SPEED, _MAX_DELAY))
-            self.send_typing(sender)
-            deadline = time.monotonic() + delay
-            while time.monotonic() < deadline:
-                remaining = deadline - time.monotonic()
-                time.sleep(min(_TYPING_REFRESH, remaining))
-                if time.monotonic() < deadline:
-                    self.send_typing(sender)
-
-            # Use the session identity for delivery.  Group slash commands are
-            # handled synchronously by the runtime, so unlike queued replies
-            # this path must explicitly address the group rather than the
-            # participant who issued the command.
+            # Use the session identity for delivery. Group slash commands need
+            # the group recipient rather than the participant who issued them.
             response_recipient = session_user_id if is_group else sender
-            for chunk in _split_message(response):
-                self._do_send(response_recipient, chunk, session_id=session_id)
+            self.send_message(response_recipient, response, session_id=session_id)
         else:
             # No message will follow — actively clear any composing presence
             # shown during the thinking phase.
@@ -992,6 +1072,24 @@ class WhatsAppChannel(BaseChannel):
         except Exception as e:
             _logger.warning("WhatsApp typing indicator failed for %s: %s", external_user_id, e)
 
+    def send_message_buffered(self, external_user_id: str, text: str,
+                              session_id: str = None):
+        """Queue intermediate output without blocking runtime callback threads."""
+        if self._dispatcher:
+            self._dispatcher.enqueue(
+                external_user_id, text, session_id=session_id, is_final=False)
+            return
+        super().send_message_buffered(external_user_id, text, session_id=session_id)
+
+    def send_message(self, external_user_id: str, text: str,
+                     session_id: str = None):
+        """Queue final output and absorb pending intermediate messages."""
+        if self._dispatcher:
+            self._dispatcher.enqueue(
+                external_user_id, text, session_id=session_id, is_final=True)
+            return
+        super().send_message(external_user_id, text, session_id=session_id)
+
     def get_qr(self) -> dict:
         """Fetch QR code data from the bridge."""
         try:
@@ -1001,17 +1099,27 @@ class WhatsAppChannel(BaseChannel):
             return {'status': 'disconnected', 'error': str(e)}
 
     def get_bridge_status(self) -> dict:
-        """Bridge connection status — cached from bridge pushes, HTTP probe fallback."""
-        if self._last_bridge_status is not None:
-            return {'status': self._last_bridge_status}
+        """Return live bridge status, falling back to the last valid push.
+
+        Status callbacks can be missed or arrive during a transient reconnect, so
+        the cached value must not permanently override the sidecar's current
+        state.  A failed probe is non-destructive: retain the last known status
+        rather than turning a temporary HTTP failure into a false disconnect.
+        """
         try:
             resp = requests.get(f"http://127.0.0.1:{self._bridge_port}/status", timeout=5)
-            return resp.json()
-        except Exception:
-            return {'status': 'disconnected'}
+            resp.raise_for_status()
+            live_status = resp.json().get('status')
+            if live_status in ('connected', 'qr_pending', 'disconnected'):
+                self._last_bridge_status = live_status
+        except (requests.RequestException, ValueError, TypeError, AttributeError):
+            pass
+
+        return {'status': self._last_bridge_status or 'disconnected'}
 
     def _do_send(self, external_user_id: str, text: str,
-                 session_id: Optional[str] = None):
+                 session_id: Optional[str] = None,
+                 _inter_chunk_seconds: float = 0.0):
         # Prefer the exact inbound JID, including @lid. Persisted routes restore
         # this mapping for delayed agent/tool sends after a process restart.
         to = self._jid_map.get(external_user_id, external_user_id)
@@ -1022,11 +1130,18 @@ class WhatsAppChannel(BaseChannel):
             "persisted=%s channel=%s",
             self._jid_namespace(to), self._jid_namespace(alternate_jid or ''),
             from_map, self.channel_id)
-        text = _strip_markdown(text)
-        # Every send path (direct, buffered worker, messaging tool) ends here —
-        # clear typing state so no phantom indicator survives the send.
+        # Format text for WhatsApp (already formatted by dispatcher; safe no-op
+        # for bypass calls like pairing/approval failures).
+        text = _whatsapp_format(text)
+        # Every send path ends here — clear typing state so no phantom indicator
+        # survives the send.
         self._clear_typing(external_user_id)
-        for chunk in _split_message(text):
+        chunks = _split_message(text)
+        for i, chunk in enumerate(chunks):
+            # Inter-chunk pacing: insert a short gap between 4096-char splits
+            # so one answer is not emitted as a zero-gap burst.
+            if i > 0 and _inter_chunk_seconds > 0:
+                time.sleep(_inter_chunk_seconds)
             correlation_id = uuid.uuid4().hex
             payload = {
                 'to': to,
@@ -1073,7 +1188,7 @@ class WhatsAppChannel(BaseChannel):
 
         # 4. Strip markdown from caption (WhatsApp uses plain text)
         if caption:
-            caption = _strip_markdown(caption)
+            caption = _whatsapp_format(caption)
 
         # 5. Send via bridge
         self._clear_typing(external_user_id)

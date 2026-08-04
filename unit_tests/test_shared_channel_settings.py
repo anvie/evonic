@@ -93,6 +93,27 @@ def test_inbox_pruned_to_cap(chan_id):
     assert len(db.get_inbox(chan_id)) == 100
 
 
+def test_inbox_cleanup_expires_entries_across_shared_channels(chan_id):
+    other_channel = db.create_channel({
+        'agent_id': None, 'type': 'whatsapp_shared', 'name': 'Other Shared',
+        'config': {'mode': 'open', 'routes': {}},
+    })
+    db.record_inbox_sender(chan_id, 'expired-one')
+    db.record_inbox_sender(other_channel, 'expired-two')
+    db.record_inbox_sender(other_channel, 'recent')
+    with db._connect() as conn:
+        conn.execute("""
+            UPDATE shared_channel_inbox
+            SET last_seen = datetime('now', '-25 hours')
+            WHERE external_user_id IN ('expired-one', 'expired-two')
+        """)
+        conn.commit()
+
+    assert db.cleanup_expired_inbox_entries(24) == 2
+    assert db.get_inbox(chan_id) == []
+    assert [entry['external_user_id'] for entry in db.get_inbox(other_channel)] == ['recent']
+
+
 def test_get_shared_channels_only_agentless(chan_id):
     db.create_agent({'id': 'ag1', 'name': 'A1'})
     db.create_channel({'agent_id': 'ag1', 'type': 'whatsapp', 'name': 'W'})
@@ -128,6 +149,8 @@ def test_create_list_delete_shared_channel(client, monkeypatch):
     chan = resp.get_json()['channel']
     assert chan['agent_id'] is None
     assert chan['config']['mode'] == 'open'
+    assert chan['config']['access_mode'] == 'assigned_only'
+    assert chan['config']['default_agent_id'] == ''
 
     # Duplicate name rejected app-side (UNIQUE treats NULLs as distinct)
     assert client.post('/api/shared-channels',
@@ -138,6 +161,34 @@ def test_create_list_delete_shared_channel(client, monkeypatch):
 
     assert client.delete(f"/api/shared-channels/{chan['id']}").status_code == 200
     assert client.get('/api/shared-channels').get_json()['channels'] == []
+
+
+def test_unassigned_sender_retention_defaults_saves_and_validates(client):
+    response = client.get('/api/shared-channels/settings')
+    assert response.status_code == 200
+    assert response.get_json()['unassigned_sender_retention_hours'] == 24
+
+    response = client.put('/api/shared-channels/settings', json={
+        'unassigned_sender_retention_hours': 48,
+    })
+    assert response.status_code == 200
+    assert response.get_json()['unassigned_sender_retention_hours'] == 48
+    assert db.get_setting('shared_channel_inbox_retention_hours') == '48'
+
+    for value in (None, 'nope', 0, 8761):
+        response = client.put('/api/shared-channels/settings', json={
+            'unassigned_sender_retention_hours': value,
+        })
+        assert response.status_code == 400
+
+
+def test_shared_channel_listing_cleans_expired_inbox_entries(client, chan_id):
+    db.record_inbox_sender(chan_id, 'expired')
+    with db._connect() as conn:
+        conn.execute("UPDATE shared_channel_inbox SET last_seen = datetime('now', '-25 hours')")
+        conn.commit()
+
+    assert client.get('/api/shared-channels').get_json()['channels'][0]['inbox_count'] == 0
 
 
 def test_routes_add_and_remove(client, chan_id, agent_a):
@@ -159,6 +210,43 @@ def test_routes_add_and_remove(client, chan_id, agent_a):
     config = db.get_channel(chan_id)['config']
     assert config['routes'] == {}
     assert config['user_names'] == {}
+
+
+def test_access_settings_validate_and_preserve_routes(client, chan_id, agent_a):
+    db.update_channel(chan_id, {'config': {
+        'mode': 'open', 'routes': {'628111': agent_a},
+        'user_names': {'628111': 'Budi'}, 'bridge_port': 3001,
+    }})
+    response = client.put(f'/api/shared-channels/{chan_id}', json={
+        'access_mode': 'unrestricted', 'default_agent_id': agent_a})
+    assert response.status_code == 200
+    config = db.get_channel(chan_id)['config']
+    assert config['access_mode'] == 'unrestricted'
+    assert config['default_agent_id'] == agent_a
+    assert config['routes'] == {'628111': agent_a}
+    assert config['user_names'] == {'628111': 'Budi'}
+    assert config['bridge_port'] == 3001
+
+
+def test_access_settings_reject_invalid_or_disabled_default(client, chan_id):
+    db.create_agent({'id': 'agent-off', 'name': 'Disabled', 'enabled': False})
+    assert client.put(f'/api/shared-channels/{chan_id}', json={
+        'access_mode': 'unknown'}).status_code == 400
+    assert client.put(f'/api/shared-channels/{chan_id}', json={
+        'access_mode': 'unrestricted', 'default_agent_id': 'ghost'}).status_code == 400
+    assert client.put(f'/api/shared-channels/{chan_id}', json={
+        'access_mode': 'unrestricted', 'default_agent_id': 'agent-off'}).status_code == 400
+
+
+def test_access_settings_are_independent_per_number(client, agent_a):
+    first = db.create_channel({'agent_id': None, 'type': 'whatsapp_shared', 'name': 'One',
+                               'config': {'routes': {}}})
+    second = db.create_channel({'agent_id': None, 'type': 'whatsapp_shared', 'name': 'Two',
+                                'config': {'routes': {}}})
+    assert client.put(f'/api/shared-channels/{first}', json={
+        'access_mode': 'unrestricted', 'default_agent_id': agent_a}).status_code == 200
+    assert db.get_channel(second)['config'].get('access_mode') is None
+    assert db.get_channel(first)['config']['default_agent_id'] == agent_a
 
 
 def test_route_removal_cleans_orphaned_names(client, chan_id, agent_a):

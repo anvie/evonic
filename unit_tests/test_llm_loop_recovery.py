@@ -388,6 +388,8 @@ class TestContextSizeCompaction(unittest.TestCase):
         mock_db.add_chat_message.return_value = None
         mock_db.get_agent_default_model.return_value = None
         mock_db.get_agent_fallback_model.return_value = None
+        mock_db.get_agent_model.return_value = None
+        mock_db.get_model_by_id.return_value = None
         mock_db.get_summary.return_value = None
         mock_db.upsert_summary.return_value = None
         if extra_db_attrs:

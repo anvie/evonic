@@ -11,11 +11,18 @@ import shutil
 import secrets
 import subprocess
 import tempfile
+from zoneinfo import available_timezones as _available_timezones
 
 import requests
 
 import config
 from models.db import db
+
+# ---------------------------------------------------------------------------
+# Platform default timezone
+# ---------------------------------------------------------------------------
+
+DEFAULT_PLATFORM_TIMEZONE = "UTC"
 
 # ---------------------------------------------------------------------------
 # Provider defaults
@@ -155,6 +162,15 @@ preferences, and communication style instructions.
 - Update immediately when the user gives a new preference
 - Prioritize notes.md over `remember` for non-factual preference information
 """
+
+def validate_timezone(name: str) -> str:
+    """Validate an IANA timezone name. Returns the name if valid, raises ValueError otherwise."""
+    if not name or not isinstance(name, str):
+        raise ValueError("IANA timezone name required")
+    if name not in _available_timezones():
+        raise ValueError(f"Not a valid IANA timezone: {name!r}")
+    return name
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -328,6 +344,9 @@ _DEFAULT_SETTINGS = [
     ("theme", "system"),
     # --- Models & Routing ---
     ("vision_model_id", ""),
+    ("default_model_fallback_id", ""),
+    ("vision_fallback_model_id", ""),
+    ("vision_fallback_model_2_id", ""),
     ("kb_organizer_model_id", ""),
     ("task_classifier_enabled", "0"),
     # --- Reliability ---
@@ -378,6 +397,7 @@ def run_setup(
     language: str = "english",
     sandbox_enabled: bool = False,
     password: str = "",
+    timezone_name: str = None,
 ) -> dict:
     """
     Execute first-time setup:
@@ -422,12 +442,25 @@ def run_setup(
     resolved_base_url = (base_url or provider_cfg["base_url"]).rstrip("/")
 
     try:
+        # -1. Validate timezone before any writes
+        if timezone_name:
+            try:
+                validate_timezone(timezone_name)
+            except ValueError:
+                return {"error": f"Unknown timezone: {timezone_name}"}
+        else:
+            timezone_name = DEFAULT_PLATFORM_TIMEZONE
+
         # 0. Generate SECRET_KEY if not already set — critical for session security
         if not os.getenv("SECRET_KEY"):
             _key = secrets.token_urlsafe(48)
             env_path = os.path.join(config.BASE_DIR, ".env")
             _update_env_var(env_path, "SECRET_KEY", _key)
             os.environ["SECRET_KEY"] = _key
+
+        # 0b. Persist timezone
+        env_path = os.path.join(config.BASE_DIR, ".env")
+        _update_env_var(env_path, "EVONIC_TIMEZONE", timezone_name)
 
         # 1a. Ensure provider exists in providers table
         if not db.get_provider(provider):

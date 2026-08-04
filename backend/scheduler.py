@@ -49,9 +49,54 @@ log = logging.getLogger(__name__)
 class Scheduler:
     def __init__(self):
         self._timezone = os.getenv("EVONIC_TIMEZONE", "Asia/Jakarta")
+        self._kb_organizer_hour, self._kb_organizer_minute = (
+            self._parse_kb_organizer_time()
+        )
         self._scheduler = BackgroundScheduler(daemon=True, timezone=self._timezone)
         self._started = False
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _parse_kb_organizer_time_value(value: str) -> tuple[int, int]:
+        """Parse a HH:MM value, raising ValueError for invalid values."""
+        try:
+            hour_text, minute_text = value.split(":", 1)
+            hour, minute = int(hour_text), int(minute_text)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+            return hour, minute
+        except (ValueError, TypeError):
+            raise ValueError("must be in HH:MM format") from None
+
+    @classmethod
+    def _parse_kb_organizer_time(cls) -> tuple[int, int]:
+        """Return the persisted or environment KB Janitor time, defaulting to 03:00."""
+        default = os.getenv("EVOMEM_KB_ORGANIZER_NIGHTLY_TIME", "03:00").strip()
+        try:
+            from models.db import db
+            value = db.get_setting("kb_organizer_nightly_time", default).strip()
+        except Exception as e:  # pragma: no cover - scheduler must still initialize
+            log.warning("Failed to read KB Janitor schedule setting: %s", e)
+            value = default
+        try:
+            return cls._parse_kb_organizer_time_value(value)
+        except ValueError:
+            log.warning("Invalid KB Janitor schedule %r; using 03:00", value)
+            return 3, 0
+
+    def refresh_kb_organizer_schedule(self, value: str) -> None:
+        """Replace the running KB Janitor job with a validated daily schedule."""
+        hour, minute = self._parse_kb_organizer_time_value(value)
+        self._kb_organizer_hour, self._kb_organizer_minute = hour, minute
+        if not self._started:
+            return
+        self._scheduler.add_job(
+            self._sefton_tidy_all,
+            CronTrigger(hour=hour, minute=minute, timezone=self._timezone),
+            id="builtin:sefton_tidy",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -77,11 +122,26 @@ class Scheduler:
             )
         except Exception as e:  # pragma: no cover - defensive guard
             log.warning("Failed to register attachments cleanup job: %s", e)
+        # Built-in: remove expired unassigned shared-channel senders hourly.
+        try:
+            self._scheduler.add_job(
+                self._cleanup_expired_shared_inbox,
+                IntervalTrigger(hours=1, timezone=self._timezone),
+                id='builtin:shared_inbox_cleanup',
+                replace_existing=True,
+                misfire_grace_time=3600,
+            )
+        except Exception as e:  # pragma: no cover - defensive guard
+            log.warning("Failed to register shared inbox cleanup job: %s", e)
         # Built-in: SEFTON nightly agentic tidy for all sefton-mode agents.
         try:
             self._scheduler.add_job(
                 self._sefton_tidy_all,
-                CronTrigger(hour=3, minute=0, timezone=self._timezone),
+                CronTrigger(
+                    hour=self._kb_organizer_hour,
+                    minute=self._kb_organizer_minute,
+                    timezone=self._timezone,
+                ),
                 id='builtin:sefton_tidy',
                 replace_existing=True,
                 misfire_grace_time=3600,
@@ -103,13 +163,26 @@ class Scheduler:
         except Exception as e:
             log.error("Attachments cleanup failed: %s", e, exc_info=True)
 
-    def _sefton_tidy_all(self):
-        """Nightly SEFTON tidy: run KB Janitor for sefton-mode agents active in last 24h."""
+    def _cleanup_expired_shared_inbox(self):
+        """Hourly housekeeping for globally expired unassigned senders."""
         try:
-            from datetime import datetime, timedelta, timezone
+            from routes.settings import _shared_inbox_retention_hours
+            from models.db import db
+            deleted = db.cleanup_expired_inbox_entries(
+                _shared_inbox_retention_hours())
+            if deleted:
+                log.info("Shared inbox cleanup: deleted %d expired sender(s)", deleted)
+        except Exception as e:
+            log.error("Shared inbox cleanup failed: %s", e, exc_info=True)
+
+    def _sefton_tidy_all(self):
+        """Nightly SEFTON tidy: run KB Janitor for sefton-mode agents whose
+        last KB filing was within the last 24h."""
+        try:
             from models.db import db
             from backend.agent_runtime.memory_manager import (
                 resolve_kb_organizer_mode, sefton_tidy_agent,
+                _load_sefton_last_filing,
             )
             agents = db.get_agents()
             sefton_agents = [a for a in agents
@@ -117,28 +190,23 @@ class Scheduler:
             if not sefton_agents:
                 return
 
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            cutoff = time.time() - 24 * 3600
             log.info("SEFTON tidy: %d sefton agent(s), cutoff %s",
-                     len(sefton_agents), cutoff.isoformat())
+                     len(sefton_agents),
+                     datetime.fromtimestamp(cutoff, timezone.utc).isoformat())
 
             for agent in sefton_agents:
                 if not agent.get('enabled'):
                     log.info("SEFTON tidy [%s]: skipped (agent disabled)", agent['id'])
                     continue
-                last_active = agent.get('last_active_at')
-                if not last_active:
-                    log.info("SEFTON tidy [%s]: skipped (never active)", agent['id'])
+                last_filing = _load_sefton_last_filing(agent['id'])
+                if last_filing <= 0:
+                    log.info("SEFTON tidy [%s]: skipped (never filed)", agent['id'])
                     continue
-                if isinstance(last_active, str):
-                    last_active_dt = datetime.fromisoformat(
-                        last_active.replace('Z', '+00:00'))
-                else:
-                    last_active_dt = last_active
-                if last_active_dt.tzinfo is None:
-                    last_active_dt = last_active_dt.replace(tzinfo=timezone.utc)
-                if last_active_dt < cutoff:
-                    log.info("SEFTON tidy [%s]: skipped (last active %s)",
-                             agent['id'], last_active_dt.isoformat())
+                if last_filing < cutoff:
+                    log.info("SEFTON tidy [%s]: skipped (last filing %s)",
+                             agent['id'],
+                             datetime.fromtimestamp(last_filing, timezone.utc).isoformat())
                     continue
                 try:
                     result = sefton_tidy_agent(agent['id'])

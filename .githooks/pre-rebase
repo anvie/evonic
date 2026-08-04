@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Prevent rebases from concealing unfinished work stored in Git stashes.
+
+set -euo pipefail
+
+if [[ "${ALLOW_REBASE_WITH_STASH:-}" == "1" ]]; then
+    exit 0
+fi
+
+if git stash list | grep -q .; then
+    echo "ERROR: Rebase blocked because this repository has pending Git stash entries." >&2
+    echo "Review them with: git stash list" >&2
+    echo "Apply, commit, or explicitly preserve the stash before rebasing." >&2
+    echo "To bypass deliberately for one command: ALLOW_REBASE_WITH_STASH=1 git rebase ..." >&2
+    exit 1
+fi

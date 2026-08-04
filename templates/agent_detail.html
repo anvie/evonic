@@ -1124,6 +1124,7 @@ html.dark .agent-tab.active {
                             oninput="chatInputChanged(this)"></textarea>
                             <div id="chat-bash-hint" class="hidden" aria-live="polite">! Bash mode: shell command</div>
                             <div id="chat-command-menu" class="hidden absolute left-0 right-0 z-50 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800" style="bottom: calc(100% + 0.5rem);" role="listbox" aria-label="Available slash commands"></div>
+                            <div id="chat-command-hint" class="hidden mt-1 text-xs text-gray-500 dark:text-gray-400" aria-live="polite"></div>
                         </div>
                         <button onclick="handleChatBtn()" id="chat-send-btn" title="Send" class="bg-indigo-500 hover:bg-indigo-600 text-white p-2.5 rounded-md text-sm transition-colors flex items-center justify-center"><svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
                     </div>
@@ -1576,6 +1577,29 @@ html.dark .agent-tab.active {
         </div>
         <div class="flex justify-end p-5 border-t border-gray-200 dark:border-gray-700">
             <button onclick="closeQRModal()" class="px-4 py-2 border border-gray-300 rounded-md text-sm text-gray-600 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Per-channel WhatsApp Debug Listener Modal -->
+<div id="channel-debug-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4" onclick="if(event.target===this) channelDebugListener.close()">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col" style="max-height:85vh" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 dark:border-gray-700 flex-shrink-0">
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">WhatsApp Debug Listener</h3>
+                <p id="channel-debug-status" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                    <span class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1.5"></span>Disconnected
+                </p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="channelDebugListener.clear()" class="px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">Clear</button>
+                <button onclick="channelDebugListener.close()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xl leading-none">&times;</button>
+            </div>
+        </div>
+        <div id="channel-debug-log" class="flex-1 overflow-y-auto px-6 py-4 space-y-2 bg-gray-50 dark:bg-gray-900/50" style="min-height:300px"></div>
+        <div class="px-6 py-3 border-t border-gray-100 dark:border-gray-700 flex-shrink-0 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
+            <span id="channel-debug-count">0 messages</span>
+            <span>Max 500 &middot; newest first</span>
         </div>
     </div>
 </div>
@@ -2687,6 +2711,7 @@ function switchKBTab(tab) {
         // Re-render preview from current textarea content
         const textarea = document.getElementById('kb-editor-content');
         document.getElementById('kb-editor-preview').innerHTML = renderKBPreview(textarea.value);
+        ui.addCopyButtons(document.getElementById('kb-editor-preview'));
         editPanel.classList.add('hidden');
         previewPanel.classList.remove('hidden');
         editBtn.className = editBtn.className.replace(activeClass, inactiveClass);
@@ -2840,6 +2865,7 @@ async function editFile(filename) {
     document.getElementById('kb-editor-modal').classList.remove('hidden');
     // Render preview and show Preview tab by default
     document.getElementById('kb-editor-preview').innerHTML = renderKBPreview(data.content);
+    ui.addCopyButtons(document.getElementById('kb-editor-preview'));
     document.getElementById('kb-editor-preview').classList.remove('hidden');
     document.getElementById('kb-editor-edit-panel').classList.add('hidden');
     document.getElementById('kb-tab-preview').className = 'px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 transition-colors';
@@ -4231,8 +4257,12 @@ async function loadChannels() {
         const toggleBtn = running
             ? `<button onclick="event.stopPropagation(); toggleChannel('${ch.id}', false)" class="text-xs px-3 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100">Stop</button>`
             : `<button onclick="event.stopPropagation(); toggleChannel('${ch.id}', true)" class="text-xs px-3 py-1 rounded bg-green-50 text-green-600 hover:bg-green-100">Start</button>`;
-        const qrBtn = (ch.type === 'whatsapp' && running)
+        const needsWhatsAppAuth = ch.bridge_status === 'qr_pending' || ch.bridge_status === 'disconnected';
+        const qrBtn = (ch.type === 'whatsapp' && running && needsWhatsAppAuth)
             ? `<button onclick="event.stopPropagation(); openQRModal('${ch.id}')" class="text-xs px-3 py-1 rounded bg-green-50 text-green-700 hover:bg-green-100">Scan QR</button>`
+            : '';
+        const debugBtn = ch.type === 'whatsapp'
+            ? `<button onclick="event.stopPropagation(); channelDebugListener.open('${ch.id}')" class="text-xs px-3 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" title="Real-time inbound WhatsApp messages">Debug Listener</button>`
             : '';
         const primaryBtn = isPrimary
             ? `<button onclick="event.stopPropagation(); unsetPrimaryChannel('${ch.id}')" class="text-xs px-3 py-1 rounded bg-yellow-50 text-yellow-600 hover:bg-yellow-100" title="Remove as primary">&#9733;</button>`
@@ -4256,12 +4286,133 @@ async function loadChannels() {
             <div class="flex items-center gap-2">
                 ${primaryBtn}
                 ${qrBtn}
+                ${debugBtn}
                 ${toggleBtn}
                 <button onclick="event.stopPropagation(); deleteChannel('${ch.id}')" class="text-xs text-red-500 hover:text-red-700">Delete</button>
             </div>
         </div>`;
     }).join('');
 }
+
+const channelDebugListener = {
+    _es: null,
+    _messages: [],
+    _channelId: null,
+    _maxMessages: 500,
+
+    open(channelId) {
+        this._channelId = channelId;
+        document.getElementById('channel-debug-modal').classList.remove('hidden');
+        this._connect();
+    },
+
+    close() {
+        document.getElementById('channel-debug-modal').classList.add('hidden');
+        this._disconnect();
+    },
+
+    clear() {
+        this._messages = [];
+        document.getElementById('channel-debug-log').innerHTML = '';
+        document.getElementById('channel-debug-count').textContent = '0 messages';
+    },
+
+    _connect() {
+        if (!this._channelId) return;
+        this._disconnect();
+        this._setStatus('connecting');
+        const listener = this;
+        const agentId = encodeURIComponent(AGENT_ID);
+        const channelId = encodeURIComponent(this._channelId);
+        const source = new EventSource(`/api/agents/${agentId}/channels/${channelId}/debug/listen`);
+        let announced = false;
+        this._es = source;
+
+        const markConnected = function() {
+            if (listener._es !== source) return;
+            listener._setStatus('connected');
+            if (!announced) {
+                announced = true;
+                listener._addLogEntry({_system: true, text: 'Connected to debug stream — listening for WhatsApp inbound messages...'});
+            }
+        };
+
+        // The browser dispatches `open` as soon as the SSE transport is ready.
+        // Do not rely only on our optional server-side `connected` event.
+        source.onopen = markConnected;
+        source.addEventListener('connected', markConnected);
+        source.addEventListener('whatsapp_inbound', function(event) {
+            if (listener._es !== source) return;
+            try {
+                listener._addLogEntry(JSON.parse(event.data));
+            } catch (error) {
+                // Ignore malformed stream events and keep the listener alive.
+            }
+        });
+        source.onerror = function() {
+            if (listener._es !== source) return;
+            // EventSource retries transient failures itself. Closing it here
+            // cancels that retry and can leave a healthy stream marked down.
+            listener._setStatus(
+                source.readyState === EventSource.CLOSED ? 'disconnected' : 'connecting'
+            );
+        };
+    },
+
+    _disconnect() {
+        if (this._es) {
+            this._es.close();
+            this._es = null;
+        }
+    },
+
+    _setStatus(state) {
+        const status = document.getElementById('channel-debug-status');
+        if (!status) return;
+        if (state === 'connected') {
+            status.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>Listening...';
+        } else if (state === 'connecting') {
+            status.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5"></span>Connecting...';
+        } else {
+            status.innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1.5"></span>Disconnected';
+        }
+    },
+
+    _maskIdentifier(value) {
+        const raw = String(value || '');
+        if (!raw) return '';
+        const at = raw.indexOf('@');
+        const local = at >= 0 ? raw.slice(0, at) : raw;
+        const domain = at >= 0 ? raw.slice(at) : '';
+        return local.length <= 6 ? local.slice(0, 1) + '***' + domain : local.slice(0, 3) + '***' + local.slice(-3) + domain;
+    },
+
+    _addLogEntry(data) {
+        const log = document.getElementById('channel-debug-log');
+        if (!log) return;
+        const card = document.createElement('div');
+        card.className = 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm p-3 text-sm';
+        const time = new Date().toTimeString().slice(0, 8);
+        if (data._system) {
+            card.className += ' border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30';
+            card.innerHTML = `<div class="flex items-center gap-2 text-green-700 dark:text-green-400"><span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">${escapeHtml(time)}</span><span class="text-green-500">&#10003;</span><span>${escapeHtml(data.text || '')}</span></div>`;
+        } else {
+            const type = data.type || 'text';
+            const sender = this._maskIdentifier(data.sender) || '?';
+            const routeStatus = data.route_status || 'unknown';
+            const message = data.text || `[No text - ${type} only]`;
+            const group = data.is_group ? `<div class="text-[11px] text-gray-400 dark:text-gray-500 mt-1"><span class="font-medium">Group:</span> ${escapeHtml(data.group_name || '(unnamed)')}</div>` : '';
+            card.innerHTML = `<div class="flex items-center gap-2 mb-1.5 flex-wrap"><span class="text-[11px] font-mono text-gray-400 dark:text-gray-500">${escapeHtml(time)}</span><span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">${escapeHtml(type)}</span></div><div class="flex items-center gap-1.5 mb-1 text-xs flex-wrap"><span class="font-semibold text-gray-800 dark:text-gray-200">${escapeHtml(sender)}</span>${data.push_name ? `<span class="text-gray-500 dark:text-gray-400">(${escapeHtml(data.push_name)})</span>` : ''}<span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">${escapeHtml(routeStatus)}</span></div>${group}<div class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed mt-1">${escapeHtml(message)}</div>`;
+        }
+        log.insertBefore(card, log.firstChild);
+        this._messages.unshift(data);
+        if (this._messages.length > this._maxMessages) {
+            this._messages.pop();
+            if (log.lastChild) log.removeChild(log.lastChild);
+        }
+        document.getElementById('channel-debug-count').textContent = `${this._messages.length} message${this._messages.length === 1 ? '' : 's'}`;
+    }
+};
 
 function showAddChannelModal() {
     document.getElementById('channel-modal').classList.remove('hidden');
@@ -5075,9 +5226,41 @@ function closeChatCommandMenu() {
     chatCommandIndex = -1;
 }
 
+function commandInputContext(value) {
+    if (!value) return null;
+    const trimmed = value.trimStart();
+    if (!trimmed.startsWith('/')) return null;
+    const space = trimmed.indexOf(' ');
+    const cmdName = space > 0 ? trimmed.slice(1, space) : trimmed.slice(1);
+    const command = chatCommands.find(c => c.name === cmdName);
+    return command ? {command, args: space > 0 ? trimmed.slice(space + 1) : ''} : null;
+}
+
+function renderChatCommandHint(ctx) {
+    const hint = document.getElementById('chat-command-hint');
+    if (!hint) return;
+    if (!ctx || !ctx.command || !ctx.command.accepts_args) {
+        hint.classList.add('hidden');
+        return;
+    }
+    const cmd = ctx.command;
+    let text = '/' + cmd.name + ' ';
+    for (const parameter of cmd.parameters) {
+        if (parameter.options) {
+            text += '<' + parameter.options.join(' | ') + '> ';
+        } else {
+            text += parameter.required ? `<${parameter.placeholder || parameter.name}>` : `[${parameter.placeholder || parameter.name}]`;
+        }
+    }
+    text += '— ' + (cmd.description || '');
+    hint.textContent = text;
+    hint.classList.remove('hidden');
+}
+
 function updateChatComposer(input) {
     if (!input) return;
     const value = input.value;
+    renderChatCommandHint(commandInputContext(value));
     const trimmed = value.trimStart();
     const bashMode = BASH_EXEC_ENABLED && trimmed.startsWith('!');
     input.classList.toggle('chat-bash-input', bashMode);
@@ -5135,7 +5318,7 @@ function getVisibleChatCommands() {
     return chatCommands.filter(command => command.name.toLowerCase().includes(match[1].toLowerCase()));
 }
 
-function selectChatCommand(command) {
+function selectChatCommand(command, showHint) {
     const input = document.getElementById('chat-input');
     if (!input || !command) return;
     input.value = `/${command.name} `;
@@ -5143,6 +5326,10 @@ function selectChatCommand(command) {
     chatInputChanged(input);
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
+    if (showHint) {
+        const hint = document.getElementById('chat-command-hint');
+        if (hint) hint.classList.remove('hidden');
+    }
 }
 
 function chatInputKeydown(event) {
@@ -5156,7 +5343,11 @@ function chatInputKeydown(event) {
         }
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
-            selectChatCommand(choices[chatCommandIndex < 0 ? 0 : chatCommandIndex]);
+            const command = choices[chatCommandIndex < 0 ? 0 : chatCommandIndex];
+            const value = document.getElementById('chat-input').value;
+            const executeNoArgs = value.trimStart().replace(/^\//, '') === command.name;
+            if (executeNoArgs && !command.accepts_args) sendChat();
+            else selectChatCommand(choices[chatCommandIndex < 0 ? 0 : chatCommandIndex], true);
             return;
         }
         if (event.key === 'Escape') {
@@ -6260,9 +6451,11 @@ const _refreshSessionStateImpl = async function() {
             content.innerHTML = html;
             meta.textContent = metaText;
             meta.classList.remove('hidden');
+            ui.addCopyButtons(content);
             mobileContent.innerHTML = html;
             mobileMeta.textContent = metaText;
             mobileMeta.classList.remove('hidden');
+            ui.addCopyButtons(mobileContent);
         } else if (headerHtml) {
             // Show state-only card when no summary yet
             content.innerHTML = `<div>${headerHtml}</div>`;
@@ -6813,6 +7006,7 @@ async function renderArtifactContent(filename, category, fileUrl, ext) {
             const text = await res.text();
             _artifactRawContent = text;
             body.innerHTML = '<div class="recap-prose max-w-none">' + marked.parse(text) + '</div>';
+            ui.addCopyButtons(body);
         } else if (ext === 'pdf') {
             // Embed PDF viewer
             body.innerHTML = `<iframe src="${fileUrl}" class="w-full rounded-md border border-gray-200 dark:border-gray-600" style="min-height: 70vh;"></iframe>`;

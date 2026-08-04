@@ -31,10 +31,18 @@ def execute(agent: dict, args: dict) -> dict:
     offset = max(0, offset)
 
     result = kanban_db.get_comments_paginated(task_id, limit, offset)
+    comments = []
+    for comment in result['comments']:
+        comment = dict(comment)
+        comment['attachments'] = [
+            {**attachment, 'url': f'/api/kanban/attachments/{attachment["id"]}/file'}
+            for attachment in kanban_db.get_attachments_for_comment(comment['id'])
+        ]
+        comments.append(comment)
 
     return {
         'status': 'success',
-        'comments': result['comments'],
+        'comments': comments,
         'total': result['total'],
         'limit': limit,
         'offset': offset,

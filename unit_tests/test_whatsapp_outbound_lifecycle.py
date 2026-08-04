@@ -1,5 +1,6 @@
-"""Focused tests for WhatsApp outbound correlation and LID retry eligibility."""
+"""Focused tests for WhatsApp outbound correlation and persisted JID routing."""
 
+import threading
 from unittest.mock import MagicMock, patch
 
 from backend.channels.whatsapp import WhatsAppChannel
@@ -11,7 +12,28 @@ def _channel():
     channel.channel_id = "channel-1"
     channel.agent_id = "agent-1"
     channel.config = {}
+    # BaseChannel.__init__ is patched out above, so re-create the outbound
+    # coalescing buffer state it normally sets up.
+    channel._buf = {}
+    channel._buf_timers = {}
+    channel._buf_lock = threading.Lock()
+    channel._last_sent = {}
+    channel._send_errors = {}
+    channel._send_errors_lock = threading.Lock()
+    channel._send_error_ttl = 3600
     return channel
+
+
+def test_whatsapp_system_instructions_require_natural_non_human_replies():
+    instructions = _channel().get_system_instructions()
+
+    assert "concisely, naturally, and conversationally" in instructions
+    assert "repetitive greetings" in instructions
+    assert "one complete combined answer" in instructions
+    assert "Avoid Markdown constructs" in instructions
+    assert "Do not claim to be human" in instructions
+    assert "AI assistant" in instructions
+    assert "NEVER use markdown symbols" not in instructions
 
 
 def test_lid_dm_uses_inbound_jid_and_pn_as_recovery_fallback():
@@ -36,12 +58,10 @@ def test_lid_dm_uses_inbound_jid_and_pn_as_recovery_fallback():
         channel._do_send("lid-user", "response")
 
     assert sent[0]["to"] == "lid-user@lid"
-    assert sent[0]["retry_eligible"] is True
-    assert sent[0]["retry_jid"] == "628111@s.whatsapp.net"
     assert sent[0]["correlation_id"]
 
 
-def test_phone_dm_keeps_phone_jid_without_fallback():
+def test_phone_dm_keeps_phone_jid():
     channel = _channel()
     channel._jid_map["628222"] = "628222@s.whatsapp.net"
     sent = []
@@ -51,8 +71,7 @@ def test_phone_dm_keeps_phone_jid_without_fallback():
         channel._do_send("628222", "response")
 
     assert sent[0]["to"] == "628222@s.whatsapp.net"
-    assert sent[0]["retry_eligible"] is False
-    assert sent[0]["retry_jid"] is None
+    assert sent[0]["correlation_id"]
 
 
 def test_persisted_jid_route_survives_channel_reconstruction():
@@ -108,7 +127,7 @@ def test_inbound_debug_event_contains_identity_transport_and_route_metadata():
     assert event["quoted_type"] == "image"
 
 
-def test_group_jid_is_preserved_and_not_lid_retry_eligible():
+def test_group_jid_is_preserved_with_stable_correlation():
     channel = _channel()
     group_id = "120363000000000001"
     channel._jid_map[group_id] = f"{group_id}@g.us"
@@ -119,7 +138,7 @@ def test_group_jid_is_preserved_and_not_lid_retry_eligible():
         channel._do_send(group_id, "group response")
 
     assert sent[0]["to"] == f"{group_id}@g.us"
-    assert sent[0]["retry_eligible"] is False
+    assert sent[0]["correlation_id"]
 
 
 def test_outbound_status_callback_is_forwarded_with_stable_correlation():
@@ -185,7 +204,7 @@ def test_group_slash_command_response_is_sent_to_group_jid_once():
     mock_db.is_session_bot_enabled.return_value = True
     mock_db.list_session_attachments.return_value = []
 
-    with patch("backend.channels.whatsapp.db", mock_db), \
+    with patch("models.db.db", mock_db), \
             patch.object(channel, "_resolve_agent", return_value="agent-1"), \
             patch("backend.agent_runtime.agent_runtime.handle_message",
                   return_value={"response": "Available commands", "slash_command": True}), \
@@ -209,7 +228,7 @@ def test_terminal_reachout_restriction_persists_and_emits_once():
             "whatsapp_restriction_key":
                 "RESTRICT_ALL_COMPANIONS|2026-07-30T06:59:55Z"}}]]
 
-    with patch("backend.channels.whatsapp.db", mock_db), \
+    with patch("models.db.db", mock_db), \
             patch("backend.event_stream.event_stream.emit") as emit:
         channel.handle_callback(_restriction_payload())
         channel.handle_callback(_restriction_payload())

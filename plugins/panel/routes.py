@@ -1104,6 +1104,7 @@ try:
         "panel",
         _panel_slash_handler,
         "Execute panel actions — /panel to list, /panel:<action> to run",
+        [{"name": "action", "required": False, "description": "Panel action ID; omit to list actions"}],
     )
 except Exception as _e:
     from backend.logging_config import get_logger

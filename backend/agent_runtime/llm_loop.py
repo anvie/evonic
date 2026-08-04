@@ -444,12 +444,66 @@ def run_tool_loop(agent: Dict[str, Any],
 
     tool_trace = []
     timeline = []
+    # Lifecycle bookkeeping is scoped to this turn. Explicit task transitions
+    # remain authoritative through the current AgentState status; they must not
+    # disable later automatic transitions for unrelated implementation tools.
+    _successful_mutation = False
+    _tool_errors = False
+
+    def _is_mutating_tool(tool_name: str) -> bool:
+        """Return whether a tool represents implementation work."""
+        return tool_name not in _READ_ONLY_TOOLS and tool_name not in {
+            'set_mode', 'save_plan', 'update_tasks', 'state',
+            'compile_task_graph', 'switch_path', 'new_path',
+            'use_skill', 'unload_skill', 'remember', 'recall',
+        }
+
+    def _emit_task_state_change(ms):
+        _persist_agent_state_split(ms, agent_id, session_id, db_agent_id)
+        event_stream.emit('state:changed', {
+            'agent_id': agent_id, 'session_id': session_id,
+            'mode': ms.mode, 'plan_file': ms.plan_file,
+            'tasks': list(ms.tasks),
+        })
+
+    def _emit_task_lifecycle_event(event_name, task_ids):
+        """Emit a task-only lifecycle event without tool or model internals."""
+        visible_ids = {task_id for task_id in task_ids if isinstance(task_id, int)}
+        if not visible_ids:
+            return
+        ms = agent_context.get('agent_state')
+        event_stream.emit(event_name, {
+            'agent_id': agent_id,
+            'session_id': session_id,
+            'task_ids': sorted(visible_ids),
+            'tasks': list(ms.tasks) if ms is not None else [],
+        })
+
+    _initial_state = agent_context.get('agent_state')
+    if _initial_state is not None:
+        # Self-heal stale task state on every session wake. Active tasks that
+        # predate lifecycle tracking (no in_progress_since) or that have been
+        # in progress across a very long wall-clock window are demoted to
+        # pending. Conservative: never auto-completes, never drops pending/done
+        # entries, keeps the task text so the agent can re-activate it.
+        _resolved = _initial_state.resolve_stale_tasks()
+        if _resolved:
+            _emit_task_state_change(_initial_state)
+            _emit_task_lifecycle_event(
+                'tasks:auto_transition', [r['id'] for r in _resolved])
+        _emit_task_lifecycle_event(
+            'tasks:stale',
+            [task['id'] for task in _initial_state.reconcile_tasks(stale_after=180)],
+        )
+
     _loop_start_time = time.time()
     _gate_context = {
         'agent_id': agent_id, 'session_id': session_id,
         'external_user_id': external_user_id, 'channel_id': channel_id,
         'message_id': agent_context.get('trusted_message_id'),
         'attachment_ids': list(agent_context.get('trusted_attachment_ids') or []),
+        'attachment_mime_types': list(
+            agent_context.get('trusted_attachment_mime_types') or []),
         'turn_index': _turn_index,
     }
 
@@ -475,6 +529,13 @@ def run_tool_loop(agent: Dict[str, Any],
                                        'turn')
     _suppress_intermediate = bool(
         _turn_decision and _turn_decision.get('suppress_intermediate'))
+    _required_tool = str(
+        (_turn_decision or {}).get('required_tool') or '').strip()
+    _required_tool_pending = bool(_required_tool)
+    if _required_tool_pending:
+        event_stream.emit('required_tool_enforced', {
+            **_gate_context, 'tool_name': _required_tool,
+        })
 
     real_exec = tool_registry.get_real_executor(agent_context)
 
@@ -554,6 +615,22 @@ def run_tool_loop(agent: Dict[str, Any],
     _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch',
                         'set_mode', 'save_plan', 'update_tasks'}
 
+    # Eager skill tools (e.g. explorer's Explore, direxplorer's Grep/Glob/Read)
+    # are advertised upfront by build_tools() — never prune them mid-turn, or the
+    # model loses them for the rest of the turn the moment they go uncalled past
+    # the prune threshold. Mirrors the existing loaded-lazy-skill protection.
+    _eager_skill_fns: set = set()
+    try:
+        from backend.skills_manager import skills_manager as _sm
+        _eager_skill_fns = {
+            td.get('function', {}).get('name', ' ').strip()
+            for td in _sm.get_all_skill_tool_defs()
+            if td.get('function', {}).get('name')
+        }
+        _eager_skill_fns.discard(' ')
+    except Exception:
+        pass
+
     def _prune_tools(tools_list: List[dict], iteration: int) -> List[dict]:
         """Prune zero-call tools after the threshold iteration.
         
@@ -574,6 +651,7 @@ def run_tool_loop(agent: Dict[str, Any],
             fn_name = t.get('function', {}).get('name', '')
             if (fn_name in _ESSENTIAL_TOOLS
                     or fn_name in _loaded_skill_fns
+                    or fn_name in _eager_skill_fns
                     or _tool_call_counts.get(fn_name, 0) > 0):
                 pruned.append(t)
         if len(pruned) < len(tools_list):
@@ -611,6 +689,7 @@ def run_tool_loop(agent: Dict[str, Any],
     # Resolve agent's default model for LLM calls
     agent_model_config = None
     _active_fallback_model_name = None  # for system message injection
+    _using_global_default_model = False
 
     # Step 1: Check agent_state for persisted fallback model (cross-session).
     # If a fallback was persisted from a prior session, PROBE the primary model
@@ -682,9 +761,10 @@ def run_tool_loop(agent: Dict[str, Any],
         try:
             from backend.agent_runtime import explorer as _explorer
             agent_model_id = agent.get('model_id') if agent else None
-            model = (_explorer.primary_model(agent)
-                     or (db.get_model_by_id(agent_model_id) if agent_model_id else None)
-                     or db.get_agent_model(agent_id))
+            _explicit_model = (_explorer.primary_model(agent)
+                               or (db.get_model_by_id(agent_model_id) if agent_model_id else None))
+            model = _explicit_model or db.get_agent_model(agent_id)
+            _using_global_default_model = model is not None and _explicit_model is None
             if model:
                 agent_model_config = _build_model_config(model)
                 _logger.info("%s using model: %s (%s)", agent_id, model.get('name'), model.get('model_name'))
@@ -745,7 +825,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         f"[System note: The user sent an image{(' with the message: ' + _user_text) if _user_text else ''}, "
                         "but this model does not support image processing. "
                         "Please inform the user politely that you cannot process images with the current model, "
-                        "and respond in the same language the user is using.]"
+                        "and respond in the same language the user is using. "
+                        "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/]"
                     )
                     _msg = {**_msg, 'content': _note}
             _patched.append(_msg)
@@ -858,6 +939,7 @@ def run_tool_loop(agent: Dict[str, Any],
         except Exception:
             _logger.exception("ATG execution crashed — falling back to plain loop")
         if _atg_outcome is not None:
+            _atg_ms.sync_completed_atg_tasks()
             try:
                 _persist_agent_state_split(_atg_ms, agent_id, session_id, db_agent_id)
             except Exception:
@@ -1091,7 +1173,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 temperature=None,
                 enable_thinking=_enable_thinking_this_call,
                 max_tokens=None,
-                log_file=llm_log_path
+                log_file=llm_log_path,
+                tool_choice=_required_tool if _required_tool_pending else None,
             )
 
         # Check A: stop signal check after LLM call (earliest safe point)
@@ -1376,6 +1459,13 @@ def run_tool_loop(agent: Dict[str, Any],
             _fallback_vision_stripped = False
             from backend.agent_runtime import explorer as _explorer
             _fallback_model = _explorer.fallback_model(agent) or db.get_agent_fallback_model(agent_id)
+            _using_global_fallback = False
+            if not _fallback_model and _using_global_default_model:
+                _global_fallback_id = db.get_setting('default_model_fallback_id', '')
+                _global_fallback = db.get_model_by_id(_global_fallback_id) if _global_fallback_id else None
+                if _global_fallback and _global_fallback.get('enabled', True):
+                    _fallback_model = _global_fallback
+                    _using_global_fallback = True
             if _fallback_model:
                 _logger.warning(
                     "Primary model failed [%s] for agent %s — attempting fallback model %s (%s)",
@@ -1386,7 +1476,10 @@ def run_tool_loop(agent: Dict[str, Any],
                     'primary_error': error_type,
                     'fallback_model': _fallback_model.get('name'),
                     'restored_from_state': False,
-                    'user_message': 'Primary model failed. Switching to fallback model...',
+                    'global_default_fallback': _using_global_fallback,
+                    'user_message': ('Default model failed. Switching to its fallback model...'
+                                     if _using_global_fallback else
+                                     'Primary model failed. Switching to fallback model...'),
                 })
                 try:
                     _fallback_config = _build_model_config(_fallback_model)
@@ -1415,7 +1508,8 @@ def run_tool_loop(agent: Dict[str, Any],
                                         f"[System note: The user sent an image{' with the message: ' + _user_text if _user_text else ''}, "
                                         "but the fallback model does not support image processing. "
                                         "Please inform the user politely that you cannot process images with the current model, "
-                                        "and respond in the same language the user is using.]"
+                                        "and respond in the same language the user is using. "
+                                        "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/]"
                                     )}
                                     _fb_stripped = True
                             _fb_patched.append(_fb_msg)
@@ -1437,7 +1531,9 @@ def run_tool_loop(agent: Dict[str, Any],
                             temperature=None,
                             enable_thinking=_enable_thinking_this_call,
                             max_tokens=None,
-                            log_file=llm_log_path
+                            log_file=llm_log_path,
+                            tool_choice=(
+                                _required_tool if _required_tool_pending else None),
                         )
                     if _fallback_result.get('success'):
                         _logger.info(
@@ -1452,19 +1548,20 @@ def run_tool_loop(agent: Dict[str, Any],
                         result = _fallback_result
                         _request = _fallback_request
                         _fallback_succeeded = True
-                        # Persist fallback model ID to agent_state (cross-session)
-                        try:
-                            _as_raw = db.get_agent_state(agent_id)
-                            _as = json.loads(_as_raw) if _as_raw else {}
-                            _as['active_fallback_model_id'] = _fallback_model.get('id')
-                            db.upsert_agent_state(json.dumps(_as), agent_id=agent_id)
-                            _logger.info(
-                                "Persisted fallback model %s to agent_state for agent %s",
-                                _fallback_model.get('model_name'), agent_id)
-                        except Exception as _ase:
-                            _logger.warning(
-                                "Failed to persist fallback to agent_state for agent %s: %s",
-                                agent_id, _ase)
+                        if not _using_global_fallback:
+                            # Persist per-agent fallback model ID to agent_state.
+                            try:
+                                _as_raw = db.get_agent_state(agent_id)
+                                _as = json.loads(_as_raw) if _as_raw else {}
+                                _as['active_fallback_model_id'] = _fallback_model.get('id')
+                                db.upsert_agent_state(json.dumps(_as), agent_id=agent_id)
+                                _logger.info(
+                                    "Persisted fallback model %s to agent_state for agent %s",
+                                    _fallback_model.get('model_name'), agent_id)
+                            except Exception as _ase:
+                                _logger.warning(
+                                    "Failed to persist fallback to agent_state for agent %s: %s",
+                                    agent_id, _ase)
                     else:
                         _fb_err = _fallback_result.get('error_type', 'unknown')
                         _logger.error(
@@ -1495,7 +1592,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         "Sorry, I couldn't process that image. The image "
                         "model is currently unavailable and my fallback "
                         "model doesn't support images. Please try again "
-                        "later or describe the image in text."
+                        "later or describe the image in text. "
+                        "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/"
                     )
                 else:
                     error_msg = _humanize_llm_error(error_detail)
@@ -1828,6 +1926,17 @@ def run_tool_loop(agent: Dict[str, Any],
                 continue  # re-enter loop so LLM can act on the injected reminder
 
             # Final response — save with timeline metadata
+            ms = agent_context.get('agent_state')
+            if (ms is not None and ms.mode == 'execute' and _successful_mutation
+                    and not stop_event.is_set()):
+                completion = ms.completion_eligible(
+                    tool_errors=_tool_errors, final_text=content, mutated=True)
+                if completion['eligible']:
+                    ms.update_tasks('done', task_id=completion['task_id'])
+                    _emit_task_state_change(ms)
+                    _emit_task_lifecycle_event(
+                        'tasks:auto_transition', [completion['task_id']])
+
             meta = {"timeline": timeline} if timeline else None
             if meta:
                 meta['thinking_duration'] = round(time.time() - _loop_start_time, 1)
@@ -1986,6 +2095,8 @@ def run_tool_loop(agent: Dict[str, Any],
 
         for tc_idx, tc in enumerate(tool_calls):
             fn_name = tc['function']['name']
+            if fn_name == 'update_tasks':
+                _explicit_task_update = True
 
             # --- Quality Monitor: hallucinated tool check ---
             _qm_hallucinated = _qm_check_hallucinated(
@@ -2025,11 +2136,18 @@ def run_tool_loop(agent: Dict[str, Any],
                 'external_user_id': external_user_id, 'channel_id': channel_id,
                 'tool_name': fn_name, 'tool_args': args, 'param_types': pt,
             })
+            if _required_tool_pending and fn_name == _required_tool:
+                _required_tool_pending = False
             _tool_call_counts[fn_name] = _tool_call_counts.get(fn_name, 0) + 1
             _tool_records.append((tc, fn_name, args, pt))
 
             if fn_name in _READ_ONLY_TOOLS and fn_name not in _ALWAYS_SERIAL_TOOLS:
                 _parallel_indices.add(tc_idx)
+
+        # Inspect the complete batch before executing it so an explicit task
+        # update later in the batch always suppresses automatic transitions.
+        _explicit_task_update = any(
+            fn_name == 'update_tasks' for _, fn_name, _, _ in _tool_records)
 
         # Phase 2: Submit and boundedly collect read-only tools (if enabled).
         _parallel_results = {}  # tc_idx -> real or synthetic result
@@ -2077,6 +2195,7 @@ def run_tool_loop(agent: Dict[str, Any],
             # Check B after this loop then ends the turn cleanly.
             if (stop_event.is_set() and i not in _parse_failed
                     and i not in _parallel_results):
+                _tool_errors = True
                 result_str = json.dumps({'error': 'Execution stopped by user'})
                 db.add_chat_message(session_id, 'tool', result_str,
                                     tool_call_id=_tc['id'], agent_id=db_agent_id)
@@ -2099,6 +2218,7 @@ def run_tool_loop(agent: Dict[str, Any],
 
             # --- Parse-failure fast path ---
             if i in _parse_failed:
+                _tool_errors = True
                 result_str = _parse_failed[i]
                 db.add_chat_message(session_id, 'tool', result_str,
                                     tool_call_id=_tc['id'], agent_id=db_agent_id)
@@ -2157,6 +2277,7 @@ def run_tool_loop(agent: Dict[str, Any],
                         'level': 'rejected',
                         'original_reasons': tool_result.get('reasons', []),
                     }
+                    _tool_errors = True
                     # Record the auto-rejection as a completed tool_call result
                     _tc_result = {_tc['id']: tool_result}
                     messages.append({'role': 'tool', 'tool_call_id': _tc['id'],
@@ -2523,6 +2644,23 @@ def run_tool_loop(agent: Dict[str, Any],
                 result_dict = {"data": result_str}
 
             has_error = isinstance(tool_result, dict) and ('error' in tool_result or tool_result.get('status') == 'error')
+
+            _tool_errors = _tool_errors or has_error
+            if (not has_error and not stop_event.is_set()
+                    and _is_mutating_tool(fn_name)):
+                ms = agent_context.get('agent_state')
+                if ms is not None and ms.mode == 'execute':
+                    # The first successful mutation in a turn auto-activates the
+                    # next pending task only when the agent has not explicitly
+                    # managed its own task list this turn. Explicit updates
+                    # always win for selecting which task is active.
+                    if not _successful_mutation and not _explicit_task_update:
+                        activated = ms.auto_activate()
+                        if activated['transitioned']:
+                            _emit_task_state_change(ms)
+                            _emit_task_lifecycle_event(
+                                'tasks:auto_transition', [activated['task_id']])
+                    _successful_mutation = True
 
             timeline.append({"type": "tool_result", "tool": fn_name, "result": result_dict, "error": has_error})
 

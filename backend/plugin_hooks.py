@@ -66,6 +66,8 @@ def run_turn_gates(context: dict) -> Optional[dict]:
                 return {**directives, **result}
             if result.get('suppress_intermediate'):
                 directives['suppress_intermediate'] = True
+            if result.get('required_tool'):
+                directives['required_tool'] = str(result['required_tool'])
         except Exception:
             _logger.exception("Plugin turn gate failed")
     return directives or None

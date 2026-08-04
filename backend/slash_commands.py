@@ -19,10 +19,21 @@ CommandHandler = Callable[[str, str, str, Optional[str], str], str]
 class SlashCommand:
     """Represents a single slash command."""
 
-    def __init__(self, name: str, handler: CommandHandler, description: str = ""):
+    def __init__(self, name: str, handler: CommandHandler, description: str = "", parameters: list = None):
         self.name = name
         self.handler = handler
         self.description = description
+        self.parameters = parameters or []
+        self.accepts_args = bool(self.parameters)
+
+    def to_dict(self) -> dict:
+        """Return a dict suitable for JSON serialization to the frontend."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+            "accepts_args": self.accepts_args,
+        }
 
 
 class SlashCommandRegistry:
@@ -31,17 +42,17 @@ class SlashCommandRegistry:
     def __init__(self):
         self._commands: Dict[str, SlashCommand] = {}
 
-    def register(self, name: str, handler: CommandHandler, description: str = ""):
+    def register(self, name: str, handler: CommandHandler, description: str = "", parameters: list = None):
         """Register a command handler."""
-        self._commands[name] = SlashCommand(name, handler, description)
+        self._commands[name] = SlashCommand(name, handler, description, parameters)
 
     def get(self, name: str) -> Optional[SlashCommand]:
         """Get a command by name."""
         return self._commands.get(name)
 
     def list_commands(self) -> list:
-        """Return list of (name, description) tuples."""
-        return [(cmd.name, cmd.description) for cmd in self._commands.values()]
+        """Return list of SlashCommand objects."""
+        return list(self._commands.values())
 
 
 def _expand_slash_list(raw_value: str, all_names: set) -> set:
@@ -55,6 +66,31 @@ def _expand_slash_list(raw_value: str, all_names: set) -> set:
         allowed = {c.strip() for c in raw[1:].split(',') if c.strip()}
         return set(all_names) - allowed
     return {c.strip() for c in raw.split(',') if c.strip()}
+
+
+def _persist_session_agent_state(chat_db, session_id: str, ms) -> None:
+    """Merge-write session-scoped AgentState fields for slash commands."""
+    import json
+
+    raw = chat_db.get_session_state(session_id)
+    try:
+        session_data = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        session_data = {}
+    if not isinstance(session_data, dict):
+        session_data = {}
+    data = json.loads(ms.serialize())
+    session_data.update({
+        'mode': data.get('mode', 'plan'),
+        'tasks': data.get('tasks', []),
+        'next_task_id': data.get('next_task_id', 1),
+        'plan_file': data.get('plan_file'),
+        'states': data.get('states', {}),
+        'auto_trivial': data.get('auto_trivial', False),
+        'atg': data.get('atg'),
+        'cmp': data.get('cmp'),
+    })
+    chat_db.upsert_session_state(session_id, json.dumps(session_data))
 
 
 def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> list:
@@ -74,20 +110,20 @@ def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> 
         is_super = can_cd = has_subagent = False
         disabled_raw = ''
 
-    disabled_set = _expand_slash_list(disabled_raw, {name for name, _desc in commands})
+    disabled_set = _expand_slash_list(disabled_raw, {cmd.name for cmd in commands})
 
     available = []
-    for name, description in commands:
-        if name in {'cd', 'cwd'} and not can_cd:
+    for cmd in commands:
+        if cmd.name in {'cd', 'cwd'} and not can_cd:
             continue
-        if name in {'restart', 'shutdown'} and not is_super:
+        if cmd.name in {'restart', 'shutdown'} and not is_super:
             continue
-        if name == 'sub' and not has_subagent:
+        if cmd.name == 'sub' and not has_subagent:
             continue
-        if not is_super and name in disabled_set:
+        if not is_super and cmd.name in disabled_set:
             continue
-        available.append((name, description))
-    return sorted(available, key=lambda command: command[0])
+        available.append(cmd)
+    return sorted(available, key=lambda c: c.name)
 
 
 # Global registry instance
@@ -153,7 +189,7 @@ def execute_command(
 def _register_builtins():
     """Register all built-in slash commands."""
 
-    # /clear — Clear chat history and agent llm log
+    # /clear [ar] — Clear chat history and agent LLM log; `ar` also archives it.
     def clear_handler(
         session_id: str,
         agent_id: str,
@@ -165,8 +201,9 @@ def _register_builtins():
         import os
         import config
 
-        # Optional `noa`/`noarchive` arg skips writing the session to the archive DB.
-        no_archive = bool({"noa", "noarchive"} & set(args.strip().lower().split()))
+        # Archive only when explicitly requested with the `ar` argument.
+        archive_requested = "ar" in set(args.strip().lower().split())
+        no_archive = not archive_requested
 
         db.clear_session(session_id, agent_id, no_archive=no_archive)
 
@@ -222,7 +259,8 @@ def _register_builtins():
     command_registry.register(
         "clear",
         clear_handler,
-        "Clear chat history for this session",
+        "Clear chat history (`/clear ar` archives it)",
+        parameters=[{"name": "archive", "options": ["ar"]}],
     )
 
     # /help — Show available commands
@@ -234,8 +272,8 @@ def _register_builtins():
         args: str,
     ) -> str:
         lines = ["**Available commands:**"]
-        for name, desc in list_available_commands(agent_id, channel_id):
-            lines.append(f"- `/{name}` — {desc}")
+        for cmd in list_available_commands(agent_id, channel_id):
+            lines.append(f"- `/{cmd.name}` — {cmd.description}")
         return "\n".join(lines)
 
     command_registry.register(
@@ -389,6 +427,7 @@ def _register_builtins():
         "investigate",
         investigate_handler,
         "Send investigation request to another agent with session context",
+        parameters=[{"name": "agent_id"}, {"name": "context"}],
     )
 
 
@@ -461,6 +500,7 @@ def _register_builtins():
         "cwd",
         cwd_handler,
         "Show current workspace directory",
+        parameters=[],
     )
 
     # /cd — Change workspace directory (super agent or remote/tunnel workplace)
@@ -553,6 +593,7 @@ def _register_builtins():
         "cd",
         cd_handler,
         "Change workspace directory",
+        parameters=[{"name": "path"}],
     )
 
 
@@ -650,22 +691,11 @@ def _register_builtins():
         # Create a fresh AgentState in plan mode
         ms = AgentState()
 
-        # Save per-session state (mode/tasks/plan_file) to session_state
         _db = agent_chat_manager.get(agent_id)
-        session_data = {
-            'mode': ms.mode,
-            'tasks': ms.tasks,
-            'next_task_id': ms._next_task_id,
-            'plan_file': ms.plan_file,
-            'states': ms.states,
-            'auto_trivial': ms.auto_trivial,
-        }
-        import json
-        _db.upsert_session_state(session_id, json.dumps(session_data))
+        _persist_session_agent_state(_db, session_id, ms)
 
-        # Reset focus in global agent_state (focus is cross-session)
-        global_data = {'focus': ms.focus, 'focus_reason': ms.focus_reason}
-        _db.upsert_agent_state(json.dumps(global_data))
+        # Reset focus in global agent_state (focus is cross-session).
+        _db.upsert_agent_state(ms.serialize())
 
         return "Switched to plan mode."
 
@@ -713,17 +743,7 @@ def _register_builtins():
         if "error" in result:
             return f"Error: {result['error']}"
 
-        # Save per-session state (mode changed to execute)
-        import json
-        session_data = {
-            "mode": ms.mode,
-            "tasks": ms.tasks,
-            "next_task_id": ms._next_task_id,
-            "plan_file": ms.plan_file,
-            "states": ms.states,
-            "auto_trivial": ms.auto_trivial,
-        }
-        _db.upsert_session_state(session_id, json.dumps(session_data))
+        _persist_session_agent_state(_db, session_id, ms)
 
         return "Switched to execute mode."
 
@@ -812,6 +832,14 @@ def _register_builtins():
         if session_content:
             sess_ms = AgentState.deserialize(session_content)
             lines.append(f"Mode: {sess_ms.mode}")
+            task_counts = {
+                status: sum(1 for task in sess_ms.tasks if task.get("status") == status)
+                for status in ("pending", "in_progress", "done")
+            }
+            lines.append(
+                f"Tasks: {task_counts['pending']} pending, "
+                f"{task_counts['in_progress']} in progress, {task_counts['done']} done"
+            )
             if sess_ms.cmp and sess_ms.cmp.get('paths'):
                 _paths = sess_ms.cmp['paths']
                 _active = _paths.get(sess_ms.cmp.get('active_id')) or {}
@@ -1090,6 +1118,7 @@ def _register_builtins():
         "model",
         model_handler,
         "Show or switch LLM model — /model, /model list|ls, /model [number|provider/model]",
+        parameters=[{"name": "action", "options": ["current", "list", "set"]}, {"name": "model"}],
     )
 
 

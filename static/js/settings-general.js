@@ -27,8 +27,10 @@ window.settingsGeneral = {
             this._fill(general);
             this._populateModelSelects(models, {
                 defaultModelId: defaultModel && defaultModel.model ? defaultModel.model.id : "",
+                defaultModelFallbackId: general.default_model_fallback_id || "",
                 visionModelId: general.vision_model_id || "",
                 visionFallbackModelId: general.vision_fallback_model_id || "",
+                visionFallbackModel2Id: general.vision_fallback_model_2_id || "",
                 kbOrganizerModelId: general.kb_organizer_model_id || "",
                 classifierModelId: classifier ? classifier.model_id || "" : "",
                 cmpModelId: cmpModel ? cmpModel.model_id || "" : "",
@@ -74,9 +76,17 @@ window.settingsGeneral = {
         set("agent-queue-workers-input", s.agent_queue_workers);
         set("max-tool-iterations-input", s.max_tool_iterations);
         set("agent-sidebar-limit-input", s.agent_sidebar_limit);
+        set("kb-organizer-nightly-time-input", s.kb_organizer_nightly_time);
         check("public-history-toggle", s.public_history);
         check("long-running-guard-toggle", s.long_running_guard_enabled);
         check("message-wrapper-toggle", s.message_wrapper_enabled);
+        check("whatsapp-safe-delivery-toggle", s.whatsapp_safe_delivery_enabled);
+        check("whatsapp-natural-formatting-toggle", s.whatsapp_natural_formatting_enabled);
+        set("whatsapp-pool-window-input", s.whatsapp_pool_window_seconds);
+        set("whatsapp-min-send-interval-input", s.whatsapp_min_send_interval_seconds);
+        set("whatsapp-typing-speed-input", s.whatsapp_typing_chars_per_second);
+        set("whatsapp-max-typing-delay-input", s.whatsapp_max_typing_delay_seconds);
+        set("whatsapp-outbound-limit-input", s.whatsapp_max_outbound_per_minute);
     },
 
     _currentSelectValues() {
@@ -86,8 +96,10 @@ window.settingsGeneral = {
         };
         return {
             defaultModelId: val("default-model-select"),
+            defaultModelFallbackId: val("default-model-fallback-select"),
             visionModelId: val("vision-model-select"),
             visionFallbackModelId: val("vision-fallback-model-select"),
+            visionFallbackModel2Id: val("vision-fallback-model-2-select"),
             kbOrganizerModelId: val("kb-organizer-model-select"),
             classifierModelId: val("task-classifier-model-select"),
             cmpModelId: val("cmp-model-select"),
@@ -127,18 +139,16 @@ window.settingsGeneral = {
 
         const enabled = models.filter((m) => m.enabled);
         fill("default-model-select", models, current.defaultModelId, "— Select model —");
+        fill("default-model-fallback-select", enabled, current.defaultModelFallbackId, "None / disabled");
         fill(
             "vision-model-select",
             enabled.filter((m) => m.vision_supported),
             current.visionModelId,
             "Auto-detect (first vision-capable model)",
         );
-        fill(
-            "vision-fallback-model-select",
-            enabled.filter((m) => m.vision_supported),
-            current.visionFallbackModelId,
-            "No fallback",
-        );
+        const visionModels = enabled.filter((m) => m.vision_supported);
+        fill("vision-fallback-model-select", visionModels, current.visionFallbackModelId, "No fallback");
+        fill("vision-fallback-model-2-select", visionModels, current.visionFallbackModel2Id, "No fallback");
         fill(
             "kb-organizer-model-select",
             enabled,

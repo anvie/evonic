@@ -484,23 +484,42 @@ class SSHBackend(ExecutionBackend):
         return {'ok': True}
 
     def cat_file_bytes(self, path: str) -> dict:
-        """Read a file as raw bytes from the remote host via SSH.
+        """Read a remote file as bytes, preferring SFTP over the exec channel.
 
-        Uses ``base64`` encoding over the SSH exec channel for binary-safe
-        transfer, avoiding the SFTP layer entirely.
+        SFTP preserves binary data without text encoding or command-output
+        truncation.  The base64 exec fallback retains compatibility with SSH
+        servers where the SFTP subsystem is unavailable.
         """
-        import base64
-        r = self._exec(f'base64 {shlex.quote(path)}', '', 60)
+        try:
+            sftp = self._client.open_sftp()
+            try:
+                with sftp.file(path, 'rb') as remote_file:
+                    return {'bytes': remote_file.read()}
+            finally:
+                sftp.close()
+        except Exception as sftp_error:
+            logger.warning('[ssh_sftp] Binary read failed for %s; using exec fallback: %s',
+                           path, sftp_error)
+
+        # Python's base64 encoder does not wrap output, unlike many `base64`
+        # command implementations.  Strip whitespace nevertheless so fallback
+        # remains compatible with servers that inject line wrapping.
+        command = (
+            'python3 -c ' + shlex.quote(
+                'import base64,sys; '
+                f'sys.stdout.write(base64.b64encode(open({path!r}, "rb").read()).decode("ascii"))'
+            )
+        )
+        r = self._exec(command, '', 60)
         if r.get('exit_code', 1) != 0:
             return {'error': r.get('stderr', '') or r.get('error', 'cat failed')}
-        encoded = r.get('stdout', '').replace('\n', '').replace('\r', '').strip()
+        encoded = ''.join(r.get('stdout', '').split())
         if not encoded:
             return {'bytes': b''}
         try:
-            data = base64.b64decode(encoded)
-            return {'bytes': data}
+            return {'bytes': base64.b64decode(encoded, validate=True)}
         except Exception as e:
-            return {'error': f'base64 decode failed: {e}'}
+            return {'error': f'base64 decode failed after SFTP error ({sftp_error}): {e}'}
 
     def delete_file(self, path: str) -> dict:
         """Delete a file on the remote host via SSH."""
