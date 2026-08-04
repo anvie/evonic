@@ -26,6 +26,24 @@
         <div id="sc-channels"></div>
     </section>
 
+    <section class="setting-group">
+        <div class="setting-group-head">
+            <i data-lucide="clock-3"></i>
+            <h3>Unassigned Sender Retention</h3>
+        </div>
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-xs text-gray-400 dark:text-gray-500">Automatically remove unassigned senders from every shared channel after this many hours without a new message.</p>
+            <div class="flex shrink-0 items-center gap-2">
+                <label for="sc-inbox-retention-hours" class="sr-only">Retention period in hours</label>
+                <input id="sc-inbox-retention-hours" type="number" min="1" max="8760" step="1" inputmode="numeric"
+                    class="w-24 rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                <span class="text-xs text-gray-500 dark:text-gray-400">hours</span>
+                <button type="button" onclick="sharedChannel.saveInboxRetention()"
+                    class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">Save</button>
+            </div>
+        </div>
+    </section>
+
     <!-- Unassigned senders -->
     <section id="sc-inbox-section" class="setting-group hidden">
         <div class="setting-group-head">
@@ -265,6 +283,32 @@
             if (sharedChannel._qrTimer) { clearInterval(sharedChannel._qrTimer); sharedChannel._qrTimer = null; }
         },
 
+        loadInboxRetention: function() {
+            fetch('/api/shared-channels/settings').then(function(r) { return r.json(); }).then(function(data) {
+                var input = document.getElementById('sc-inbox-retention-hours');
+                if (input && document.activeElement !== input) input.value = data.unassigned_sender_retention_hours;
+            });
+        },
+
+        saveInboxRetention: function() {
+            var input = document.getElementById('sc-inbox-retention-hours');
+            if (!input) return;
+            fetch('/api/shared-channels/settings', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({unassigned_sender_retention_hours: input.value})
+            }).then(function(r) { return r.json().then(function(data) { return {ok: r.ok, data: data}; }); })
+              .then(function(result) {
+                  if (!result.ok) throw new Error(result.data.error || 'Failed to save retention period');
+                  input.value = result.data.unassigned_sender_retention_hours;
+                  sharedChannel.showToast('Unassigned sender retention saved.');
+                  sharedChannel.resetSigs();
+                  sharedChannel.load();
+              }).catch(function(err) {
+                  sharedChannel.showToast(err.message, 'error');
+              });
+        },
+
         loadAgents: function() {
             return fetch('/api/agents').then(function(r) { return r.json(); }).then(function(data) {
                 sharedChannel.agentsById = {};
@@ -280,6 +324,7 @@
         load: function() {
             fetch('/api/shared-channels').then(function(r) { return r.json(); }).then(function(data) {
                 var previousActiveId = sharedChannel.activeId;
+                sharedChannel.loadInboxRetention();
                 sharedChannel.channels = data.channels || [];
                 // Keep the current selection if it still exists; otherwise fall
                 // back to the first channel (or none).

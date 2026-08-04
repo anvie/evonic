@@ -122,6 +122,17 @@ class Scheduler:
             )
         except Exception as e:  # pragma: no cover - defensive guard
             log.warning("Failed to register attachments cleanup job: %s", e)
+        # Built-in: remove expired unassigned shared-channel senders hourly.
+        try:
+            self._scheduler.add_job(
+                self._cleanup_expired_shared_inbox,
+                IntervalTrigger(hours=1, timezone=self._timezone),
+                id='builtin:shared_inbox_cleanup',
+                replace_existing=True,
+                misfire_grace_time=3600,
+            )
+        except Exception as e:  # pragma: no cover - defensive guard
+            log.warning("Failed to register shared inbox cleanup job: %s", e)
         # Built-in: SEFTON nightly agentic tidy for all sefton-mode agents.
         try:
             self._scheduler.add_job(
@@ -151,6 +162,18 @@ class Scheduler:
                 )
         except Exception as e:
             log.error("Attachments cleanup failed: %s", e, exc_info=True)
+
+    def _cleanup_expired_shared_inbox(self):
+        """Hourly housekeeping for globally expired unassigned senders."""
+        try:
+            from routes.settings import _shared_inbox_retention_hours
+            from models.db import db
+            deleted = db.cleanup_expired_inbox_entries(
+                _shared_inbox_retention_hours())
+            if deleted:
+                log.info("Shared inbox cleanup: deleted %d expired sender(s)", deleted)
+        except Exception as e:
+            log.error("Shared inbox cleanup failed: %s", e, exc_info=True)
 
     def _sefton_tidy_all(self):
         """Nightly SEFTON tidy: run KB Janitor for sefton-mode agents whose

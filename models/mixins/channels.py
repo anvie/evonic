@@ -174,6 +174,18 @@ class ChannelMixin:
             """, (channel_id, channel_id, self._INBOX_MAX_PER_CHANNEL))
             conn.commit()
 
+    def cleanup_expired_inbox_entries(self, retention_hours: int) -> int:
+        """Remove unassigned senders inactive longer than ``retention_hours``."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM shared_channel_inbox "
+                "WHERE last_seen < datetime('now', ?)",
+                (f'-{retention_hours} hours',),
+            )
+            conn.commit()
+            return cursor.rowcount
+
     def get_inbox(self, channel_id: str) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row

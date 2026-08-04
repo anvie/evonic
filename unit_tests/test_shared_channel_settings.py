@@ -93,6 +93,27 @@ def test_inbox_pruned_to_cap(chan_id):
     assert len(db.get_inbox(chan_id)) == 100
 
 
+def test_inbox_cleanup_expires_entries_across_shared_channels(chan_id):
+    other_channel = db.create_channel({
+        'agent_id': None, 'type': 'whatsapp_shared', 'name': 'Other Shared',
+        'config': {'mode': 'open', 'routes': {}},
+    })
+    db.record_inbox_sender(chan_id, 'expired-one')
+    db.record_inbox_sender(other_channel, 'expired-two')
+    db.record_inbox_sender(other_channel, 'recent')
+    with db._connect() as conn:
+        conn.execute("""
+            UPDATE shared_channel_inbox
+            SET last_seen = datetime('now', '-25 hours')
+            WHERE external_user_id IN ('expired-one', 'expired-two')
+        """)
+        conn.commit()
+
+    assert db.cleanup_expired_inbox_entries(24) == 2
+    assert db.get_inbox(chan_id) == []
+    assert [entry['external_user_id'] for entry in db.get_inbox(other_channel)] == ['recent']
+
+
 def test_get_shared_channels_only_agentless(chan_id):
     db.create_agent({'id': 'ag1', 'name': 'A1'})
     db.create_channel({'agent_id': 'ag1', 'type': 'whatsapp', 'name': 'W'})
@@ -140,6 +161,34 @@ def test_create_list_delete_shared_channel(client, monkeypatch):
 
     assert client.delete(f"/api/shared-channels/{chan['id']}").status_code == 200
     assert client.get('/api/shared-channels').get_json()['channels'] == []
+
+
+def test_unassigned_sender_retention_defaults_saves_and_validates(client):
+    response = client.get('/api/shared-channels/settings')
+    assert response.status_code == 200
+    assert response.get_json()['unassigned_sender_retention_hours'] == 24
+
+    response = client.put('/api/shared-channels/settings', json={
+        'unassigned_sender_retention_hours': 48,
+    })
+    assert response.status_code == 200
+    assert response.get_json()['unassigned_sender_retention_hours'] == 48
+    assert db.get_setting('shared_channel_inbox_retention_hours') == '48'
+
+    for value in (None, 'nope', 0, 8761):
+        response = client.put('/api/shared-channels/settings', json={
+            'unassigned_sender_retention_hours': value,
+        })
+        assert response.status_code == 400
+
+
+def test_shared_channel_listing_cleans_expired_inbox_entries(client, chan_id):
+    db.record_inbox_sender(chan_id, 'expired')
+    with db._connect() as conn:
+        conn.execute("UPDATE shared_channel_inbox SET last_seen = datetime('now', '-25 hours')")
+        conn.commit()
+
+    assert client.get('/api/shared-channels').get_json()['channels'][0]['inbox_count'] == 0
 
 
 def test_routes_add_and_remove(client, chan_id, agent_a):
