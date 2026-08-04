@@ -821,10 +821,23 @@ class TelegramChannel(BaseChannel):
         self._llm_thinking_handler = _on_llm_thinking
         event_stream.on('llm_thinking', _on_llm_thinking)
 
-        # Tool-call notification: post a compact one-liner when a tool finishes.
-        # Debounced per user (2s) so a 100-tool loop doesn't spam the chat.
-        _tool_notify_last: dict = {}  # external_user_id -> timestamp
-        _TOOL_NOTIFY_DEBOUNCE = 2.0
+        # Tool-call notification: coalesce tool calls within a short window into
+        # one compact message. A 100-tool loop collapses to a handful of lines
+        # instead of one message per call.
+        _tool_pending: dict = {}  # external_user_id -> {last, counts: {name: n}, any_error}
+        _TOOL_WINDOW = 5.0
+
+        def _flush_tool_notify(user_id: str):
+            entry = _tool_pending.pop(user_id, None)
+            if not entry:
+                return
+            parts = [f"{name} ({n}x)" for name, n in sorted(entry['counts'].items())]
+            icon = '\u26a0\ufe0f' if entry['any_error'] else '\U0001f6e0\ufe0f'
+            text = f"{icon} Tool: {', '.join(parts)}"
+            try:
+                self.send_message(user_id, text)
+            except Exception as e:
+                _logger.error("Failed to send tool notification: %s", e)
 
         def _on_tool_executed(data):
             if data.get('channel_id') != channel_id:
@@ -833,17 +846,22 @@ class TelegramChannel(BaseChannel):
             if not user_id:
                 return
             now = time.time()
-            if now - _tool_notify_last.get(user_id, 0) < _TOOL_NOTIFY_DEBOUNCE:
+            entry = _tool_pending.get(user_id)
+            if entry and now - entry['last'] < _TOOL_WINDOW:
+                name = data.get('tool_name', '')
+                entry['counts'][name] = entry['counts'].get(name, 0) + 1
+                entry['any_error'] = entry['any_error'] or data.get('has_error', False)
+                entry['last'] = now
                 return
-            _tool_notify_last[user_id] = now
-            tool_name = data.get('tool_name', '')
-            has_error = data.get('has_error', False)
-            icon = '\u26a0\ufe0f' if has_error else '\U0001f6e0\ufe0f'
-            text = f"{icon} Tool: `{tool_name}`"
-            try:
-                self.send_message(user_id, text)
-            except Exception as e:
-                _logger.error("Failed to send tool notification: %s", e)
+            # flush previous window (if any) and start a new one
+            if entry:
+                _flush_tool_notify(user_id)
+            _tool_pending[user_id] = {
+                'last': now,
+                'counts': {data.get('tool_name', ''): 1},
+                'any_error': data.get('has_error', False),
+            }
+            threading.Timer(_TOOL_WINDOW, _flush_tool_notify, args=[user_id]).start()
 
         self._tool_executed_handler = _on_tool_executed
         event_stream.on('tool_executed', _on_tool_executed)
