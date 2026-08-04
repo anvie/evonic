@@ -915,6 +915,21 @@ html.dark #tab-chat.chat-fullscreen {
     display: inline-block;
     width: 100%;
 }
+.diff-code-block .hl-diff-add-change,
+.diff-code-block .hl-diff-remove-change {
+    border-radius: 2px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    font-weight: 700;
+}
+.diff-code-block .hl-diff-add-change {
+    color: #d7ffd3;
+    background: rgba(94, 201, 102, 0.32);
+}
+.diff-code-block .hl-diff-remove-change {
+    color: #ffd6df;
+    background: rgba(235, 82, 120, 0.32);
+}
 .diff-code-block .hl-diff-context {
     color: #9399b2;
 }

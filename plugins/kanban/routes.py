@@ -20,13 +20,21 @@ Agent Access Control:
 
 import json
 import os
+import re
+import uuid
 from datetime import datetime, timezone
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, send_file
+from werkzeug.utils import secure_filename
 
-from plugins.kanban.db import kanban_db
+from plugins.kanban.db import ATTACHMENTS_DIR, kanban_db
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SUPER_AGENT_ID = 'super'
+
+# --- Attachment upload policy -------------------------------------------------
+ALLOWED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+ALLOWED_IMAGE_MIMES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 def _now():
@@ -49,6 +57,47 @@ def _get_owner_name():
         return db.get_setting('owner_name') or 'UI User'
     except Exception:
         return 'UI User'
+
+
+def _attachment_file_path(task_id, stored_name: str) -> str:
+    """Absolute path of a stored attachment file on disk."""
+    return os.path.join(ATTACHMENTS_DIR, f'task_{task_id}', stored_name)
+
+
+def _attachment_with_url(att: dict) -> dict:
+    """Return an attachment dict enriched with its public file URL."""
+    att = dict(att)
+    att['url'] = f'/api/kanban/attachments/{att["id"]}/file'
+    return att
+
+
+def _comment_with_attachments(comment: dict) -> dict:
+    comment = dict(comment)
+    comment['attachments'] = [
+        _attachment_with_url(att)
+        for att in kanban_db.get_attachments_for_comment(comment['id'])
+    ]
+    return comment
+
+
+def _task_with_attachments(task: dict) -> dict:
+    """Return a task dict enriched with its attachment list (with URLs)."""
+    task = dict(task)
+    task['attachments'] = [_attachment_with_url(a) for a in kanban_db.get_attachments(task['id'])]
+    return task
+
+
+def _remove_attachment_file(att: dict) -> None:
+    """Best-effort removal of an attachment's file and its (now possibly empty) task dir."""
+    try:
+        path = _attachment_file_path(att.get('task_id'), att.get('stored_name'))
+        if path and os.path.isfile(path):
+            os.remove(path)
+        task_dir = os.path.dirname(path)
+        if task_dir and os.path.isdir(task_dir) and not os.listdir(task_dir):
+            os.rmdir(task_dir)
+    except OSError:
+        pass
 
 
 def _is_super_agent(agent_id):
@@ -128,6 +177,86 @@ def _enhance_completion(messages):
     return LLMClient(model_config=fallback_model).chat_completion(**completion_kwargs)
 
 
+def _extract_reply(result):
+    """Extract the text reply from an _enhance_completion result.
+
+    Handles the nested {response: {choices: ...}} structure, falls back to
+    reasoning_content when content is empty, and strips thinking tags.
+    Returns None when no usable reply is present.
+    """
+    inner = result.get("response", result)
+    choices = inner.get("choices", [])
+    if not choices:
+        return None
+    msg = choices[0].get("message", {})
+    reply = (msg.get("content") or "").strip()
+    if not reply:
+        reply = (msg.get("reasoning_content") or msg.get("reasoning") or "").strip()
+    if not reply:
+        return None
+    if "<think" in reply or "<reasoning" in reply:
+        reply = re.sub(r"<(?:think|thinking)>.*?</(?:think|thinking)>", "", reply, flags=re.DOTALL)
+        reply = re.sub(r"<reasoning>.*?</reasoning>", "", reply, flags=re.DOTALL)
+        reply = reply.strip()
+    return reply or None
+
+
+def _parse_enhance_reply(reply):
+    """Parse the ---TITLE--- / ---DESCRIPTION--- / ---END--- delimiter format.
+
+    Returns (title, description) or None when the format is invalid.
+    """
+    title_match = re.search(
+        r"^\s*---TITLE---\s*\n(.*?)(?=\n\s*---DESCRIPTION---)",
+        reply,
+        re.DOTALL | re.MULTILINE,
+    )
+    desc_match = re.search(
+        r"^\s*---DESCRIPTION---\s*\n(.*?)(?:\n\s*---END---\s*$|\Z)",
+        reply,
+        re.DOTALL | re.MULTILINE,
+    )
+    if not title_match or not desc_match:
+        return None
+    title = title_match.group(1).strip()
+    desc = desc_match.group(1).strip()
+    if not title or not desc:
+        return None
+    return title, desc
+
+
+# Indonesian stopwords used by _looks_non_english as a lightweight guard against
+# the LLM echoing non-English (e.g. Indonesian) input back verbatim.
+_ID_STOPWORDS = frozenset(
+    "yang untuk dengan dan dari agar supaya bisa dapat akan tidak jika pada ke di ini itu "
+    "juga sudah telah atau karena namun tetapi sesudah sebelum ketika saat sebagai secara "
+    "terhadap tentang antara bagi oleh membuat menjadi lebih sangat harus perlu ingin mau "
+    "ada adalah tersebut kamu saya kita kami anda sehingga maka pun ya belum pernah lagi "
+    "masih sedang memang walaupun meskipun kecuali tanpa hingga sampai sebab akibat "
+    "bagaimana mengapa kapan".split()
+)
+
+
+def _looks_non_english(text, threshold=0.15):
+    """Heuristic: text is probably not English when a large share of its words
+    are common Indonesian stopwords (the observed failure mode for this endpoint)."""
+    words = re.findall(r"[a-zA-Z]+", (text or "").lower())
+    if not words:
+        return False
+    return sum(1 for w in words if w in _ID_STOPWORDS) / len(words) >= threshold
+
+
+_ENGLISH_TRANSLATION_PROMPT = (
+    "You are a translator. Rewrite the following task title and description in clear, "
+    "natural English, preserving the exact meaning. Output ONLY the translated text in "
+    "this exact format:\n"
+    "---TITLE---\n<title in English>\n"
+    "---DESCRIPTION---\n<description in English>\n"
+    "---END---\n"
+    "Do NOT include any text before ---TITLE--- or after ---END---."
+)
+
+
 def create_blueprint():
     bp = Blueprint('kanban', __name__, template_folder=os.path.join(PLUGIN_DIR, 'templates'))
 
@@ -150,6 +279,7 @@ def create_blueprint():
             deps = all_deps.get(tid, [])
             task['deps'] = deps
             task['deps_met'] = all(d in done_ids for d in deps)
+        tasks = [_task_with_attachments(t) for t in tasks]
         return jsonify({'tasks': tasks})
 
     @bp.route('/api/kanban/tasks/available-deps', methods=['GET'])
@@ -207,6 +337,7 @@ def create_blueprint():
                 return jsonify({'error': str(e)}), 400
         task['deps'] = kanban_db.get_dependencies(task['id'])
         task['deps_met'] = not kanban_db.has_unmet_dependencies(task['id'])
+        task = _task_with_attachments(task)
         _emit('kanban_task_created', task)
         return jsonify({'task': task}), 201
 
@@ -225,13 +356,16 @@ def create_blueprint():
             "You are a professional task-writing assistant. Your job is to:\n"
             "1. Enhance the user's task description to be more detailed, structured, and actionable, but not too much, simple and lean but descriptive.\n"
             "2. Generate a concise, descriptive title for the task.\n"
+            "3. ALWAYS write the enhanced title and description in English, regardless of the language of the user's input. "
+            "If the input is written in Indonesian or another language, translate and reformulate its meaning into clear, natural English.\n"
             "Return your answer in this exact format:\n"
             "---TITLE---\n"
-            "<your title here>\n"
+            "<your English title here>\n"
             "---DESCRIPTION---\n"
-            "<your enhanced description here>\n"
+            "<your enhanced English description here>\n"
             "---END---\n"
-            "Do NOT include any text before ---TITLE--- or after ---END---."
+            "Do NOT include any text before ---TITLE--- or after ---END---.\n"
+            "All of your output must be in English."
         )
 
         user_prompt = f"Title: {data.get('title', '').strip() or '(not provided)'}\n\nDescription: {description}"
@@ -250,52 +384,33 @@ def create_blueprint():
                 return jsonify({'error': 'LLM ran out of tokens. Please try a shorter description.'}), 500
             return jsonify({'error': 'LLM API error'}), 500
 
-        # Handle nested response structure
-        inner = result.get('response', result)
-        choices = inner.get('choices', [])
-        if not choices:
-            print("[ENHANCE] no choices in result")
+        reply = _extract_reply(result)
+        if not reply:
+            print("[ENHANCE] no usable reply in result")
             return jsonify({'error': 'LLM returned no choices'}), 500
 
-        msg = choices[0].get('message', {})
-        reply = (msg.get('content') or '').strip()
-
-        # Fallback: if content is empty, try reasoning_content
-        if not reply:
-            reasoning = (msg.get('reasoning_content') or msg.get('reasoning') or '').strip()
-            if reasoning:
-                print(f"[ENHANCE] content empty, falling back to reasoning_content ({len(reasoning)} chars)")
-                reply = reasoning
-
-        # Strip thinking/reasoning tags if present
-        if '<think' in reply or '<reasoning' in reply:
-            import re
-            reply = re.sub(r'<(?:think|thinking)>.*?</(?:think|thinking)>', '', reply, flags=re.DOTALL)
-            reply = re.sub(r'<reasoning>.*?</reasoning>', '', reply, flags=re.DOTALL)
-            reply = reply.strip()
-
-        # Parse the delimiter-based format
-        import re
-        title_match = re.search(
-            r'^\s*---TITLE---\s*\n(.*?)(?=\n\s*---DESCRIPTION---)',
-            reply,
-            re.DOTALL | re.MULTILINE,
-        )
-        desc_match = re.search(
-            r'^\s*---DESCRIPTION---\s*\n(.*?)(?:\n\s*---END---\s*$|\Z)',
-            reply,
-            re.DOTALL | re.MULTILINE,
-        )
-
-        if not title_match or not desc_match:
+        parsed = _parse_enhance_reply(reply)
+        if not parsed:
             print(f"[ENHANCE] delimiter parse failed, reply preview: {reply[:500]}")
             return jsonify({'error': 'Failed to parse LLM response'}), 500
 
-        enhanced_title = title_match.group(1).strip()
-        enhanced_desc = desc_match.group(1).strip()
+        enhanced_title, enhanced_desc = parsed
 
-        if not enhanced_title or not enhanced_desc:
-            return jsonify({'error': 'LLM returned empty result'}), 500
+        # Enforce English output: if the enhanced fields are not English (e.g. the model
+        # echoed Indonesian input), run a dedicated translation pass.
+        if _looks_non_english(enhanced_title) or _looks_non_english(enhanced_desc):
+            print("[ENHANCE] output not English, running translation pass")
+            translation = _enhance_completion([
+                {'role': 'system', 'content': _ENGLISH_TRANSLATION_PROMPT},
+                {
+                    'role': 'user',
+                    'content': f"---TITLE---\n{enhanced_title}\n---DESCRIPTION---\n{enhanced_desc}",
+                },
+            ])
+            translated_reply = _extract_reply(translation) if translation.get('success') else None
+            reparsed = _parse_enhance_reply(translated_reply) if translated_reply else None
+            if reparsed:
+                enhanced_title, enhanced_desc = reparsed
 
         return jsonify({'title': enhanced_title, 'description': enhanced_desc})
 
@@ -361,6 +476,7 @@ def create_blueprint():
                 return jsonify({'error': str(e)}), 400
         updated['deps'] = kanban_db.get_dependencies(task_id)
         updated['deps_met'] = not kanban_db.has_unmet_dependencies(task_id)
+        updated = _task_with_attachments(updated)
         _emit('kanban_task_updated', updated)
         return jsonify({'task': updated})
 
@@ -376,16 +492,45 @@ def create_blueprint():
         if not is_allowed:
             return jsonify({'error': error}), 403
 
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        content = data.get('content', '').strip()
-        if not content:
-            return jsonify({'error': 'Content is required'}), 400
+        if request.mimetype == 'application/json':
+            data = request.get_json(silent=True) or {}
+            content = (data.get('content') or '').strip()
+            files = []
+        else:
+            content = (request.form.get('content') or '').strip()
+            files = [f for f in request.files.getlist('files') if f and f.filename]
+        if not content and not files:
+            return jsonify({'error': 'Content or at least one attachment is required'}), 400
+
+        validated = []
+        for f in files:
+            filename = f.filename or ''
+            ext = os.path.splitext(filename)[1].lower()
+            mime = (f.mimetype or '').lower()
+            if ext not in ALLOWED_IMAGE_EXTENSIONS or (
+                mime and mime not in ALLOWED_IMAGE_MIMES and mime != 'application/octet-stream'
+            ):
+                return jsonify({'error': f'Invalid file type: "{filename}". Only image files are supported.'}), 400
+            f.stream.seek(0, os.SEEK_END)
+            size = f.stream.tell()
+            f.stream.seek(0)
+            if size > MAX_FILE_SIZE:
+                return jsonify({'error': f'File too large: "{filename}"'}), 400
+            validated.append((f, filename, mime, size))
 
         agent_id = _get_request_agent_id()
         author = agent_id or _get_owner_name()
         comment = kanban_db.add_comment(task_id, content, author)
+        if validated:
+            task_dir = os.path.join(ATTACHMENTS_DIR, f'task_{task_id}')
+            os.makedirs(task_dir, exist_ok=True)
+            for f, filename, mime, size in validated:
+                stored_name = f'{uuid.uuid4().hex}_{secure_filename(filename)}'
+                f.save(os.path.join(task_dir, stored_name))
+                kanban_db.add_attachment(
+                    task_id, filename, stored_name, mime, size, author, comment_id=comment['id']
+                )
+        comment = _comment_with_attachments(comment)
         kanban_db.add_activity(task_id, 'commented', f'Comment added by {author}')
         return jsonify({'comment': comment}), 201
 
@@ -395,7 +540,7 @@ def create_blueprint():
         if not task:
             return jsonify({'error': 'Task not found'}), 404
 
-        comments = kanban_db.get_comments(task_id)
+        comments = [_comment_with_attachments(c) for c in kanban_db.get_comments(task_id)]
         return jsonify({'comments': comments})
 
     @bp.route('/api/kanban/comments/<int:comment_id>', methods=['DELETE'])
@@ -420,6 +565,8 @@ def create_blueprint():
         if not is_owner and not (agent_id and _is_super_agent(agent_id)):
             return jsonify({'error': 'You can only delete your own comments'}), 403
 
+        for att in kanban_db.delete_attachments_for_comment(comment_id):
+            _remove_attachment_file(att)
         deleted = kanban_db.delete_comment(comment_id)
         if not deleted:
             return jsonify({'error': 'Failed to delete comment'}), 500
@@ -482,7 +629,113 @@ def create_blueprint():
         if agent_id and not _is_super_agent(agent_id):
             return jsonify({'error': 'Forbidden: only super agent or UI can delete tasks'}), 403
 
+        # Remove attachment files from disk before deleting the task row.
+        for att in kanban_db.delete_attachments_for_task(task_id):
+            _remove_attachment_file(att)
         kanban_db.delete(task_id)
+        return jsonify({'success': True})
+
+    # ──────── Attachments ───────────────────────────────────────────────────────
+
+    @bp.route('/api/kanban/tasks/<int:task_id>/attachments', methods=['GET'])
+    def kanban_api_list_attachments(task_id):
+        task = kanban_db.get(task_id)
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+        attachments = [_attachment_with_url(a) for a in kanban_db.get_attachments(task_id)]
+        return jsonify({'attachments': attachments})
+
+    @bp.route('/api/kanban/tasks/<int:task_id>/attachments', methods=['POST'])
+    def kanban_api_upload_attachments(task_id):
+        task = kanban_db.get(task_id)
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+
+        is_allowed, error = _check_write_access(task)
+        if not is_allowed:
+            return jsonify({'error': error}), 403
+
+        files = request.files.getlist('files')
+        files = [f for f in files if f and f.filename]
+        if not files:
+            return jsonify({'error': 'No files selected. Please choose at least one image file.'}), 400
+
+        agent_id = _get_request_agent_id()
+        uploaded_by = agent_id or _get_owner_name()
+        task_dir = os.path.join(ATTACHMENTS_DIR, f'task_{task_id}')
+
+        # Validate everything first so a bad file never leaves partial uploads behind.
+        validated = []
+        for f in files:
+            filename = f.filename or ''
+            ext = os.path.splitext(filename)[1].lower()
+            mime = (f.mimetype or '').lower()
+            ext_ok = ext in ALLOWED_IMAGE_EXTENSIONS
+            mime_ok = mime in ALLOWED_IMAGE_MIMES or mime in ('', 'application/octet-stream')
+            if not (ext_ok and mime_ok):
+                return jsonify({
+                    'error': f'Invalid file type: "{filename}". Only image files are supported (PNG, JPG, JPEG, GIF, WEBP, BMP).'
+                }), 400
+            f.stream.seek(0, os.SEEK_END)
+            size = f.stream.tell()
+            f.stream.seek(0)
+            if size > MAX_FILE_SIZE:
+                return jsonify({
+                    'error': f'File too large: "{filename}" ({size // (1024 * 1024)} MB). Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB per file.'
+                }), 400
+            validated.append((f, filename, ext, mime, size))
+
+        os.makedirs(task_dir, exist_ok=True)
+        saved = []
+        for f, filename, ext, mime, size in validated:
+            stored_name = f'{uuid.uuid4().hex}_{secure_filename(filename)}'
+            f.save(os.path.join(task_dir, stored_name))
+            att = kanban_db.add_attachment(task_id, filename, stored_name, mime, size, uploaded_by)
+            if att:
+                kanban_db.add_activity(task_id, 'attachment_added', f'{filename} uploaded by {uploaded_by}')
+                saved.append(_attachment_with_url(att))
+
+        if not saved:
+            return jsonify({'error': 'No valid image files were uploaded.'}), 400
+        return jsonify({'attachments': saved}), 201
+
+    @bp.route('/api/kanban/attachments/<int:attachment_id>/file', methods=['GET'])
+    def kanban_api_get_attachment_file(attachment_id):
+        att = kanban_db.get_attachment(attachment_id)
+        if not att:
+            return jsonify({'error': 'Attachment not found'}), 404
+        path = _attachment_file_path(att['task_id'], att['stored_name'])
+        if not os.path.isfile(path):
+            return jsonify({'error': 'Attachment file is missing on disk'}), 404
+        return send_file(
+            path,
+            mimetype=att.get('mime_type') or 'application/octet-stream',
+            as_attachment=False,
+            download_name=att['filename'],
+        )
+
+    @bp.route('/api/kanban/attachments/<int:attachment_id>', methods=['DELETE'])
+    def kanban_api_delete_attachment(attachment_id):
+        att = kanban_db.get_attachment(attachment_id)
+        if not att:
+            return jsonify({'error': 'Attachment not found'}), 404
+
+        task = kanban_db.get(att['task_id'])
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+
+        is_allowed, error = _check_write_access(task)
+        if not is_allowed:
+            return jsonify({'error': error}), 403
+
+        deleted = kanban_db.delete_attachment(attachment_id)
+        if deleted:
+            _remove_attachment_file(deleted)
+            kanban_db.add_activity(
+                att['task_id'],
+                'attachment_removed',
+                f'{deleted["filename"]} removed by {_get_request_agent_id() or _get_owner_name()}',
+            )
         return jsonify({'success': True})
 
     # ───────── Archive ─────────
@@ -519,7 +772,7 @@ def create_blueprint():
 
     @bp.route('/api/kanban/archived', methods=['GET'])
     def kanban_api_get_archived():
-        tasks = kanban_db.get_archived()
+        tasks = [_task_with_attachments(t) for t in kanban_db.get_archived()]
         return jsonify({'tasks': tasks})
 
     @bp.route('/api/kanban/archived/count', methods=['GET'])

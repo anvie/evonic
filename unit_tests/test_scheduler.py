@@ -282,6 +282,54 @@ class TestSchedulerEngine:
 
 
 # ---------------------------------------------------------------------------
+# TestKbOrganizerSchedule - global Vault Janitor schedule configuration
+# ---------------------------------------------------------------------------
+
+class TestKbOrganizerSchedule:
+
+    def test_uses_configured_nightly_time(self, monkeypatch):
+        from backend.scheduler import Scheduler
+
+        monkeypatch.setenv('EVOMEM_KB_ORGANIZER_NIGHTLY_TIME', '14:25')
+        scheduler = Scheduler()
+
+        assert (scheduler._kb_organizer_hour, scheduler._kb_organizer_minute) == (14, 25)
+
+    def test_defaults_nightly_time_to_3_am(self, monkeypatch):
+        from backend.scheduler import Scheduler
+
+        monkeypatch.delenv('EVOMEM_KB_ORGANIZER_NIGHTLY_TIME', raising=False)
+        scheduler = Scheduler()
+
+        assert (scheduler._kb_organizer_hour, scheduler._kb_organizer_minute) == (3, 0)
+
+    def test_invalid_nightly_time_falls_back_to_3_am(self, monkeypatch):
+        from backend.scheduler import Scheduler
+
+        monkeypatch.setenv('EVOMEM_KB_ORGANIZER_NIGHTLY_TIME', 'tomorrow')
+        scheduler = Scheduler()
+
+        assert (scheduler._kb_organizer_hour, scheduler._kb_organizer_minute) == (3, 0)
+
+    def test_registers_janitor_at_configured_time(self, monkeypatch):
+        from backend.scheduler import Scheduler
+
+        monkeypatch.setenv('EVOMEM_KB_ORGANIZER_NIGHTLY_TIME', '14:25')
+        scheduler = Scheduler()
+        scheduler._scheduler = MagicMock()
+        scheduler._load_from_db = MagicMock()
+
+        scheduler.start()
+
+        sefton_call = next(
+            call for call in scheduler._scheduler.add_job.call_args_list
+            if call.kwargs['id'] == 'builtin:sefton_tidy'
+        )
+        assert "hour='14'" in str(sefton_call.args[1])
+        assert "minute='25'" in str(sefton_call.args[1])
+
+
+# ---------------------------------------------------------------------------
 # TestSchedulerActions — action executor methods
 # ---------------------------------------------------------------------------
 

@@ -493,6 +493,12 @@ def _producer_chat(ring: BoundedRing, breaker: CircuitBreaker,
             'result': d.get('tool_result', {}),
             'error': d.get('has_error', False),
         }),
+        'tasks:auto_transition': ('tasks:auto_transition', lambda d: {
+            key: d[key] for key in ('task_ids', 'tasks') if key in d
+        }),
+        'tasks:stale': ('tasks:stale', lambda d: {
+            key: d[key] for key in ('task_ids', 'tasks') if key in d
+        }),
         'llm_response_chunk': ('response_chunk', lambda d: {
             'content': d.get('content', ''),
             'is_final': d.get('is_final', False),

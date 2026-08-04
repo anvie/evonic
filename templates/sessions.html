@@ -2031,16 +2031,21 @@ function _renderSessionStateSnapshot(stateData) {
     if (stateData.tasks && stateData.tasks.length > 0) {
         const icons = {pending: '\u2610', in_progress: '\u27f3', done: '\u2713'};
         const iconColors = {pending: 'text-gray-400', in_progress: 'text-amber-500', done: 'text-green-500'};
+        const staleTaskIds = new Set(Array.isArray(stateData.stale_task_ids) ? stateData.stale_task_ids : []);
+        const staleBefore = Date.now() - 180000;
         planHtml += '<div class="mt-2"><div class="text-gray-500 dark:text-gray-400 font-medium mb-1 text-xs uppercase tracking-wide">Tasks</div><ul class="space-y-0.5">';
         for (const t of stateData.tasks) {
             const active = t.status === 'in_progress';
+            const startedAt = Number(t.in_progress_since);
+            const stale = active && (staleTaskIds.has(t.id) || (startedAt > 0 && startedAt * 1000 <= staleBefore));
             const spinnerSvg = '<svg class="task-active-icon animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-opacity="0.2"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="40 60"/></svg>';
             const icon = active ? spinnerSvg : (icons[t.status] || '\u2610');
             const color = iconColors[t.status] || 'text-gray-400';
             const textClass = t.status === 'done' ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200';
             const iconCls = `${color} inline-flex items-center justify-center w-4 h-4 text-xs flex-shrink-0`;
             const textCls = active ? 'task-active-text text-xs' : `${textClass} text-xs`;
-            planHtml += `<li class="flex items-start gap-1.5"><span class="${iconCls}">${icon}</span><span class="${textCls}">${esc(t.text)}</span></li>`;
+            const staleBadge = stale ? '<span class="text-[10px] font-medium text-amber-700 dark:text-amber-300" title="This task has been in progress for a while">stale</span>' : '';
+            planHtml += `<li class="flex items-start gap-1.5"><span class="${iconCls}">${icon}</span><span class="${textCls}">${esc(t.text)}</span>${staleBadge}</li>`;
         }
         planHtml += '</ul></div>';
     }
@@ -2163,6 +2168,24 @@ function clearAgentStatePanel() {
     _sessionStateData = {};
     clearAgentState(['agent-state-content', 'mobile-agent-state-content']);
 }
+
+function _refreshTaskLifecycleSnapshot(detail) {
+    if (Array.isArray(detail.tasks)) _sessionStateData.tasks = detail.tasks;
+    if (Array.isArray(detail.task_ids)) _sessionStateData.stale_task_ids = detail.task_ids;
+    else if (Array.isArray(detail.tasks)) _sessionStateData.stale_task_ids = [];
+    _renderSessionStateSnapshot(_sessionStateData);
+}
+
+document.addEventListener('evonic:task-auto-transition', function(event) {
+    const detail = event.detail || {};
+    _refreshTaskLifecycleSnapshot(detail);
+    const count = Array.isArray(detail.task_ids) ? detail.task_ids.length : 0;
+    showToast(count === 1 ? 'Task status updated automatically' : 'Task statuses updated automatically');
+});
+
+document.addEventListener('evonic:tasks-stale', function(event) {
+    _refreshTaskLifecycleSnapshot(event.detail || {});
+});
 
 document.addEventListener('evonic:agent-state-changed', function(event) {
     const detail = event.detail || {};

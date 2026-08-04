@@ -94,52 +94,60 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
-        <div class="setting-row stacked" data-search="vision primary fallback describe image analysis multimodal">
-            <div class="setting-row-text">
-                <div class="setting-row-title">Vision Model (Primary)</div>
-                <div class="setting-row-desc">
-                    First vision-capable model used by the <code>describe_image</code>
-                    tool. Only models with vision support are listed.
+        <section class="setting-subgroup vision-models-group" aria-label="Vision Models">
+            <div class="setting-subgroup-head">
+                <i data-lucide="eye" aria-hidden="true"></i>
+                <p>Configure the primary model and fallback order for image descriptions.</p>
+            </div>
+            <div class="setting-subgroup-body">
+                <div class="setting-row stacked" data-search="vision primary fallback describe image analysis multimodal">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">Vision Model (Primary)</div>
+                        <div class="setting-row-desc">
+                            First vision-capable model used by the <code>describe_image</code>
+                            tool. Only models with vision support are listed.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="vision-model-select" class="setting-select"
+                                data-setting-key="vision_model_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="setting-row stacked" data-search="vision fallback 1 model secondary backup describe image">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">Vision Fallback 1</div>
+                        <div class="setting-row-desc">
+                            First backup model used when the primary vision model fails.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="vision-fallback-model-select" class="setting-select"
+                                data-setting-key="vision_fallback_model_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="setting-row stacked" data-search="vision fallback 2 model tertiary backup describe image">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">Vision Fallback 2</div>
+                        <div class="setting-row-desc">
+                            Second backup model used when the primary model and Fallback 1 fail.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="vision-fallback-model-2-select" class="setting-select"
+                                data-setting-key="vision_fallback_model_2_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
                 </div>
             </div>
-            <div class="setting-row-control">
-                <select id="vision-model-select" class="setting-select"
-                        data-setting-key="vision_model_id">
-                    <option value="">Loading models…</option>
-                </select>
-                <span class="save-status" aria-live="polite"></span>
-            </div>
-        </div>
-        <div class="setting-row stacked" data-search="vision fallback 1 model secondary backup describe image">
-            <div class="setting-row-text">
-                <div class="setting-row-title">Vision Fallback 1</div>
-                <div class="setting-row-desc">
-                    First backup model used when the primary vision model fails.
-                </div>
-            </div>
-            <div class="setting-row-control">
-                <select id="vision-fallback-model-select" class="setting-select"
-                        data-setting-key="vision_fallback_model_id">
-                    <option value="">Loading models…</option>
-                </select>
-                <span class="save-status" aria-live="polite"></span>
-            </div>
-        </div>
-        <div class="setting-row stacked" data-search="vision fallback 2 model tertiary backup describe image">
-            <div class="setting-row-text">
-                <div class="setting-row-title">Vision Fallback 2</div>
-                <div class="setting-row-desc">
-                    Second backup model used when the primary model and Fallback 1 fail.
-                </div>
-            </div>
-            <div class="setting-row-control">
-                <select id="vision-fallback-model-2-select" class="setting-select"
-                        data-setting-key="vision_fallback_model_2_id">
-                    <option value="">Loading models…</option>
-                </select>
-                <span class="save-status" aria-live="polite"></span>
-            </div>
-        </div>
+        </section>
         <div class="setting-row stacked" data-search="kb organizer model knowledge base memory vault background sub-agent">
             <div class="setting-row-text">
                 <div class="setting-row-title">KB Organizer Model</div>
@@ -154,6 +162,20 @@
                         data-setting-key="kb_organizer_model_id">
                     <option value="">Loading models…</option>
                 </select>
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row" data-search="kb organizer vault janitor nightly schedule time memory cleanup">
+            <div class="setting-row-text">
+                <div class="setting-row-title">KB Organizer Schedule</div>
+                <div class="setting-row-desc">
+                    Daily time for the Vault Janitor to organize active agents' memory
+                    vaults. Changes apply immediately. Default: 03:00.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <input type="time" id="kb-organizer-nightly-time-input" class="setting-num"
+                       data-setting-key="kb_organizer_nightly_time" />
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>

@@ -16,9 +16,12 @@ def test_update_tasks_contract_requires_atomic_entries():
     assert "never batch several actions into one task" in description
     assert "only one implementation task may be in_progress at a time" in description
 
+    actions = properties["action"]["enum"]
+    assert "replace" in actions
     action_description = properties["action"]["description"].lower()
     assert "sole active task" in action_description
     assert "returns every other active task to pending" in action_description
+    assert "preserving its id and status" in action_description
 
     add_description = properties["text"]["description"].lower()
     assert "one atomic task" in add_description

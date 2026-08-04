@@ -592,6 +592,41 @@ def _pre_set_execute_mode(agent_id: str, task: dict, sdk=None) -> bool:
 
 
 
+def _format_followup_comment(comment: dict, attachments: list) -> str:
+    """Render a follow-up comment with actionable references to its attachments."""
+    content = (comment.get('content') or '').strip()
+    if not attachments:
+        return content
+
+    from plugins.kanban.db import ATTACHMENTS_DIR
+
+    lines = [content] if content else []
+    lines.append('Attachments:')
+    for attachment in attachments:
+        attachment_id = attachment.get('id')
+        filename = attachment.get('filename') or 'unnamed attachment'
+        mime_type = attachment.get('mime_type') or 'application/octet-stream'
+        stored_name = attachment.get('stored_name')
+        task_id = attachment.get('task_id') or comment.get('task_id')
+        path = (
+            os.path.join(ATTACHMENTS_DIR, f'task_{task_id}', stored_name)
+            if task_id and stored_name else None
+        )
+        url = f'/api/kanban/attachments/{attachment_id}/file' if attachment_id else None
+        reference = ', '.join(part for part in (
+            f'name={filename}', f'mime_type={mime_type}',
+            f'path={path}' if path else None,
+            f'url={url}' if url else None,
+        ) if part)
+        lines.append(f'- [{reference}]')
+        if mime_type.lower().startswith('image/') and path:
+            lines.append(
+                f'  Analyze this image with `describe_image` using path `{path}` '
+                'before acting on visual annotations or feedback.'
+            )
+    return '\n'.join(lines)
+
+
 def _notify_agent_followup(agent_id: str, task: dict, merged_content: str,
                            channel_type: str, sdk=None,
                            prior_content: str = None, comment_author: str = None) -> bool:
@@ -1002,15 +1037,15 @@ def _scan_comments_for_followup(sdk=None):
             _classified_comments.add(comment.get('id'))
 
         # Merge multiple new comments into one string for a single LLM call
-        if len(unclassified) == 1:
-            merged_content = unclassified[0].get('content', '').strip()
-        else:
-            parts = []
-            for i, c in enumerate(unclassified, 1):
-                author = c.get('author') or 'unknown'
-                body = c.get('content', '').strip()
-                parts.append(f'[Comment {i} by {author}]: {body}')
-            merged_content = '\n\n'.join(parts)
+        parts = []
+        for i, comment in enumerate(unclassified, 1):
+            attachments = kanban_db.get_attachments_for_comment(comment['id'])
+            body = _format_followup_comment(comment, attachments)
+            if len(unclassified) > 1:
+                author = comment.get('author') or 'unknown'
+                body = f'[Comment {i} by {author}]: {body}'
+            parts.append(body)
+        merged_content = '\n\n'.join(part for part in parts if part)
 
         if not merged_content:
             continue

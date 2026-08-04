@@ -245,6 +245,25 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
                 </div>
                 <ul id="task-deps-selected" class="mt-2 flex flex-col gap-1"></ul>
             </div>
+            <div class="mb-5">
+                <div class="flex items-center justify-between gap-3 mb-1.5">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300" for="task-files">Attachments</label>
+                    <span class="text-xs text-gray-400 dark:text-gray-500">Optional</span>
+                </div>
+                <input type="file" id="task-files" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple
+                    class="sr-only"
+                    onchange="handleFilesSelected(this)">
+                <label for="task-files" id="task-files-dropzone" class="group flex min-h-[116px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-4 text-center transition hover:border-indigo-400 hover:bg-indigo-50/60 focus-within:border-indigo-500 focus-within:bg-indigo-50/60 focus-within:ring-2 focus-within:ring-indigo-200 dark:border-gray-600 dark:bg-gray-700/40 dark:hover:border-indigo-400 dark:hover:bg-indigo-900/20 dark:focus-within:border-indigo-400 dark:focus-within:bg-indigo-900/20 dark:focus-within:ring-indigo-800"
+                    ondragenter="handleTaskFilesDrag(event, true)" ondragover="handleTaskFilesDrag(event, true)" ondragleave="handleTaskFilesDrag(event, false)" ondrop="handleTaskFilesDrop(event)">
+                    <span class="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-white text-indigo-600 shadow-sm ring-1 ring-gray-200 transition group-hover:scale-105 group-hover:bg-indigo-600 group-hover:text-white dark:bg-gray-800 dark:text-indigo-400 dark:ring-gray-600 dark:group-hover:bg-indigo-500 dark:group-hover:text-white">
+                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" x2="12" y1="3" y2="15"></line></svg>
+                    </span>
+                    <span class="text-sm font-medium text-gray-700 dark:text-gray-200"><span class="text-indigo-600 dark:text-indigo-400">Choose images</span> or drag them here</span>
+                    <span class="mt-1 text-xs text-gray-400 dark:text-gray-500">PNG, JPG, GIF, WEBP, or BMP up to 10 MB each</span>
+                </label>
+                <div id="task-files-error" class="hidden mt-1.5 text-xs text-red-600 dark:text-red-400"></div>
+                <ul id="task-files-list" class="mt-2 grid grid-cols-1 gap-1.5"></ul>
+            </div>
             <div class="flex justify-end gap-2">
                 <button type="button" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition" onclick="closeModal()">Cancel</button>
                 <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 dark:bg-indigo-500 rounded-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 transition" id="modal-submit">Create Task</button>
@@ -308,6 +327,10 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
                     <div class="text-xs font-semibold uppercase text-gray-400 dark:text-gray-500 mb-1">Depends On</div>
                     <div class="text-sm text-gray-700 dark:text-gray-300" id="detail-deps"></div>
                 </div>
+                <div id="detail-attachments-section" class="hidden mt-4">
+                    <div class="text-xs font-semibold uppercase text-gray-400 dark:text-gray-500 mb-1">Attachments</div>
+                    <div id="detail-attachments" class="grid grid-cols-2 sm:grid-cols-3 gap-2"></div>
+                </div>
 
                 <div class="flex justify-between items-center mb-3 mt-10">
                     <button onclick="openEditFromDetail()" class="px-3 w-[100px] py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition">Edit</button>
@@ -325,6 +348,12 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
                 <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
                     <textarea id="comment-input" rows="3" placeholder="Add a comment..."
                         class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm resize-y bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400 dark:focus:border-indigo-500"></textarea>
+                    <div class="mt-2">
+                        <label for="comment-files" class="text-xs font-medium text-gray-500 dark:text-gray-400">Attach images</label>
+                        <input type="file" id="comment-files" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple
+                            class="block w-full mt-1 text-xs text-gray-600 dark:text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-indigo-50 file:text-indigo-600 dark:file:bg-indigo-900/30 dark:file:text-indigo-300">
+                        <div id="comment-files-list" class="mt-1 text-xs text-gray-500 dark:text-gray-400"></div>
+                    </div>
                     <div class="flex justify-end mt-2">
                         <button id="comment-submit-btn" onclick="submitComment()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 dark:bg-indigo-500 rounded-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                             <svg class="hidden animate-spin w-4 h-4" id="comment-spinner" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
@@ -372,6 +401,15 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
                             <ul id="detail-deps-dropdown" class="hidden absolute z-50 w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg mt-1 shadow-lg max-h-48 overflow-y-auto text-sm"></ul>
                         </div>
                         <ul id="detail-deps-selected" class="mt-2 flex flex-col gap-1"></ul>
+                    </div>
+                    <div class="mb-5">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Attachments (optional)</label>
+                        <div id="detail-existing-attachments" class="flex flex-col gap-1 mb-2"></div>
+                        <input type="file" id="detail-task-files" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple
+                            class="w-full text-sm text-gray-700 dark:text-gray-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 dark:file:bg-indigo-900/30 dark:file:text-indigo-400 transition"
+                            onchange="handleDetailFilesSelected(this)">
+                        <div id="detail-task-files-error" class="hidden mt-1.5 text-xs text-red-600 dark:text-red-400"></div>
+                        <ul id="detail-task-files-list" class="mt-2 flex flex-col gap-1"></ul>
                     </div>
                     <div class="flex justify-end gap-2">
                         <button type="button" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition" onclick="cancelEditFromDetail()">Cancel</button>
@@ -978,6 +1016,238 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         return _depsSelected.map(d => d.id);
     }
 
+    // ---- Attachments (create/edit form) ----
+    let _pendingFiles = [];
+    let _pendingDetailFiles = [];
+    const _ALLOWED_IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
+    const _MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+    function _validateImageFile(file) {
+        if (!_ALLOWED_IMAGE_RE.test(file.name)) {
+            return `"${file.name}" is not a supported image. Only PNG, JPG, JPEG, GIF, WEBP and BMP are allowed.`;
+        }
+        if (file.size > _MAX_FILE_SIZE) {
+            return `"${file.name}" is too large (${Math.ceil(file.size / (1024 * 1024))} MB). Maximum size is 10 MB per file.`;
+        }
+        return null;
+    }
+
+    function _fileThumbHtml(f) {
+        if (f.preview) {
+            return `<img src="${f.preview}" class="w-8 h-8 object-cover rounded border border-gray-200 dark:border-gray-600 flex-shrink-0">`;
+        }
+        return '<span class="w-8 h-8 rounded bg-gray-100 dark:bg-gray-700 flex-shrink-0 flex items-center justify-center text-gray-400">\uD83D\uDCC4</span>';
+    }
+
+    function _renderPendingFiles(listId, errorId, arr, removeFn) {
+        const $list = $(`#${listId}`);
+        const $err = $(`#${errorId}`);
+        $err.addClass('hidden').text('');
+        if (!arr.length) {
+            $list.html('<li class="text-xs text-gray-400 dark:text-gray-500">No files selected.</li>');
+            return;
+        }
+        $list.html(arr.map(function(f, i) {
+            return `<li class="flex items-center gap-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-2 py-1.5">
+                ${_fileThumbHtml(f)}
+                <span class="text-xs text-gray-700 dark:text-gray-300 truncate flex-1" title="${esc(f.name)}">${esc(f.name)}</span>
+                <button type="button" class="text-gray-400 hover:text-red-500 text-sm leading-none flex-shrink-0" title="Remove" onclick="${removeFn}(${i})">&times;</button>
+            </li>`;
+        }).join(''));
+    }
+
+    function _removePendingFile(index) {
+        const f = _pendingFiles[index];
+        if (f && f.preview) URL.revokeObjectURL(f.preview);
+        _pendingFiles.splice(index, 1);
+        _renderPendingFiles('task-files-list', 'task-files-error', _pendingFiles, '_removePendingFile');
+    }
+
+    function _removePendingDetailFile(index) {
+        const f = _pendingDetailFiles[index];
+        if (f && f.preview) URL.revokeObjectURL(f.preview);
+        _pendingDetailFiles.splice(index, 1);
+        _renderPendingFiles('detail-task-files-list', 'detail-task-files-error', _pendingDetailFiles, '_removePendingDetailFile');
+    }
+
+    function _collectSelectedFiles(filesSource, arr, renderFn, errorId) {
+        const files = Array.from(filesSource || []);
+        if (!files.length) return;
+        const errors = [];
+        files.forEach(function(f) {
+            const err = _validateImageFile(f);
+            if (err) {
+                errors.push(err);
+            } else {
+                if (f.type && f.type.indexOf('image/') === 0 && typeof URL !== 'undefined') {
+                    f.preview = URL.createObjectURL(f);
+                }
+                arr.push(f);
+            }
+        });
+        renderFn();
+        if (errors.length) {
+            $('#' + errorId).removeClass('hidden').text(errors.join(' '));
+        }
+    }
+
+    function handleFilesSelected(input) {
+        _collectSelectedFiles(
+            input.files,
+            _pendingFiles,
+            function() { _renderPendingFiles('task-files-list', 'task-files-error', _pendingFiles, '_removePendingFile'); },
+            'task-files-error'
+        );
+        $(input).val('');
+    }
+
+    function handleTaskFilesDrag(event, isOver) {
+        event.preventDefault();
+        event.stopPropagation();
+        $('#task-files-dropzone').toggleClass('border-indigo-500 bg-indigo-50 dark:border-indigo-400 dark:bg-indigo-900/30', isOver);
+    }
+
+    function handleTaskFilesDrop(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        $('#task-files-dropzone').removeClass('border-indigo-500 bg-indigo-50 dark:border-indigo-400 dark:bg-indigo-900/30');
+        _collectSelectedFiles(
+            event.dataTransfer ? event.dataTransfer.files : [],
+            _pendingFiles,
+            function() { _renderPendingFiles('task-files-list', 'task-files-error', _pendingFiles, '_removePendingFile'); },
+            'task-files-error'
+        );
+    }
+
+    function handleDetailFilesSelected(input) {
+        _collectSelectedFiles(
+            input.files,
+            _pendingDetailFiles,
+            function() { _renderPendingFiles('detail-task-files-list', 'detail-task-files-error', _pendingDetailFiles, '_removePendingDetailFile'); },
+            'detail-task-files-error'
+        );
+        $(input).val('');
+    }
+
+    function _clearPendingFiles(arr) {
+        arr.forEach(function(f) { if (f.preview) URL.revokeObjectURL(f.preview); });
+        arr.length = 0;
+    }
+
+    function uploadAttachments(taskId, files, done) {
+        if (!files || !files.length) { done([]); return; }
+        const fd = new FormData();
+        files.forEach(f => fd.append('files', f, f.name));
+        $.ajax({
+            url: `${API}/tasks/${taskId}/attachments`,
+            method: 'POST',
+            data: fd,
+            processData: false,
+            contentType: false,
+            success: function() { done([]); },
+            error: function(xhr) {
+                done([xhr.responseJSON?.error || 'Attachment upload failed. Please try again.']);
+            }
+        });
+    }
+
+    function afterSave(taskId) {
+        if (!taskId || !_pendingFiles.length) {
+            _clearPendingFiles(_pendingFiles);
+            closeModal();
+            loadTasks();
+            return;
+        }
+        const files = _pendingFiles.slice();
+        _pendingFiles = [];
+        uploadAttachments(taskId, files, function(errors) {
+            if (errors && errors.length) {
+                alert('Task saved, but some attachments failed:\n' + errors.join('\n'));
+            }
+            closeModal();
+            loadTasks();
+        });
+    }
+
+    // ---- Attachments (detail modal) ----
+
+    function renderAttachmentCard(a) {
+        return `<div class="relative group bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
+            <a href="${esc(a.url)}" target="_blank" rel="noopener" class="block" title="${esc(a.filename)}">
+                <img src="${esc(a.url)}" alt="${esc(a.filename)}" class="w-full h-24 object-cover bg-gray-100 dark:bg-gray-800" loading="lazy"
+                    onerror="this.style.display='none'">
+                <div class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 truncate">${esc(a.filename)}</div>
+            </a>
+            <button type="button" onclick="deleteAttachment(${a.id})" title="Delete attachment"
+                class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 text-white text-xs opacity-0 group-hover:opacity-100 hover:bg-red-600 transition flex items-center justify-center">&times;</button>
+        </div>`;
+    }
+
+    function renderDetailExistingAttachments(task) {
+        const atts = task.attachments || [];
+        const $el = $('#detail-existing-attachments');
+        if (!atts.length) {
+            $el.html('<div class="text-xs text-gray-400 dark:text-gray-500">No attachments yet.</div>');
+            return;
+        }
+        $el.html(atts.map(a => `<div class="flex items-center gap-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-2 py-1.5">
+            <a href="${esc(a.url)}" target="_blank" rel="noopener" class="flex items-center gap-2 flex-1 min-w-0" title="${esc(a.filename)}">
+                <img src="${esc(a.url)}" alt="" class="w-8 h-8 object-cover rounded border border-gray-200 dark:border-gray-600 flex-shrink-0" loading="lazy" onerror="this.style.display='none'">
+                <span class="text-xs text-gray-700 dark:text-gray-300 truncate">${esc(a.filename)}</span>
+            </a>
+            <button type="button" class="text-gray-400 hover:text-red-500 text-sm leading-none flex-shrink-0" title="Delete attachment" onclick="deleteAttachmentFromEdit(${a.id})">&times;</button>
+        </div>`).join(''));
+    }
+
+    function _refreshDetailAttachments() {
+        const task = tasks.find(t => t.id === currentDetailId);
+        if (!task) return;
+        const atts = task.attachments || [];
+        if (atts.length) {
+            $('#detail-attachments').html(atts.map(renderAttachmentCard).join(''));
+            $('#detail-attachments-section').removeClass('hidden');
+        } else {
+            $('#detail-attachments-section').addClass('hidden');
+            $('#detail-attachments').empty();
+        }
+    }
+
+    function deleteAttachment(attachmentId) {
+        if (!confirm('Delete this attachment?')) return;
+        const taskId = currentDetailId;
+        $.ajax({
+            url: `${API}/attachments/${attachmentId}`,
+            method: 'DELETE',
+            success: function() {
+                const task = tasks.find(t => t.id === taskId);
+                if (task && task.attachments) {
+                    task.attachments = task.attachments.filter(a => a.id !== attachmentId);
+                }
+                _refreshDetailAttachments();
+                loadActivity(taskId);
+            },
+            error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to delete attachment'); }
+        });
+    }
+
+    function deleteAttachmentFromEdit(attachmentId) {
+        if (!confirm('Delete this attachment?')) return;
+        const taskId = currentDetailId;
+        $.ajax({
+            url: `${API}/attachments/${attachmentId}`,
+            method: 'DELETE',
+            success: function() {
+                const task = tasks.find(t => t.id === taskId);
+                if (task && task.attachments) {
+                    task.attachments = task.attachments.filter(a => a.id !== attachmentId);
+                }
+                renderDetailExistingAttachments(task);
+                loadActivity(taskId);
+            },
+            error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to delete attachment'); }
+        });
+    }
+
     function openCreateModal() {
         _isEditing = false;
         $('#task-id').val('');
@@ -987,6 +1257,9 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         $('#modal-submit').text('Create Task');
         populateAgentSelect('#task-assignee');
         initDepsWidget(null, []);
+        _clearPendingFiles(_pendingFiles);
+        $('#task-files-error').addClass('hidden').text('');
+        $('#task-files-list').empty();
         $('#kb-modal').removeClass('hidden').addClass('flex');
     }
 
@@ -1001,6 +1274,9 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         $('#task-priority').val(task.priority || 'low');
         populateAgentSelect('#task-assignee', task.assignee || '');
         initDepsWidget(task.id, task.deps || []);
+        _clearPendingFiles(_pendingFiles);
+        $('#task-files-error').addClass('hidden').text('');
+        $('#task-files-list').empty();
         $('#modal-title').text('Edit Task');
         $('#modal-submit').text('Save Changes');
         $('#kb-modal').removeClass('hidden').addClass('flex');
@@ -1008,6 +1284,9 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
 
     function closeModal() {
         _isEditing = false;
+        _clearPendingFiles(_pendingFiles);
+        $('#task-files-error').addClass('hidden').text('');
+        $('#task-files-list').empty();
         $('#kb-modal').removeClass('flex').addClass('hidden');
     }
 
@@ -1034,14 +1313,14 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         if (taskId) {
             $.ajax({ url: `${API}/tasks/${taskId}`, method: 'PUT',
                 contentType: 'application/json', data: JSON.stringify(payload),
-                success: function() { closeModal(); loadTasks(); },
+                success: function() { afterSave(taskId); },
                 error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to update'); },
                 complete: function() { $btn.prop('disabled', false).text(origText); }
             });
         } else {
             $.ajax({ url: `${API}/tasks`, method: 'POST',
                 contentType: 'application/json', data: JSON.stringify(payload),
-                success: function() { closeModal(); loadTasks(); },
+                success: function(resp) { afterSave(resp && resp.task ? String(resp.task.id) : null); },
                 error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to create'); },
                 complete: function() { $btn.prop('disabled', false).text(origText); }
             });
@@ -1132,6 +1411,9 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
             $('#detail-deps-section').addClass('hidden');
         }
 
+        // Attachments
+        _refreshDetailAttachments();
+
         switchTab('details');
         $('#kb-detail-modal').removeClass('hidden').addClass('flex');
 
@@ -1191,30 +1473,34 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         });
     }
 
+    function renderCommentAttachments(attachments) {
+        if (!attachments || !attachments.length) return '';
+        return `<div class="mt-2 flex flex-wrap gap-2">${attachments.map(a => `
+            <a href="${esc(a.url)}" target="_blank" rel="noopener" download="${esc(a.filename)}"
+                class="block max-w-full border border-gray-200 dark:border-gray-600 rounded overflow-hidden hover:border-indigo-400" title="Open or download ${esc(a.filename)}">
+                <img src="${esc(a.url)}" alt="${esc(a.filename)}" class="w-32 h-20 object-cover bg-gray-100 dark:bg-gray-800" loading="lazy" onerror="this.remove()">
+                <span class="block max-w-32 px-2 py-1 text-xs text-gray-600 dark:text-gray-300 truncate">${esc(a.filename)}</span>
+            </a>`).join('')}</div>`;
+    }
+
+    function renderCommentCard(c, taskId) {
+        return `<div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 group relative">
+            <button class="absolute top-2 right-2 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Delete comment" onclick="deleteComment(${c.id}, ${taskId})">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+            <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1 pr-5">${esc(c.author || 'Anonymous')}</div>
+            ${c.content ? `<div class="text-sm text-gray-700 dark:text-gray-300 break-words kb-markdown">${DOMPurify.sanitize(marked.parse(c.content))}</div>` : ''}
+            ${renderCommentAttachments(c.attachments)}
+            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">${fmtShort(c.created_at)}</div>
+        </div>`;
+    }
+
     function loadComments(taskId) {
         $('#comment-list').html('<div class="text-sm text-gray-400 text-center py-4">Loading...</div>');
         $.get(`${API}/tasks/${taskId}/comments`, function(data) {
             const items = data.comments || [];
-            if (items.length) {
-                $('#comment-count').text(`(${items.length})`).removeClass('hidden');
-            } else {
-                $('#comment-count').addClass('hidden');
-            }
-            if (!items.length) {
-                $('#comment-list').html('<div class="text-sm text-gray-400 text-center py-4">No comments yet</div>');
-                return;
-            }
-            const html = items.map(c => `
-                <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 group relative">
-                    <button class="absolute top-2 right-2 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Delete comment" onclick="deleteComment(${c.id}, ${taskId})">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                    </button>
-                    <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1 pr-5">${esc(c.author || 'Anonymous')}</div>
-                    <div class="text-sm text-gray-700 dark:text-gray-300 break-words kb-markdown">${DOMPurify.sanitize(marked.parse(c.content))}</div>
-                    <div class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">${fmtShort(c.created_at)}</div>
-                </div>`).join('');
-            $('#comment-list').html(html);
+            $('#comment-count').toggleClass('hidden', !items.length).text(items.length ? `(${items.length})` : '');
+            $('#comment-list').html(items.length ? items.map(c => renderCommentCard(c, taskId)).join('') : '<div class="text-sm text-gray-400 text-center py-4">No comments yet</div>');
         }).fail(function() {
             $('#comment-list').html('<div class="text-sm text-red-400 text-center py-4">Failed to load comments</div>');
         });
@@ -1295,39 +1581,32 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
     function submitComment() {
         if (!currentDetailId) return;
         const content = $('#comment-input').val().trim();
-        if (!content) return;
+        const files = Array.from($('#comment-files')[0].files || []);
+        if (!content && !files.length) return;
         const $btn = $('#comment-submit-btn');
         const $spinner = $('#comment-spinner');
         const $btnText = $('#comment-btn-text');
-        // Loading state
+        const formData = new FormData();
+        formData.append('content', content);
+        files.forEach(file => formData.append('files', file));
         $btn.prop('disabled', true);
         $spinner.removeClass('hidden');
         $btnText.text('Posting...');
         $.ajax({
             url: `${API}/tasks/${currentDetailId}/comments`,
             method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({ content }),
+            data: formData,
+            contentType: false,
+            processData: false,
             success: function(data) {
                 $('#comment-input').val('');
-                // Optimistic append — build card from response data
+                $('#comment-files').val('');
+                $('#comment-files-list').empty();
                 const c = data.comment;
                 if (c) {
-                    const card = `
-                        <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 group relative">
-                            <button class="absolute top-2 right-2 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Delete comment" onclick="deleteComment(${c.id}, ${currentDetailId})">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            </button>
-                            <div class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-1 pr-5">${esc(c.author || 'Anonymous')}</div>
-                            <div class="text-sm text-gray-700 dark:text-gray-300 break-words kb-markdown">${DOMPurify.sanitize(marked.parse(c.content))}</div>
-                            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">${fmtShort(c.created_at)}</div>
-                        </div>`;
-                    // Remove "No comments yet" placeholder if present
                     const $list = $('#comment-list');
                     $list.children('.text-sm.text-center.py-4').remove();
-                    $list.append(card);
-                    // Update comment count badge
+                    $list.append(renderCommentCard(c, currentDetailId));
                     const $count = $('#comment-count');
                     const current = parseInt($count.text().replace(/[()]/g, '')) || 0;
                     $count.text(`(${current + 1})`).removeClass('hidden');
@@ -1385,6 +1664,13 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
             selectedId: 'detail-deps-selected',
         });
 
+        // Attachments: show existing ones and reset the "add new" picker
+        renderDetailExistingAttachments(task);
+        _clearPendingFiles(_pendingDetailFiles);
+        $('#detail-task-files-list').empty();
+        $('#detail-task-files-error').addClass('hidden').text('');
+        $('#detail-task-files').val('');
+
         $('#panel-details').addClass('hidden');
         $('#panel-edit').removeClass('hidden');
     }
@@ -1410,10 +1696,17 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
             data: JSON.stringify(payload),
             success: function() {
                 const taskIdNum = Number(taskId);
-                $('#panel-edit').addClass('hidden');
-                $('#panel-details').removeClass('hidden');
-                loadTasks(function() {
-                    openDetailModal(taskIdNum);
+                const newFiles = _pendingDetailFiles.slice();
+                _clearPendingFiles(_pendingDetailFiles);
+                uploadAttachments(String(taskIdNum), newFiles, function(errors) {
+                    if (errors && errors.length) {
+                        alert('Task updated, but some attachments failed:\n' + errors.join('\n'));
+                    }
+                    $('#panel-edit').addClass('hidden');
+                    $('#panel-details').removeClass('hidden');
+                    loadTasks(function() {
+                        openDetailModal(taskIdNum);
+                    });
                 });
             },
             error: function(xhr) { alert(xhr.responseJSON?.error || 'Failed to update'); }
