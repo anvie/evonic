@@ -1190,29 +1190,46 @@ class WhatsAppChannel(BaseChannel):
         if caption:
             caption = _whatsapp_format(caption)
 
-        # 5. Send via bridge
+        # 5. Submit through the bridge delivery lifecycle. A successful HTTP
+        # response means Baileys accepted the attachment; delivery is confirmed
+        # later through whatsapp_outbound_status callbacks.
+        correlation_id = uuid.uuid4().hex
         self._clear_typing(external_user_id)
         try:
-            self._bridge_post('/send-file', {
+            result = self._bridge_post('/send-file', {
                 'to': to,
                 'filePath': file_path,
                 'caption': caption,
                 'mimeType': mime_type,
+                'correlation_id': correlation_id,
             })
-            _logger.info("WhatsApp file sent to %s (channel %s): %s",
-                         external_user_id, self.channel_id, file_path)
+            status = result.get('status')
+            if status != 'accepted':
+                _logger.error(
+                    "WhatsApp file was not accepted for %s: status=%s correlation_id=%s",
+                    external_user_id, status, correlation_id)
+                return False
+            _logger.info(
+                "WhatsApp file accepted for %s (channel %s): correlation_id=%s "
+                "message_id=%s file=%s",
+                external_user_id, self.channel_id, correlation_id,
+                result.get('message_id'), file_path)
         except Exception as e:
             _logger.error("WhatsApp file send failed to %s: %s", external_user_id, e)
             return False
-        self.send_typing(external_user_id, state='paused')
+        finally:
+            self.send_typing(external_user_id, state='paused')
 
-        # 6. Emit event (consistent with _do_send)
+        # 6. Report queue acceptance without claiming confirmed delivery.
         from backend.event_stream import event_stream
         event_stream.emit('message_sent', {
             'channel_type': 'whatsapp',
             'channel_id': self.channel_id,
             'external_user_id': external_user_id,
             'message': f"[File: {os.path.basename(file_path)}]",
+            'status': 'accepted',
+            'correlation_id': correlation_id,
+            'message_id': result.get('message_id'),
         })
         return True
 

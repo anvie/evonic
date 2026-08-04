@@ -5,6 +5,7 @@ const pino = require('pino');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
+const { attachmentTransportReady, submitAttachment } = require('./attachment-message');
 const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
 const { normalizeRecipientJid } = require('./jid');
 const { OutboundLifecycle } = require('./outbound-lifecycle');
@@ -648,25 +649,41 @@ app.post('/typing', async (req, res) => {
 });
 
 app.post('/send-file', async (req, res) => {
-    const { to, filePath, caption, mimeType } = req.body || {};
+    const {
+        to, filePath, caption, mimeType,
+        correlation_id: requestedCorrelationId, session_id: sessionId,
+    } = req.body || {};
     if (!to || !filePath) {
         return res.status(400).json({ error: 'to and filePath required' });
     }
-    if (!sock || connectionStatus !== 'connected') {
-        return res.status(503).json({ error: 'Not connected to WhatsApp' });
+    if (!attachmentTransportReady({
+        hasSocket: Boolean(sock), connectionStatus, messageSendReady,
+    })) {
+        return res.status(503).json({ error: 'WhatsApp message transport is not ready' });
     }
     const jid = normalizeRecipientJid(to);
+    const correlationId = requestedCorrelationId
+        || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    console.log(
+        '[whatsapp-bridge] SEND FILE requested correlationId=%s to=%s jid=%s fileName=%s',
+        correlationId, to, jid, path.basename(filePath));
     try {
-        const fileBuffer = fs.readFileSync(filePath);
-        await sock.sendMessage(jid, {
-            document: fileBuffer,
-            mimetype: mimeType || 'application/octet-stream',
-            fileName: path.basename(filePath),
-            caption: caption || undefined,
+        const result = await submitAttachment({
+            lifecycle: outboundLifecycle,
+            correlationId,
+            jid,
+            fileBuffer: fs.readFileSync(filePath),
+            filePath,
+            caption,
+            mimeType,
+            sessionId,
         });
-        res.json({ success: true });
+        res.status(result.httpStatus).json(result.body);
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        console.error(
+            '[whatsapp-bridge] SEND FILE FAIL correlationId=%s to=%s error=%s',
+            correlationId, jid, e.message);
+        res.status(500).json({ error: e.message, correlation_id: correlationId });
     }
 });
 
