@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const { attachmentTransportReady, submitAttachment } = require('./attachment-message');
+const { downloadInboundDocument, extractInboundText } = require('./inbound-document');
 const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
 const { normalizeRecipientJid } = require('./jid');
 const { OutboundLifecycle } = require('./outbound-lifecycle');
@@ -420,13 +421,8 @@ async function startBaileys() {
                 pushNameCache.set(sender, msg.pushName);
             }
 
-            // Extract text
-            const text =
-                content?.conversation ||
-                content?.extendedTextMessage?.text ||
-                content?.imageMessage?.caption ||
-                content?.videoMessage?.caption ||
-                '';
+            // Extract text, including document captions wrapped by WhatsApp.
+            const text = extractInboundText(content);
 
             // Extract button reply (approval flow)
             const buttonReply = content?.buttonsResponseMessage;
@@ -436,7 +432,8 @@ async function startBaileys() {
                 continue;
             }
 
-            // Extract image if present
+            // Extract media if present. Baileys performs the decryption before
+            // bytes are forwarded to the Python channel.
             let image = null;
             if (content?.imageMessage) {
                 try {
@@ -452,9 +449,23 @@ async function startBaileys() {
                 }
             }
 
-            // Log every inbound message (early feature — verbose for monitoring)
-            console.log('[whatsapp-bridge] MSG id=%s from=%s jid=%s group=%s text_len=%d image=%s',
-                messageId, sender, jid, isGroup, text.length, !!image);
+            let document = null;
+            let documentDownloadFailed = false;
+            if (content?.documentMessage) {
+                try {
+                    document = await downloadInboundDocument({
+                        message: msg, content, downloadMediaMessage, logger,
+                    });
+                } catch (e) {
+                    documentDownloadFailed = true;
+                    console.error('[whatsapp-bridge] Failed to download document:', e.message);
+                }
+            }
+
+            // Log every inbound message without logging attachment contents.
+            console.log('[whatsapp-bridge] MSG id=%s from=%s jid=%s group=%s text_len=%d image=%s document=%s document_download_failed=%s',
+                messageId, sender, jid, isGroup, text.length, !!image, !!document,
+                documentDownloadFailed);
             if (isGroup) {
                 console.log('[whatsapp-bridge] GROUP MSG keys:', JSON.stringify(Object.keys(msg.message || {})),
                     'unwrapped:', JSON.stringify(Object.keys(content || {})));
@@ -508,7 +519,8 @@ async function startBaileys() {
             const groupName = isGroup ? await getGroupSubject(jid) : null;
 
             postCallback({
-                from: sender, jid, message_id: messageId, text, image,
+                from: sender, jid, message_id: messageId, text, image, document,
+                document_download_failed: documentDownloadFailed,
                 message_timestamp: messageTimestamp,
                 content_type: contentType,
                 wrapper_types: wrapperTypes,
