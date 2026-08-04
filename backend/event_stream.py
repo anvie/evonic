@@ -43,6 +43,7 @@ CHAT_FORWARDED_EVENTS = frozenset({
     'tasks:stale',
     'llm_response_chunk',
     'turn_complete',
+    'required_tool_enforced',
     'approval_required',
     'approval_resolved',
     'llm_retry',

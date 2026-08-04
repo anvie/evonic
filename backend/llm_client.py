@@ -366,6 +366,7 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         log_file: Optional[str] = None,
+        tool_choice: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Delegate chat completion to CodexClient (Responses API)."""
         from models.db import db as _db
@@ -394,6 +395,7 @@ class LLMClient:
             tools=tools,
             reasoning=bool(self.thinking),
             timeout=self.timeout or 120,
+            tool_choice=tool_choice,
         )
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -486,6 +488,7 @@ class LLMClient:
         enable_thinking: bool = True,
         max_tokens: Optional[int] = None,
         log_file: Optional[str] = None,
+        tool_choice: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send chat completion request to OpenAI-compatible endpoint.
 
@@ -503,6 +506,7 @@ class LLMClient:
             max_tokens: Optional override for max output tokens. If None,
                 uses self.max_tokens (doubled when thinking is active).
             log_file: Optional path for API call logging.
+            tool_choice: Optional function name that the provider must call.
 
         Returns:
             Dict with response, duration_ms, token counts, success flag,
@@ -514,7 +518,8 @@ class LLMClient:
             retry count via llm_max_retries setting (DB default: 5).
         """
         if self.api_format == "codex":
-            return self._codex_chat_completion(messages, tools, temperature, max_tokens, log_file)
+            return self._codex_chat_completion(
+                messages, tools, temperature, max_tokens, log_file, tool_choice)
 
         is_ollama_fmt = self.api_format == "ollama" or (
             self.base_url and "ollama.com" in self.base_url
@@ -642,6 +647,9 @@ class LLMClient:
                 payload["options"]["temperature"] = effective_temperature
             if tools:
                 payload["tools"] = tools
+                if tool_choice:
+                    payload["tool_choice"] = {
+                        "type": "function", "function": {"name": tool_choice}}
         elif is_anthropic:
             # Anthropic API uses /messages endpoint with different payload structure.
             # Extract system messages into top-level "system" field.
@@ -667,7 +675,9 @@ class LLMClient:
                         "input_schema": fn.get("parameters", {}),
                     })
                 payload["tools"] = anthropic_tools
-                payload["tool_choice"] = {"type": "auto"}
+                payload["tool_choice"] = (
+                    {"type": "tool", "name": tool_choice}
+                    if tool_choice else {"type": "auto"})
         else:
             payload = {
                 "model": self.model,
@@ -679,6 +689,9 @@ class LLMClient:
                 payload["temperature"] = effective_temperature
             if tools:
                 payload["tools"] = tools
+                if tool_choice:
+                    payload["tool_choice"] = {
+                        "type": "function", "function": {"name": tool_choice}}
 
         if is_anthropic:
             headers = {

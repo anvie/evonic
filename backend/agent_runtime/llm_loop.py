@@ -502,6 +502,8 @@ def run_tool_loop(agent: Dict[str, Any],
         'external_user_id': external_user_id, 'channel_id': channel_id,
         'message_id': agent_context.get('trusted_message_id'),
         'attachment_ids': list(agent_context.get('trusted_attachment_ids') or []),
+        'attachment_mime_types': list(
+            agent_context.get('trusted_attachment_mime_types') or []),
         'turn_index': _turn_index,
     }
 
@@ -527,6 +529,13 @@ def run_tool_loop(agent: Dict[str, Any],
                                        'turn')
     _suppress_intermediate = bool(
         _turn_decision and _turn_decision.get('suppress_intermediate'))
+    _required_tool = str(
+        (_turn_decision or {}).get('required_tool') or '').strip()
+    _required_tool_pending = bool(_required_tool)
+    if _required_tool_pending:
+        event_stream.emit('required_tool_enforced', {
+            **_gate_context, 'tool_name': _required_tool,
+        })
 
     real_exec = tool_registry.get_real_executor(agent_context)
 
@@ -1164,7 +1173,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 temperature=None,
                 enable_thinking=_enable_thinking_this_call,
                 max_tokens=None,
-                log_file=llm_log_path
+                log_file=llm_log_path,
+                tool_choice=_required_tool if _required_tool_pending else None,
             )
 
         # Check A: stop signal check after LLM call (earliest safe point)
@@ -1521,7 +1531,9 @@ def run_tool_loop(agent: Dict[str, Any],
                             temperature=None,
                             enable_thinking=_enable_thinking_this_call,
                             max_tokens=None,
-                            log_file=llm_log_path
+                            log_file=llm_log_path,
+                            tool_choice=(
+                                _required_tool if _required_tool_pending else None),
                         )
                     if _fallback_result.get('success'):
                         _logger.info(
@@ -2124,6 +2136,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 'external_user_id': external_user_id, 'channel_id': channel_id,
                 'tool_name': fn_name, 'tool_args': args, 'param_types': pt,
             })
+            if _required_tool_pending and fn_name == _required_tool:
+                _required_tool_pending = False
             _tool_call_counts[fn_name] = _tool_call_counts.get(fn_name, 0) + 1
             _tool_records.append((tc, fn_name, args, pt))
 

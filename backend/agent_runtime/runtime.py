@@ -2126,16 +2126,28 @@ class AgentRuntime:
             if _trusted_meta.get('channel_message_id'):
                 agent_context['trusted_message_id'] = str(_trusted_meta['channel_message_id'])
             if _trusted_meta.get('attachment_info'):
-                _att_ids = []
                 _a_info = _trusted_meta['attachment_info']
-                if isinstance(_a_info, list):
-                    for _att in _a_info:
-                        if isinstance(_att, dict) and _att.get('id'):
-                            _att_ids.append(str(_att['id']))
-                elif isinstance(_a_info, dict) and _a_info.get('id'):
-                    _att_ids.append(str(_a_info['id']))
+                _att_infos = _a_info if isinstance(_a_info, list) else [_a_info]
+                _att_ids = []
+                _att_mime_types = []
+                _att_paths = []
+                for _att in _att_infos:
+                    if not isinstance(_att, dict):
+                        continue
+                    _att_id = _att.get('id') or _att.get('attachment_id')
+                    if _att_id is not None:
+                        _att_ids.append(str(_att_id))
+                    if _att.get('mime_type'):
+                        _att_mime_types.append(str(_att['mime_type']))
+                    _att_path = _att.get('workplace_path') or _att.get('file_path')
+                    if _att_path:
+                        _att_paths.append(str(_att_path))
                 if _att_ids:
                     agent_context['trusted_attachment_ids'] = _att_ids
+                if _att_mime_types:
+                    agent_context['trusted_attachment_mime_types'] = _att_mime_types
+                if _att_paths:
+                    agent_context['trusted_attachment_paths'] = _att_paths
 
         # Propagate agent_message_depth and from_agent_id from incoming message metadata
         if ctx.external_user_id.startswith("__agent__"):

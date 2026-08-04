@@ -66,6 +66,16 @@ class WorkflowGuard:
         visible = external[-4:] if len(external) >= 4 else "hidden"
         return digest, f"***{visible}"
 
+    @staticmethod
+    def _image_attachment_ids(context):
+        attachment_ids = list(context.get("attachment_ids") or [])
+        mime_types = list(context.get("attachment_mime_types") or [])
+        return [
+            str(attachment_id)
+            for index, attachment_id in enumerate(attachment_ids)
+            if index < len(mime_types) and str(mime_types[index]).lower().startswith("image/")
+        ]
+
     def turn_gate(self, context):
         policy, identity = self.policy(context), self.identity(context)
         if not policy or not identity or not self.enabled() or self.shadow():
@@ -75,7 +85,16 @@ class WorkflowGuard:
             self.log(f"blocked_turn policy={policy['policy_id']} subject={subject['id']}")
             return {"handled": True, "response": policy["fixed_response"],
                     "suppress_intermediate": True}
-        return {"suppress_intermediate": bool(policy.get("suppress_intermediate", True))}
+        decision = {"suppress_intermediate": bool(policy.get("suppress_intermediate", True))}
+        required_tool = str(policy.get("image_attachment_required_tool") or "").strip()
+        image_attachment_ids = self._image_attachment_ids(context)
+        if required_tool and image_attachment_ids:
+            decision["required_tool"] = required_tool
+            self.log(
+                f"required_tool policy={policy['policy_id']} tool={required_tool} "
+                f"attachment_count={len(image_attachment_ids)}"
+            )
+        return decision
 
     def tool_guard(self, agent_id, tool_name, _args, context):
         policy, identity = self.policy({**(context or {}), "agent_id": agent_id}), self.identity(context or {})
