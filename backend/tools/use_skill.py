@@ -60,8 +60,14 @@ def execute(agent: dict, args: dict) -> dict:
             "available_skills": available
         }
 
-    # Per-agent allowlist check (super agents are exempt)
-    if not agent.get('is_super'):
+    # Per-agent allowlist check (only the designated super agent is exempt)
+    _super_id = None
+    try:
+        from models.db import db
+        _super_id = db.get_setting('super_agent_id')
+    except Exception:
+        pass
+    if not (agent.get('is_super') and agent.get('id') == _super_id):
         from models.db import db
         # Sub-agents inherit parent's skill assignments
         _eid = agent.get('parent_id', agent.get('id', '')) if agent.get('is_subagent') else agent.get('id', '')
