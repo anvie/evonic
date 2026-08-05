@@ -708,6 +708,8 @@ def enforce_auth():
         return None  # Evonet binary download is unauthenticated (uses embedded connector_token)
     if request.path == '/ws/connector':
         return None  # Evonet connector authenticates via Bearer token, not session
+    if request.path.startswith('/agentapi/'):
+        return None  # AgentAPI plugin endpoints authenticate via their own Bearer token
     if request.path.startswith('/static/'):
         return None
     if request.path.startswith('/webhook'):
