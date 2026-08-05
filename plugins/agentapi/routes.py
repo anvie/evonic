@@ -361,13 +361,50 @@ def create_blueprint():
                 return
             q.put_nowait((_SENTINEL, None))
 
+        # Tool-call notifications: coalesce tool_executed events within a short
+        # window into one SSE event (mirrors the Telegram channel's coalescing).
+        # A 100-tool loop collapses to a handful of lines, not one per call.
+        _tool_pending: dict = {}  # session_id -> {last, counts: {name: n}, any_error}
+        _TOOL_WINDOW = 5.0
+
+        def _flush_tool_notify(sid: str):
+            entry = _tool_pending.pop(sid, None)
+            if not entry:
+                return
+            parts = [f"{name} ({n}x)" for name, n in sorted(entry['counts'].items())]
+            q.put_nowait(('tool', {
+                'tool_name': ', '.join(parts),
+                'has_error': entry['any_error'],
+            }))
+
+        def on_tool_executed(data):
+            if data.get('session_id') != session_id:
+                return
+            now = time.time()
+            entry = _tool_pending.get(session_id)
+            if entry and now - entry['last'] < _TOOL_WINDOW:
+                name = data.get('tool_name', '')
+                entry['counts'][name] = entry['counts'].get(name, 0) + 1
+                entry['any_error'] = entry['any_error'] or data.get('has_error', False)
+                entry['last'] = now
+                return
+            if entry:
+                _flush_tool_notify(session_id)
+            _tool_pending[session_id] = {
+                'last': now,
+                'counts': {data.get('tool_name', ''): 1},
+                'any_error': data.get('has_error', False),
+            }
+            threading.Timer(_TOOL_WINDOW, _flush_tool_notify, args=[session_id]).start()
+
         # Thread to run the agent and forward chunks via event_stream
         events_registered = []
 
         def run_agent():
             event_stream.on('llm_response_chunk', on_chunk)
             event_stream.on('turn_complete', on_turn_complete)
-            events_registered.extend(['llm_response_chunk', 'turn_complete'])
+            event_stream.on('tool_executed', on_tool_executed)
+            events_registered.extend(['llm_response_chunk', 'turn_complete', 'tool_executed'])
 
             try:
                 agent_runtime.handle_message(
@@ -413,6 +450,17 @@ def create_blueprint():
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
                         content_sent = True
+                    elif event_type == 'tool':
+                        # Tool-call notification: a compact line like
+                        #   {"type":"tool","tool_name":"bash (2x), python (1x)","has_error":false}
+                        # Streamed inline so the client can show it in the chat
+                        # while the agent keeps working.
+                        tool_event = {
+                            'type': 'tool',
+                            'tool_name': payload.get('tool_name', ''),
+                            'has_error': payload.get('has_error', False),
+                        }
+                        yield f"data: {json.dumps(tool_event)}\n\n"
 
                 # Send final [DONE] chunk
                 final_chunk = {
