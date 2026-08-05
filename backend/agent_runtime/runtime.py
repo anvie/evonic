@@ -2599,6 +2599,10 @@ class AgentRuntime:
         chatlog_manager.get(agent_id, session_id).append({'type': 'final', 'session_id': session_id,
                                                           'content': reply,
                                                           'metadata': {'busy_rejection': True}})
+        # Record the deferral so the pending user message is auto-resumed once the
+        # agent is free and unfocused (drained in _send_free_notification). Queued
+        # on the opt-in branch too — the real answer supersedes the notification.
+        self._queue_deferred_resume(agent_id, session_id, external_user_id, channel_id)
         # Send via channel if applicable
         if channel_id:
             try:
@@ -2640,6 +2644,22 @@ class AgentRuntime:
         with cls._free_notify_lock:
             cls._free_notify_pending[agent_id] = {
                 'session_id': session_id,
+                'external_user_id': external_user_id,
+                'channel_id': channel_id,
+            }
+
+    # Sessions rejected while the agent was focus-busy, awaiting auto-resume:
+    # agent_id -> {session_id: {'external_user_id': str, 'channel_id': str|None}}
+    # Drained by _send_free_notification once the agent is free and unfocused.
+    _deferred_resume_pending: dict = {}
+    _deferred_resume_lock = threading.Lock()
+
+    @classmethod
+    def _queue_deferred_resume(cls, agent_id: str, session_id: str,
+                                external_user_id: str, channel_id: Optional[str]) -> None:
+        """Record a busy-rejected session so it is re-run when the agent frees up."""
+        with cls._deferred_resume_lock:
+            cls._deferred_resume_pending.setdefault(agent_id, {})[session_id] = {
                 'external_user_id': external_user_id,
                 'channel_id': channel_id,
             }
@@ -2962,14 +2982,17 @@ class AgentRuntime:
         return True
 
     def resume_session(self, agent: dict, session_id: str,
-                       external_user_id: str, channel_id: str | None = None) -> None:
+                       external_user_id: str, channel_id: str | None = None,
+                       send_via_channel: bool = False) -> None:
         """Re-enqueue a session for agent processing without saving a new message.
 
         Used at startup to follow up on unreplied user messages that were left
-        pending after a server restart.
+        pending after a server restart, and by the deferred-resume drain to
+        answer messages rejected while the agent was focus-busy (pass
+        send_via_channel=True there so channel users receive the answer).
         """
         if not agent.get('enabled', True):
             return
         task = _QueueTask(agent, SessionContext(session_id, external_user_id, channel_id),
-                          send_via_channel=False)
+                          send_via_channel=send_via_channel)
         self._message_queue.put(task)

@@ -20,6 +20,7 @@ agent_runtime = AgentRuntime()
 
 
 _FREE_NOTIFY_DELAY = 6  # seconds — debounce rapid busy→free transitions
+_DEFERRED_RETRY_DELAY = 30  # seconds — re-check when agent is idle but still focused
 _free_notify_timers: dict[str, threading.Timer] = {}
 _free_notify_timers_lock = threading.Lock()
 
@@ -38,10 +39,14 @@ def _on_agent_busy_changed(event):
             timer.cancel()
         return
 
-    # Agent became free — check if there's a pending notification
+    # Agent became free — check if there's a pending notification or a
+    # deferred (busy-rejected) session awaiting auto-resume.
     with AgentRuntime._free_notify_lock:
-        if agent_id not in AgentRuntime._free_notify_pending:
-            return
+        has_notify = agent_id in AgentRuntime._free_notify_pending
+    with AgentRuntime._deferred_resume_lock:
+        has_deferred = bool(AgentRuntime._deferred_resume_pending.get(agent_id))
+    if not (has_notify or has_deferred):
+        return
 
     # Schedule delayed send; cancelled if agent goes busy again before it fires
     with _free_notify_timers_lock:
@@ -54,8 +59,64 @@ def _on_agent_busy_changed(event):
         t.start()
 
 
+def _drain_deferred_resumes(agent_id: str) -> set:
+    """Re-enqueue sessions whose user message was rejected while the agent was
+    focus-busy, so the pending message is answered without a user nudge.
+
+    Returns the set of resumed session_ids. Busy-rejection replies are excluded
+    from LLM context, so the resumed turn naturally answers the buried user
+    message.
+    """
+    with AgentRuntime._deferred_resume_lock:
+        deferred = AgentRuntime._deferred_resume_pending.pop(agent_id, None)
+    if not deferred:
+        return set()
+
+    from models.db import db
+    from models.chatlog import ChatLog
+    try:
+        agent = db.get_agent(agent_id)
+    except Exception:
+        agent = None
+    if not agent:
+        return set()
+
+    resumed = set()
+    _tail_types = frozenset({'user', 'final', 'intermediate', 'error'})
+    for session_id, info in deferred.items():
+        # Guard: skip sessions that got a real answer in the meantime — only
+        # resume when the tail is still the unanswered user message or a
+        # busy/notify system reply.
+        try:
+            with ChatLog(agent_id, session_id) as clog:
+                last = clog.get_last_entry(types=_tail_types)
+        except Exception:
+            last = None
+        if last is not None:
+            meta = last.get('metadata') or {}
+            is_pending_tail = (
+                last.get('type') == 'user'
+                or (last.get('type') == 'final'
+                    and (meta.get('busy_rejection') or meta.get('busy_ack')
+                         or meta.get('free_notification')))
+            )
+            if not is_pending_tail:
+                continue
+        try:
+            agent_runtime.resume_session(
+                agent, session_id, info['external_user_id'], info['channel_id'],
+                send_via_channel=bool(info['channel_id']))
+            resumed.add(session_id)
+            log.info("[DeferredResume] agent=%s resuming rejected session=%s user=%s",
+                     agent_id, session_id, info['external_user_id'])
+        except Exception as e:
+            log.error("[DeferredResume] failed to resume session %s: %s", session_id, e)
+    return resumed
+
+
 def _send_free_notification(agent_id: str):
-    """Actually deliver the free-notification after the debounce delay."""
+    """Deliver the free-notification and drain deferred (busy-rejected) sessions
+    after the debounce delay."""
     with _free_notify_timers_lock:
         _free_notify_timers.pop(agent_id, None)
 
@@ -64,9 +125,37 @@ def _send_free_notification(agent_id: str):
         log.debug("[AgentFreeNotify] agent=%s went busy again during delay — skipping", agent_id)
         return
 
+    # Focus gate: idle but still focused on a task (e.g. between task turns) —
+    # re-arm and retry. The retry loop (rather than waiting for another busy
+    # event) matters because focus can be cleared with no subsequent turn
+    # (e.g. the kanban stale-task watchdog), which would strand deferrals.
+    try:
+        ms = agent_runtime._restore_agent_state(agent_id)
+    except Exception:
+        ms = None
+    if ms is not None and getattr(ms, 'focus', False):
+        with _free_notify_timers_lock:
+            old = _free_notify_timers.pop(agent_id, None)
+            if old:
+                old.cancel()
+            t = threading.Timer(_DEFERRED_RETRY_DELAY, _send_free_notification, args=(agent_id,))
+            t.daemon = True
+            _free_notify_timers[agent_id] = t
+            t.start()
+        log.debug("[AgentFreeNotify] agent=%s idle but focused — retrying in %ss",
+                  agent_id, _DEFERRED_RETRY_DELAY)
+        return
+
+    resumed_sessions = _drain_deferred_resumes(agent_id)
+
     with AgentRuntime._free_notify_lock:
         pending = AgentRuntime._free_notify_pending.pop(agent_id, None)
     if not pending:
+        return
+    # The auto-resumed real answer supersedes the generic notification.
+    if pending['session_id'] in resumed_sessions:
+        log.debug("[AgentFreeNotify] agent=%s session=%s auto-resumed — skipping generic notification",
+                  agent_id, pending['session_id'])
         return
 
     session_id = pending['session_id']

@@ -517,13 +517,20 @@ if (not _reloader_active or _is_reloader_child) and not _smoke_test:
 
                 if _last is None:
                     continue  # empty session, skip
-                if _last.get('type') != 'user':
+                # A session is unreplied when the tail is a user message, or a
+                # busy-rejection reply (the user's message right before it was
+                # never processed — see deferred auto-resume in agent_runtime).
+                _is_busy_rejection_tail = (
+                    _last.get('type') == 'final'
+                    and (_last.get('metadata') or {}).get('busy_rejection')
+                )
+                if _last.get('type') != 'user' and not _is_busy_rejection_tail:
                     continue  # last message is agent/system — already replied
 
                 # Slash commands (e.g. /autopilot on, /clear) are system/control
                 # instructions that don't require an agent reply — skip them.
                 _content = (_last.get('content') or '').strip()
-                if _content.startswith('/'):
+                if not _is_busy_rejection_tail and _content.startswith('/'):
                     continue
 
                 _unreplied_count += 1
@@ -538,18 +545,22 @@ if (not _reloader_active or _is_reloader_child) and not _smoke_test:
                     _agent_name, _session_id, _ts_str, _preview
                 )
                 _pending.append((_agent, _session_id, _sess.get('external_user_id', ''),
-                                 _sess.get('channel_id')))
+                                 _sess.get('channel_id'), _is_busy_rejection_tail))
 
         if _unreplied_count:
             _log.warning(
                 "Unreplied-chat scan complete: %d/%d human session(s) have no agent reply.",
                 _unreplied_count, _total_sessions,
             )
-            # Re-enqueue unreplied sessions so agents follow up
+            # Re-enqueue unreplied sessions so agents follow up. For sessions
+            # stranded by a busy rejection, deliver the answer via the channel
+            # too (the user only ever saw the rejection there).
             from backend.agent_runtime import agent_runtime
-            for _agent, _sid, _ext_uid, _ch_id in _pending:
+            for _agent, _sid, _ext_uid, _ch_id, _was_rejected in _pending:
                 try:
-                    agent_runtime.resume_session(_agent, _sid, _ext_uid, _ch_id)
+                    agent_runtime.resume_session(
+                        _agent, _sid, _ext_uid, _ch_id,
+                        send_via_channel=bool(_ch_id and _was_rejected))
                     _log.info("Resumed unreplied session %s for agent %s",
                               _sid, _agent.get('name', _agent['id']))
                 except Exception as _e:
