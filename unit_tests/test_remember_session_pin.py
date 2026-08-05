@@ -1,6 +1,6 @@
-"""Verify the redesigned `remember` tool pins facts into the running session
-summary instantly (no LLM, no long-term write), and that the summary survives
-re-pinning."""
+"""Verify the `remember` tool pins facts into the running session summary
+instantly (no LLM), and that the summary survives re-pinning. Ledger-write and
+keyed-supersession behavior is covered in test_keyed_ledger.py."""
 
 import os
 import sys

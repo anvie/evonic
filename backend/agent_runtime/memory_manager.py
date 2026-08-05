@@ -2037,81 +2037,105 @@ def _kb_page_lock(agent_id: str, slug: str) -> threading.RLock:
         return lk
 
 
-def extract_and_store_kb(agent: dict, session_id: str, summary: str,
-                          llm_lock: threading.Lock) -> None:
-    """File durable knowledge from a remembered fact (or summary) into the KB.
-
-    Backs the `remember` tool path (``store_memory`` → ``_extract_from_fact_async``).
-    Routes through the unified rich-doc author so an explicitly-remembered fact
-    becomes a rich, inline-linked doc — the same model the summary pipeline uses.
-    Runs in a background thread; non-fatal on error.
-    """
-    _author_docs(agent, session_id, summary, llm_lock)
-
-
 def store_memory(agent_id: str, session_id: str, content: str,
-                 category: str = 'general') -> dict:
-    """Pin a fact into the running session summary. Backs the `remember` tool.
+                 category: str = 'general', key: str = None) -> dict:
+    """Store a fact in the ledger and pin it into the running session summary.
+    Backs the `remember` tool.
 
-    Two things happen:
-    1. The fact is appended to the session's running summary so it is immediately
-       visible in the agent's context for the rest of the session.
-    2. It is filed into long-term KB + knowledge graph DIRECTLY (in the
-       background), so an explicitly-remembered fact becomes a KB page / entity
-       node regardless of whether the incremental summarizer later compacts the
-       noted bullet away. Dedup in the extractor prevents duplicates with the
-       summary-driven pass.
+    Two things happen, both engine-independent and zero-LLM:
+    1. The fact is written to the memories ledger. When *key* is given it maps
+       onto the ``dimension`` column and any active same-key rows are superseded
+       (deterministic replace — "deploy to X" then "deploy to Y" keeps only Y).
+       We deliberately do NOT route through ``_store_with_conflict_detection``
+       here: that helper triggers the LLM dimension backfill, which stays on the
+       summarizer's batch path.
+    2. It is pinned into the session's running summary so it is immediately
+       visible for the rest of the session. Keyed pins REPLACE an existing
+       ``- (noted:key)`` bullet in place instead of appending, so the summary
+       never accumulates stale values for the same key.
+
+    KB/graph filing is no longer done per-fact; the noted bullet reaches the KB
+    via the summary-driven organizer batch (the ledger is the durability
+    guarantee).
     """
     content = content.strip()
     if not content:
         return {"error": "Memory content cannot be empty."}
     if not session_id:
         return {"error": "No active session to note this fact in."}
+    key = (key or '').strip().lower() or None
+    if key and category in (None, '', 'general'):
+        category = key.split('.', 1)[0]
     try:
-        tag = "" if category in (None, "", "general") else f", {category}"
-        bullet = f"- (noted{tag}) {content}"
+        # 1) Ledger write (always, both engines). Keyed facts supersede in place.
+        superseded_ids = []
+        if key:
+            existing = db.get_memories_by_dimension(agent_id, key)
+            superseded_ids = [m['id'] for m in existing]
+            memory_id = db.add_memory(agent_id, content, category, session_id, key)
+            for old_id in superseded_ids:
+                db.supersede_memory(agent_id, old_id, memory_id)
+        else:
+            db.add_memory(agent_id, content, category, session_id, None)
+
+        # 2) Session pin: replace same-key bullet in place, else append.
+        if key:
+            bullet = f"- (noted:{key}) {content}"
+        else:
+            tag = "" if category in (None, "", "general") else f", {category}"
+            bullet = f"- (noted{tag}) {content}"
         rec = db.get_summary(session_id, agent_id=agent_id)
+        existing_summary = (rec or {}).get('summary') or ''
+        new_summary = None
+        if key and existing_summary:
+            pin_re = re.compile(
+                r'^- \(noted:' + re.escape(key) + r'\) .*$', re.MULTILINE)
+            if pin_re.search(existing_summary):
+                new_summary = pin_re.sub(bullet, existing_summary, count=1)
+        if new_summary is None:
+            new_summary = (existing_summary.rstrip() + "\n" + bullet
+                           if existing_summary else bullet)
         if rec and rec.get('summary'):
-            new_summary = rec['summary'].rstrip() + "\n" + bullet
             db.upsert_summary(session_id, new_summary,
                               rec.get('last_message_id') or 0,
                               rec.get('message_count') or 0,
                               agent_id=agent_id,
                               last_message_ts=rec.get('last_message_ts'))
         else:
-            db.upsert_summary(session_id, bullet, 0, 0, agent_id=agent_id)
-        # File the explicit fact into KB/graph directly (background, best-effort).
-        _extract_from_fact_async(agent_id, session_id, content)
-        return {"result": "Noted for this session.", "content": content}
+            db.upsert_summary(session_id, new_summary, 0, 0, agent_id=agent_id)
+
+        result = {"result": "Noted for this session.", "content": content}
+        if key:
+            result["key"] = key
+            if superseded_ids:
+                result["result"] = "Noted; replaced the previous value for this key."
+                result["superseded"] = superseded_ids
+        return result
     except Exception as e:
         return {"error": f"Failed to note fact: {e}"}
 
 
-def _extract_from_fact_async(agent_id: str, session_id: str, content: str) -> None:
-    """Run KB + graph extraction on a single remembered fact, in the background.
+def recall_by_key(agent_id: str, key: str) -> dict:
+    """Exact-key lookup of the current value. Backs `recall(mode='key')`.
 
-    Lets an explicitly `remember`-ed fact become a KB page / entity node without
-    depending on it surviving summary compaction. Non-fatal on any error.
+    A deterministic point read on the ledger — no FTS ranking, no evomem
+    subprocess, no LLM. Superseded/expired rows are already filtered by the
+    dimension query, so at most the single current fact comes back.
     """
-    if get_engine() != "evomem":
-        return
-
-    def _run():
-        try:
-            from backend.agent_runtime.runtime import AgentRuntime
-            from backend.llm_usage_events import usage_context
-            agent = db.get_agent(agent_id)
-            if not agent:
-                return
-            with usage_context('memory', agent_id, agent.get('name'), session_id):
-                extract_and_store_kb(
-                    agent, session_id, content,
-                    AgentRuntime._llm_serializer._llm_lock)
-        except Exception as e:
-            print(f"[MemoryManager] remember-extract failed for {agent_id} "
-                  f"(non-fatal): {e}")
-
-    threading.Thread(target=_run, daemon=True).start()
+    key = (key or '').strip().lower()
+    if not key:
+        return {"error": "recall(mode='key') requires the key as `query`."}
+    try:
+        rows = db.get_memories_by_dimension(agent_id, key)
+        if not rows:
+            return {"result": "No memory stored for this key.", "key": key,
+                    "count": 0}
+        m = rows[0]  # most recently updated active row
+        return {"key": key, "content": m['content'],
+                "category": m.get('category'),
+                "updated_at": m.get('updated_at'), "count": 1}
+    except Exception as e:
+        return {"error": f"Key recall failed: {e}"}
 
 
 def search_memories(agent_id: str, query: str, limit: int = 6) -> dict:
