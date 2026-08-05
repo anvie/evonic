@@ -433,6 +433,10 @@ def create_blueprint():
                         break
 
                     if item[0] is _SENTINEL:
+                        # Turn complete: flush any pending coalesced tool events
+                        # (the 5s window may not have elapsed yet) so the client
+                        # sees them before the stream closes.
+                        _flush_tool_notify(session_id)
                         break
 
                     event_type, payload = item
@@ -489,9 +493,12 @@ def create_blueprint():
                 # Clean up event subscriptions
                 for ev_name in events_registered:
                     try:
-                        event_stream.off(ev_name, on_chunk
-                                         if ev_name == 'llm_response_chunk'
-                                         else on_turn_complete)
+                        if ev_name == 'llm_response_chunk':
+                            event_stream.off(ev_name, on_chunk)
+                        elif ev_name == 'turn_complete':
+                            event_stream.off(ev_name, on_turn_complete)
+                        elif ev_name == 'tool_executed':
+                            event_stream.off(ev_name, on_tool_executed)
                     except Exception:
                         pass
 
