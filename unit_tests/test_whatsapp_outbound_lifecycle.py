@@ -1,6 +1,8 @@
 """Focused tests for WhatsApp outbound correlation and persisted JID routing."""
 
+import os
 import threading
+import tempfile
 from unittest.mock import MagicMock, patch
 
 from backend.channels.whatsapp import WhatsAppChannel
@@ -172,6 +174,78 @@ def test_session_id_is_included_in_local_bridge_payload():
         channel._do_send("628222", "response", session_id="session-1")
 
     assert sent[0]["session_id"] == "session-1"
+
+
+def test_attachment_send_retains_route_and_reports_acceptance_metadata():
+    channel = _channel()
+    channel._jid_map["lid-user"] = "lid-user@lid"
+    payloads = []
+
+    def accept_attachment(path, payload):
+        payloads.append((path, payload))
+        return {
+            "success": True,
+            "status": "accepted",
+            "correlation_id": payload["correlation_id"],
+            "message_id": "attachment-key-1",
+        }
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as attachment, \
+            patch.object(channel, "_bridge_post", side_effect=accept_attachment), \
+            patch.object(channel, "send_typing"), \
+            patch.object(channel, "_clear_typing"), \
+            patch("backend.event_stream.event_stream.emit") as emit:
+        attachment.write(b"%PDF-1.7\n%%EOF\n")
+        attachment.flush()
+
+        result = channel._do_send_file(
+            "lid-user", attachment.name,
+            caption="**Report**", mime_type="application/pdf")
+
+    assert result is True
+    bridge_path, payload = payloads[0]
+    assert bridge_path == "/send-file"
+    assert payload["to"] == "lid-user@lid"
+    assert payload["caption"] == "Report"
+    assert payload["mimeType"] == "application/pdf"
+    assert payload["correlation_id"]
+    event_name, event = emit.call_args.args
+    assert event_name == "message_sent"
+    assert event["status"] == "accepted"
+    assert event["correlation_id"] == payload["correlation_id"]
+    assert event["message_id"] == "attachment-key-1"
+
+
+def test_attachment_send_rejects_non_accepted_bridge_status():
+    channel = _channel()
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as attachment, \
+            patch.object(channel, "_bridge_post", return_value={
+                "success": False,
+                "status": "failed",
+                "correlation_id": "correlation-failed",
+            }), \
+            patch.object(channel, "send_typing"), \
+            patch.object(channel, "_clear_typing"), \
+            patch("backend.event_stream.event_stream.emit") as emit:
+        attachment.write(b"%PDF-1.7\n%%EOF\n")
+        attachment.flush()
+
+        result = channel._do_send_file("628222", attachment.name)
+
+    assert result is False
+    emit.assert_not_called()
+
+
+def test_attachment_send_rejects_missing_file_before_bridge_submission():
+    channel = _channel()
+    missing_path = os.path.join(tempfile.gettempdir(), "evonic-missing-attachment.pdf")
+
+    with patch.object(channel, "_bridge_post") as bridge_post:
+        result = channel._do_send_file("628222", missing_path)
+
+    assert result is False
+    bridge_post.assert_not_called()
 
 
 def _restriction_payload():
