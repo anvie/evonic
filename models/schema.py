@@ -388,6 +388,8 @@ class SchemaMixin:
                 ("video_enabled", "BOOLEAN DEFAULT 0"),
                 ("enable_atg", "BOOLEAN DEFAULT 0"),
                 ("enable_cmp", "BOOLEAN DEFAULT 0"),
+                # dm_only: agent hanya melayani pesan pribadi (DM); pesan grup ditolak.
+                ("dm_only", "INTEGER DEFAULT 0"),
             ]:
                 try:
                     cursor.execute(f"ALTER TABLE agents ADD COLUMN {col} {defn}")

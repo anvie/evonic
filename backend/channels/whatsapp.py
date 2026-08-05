@@ -173,6 +173,15 @@ def _wrap_group_message(text, group_name, push_name, sender,
     return '\n'.join(lines)
 
 
+def _reject_group_for_agent(agent, is_group: bool) -> bool:
+    """dm_only agents reject every group message before further processing.
+
+    The check is deliberately independent of @mentions, replies, and slash
+    commands: a dm_only agent must not engage with group chats at all.
+    """
+    return bool(is_group and agent and agent.get('dm_only'))
+
+
 class WhatsAppChannel(BaseChannel):
     def __init__(self, channel_id: str, agent_id: str, config: Dict[str, Any]):
         super().__init__(channel_id, agent_id, config)
@@ -782,6 +791,14 @@ class WhatsAppChannel(BaseChannel):
                          sender, is_group, jid)
             return
 
+        # dm_only agents reject every group message before any further processing,
+        # including @mentions, replies, and slash commands.
+        agent = db.get_agent(agent_id)
+        if _reject_group_for_agent(agent, is_group):
+            _logger.info("WhatsApp group message dropped (agent dm_only): agent=%s sender=%s text=%s",
+                         agent_id, sender, text[:80] if text else "")
+            return
+
         # In groups, only respond when @mentioned or when user replies to a bot message
         if is_group and not bot_mentioned and not quoted_is_bot:
             _logger.info("WhatsApp group message dropped (not mentioned): sender=%s text=%s", sender, text[:80] if text else "")
@@ -800,8 +817,6 @@ class WhatsAppChannel(BaseChannel):
         image_bytes = None  # decoded original bytes, persisted as attachment below
         audio_bytes = None  # decoded original bytes, persisted as attachment below
         audio_mime = None
-
-        agent = db.get_agent(agent_id)
 
         if image_data:
             try:
@@ -1074,12 +1089,9 @@ class WhatsAppChannel(BaseChannel):
 
     def send_message_buffered(self, external_user_id: str, text: str,
                               session_id: str = None):
-        """Queue intermediate output without blocking runtime callback threads."""
-        if self._dispatcher:
-            self._dispatcher.enqueue(
-                external_user_id, text, session_id=session_id, is_final=False)
-            return
-        super().send_message_buffered(external_user_id, text, session_id=session_id)
+        """Suppress intermediate agent output; WhatsApp delivers final responses only."""
+        _logger.debug(
+            "Suppressing WhatsApp intermediate output for channel %s", self.channel_id)
 
     def send_message(self, external_user_id: str, text: str,
                      session_id: str = None):
