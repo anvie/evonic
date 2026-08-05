@@ -389,6 +389,14 @@ class WhatsAppChannel(BaseChannel):
             source_agent = data.get('source_agent_name')
             header = f"Approval Required (agent: {source_agent})" if source_agent else "Approval Required"
             text = f"{header}\nTool: {tool_name}\nRisk: {risk}\n{desc}"
+            # Include the focused snippet (window centered on the dangerous line with a
+            # marker) so mobile reviewers can actually see the risky code. WhatsApp
+            # interactive-button bodies are length-limited, so keep it compact.
+            focus_snippet = info.get('focus_snippet') or ''
+            if focus_snippet:
+                if len(focus_snippet) > 700:
+                    focus_snippet = focus_snippet[:700].rstrip() + '\n…'
+                text += f"\n\n```{focus_snippet}```"
             try:
                 self._bridge_post('/send-buttons', {
                     'to': self._jid_map.get(user_id, user_id),
@@ -1202,29 +1210,46 @@ class WhatsAppChannel(BaseChannel):
         if caption:
             caption = _whatsapp_format(caption)
 
-        # 5. Send via bridge
+        # 5. Submit through the bridge delivery lifecycle. A successful HTTP
+        # response means Baileys accepted the attachment; delivery is confirmed
+        # later through whatsapp_outbound_status callbacks.
+        correlation_id = uuid.uuid4().hex
         self._clear_typing(external_user_id)
         try:
-            self._bridge_post('/send-file', {
+            result = self._bridge_post('/send-file', {
                 'to': to,
                 'filePath': file_path,
                 'caption': caption,
                 'mimeType': mime_type,
+                'correlation_id': correlation_id,
             })
-            _logger.info("WhatsApp file sent to %s (channel %s): %s",
-                         external_user_id, self.channel_id, file_path)
+            status = result.get('status')
+            if status != 'accepted':
+                _logger.error(
+                    "WhatsApp file was not accepted for %s: status=%s correlation_id=%s",
+                    external_user_id, status, correlation_id)
+                return False
+            _logger.info(
+                "WhatsApp file accepted for %s (channel %s): correlation_id=%s "
+                "message_id=%s file=%s",
+                external_user_id, self.channel_id, correlation_id,
+                result.get('message_id'), file_path)
         except Exception as e:
             _logger.error("WhatsApp file send failed to %s: %s", external_user_id, e)
             return False
-        self.send_typing(external_user_id, state='paused')
+        finally:
+            self.send_typing(external_user_id, state='paused')
 
-        # 6. Emit event (consistent with _do_send)
+        # 6. Report queue acceptance without claiming confirmed delivery.
         from backend.event_stream import event_stream
         event_stream.emit('message_sent', {
             'channel_type': 'whatsapp',
             'channel_id': self.channel_id,
             'external_user_id': external_user_id,
             'message': f"[File: {os.path.basename(file_path)}]",
+            'status': 'accepted',
+            'correlation_id': correlation_id,
+            'message_id': result.get('message_id'),
         })
         return True
 

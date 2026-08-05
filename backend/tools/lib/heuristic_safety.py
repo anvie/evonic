@@ -308,6 +308,10 @@ def check_root_filesystem_scan(code: str) -> dict | None:
     reasons = [p["description"] for p in matched]
     approval_info = _generate_approval_info(
         {"matched_patterns": matched}, {}, "bash")
+    from backend.tools.lib.snippet_focus import build_focus_snippet, compute_highlights
+    highlights = compute_highlights(code, matched)
+    approval_info["highlights"] = highlights
+    approval_info["focus_snippet"] = build_focus_snippet(code, highlights)
     return {
         "level": "requires_approval",
         "score": sum(p["weight"] for p in matched),

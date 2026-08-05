@@ -201,3 +201,38 @@ test('ACK 463 remains terminal across a disconnect and reconnect', async () => {
     assert.equal(sent.length, 1);
     assert.equal(events.at(-1).status, 'failed');
 });
+
+test('attachment metadata follows acceptance and asynchronous failure', async () => {
+    const { lifecycle, sent, events } = harness();
+    await lifecycle.onConnection('connected');
+    const accepted = await lifecycle.accept({
+        correlationId: 'correlation-attachment',
+        jid: '628444@s.whatsapp.net',
+        content: {
+            document: Buffer.from('%PDF-1.7\n'),
+            mimetype: 'application/pdf',
+            fileName: 'report.pdf',
+        },
+        metadata: {
+            session_id: 'session-attachment',
+            outbound_kind: 'attachment',
+            attachment_name: 'report.pdf',
+            attachment_mime_type: 'application/pdf',
+        },
+    });
+
+    assert.equal(accepted.status, 'accepted');
+    assert.equal(accepted.message_id, 'key-1');
+    assert.equal(sent[0].jid, '628444@s.whatsapp.net');
+    assert.equal(events[0].outbound_kind, 'attachment');
+    assert.equal(events[0].attachment_name, 'report.pdf');
+    await lifecycle.onMessageUpdates([{
+        key: { id: 'key-1', fromMe: true },
+        update: { status: 0, messageStubParameters: ['500'] },
+    }]);
+
+    assert.deepEqual(events.map((event) => event.status), ['accepted', 'failed']);
+    assert.ok(events.every((event) => event.correlation_id === 'correlation-attachment'));
+    assert.ok(events.every((event) => event.session_id === 'session-attachment'));
+    assert.ok(events.every((event) => event.outbound_kind === 'attachment'));
+});
