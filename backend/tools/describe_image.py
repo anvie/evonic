@@ -228,6 +228,13 @@ def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
     )
 
 
+def _format_vision_model_label(index: int, model: dict) -> str:
+    """Return a user-facing fallback position and identifier for a vision model."""
+    position = "primary model" if index == 0 else f"fallback model {index}"
+    identifier = model.get("name") or model.get("id") or "unknown"
+    return f"{position} ({identifier})"
+
+
 def _find_closest_attachment(agent_id: str, orig_path: str) -> Optional[str]:
     """Search the agent's data/attachments directory for a close filename match.
 
@@ -405,8 +412,8 @@ def execute(agent: dict, args: dict) -> Any:
         "auth_error",
     })
 
-    for vision_model in vision_models:
-        model_name = vision_model.get("name", vision_model.get("id", "unknown"))
+    for model_index, vision_model in enumerate(vision_models):
+        model_label = _format_vision_model_label(model_index, vision_model)
         try:
             client = LLMClient(model_config=vision_model)
             # Enforce a 2-minute (120s) maximum timeout for vision model calls,
@@ -420,7 +427,7 @@ def execute(agent: dict, args: dict) -> Any:
         except Exception as e:
             # Unexpected exception — treat as transient failure, try next
             failures += 1
-            last_error = f"{model_name}: {e}"
+            last_error = f"{model_label}: {e}"
             continue
 
         if result.get("success"):
@@ -431,12 +438,15 @@ def execute(agent: dict, args: dict) -> Any:
         error_detail = result.get("error_detail", "")
         if error_type in _FALLBACK_ERROR_TYPES:
             failures += 1
-            last_error = f"{model_name}: {error_detail or error_type}"
+            last_error = f"{model_label}: {error_detail or error_type}"
             continue  # Try next model
 
         # Non-recoverable error (e.g. malformed request, unsupported content) —
         # fail immediately.
-        return f"Error: Vision model call failed ({error_type}): {error_detail}"
+        return (
+            f"Error: Vision model call failed for {model_label} "
+            f"({error_type}): {error_detail}"
+        )
 
     if result is None or not result.get("success"):
         return (
