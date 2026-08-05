@@ -81,6 +81,38 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Render `code` as escaped HTML with the dangerous spans wrapped in <mark> so the
+// reviewer can immediately see *where* the risk is. `highlights` are {start,end}
+// character offsets (from the backend safety pipeline) into `code`. Overlapping
+// spans are merged. Exposed globally so the chat timeline card reuses it verbatim.
+function evHighlightCode(code, highlights) {
+    code = String(code == null ? '' : code);
+    if (!highlights || !highlights.length) return escapeHtml(code);
+    // Sort + merge overlapping/adjacent spans, clamped to the code bounds.
+    const spans = highlights
+        .map(function(h) { return {start: Math.max(0, h.start | 0), end: Math.min(code.length, h.end | 0)}; })
+        .filter(function(s) { return s.end > s.start; })
+        .sort(function(a, b) { return a.start - b.start; });
+    if (!spans.length) return escapeHtml(code);
+    const merged = [spans[0]];
+    for (let i = 1; i < spans.length; i++) {
+        const last = merged[merged.length - 1];
+        if (spans[i].start <= last.end) last.end = Math.max(last.end, spans[i].end);
+        else merged.push(spans[i]);
+    }
+    let html = '';
+    let cursor = 0;
+    const MARK = '<mark class="ev-code-hl" style="background:#f59e0b;color:#111827;border-radius:2px;padding:0 1px;">';
+    for (const s of merged) {
+        if (s.start > cursor) html += escapeHtml(code.slice(cursor, s.start));
+        html += MARK + escapeHtml(code.slice(s.start, s.end)) + '</mark>';
+        cursor = s.end;
+    }
+    if (cursor < code.length) html += escapeHtml(code.slice(cursor));
+    return html;
+}
+window.evHighlightCode = evHighlightCode;
+
 function ensureModal() {
     if (_modalRoot) return;
     const frag = document.createElement('div');
@@ -161,7 +193,19 @@ function populateModal(data) {
     const codeBlock = document.getElementById('ev-approval-code-block');
     if (codeSnippet) {
         codeBlock.classList.remove('hidden');
-        document.getElementById('ev-approval-code').textContent = String(codeSnippet);
+        const codeEl = document.getElementById('ev-approval-code');
+        codeEl.innerHTML = evHighlightCode(codeSnippet, info.highlights);
+        // Center the first dangerous span within the scrollable <pre> only — avoid
+        // scrollIntoView, which could scroll the outer modal/page instead.
+        requestAnimationFrame(function() {
+            const mark = codeEl.querySelector('.ev-code-hl');
+            const pre = codeEl.parentElement;
+            if (mark && pre) {
+                const preRect = pre.getBoundingClientRect();
+                const markRect = mark.getBoundingClientRect();
+                pre.scrollTop += (markRect.top - preRect.top) - pre.clientHeight / 2 + markRect.height / 2;
+            }
+        });
     } else {
         codeBlock.classList.add('hidden');
     }

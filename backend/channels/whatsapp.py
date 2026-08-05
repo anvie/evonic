@@ -380,6 +380,14 @@ class WhatsAppChannel(BaseChannel):
             source_agent = data.get('source_agent_name')
             header = f"Approval Required (agent: {source_agent})" if source_agent else "Approval Required"
             text = f"{header}\nTool: {tool_name}\nRisk: {risk}\n{desc}"
+            # Include the focused snippet (window centered on the dangerous line with a
+            # marker) so mobile reviewers can actually see the risky code. WhatsApp
+            # interactive-button bodies are length-limited, so keep it compact.
+            focus_snippet = info.get('focus_snippet') or ''
+            if focus_snippet:
+                if len(focus_snippet) > 700:
+                    focus_snippet = focus_snippet[:700].rstrip() + '\n…'
+                text += f"\n\n```{focus_snippet}```"
             try:
                 self._bridge_post('/send-buttons', {
                     'to': self._jid_map.get(user_id, user_id),

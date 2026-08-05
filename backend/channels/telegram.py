@@ -741,10 +741,15 @@ class TelegramChannel(BaseChannel):
             desc = info.get('description', 'This action requires careful consideration.')
             reasons_str = ', '.join(reasons) if reasons else '-'
             tool_args = data.get('tool_args') or {}
-            code_snippet = tool_args.get('script') or tool_args.get('code') or ''
             code_lang = 'bash' if 'script' in tool_args else 'python'
-            if code_snippet and len(code_snippet) > 500:
-                code_snippet = code_snippet[:500] + '\n... (truncated)'
+            # Prefer the focused snippet (window centered on the dangerous line with a
+            # marker) so the risky code is always visible even when the full script is
+            # long. Fall back to head-truncation only when no focus snippet is present.
+            code_snippet = info.get('focus_snippet') or ''
+            if not code_snippet:
+                code_snippet = tool_args.get('script') or tool_args.get('code') or ''
+                if code_snippet and len(code_snippet) > 500:
+                    code_snippet = code_snippet[:500] + '\n... (truncated)'
             code_block = f"\n\n```{code_lang}\n{code_snippet}\n```" if code_snippet else ''
             source_agent = data.get('source_agent_name')
             header = f"\u26a0\ufe0f Approval Required(agent: {source_agent})" if source_agent else "\u26a0\ufe0f Approval Required"
