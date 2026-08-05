@@ -24,6 +24,43 @@ def _channel():
     return channel
 
 
+def test_whatsapp_suppresses_buffered_intermediate_output_with_dispatcher():
+    channel = _channel()
+    channel._dispatcher = MagicMock()
+
+    channel.send_message_buffered("628222", "technical progress", session_id="session-1")
+
+    channel._dispatcher.enqueue.assert_not_called()
+
+
+def test_whatsapp_suppresses_buffered_intermediate_output_without_dispatcher():
+    channel = _channel()
+
+    with patch("backend.channels.base.BaseChannel.send_message_buffered") as buffered:
+        channel.send_message_buffered("628222", "technical progress", session_id="session-1")
+
+    buffered.assert_not_called()
+
+
+def test_whatsapp_queues_final_output_with_dispatcher():
+    channel = _channel()
+    channel._dispatcher = MagicMock()
+
+    channel.send_message("628222", "final answer", session_id="session-1")
+
+    channel._dispatcher.enqueue.assert_called_once_with(
+        "628222", "final answer", session_id="session-1", is_final=True)
+
+
+def test_whatsapp_sends_final_output_without_dispatcher():
+    channel = _channel()
+
+    with patch("backend.channels.base.BaseChannel.send_message") as send:
+        channel.send_message("628222", "final answer", session_id="session-1")
+
+    send.assert_called_once_with("628222", "final answer", session_id="session-1")
+
+
 def test_whatsapp_system_instructions_require_natural_non_human_replies():
     instructions = _channel().get_system_instructions()
 
