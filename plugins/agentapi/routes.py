@@ -434,9 +434,18 @@ def create_blueprint():
 
                     if item[0] is _SENTINEL:
                         # Turn complete: flush any pending coalesced tool events
-                        # (the 5s window may not have elapsed yet) so the client
-                        # sees them before the stream closes.
-                        _flush_tool_notify(session_id)
+                        # (the 5s window may not have elapsed yet). Yield them
+                        # directly — the queue loop is about to exit, so a
+                        # put_nowait'd item would never be consumed.
+                        entry = _tool_pending.pop(session_id, None)
+                        if entry:
+                            parts = [f"{name} ({n}x)" for name, n in sorted(entry['counts'].items())]
+                            tool_event = {
+                                'type': 'tool',
+                                'tool_name': ', '.join(parts),
+                                'has_error': entry['any_error'],
+                            }
+                            yield f"data: {json.dumps(tool_event)}\n\n"
                         break
 
                     event_type, payload = item
