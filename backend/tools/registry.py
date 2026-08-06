@@ -1152,7 +1152,10 @@ def _builtin_remember_factory(agent_context: dict):
             "name": "remember",
             "description": (
                 "Store a fact in long-term memory. "
-                "The summarizer persists it and builds the knowledge graph automatically."
+                "Provide `key` for facts with a stable identity (a preference, a "
+                "decision, a setting) — remembering the same key again REPLACES "
+                "the old value instead of piling up. Reuse an existing key from "
+                "'Known memory keys' when one fits."
             ),
             "parameters": {
                 "type": "object",
@@ -1161,11 +1164,21 @@ def _builtin_remember_factory(agent_context: dict):
                         "type": "string",
                         "description": "The fact to remember as a single clear sentence."
                     },
+                    "key": {
+                        "type": "string",
+                        "description": (
+                            "Stable dot-path identity for this fact, e.g. "
+                            "'user.deploy_target', 'preference.language', "
+                            "'decision.database'. Same key = the new fact "
+                            "supersedes the old one. Omit for one-off episodic "
+                            "facts with no natural key."
+                        )
+                    },
                     "category": {
                         "type": "string",
                         "enum": ["user_info", "preference", "decision",
                                  "context", "instruction", "general"],
-                        "description": "Category for this memory (default: general)."
+                        "description": "Category for this memory (default: general; ignored when `key` is given — derived from the key's first segment)."
                     }
                 },
                 "required": ["content"]
@@ -1179,7 +1192,8 @@ def _builtin_remember_factory(agent_context: dict):
         session_id = agent_context.get('session_id', '')
         return store_memory(agent_id, session_id,
                             args.get('content', ''),
-                            args.get('category', 'general'))
+                            args.get('category', 'general'),
+                            key=args.get('key'))
 
     return tool_def, executor
 
@@ -1187,8 +1201,10 @@ def _builtin_remember_factory(agent_context: dict):
 def _builtin_recall_factory(agent_context: dict):
     """Factory for the built-in 'recall' tool — searches long-term memory.
 
-    One tool, four modes:
+    One tool, five modes:
       - fts   (default): fast keyword search over remembered facts
+      - key             : exact-key point lookup of the current value of a keyed
+                          fact ('query' is the key, e.g. 'user.deploy_target')
       - think           : reason over everything known about a topic (synthesis
                           with citations + knowledge gaps)
       - graph           : traverse the entity knowledge graph from an entity
@@ -1211,12 +1227,12 @@ def _builtin_recall_factory(agent_context: dict):
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Keywords to search for; the entity name when mode='graph'; or the KB filename (e.g. 'evonic.md') when mode='links'."
+                        "description": "Keywords to search for; the memory key (e.g. 'user.deploy_target') when mode='key'; the entity name when mode='graph'; or the KB filename (e.g. 'evonic.md') when mode='links'."
                     },
                     "mode": {
                         "type": "string",
-                        "enum": ["fts", "think", "graph", "links"],
-                        "description": "Retrieval mode (default: fts)."
+                        "enum": ["fts", "key", "think", "graph", "links"],
+                        "description": "Retrieval mode (default: fts). Use 'key' for the current value of a known memory key — fastest and most precise."
                     },
                     "edge_type": {
                         "type": "string",
@@ -1235,7 +1251,7 @@ def _builtin_recall_factory(agent_context: dict):
 
     def executor(args: dict) -> dict:
         from backend.agent_runtime.memory_manager import (
-            search_memories, synthesize_memory, graph_lookup,
+            search_memories, synthesize_memory, graph_lookup, recall_by_key,
         )
         agent_id = agent_context.get('id', '')
         query = args.get('query', '')
@@ -1267,6 +1283,8 @@ def _builtin_recall_factory(agent_context: dict):
                 pass
             return result
 
+        if mode == 'key':
+            return _augment(recall_by_key(agent_id, query))
         if mode == 'think':
             return _augment(synthesize_memory(agent_id, query))
         if mode == 'graph':

@@ -336,6 +336,10 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         "the `recall` tool to look up past facts — nothing is injected automatically."
     )
     parts.append(
+        "- `recall(query=\"<key>\", mode=\"key\")` — exact current value of a keyed "
+        "fact. Fastest and most precise; prefer it whenever the key is listed below."
+    )
+    parts.append(
         "- `recall(query=\"...\")` — fast keyword lookup of a specific stored fact "
         "(e.g. a phone number, an address, a name). This is the default (mode='fts')."
     )
@@ -364,6 +368,20 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         "memory. Only after confirming the information is not in memory should you "
         "resort to filesystem exploration."
     )
+
+    # Keys-only memory index: show WHAT the agent knows (a few tokens per key)
+    # without paying for the contents. Enables precise recall(mode='key') and
+    # keeps remember() key naming consistent (the agent reuses listed keys).
+    try:
+        _mem_keys = db.get_active_dimensions(aid, limit=50)
+    except Exception:
+        _mem_keys = []
+    if _mem_keys:
+        parts.append(
+            "Known memory keys (current value via `recall(query=\"<key>\", "
+            "mode=\"key\")`; reuse a listed key in remember() to update that fact):"
+        )
+        parts.append("`" + "`, `".join(_mem_keys) + "`")
 
     # List available skills with SYSTEM.md so the agent knows what it can load
     skills_mgr = skills_manager

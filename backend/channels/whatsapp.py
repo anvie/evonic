@@ -244,6 +244,15 @@ def _wrap_group_message(text, group_name, push_name, sender,
     return '\n'.join(lines)
 
 
+def _reject_group_for_agent(agent, is_group: bool) -> bool:
+    """dm_only agents reject every group message before further processing.
+
+    The check is deliberately independent of @mentions, replies, and slash
+    commands: a dm_only agent must not engage with group chats at all.
+    """
+    return bool(is_group and agent and agent.get('dm_only'))
+
+
 class WhatsAppChannel(BaseChannel):
     def __init__(self, channel_id: str, agent_id: str, config: Dict[str, Any]):
         super().__init__(channel_id, agent_id, config)
@@ -451,6 +460,14 @@ class WhatsAppChannel(BaseChannel):
             source_agent = data.get('source_agent_name')
             header = f"Approval Required (agent: {source_agent})" if source_agent else "Approval Required"
             text = f"{header}\nTool: {tool_name}\nRisk: {risk}\n{desc}"
+            # Include the focused snippet (window centered on the dangerous line with a
+            # marker) so mobile reviewers can actually see the risky code. WhatsApp
+            # interactive-button bodies are length-limited, so keep it compact.
+            focus_snippet = info.get('focus_snippet') or ''
+            if focus_snippet:
+                if len(focus_snippet) > 700:
+                    focus_snippet = focus_snippet[:700].rstrip() + '\n…'
+                text += f"\n\n```{focus_snippet}```"
             try:
                 self._bridge_post('/send-buttons', {
                     'to': self._jid_map.get(user_id, user_id),
@@ -854,6 +871,14 @@ class WhatsAppChannel(BaseChannel):
                          sender, is_group, jid)
             return
 
+        # dm_only agents reject every group message before any further processing,
+        # including @mentions, replies, and slash commands.
+        agent = db.get_agent(agent_id)
+        if _reject_group_for_agent(agent, is_group):
+            _logger.info("WhatsApp group message dropped (agent dm_only): agent=%s sender=%s text=%s",
+                         agent_id, sender, text[:80] if text else "")
+            return
+
         # In groups, only respond when @mentioned or when user replies to a bot message
         if is_group and not bot_mentioned and not quoted_is_bot:
             _logger.info("WhatsApp group message dropped (not mentioned): sender=%s text=%s", sender, text[:80] if text else "")
@@ -873,8 +898,6 @@ class WhatsAppChannel(BaseChannel):
         audio_bytes = None  # decoded original bytes, persisted as attachment below
         audio_mime = None
         document = _decode_document_payload(document_data)
-
-        agent = db.get_agent(agent_id)
 
         if image_data:
             try:
@@ -1216,12 +1239,9 @@ class WhatsAppChannel(BaseChannel):
 
     def send_message_buffered(self, external_user_id: str, text: str,
                               session_id: str = None):
-        """Queue intermediate output without blocking runtime callback threads."""
-        if self._dispatcher:
-            self._dispatcher.enqueue(
-                external_user_id, text, session_id=session_id, is_final=False)
-            return
-        super().send_message_buffered(external_user_id, text, session_id=session_id)
+        """Suppress intermediate agent output; WhatsApp delivers final responses only."""
+        _logger.debug(
+            "Suppressing WhatsApp intermediate output for channel %s", self.channel_id)
 
     def send_message(self, external_user_id: str, text: str,
                      session_id: str = None):

@@ -121,6 +121,13 @@ class SafetyPipeline:
             level = "requires_approval"
             requires_approval = True
             approval_info = _generate_approval_info(blocked_deduped, len(all_matched))
+            # Locate the dangerous spans so every surface (web modal, chat card, and
+            # messaging channels) can highlight / focus on the risky code instead of
+            # showing it as undifferentiated (and head-truncated) text.
+            from backend.tools.lib.snippet_focus import build_focus_snippet, compute_highlights
+            highlights = compute_highlights(code, all_matched)
+            approval_info["highlights"] = highlights
+            approval_info["focus_snippet"] = build_focus_snippet(code, highlights)
         elif total_score >= 4:
             level = "warning"
             requires_approval = False

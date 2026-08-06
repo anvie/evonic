@@ -40,12 +40,14 @@ class TestEngineSelection:
 
 
 class TestStoreMemory:
-    """`store_memory` (the `remember` tool) pins a fact into the running session
-    summary — no LLM, no direct long-term write. The summarizer persists it later."""
+    """`store_memory` (the `remember` tool) writes the fact to the memories
+    ledger (durable, engine-independent, zero-LLM) and pins it into the running
+    session summary. KB filing happens later via the batched organizer."""
 
     def test_pins_to_new_session_summary(self):
         with patch("backend.agent_runtime.memory_manager.db.get_summary", return_value=None), \
-             patch("backend.agent_runtime.memory_manager.db.upsert_summary") as upsert:
+             patch("backend.agent_runtime.memory_manager.db.upsert_summary") as upsert, \
+             patch("backend.agent_runtime.memory_manager.db.add_memory"):
             from backend.agent_runtime.memory_manager import store_memory
             result = store_memory("test-agent", "sess-1", "Test fact", "preference")
             assert result["result"].startswith("Noted")
@@ -60,7 +62,8 @@ class TestStoreMemory:
         rec = {"summary": "Prior text.", "last_message_id": 42,
                "message_count": 7, "last_message_ts": 99}
         with patch("backend.agent_runtime.memory_manager.db.get_summary", return_value=rec), \
-             patch("backend.agent_runtime.memory_manager.db.upsert_summary") as upsert:
+             patch("backend.agent_runtime.memory_manager.db.upsert_summary") as upsert, \
+             patch("backend.agent_runtime.memory_manager.db.add_memory"):
             from backend.agent_runtime.memory_manager import store_memory
             store_memory("test-agent", "sess-1", "Phone 555", "user_info")
             args, kwargs = upsert.call_args
@@ -69,20 +72,37 @@ class TestStoreMemory:
             assert args[2] == 42 and args[3] == 7
             assert kwargs.get("last_message_ts") == 99
 
-    def test_makes_no_llm_or_longterm_write(self):
-        # store_memory only pins the fact to the running summary; durable
-        # authoring is deferred to a background thread (_extract_from_fact_async),
-        # so nothing writes long-term memory or calls the LLM synchronously.
+    def test_writes_ledger_without_llm(self):
+        # store_memory writes the fact durably to the memories ledger (even in
+        # FTS5 mode) with zero LLM calls; per-fact KB authoring was removed —
+        # the batched summary-driven organizer files it into the KB later.
         with patch("backend.agent_runtime.memory_manager.db.get_summary", return_value=None), \
              patch("backend.agent_runtime.memory_manager.db.upsert_summary"), \
              patch("backend.agent_runtime.memory_manager.db.add_memory") as add_mem, \
-             patch("backend.agent_runtime.memory_manager._extract_from_fact_async") as evo, \
              patch("backend.agent_runtime.memory_manager.llm_client.chat_completion") as llm:
             from backend.agent_runtime.memory_manager import store_memory
             store_memory("test-agent", "sess-1", "Test fact", "general")
-            add_mem.assert_not_called()
+            add_mem.assert_called_once_with(
+                "test-agent", "Test fact", "general", "sess-1", None)
             llm.assert_not_called()
-            evo.assert_called_once()  # durable authoring deferred to background
+
+    def test_keyed_write_supersedes_same_key(self):
+        with patch("backend.agent_runtime.memory_manager.db.get_summary", return_value=None), \
+             patch("backend.agent_runtime.memory_manager.db.upsert_summary"), \
+             patch("backend.agent_runtime.memory_manager.db.get_memories_by_dimension",
+                   return_value=[{"id": 5}]), \
+             patch("backend.agent_runtime.memory_manager.db.add_memory", return_value=9) as add_mem, \
+             patch("backend.agent_runtime.memory_manager.db.supersede_memory") as supersede, \
+             patch("backend.agent_runtime.memory_manager.llm_client.chat_completion") as llm:
+            from backend.agent_runtime.memory_manager import store_memory
+            result = store_memory("test-agent", "sess-1", "Deploy to Y",
+                                  key="user.deploy_target")
+            add_mem.assert_called_once_with(
+                "test-agent", "Deploy to Y", "user", "sess-1", "user.deploy_target")
+            supersede.assert_called_once_with("test-agent", 5, 9)
+            llm.assert_not_called()
+            assert result["key"] == "user.deploy_target"
+            assert result["superseded"] == [5]
 
     def test_empty_content_returns_error(self):
         from backend.agent_runtime.memory_manager import store_memory

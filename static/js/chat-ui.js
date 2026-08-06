@@ -3224,10 +3224,17 @@ class Turn {
         }
 
         if (codeSnippet) {
+            const highlights = (data.approval_info && data.approval_info.highlights) || null;
+            const $code = $('<code>');
+            if (highlights && highlights.length && typeof window.evHighlightCode === 'function') {
+                $code.html(window.evHighlightCode(codeSnippet, highlights));
+            } else {
+                $code.text(codeSnippet);
+            }
             $details.append(
                 $('<div class="mb-2">').append(
                     $('<div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">').text('Code ').append($('<span class="font-normal text-gray-400">').text('(' + codeLang + ')')),
-                    $('<pre class="text-xs bg-gray-900 text-gray-100 rounded p-2 overflow-auto max-h-48 whitespace-pre-wrap break-all">').append($('<code>').text(codeSnippet))
+                    $('<pre class="text-xs bg-gray-900 text-gray-100 rounded p-2 overflow-auto max-h-48 whitespace-pre-wrap break-all">').append($code)
                 )
             );
         }
