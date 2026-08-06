@@ -8,11 +8,12 @@ window.settingsModels = {
     searchQuery: "",
     _currentTestModelId: null,
     _fetchProviderId: null,
-    _codexStatus: null,
+    _authProviderId: null,
+    _authKind: null,
+    _authPollTimer: null,
 
     async init() {
         await this.load();
-        this._checkCodexStatus();
     },
 
     async load() {
@@ -95,20 +96,18 @@ window.settingsModels = {
                     ? models.map((model) => this._renderModelCard(model)).join("")
                     : `<div class="col-span-full text-center py-4 text-sm text-gray-400 dark:text-gray-500">No models yet — click <strong>Fetch Models</strong> to discover available models from this provider.</div>`;
 
-                const isCodex = prov.api_format === "codex" || prov.auth_type === "oauth";
-                const codexConnected = this._codexStatus && this._codexStatus.connected && this._codexStatus.provider_id === pid;
+                const hasCredentialSetup = ["codex", "anthropic"].includes(prov.api_format);
+                const connected = Boolean(prov.credential_configured);
 
                 let actionButtons;
                 const addModelBtn = `<button class="px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors" onclick="settingsModels.addModelForProvider('${pid}')" title="Add a custom model">+ Model</button>`;
-                if (isCodex) {
-                    const statusDot = codexConnected
-                        ? '<span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1" title="Connected"></span>'
-                        : '<span class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1" title="Not connected"></span>';
-                    const connectBtn = codexConnected
-                        ? `<button class="px-2 py-1 text-xs font-medium text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-950/50 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors" onclick="settingsModels.codexDisconnect()" title="Disconnect OAuth">Disconnect</button>`
-                        : `<button class="px-2 py-1 text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/50 rounded hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors" onclick="settingsModels.codexConnect('${pid}')" title="Connect via OAuth">Connect</button>`;
-                    actionButtons = `${statusDot}${connectBtn}` +
-                        (codexConnected ? `<button class="px-2 py-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 rounded hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors" onclick="settingsModels.fetchModels('${pid}')" title="Discover models">Fetch Models</button>` : "") +
+                if (hasCredentialSetup) {
+                    const status = connected
+                        ? '<span class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>Ready</span>'
+                        : '<span class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-300"><span class="w-2 h-2 rounded-full bg-amber-500"></span>Setup needed</span>';
+                    actionButtons = `${status}` +
+                        `<button class="px-2 py-1 text-xs font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 rounded hover:bg-indigo-100 dark:hover:bg-indigo-900/50 focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-colors" onclick="settingsModels.openCredentialSetup('${pid}')">${connected ? "Manage login" : "Set up"}</button>` +
+                        (connected ? `<button class="px-2 py-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 rounded hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors" onclick="settingsModels.fetchModels('${pid}')" title="Discover models">Fetch Models</button>` : "") +
                         addModelBtn +
                         `<button class="px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onclick="settingsModels.editProvider('${pid}')" title="Edit provider settings">Edit</button>` +
                         `<button class="px-2 py-1 text-xs font-medium text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-950/50 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors" onclick="settingsModels.deleteProvider('${pid}')" title="Delete provider">Del</button>`;
@@ -123,13 +122,13 @@ window.settingsModels = {
 
                 return `
                     <div class="provider-group">
-                        <div class="flex items-center justify-between mb-2 px-1">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2 px-1">
                             <div class="flex items-center gap-2">
                                 <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300">${this._escapeHtml(prov.name)}</h3>
                                 ${typeBadge}
                                 <span class="text-xs text-gray-400">${models.length} model${models.length !== 1 ? "s" : ""}</span>
                             </div>
-                            <div class="flex items-center gap-1.5">
+                            <div class="flex flex-wrap items-center gap-1.5">
                                 ${actionButtons}
                             </div>
                         </div>
@@ -710,150 +709,198 @@ window.settingsModels = {
         return div.innerHTML;
     },
 
-    /* ---- Codex OAuth (PKCE flow) ---- */
+    /* ---- Provider credential setup ---- */
 
-    async _checkCodexStatus() {
+    _authBase() {
+        return `/api/providers/${encodeURIComponent(this._authProviderId)}/auth/${this._authKind}`;
+    },
+
+    _credentialSourceLabel(source) {
+        return ({
+            api_key: "Anthropic API key",
+            setup_token: "Claude setup-token",
+            claude_code: "Claude Code credential store",
+            codex_cli_import: "Imported Codex CLI login",
+            evonic_oauth: "Evonic-managed OAuth",
+        })[source] || "Not configured";
+    },
+
+    async openCredentialSetup(providerId) {
+        const provider = this.providers.find((item) => item.id === providerId);
+        if (!provider) return;
+        this.closeCredentialSetup();
+        this._authProviderId = providerId;
+        this._authKind = provider.api_format === "codex" ? "codex" : "claude";
+        document.getElementById("provider-auth-title").textContent = `Set up ${provider.name}`;
+        document.getElementById("provider-auth-content").innerHTML =
+            '<div class="text-center py-10"><div class="spinner mx-auto" style="width:28px;height:28px;border-width:2px;"></div><p class="mt-3 text-sm text-gray-600 dark:text-gray-300">Checking available credentials…</p></div>';
+        openModal("provider-auth-modal");
         try {
-            this._codexStatus = await apiGet("/api/provider/codex/status");
-            this.render();
-        } catch (e) {
-            this._codexStatus = null;
+            const status = await apiGet(this._authBase() + "/status");
+            this._renderCredentialChoices(status);
+        } catch (error) {
+            this._showAuthError(error.message || "Could not check credentials.");
         }
     },
 
-    async codexConnect(providerId) {
+    _renderCredentialChoices(status) {
+        const isCodex = this._authKind === "codex";
+        const source = this._credentialSourceLabel(status.credential_source);
+        const existingLabel = isCodex ? "Import Codex CLI login" : "Use Claude Code login";
+        const existingHelp = isCodex
+            ? "Imports the current CLI credential snapshot. A separate login is safer if Codex CLI is used often."
+            : "Links the freshest credential from macOS Keychain or ~/.claude/.credentials.json.";
+        document.getElementById("provider-auth-content").innerHTML = `
+            <div class="flex items-start justify-between gap-4 pb-5 border-b border-gray-200 dark:border-gray-700">
+                <div>
+                    <p class="font-semibold text-gray-900 dark:text-gray-100">${status.connected ? "Connected" : "Choose how to connect"}</p>
+                    <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">${status.connected ? this._escapeHtml(source) : "Evonic uses only the credential source you choose."}</p>
+                </div>
+                <span class="inline-flex items-center gap-2 text-sm font-medium ${status.connected ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}">
+                    <span class="w-2 h-2 rounded-full ${status.connected ? "bg-emerald-500" : "bg-amber-500"}"></span>${status.connected ? "Ready" : "Setup needed"}
+                </span>
+            </div>
+            <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                <div class="py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div class="max-w-md"><p class="font-medium text-gray-900 dark:text-gray-100">${existingLabel}</p><p class="mt-1 text-sm text-gray-600 dark:text-gray-300">${existingHelp}</p></div>
+                    <button type="button" onclick="settingsModels.authUseExisting()" ${status.existing_available ? "" : "disabled"} class="px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed">${status.existing_available ? "Use existing" : "Not detected"}</button>
+                </div>
+                <div class="py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div class="max-w-md"><p class="font-medium text-gray-900 dark:text-gray-100">Sign in with another account</p><p class="mt-1 text-sm text-gray-600 dark:text-gray-300">${isCodex ? "Use OpenAI's device-code flow without changing your Codex CLI login." : "Authorize a Claude Pro or Max account and paste the returned code."}</p></div>
+                    <button type="button" onclick="settingsModels.authStartNew()" class="px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2">Start sign-in</button>
+                </div>
+                ${isCodex ? "" : `<div class="py-5"><label for="provider-auth-secret" class="font-medium text-gray-900 dark:text-gray-100">API key or setup-token</label><p class="mt-1 mb-3 text-sm text-gray-600 dark:text-gray-300">Use a pay-per-token API key, or paste a token created by <code>claude setup-token</code>.</p><div class="flex flex-col sm:flex-row gap-2"><input id="provider-auth-secret" type="password" autocomplete="new-password" data-1p-ignore="true" data-lpignore="true" placeholder="sk-ant-…" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"><button type="button" onclick="settingsModels.authSaveSecret()" class="px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">Save credential</button></div></div>`}
+            </div>
+            ${status.connected ? '<div class="pt-5 border-t border-gray-200 dark:border-gray-700"><button type="button" onclick="settingsModels.authDisconnect()" class="text-sm font-medium text-red-600 dark:text-red-400 hover:underline focus:outline-none focus:ring-2 focus:ring-red-400 rounded">Disconnect this provider</button></div>' : ""}`;
+    },
+
+    async authUseExisting() {
         try {
-            const result = await apiPost("/api/provider/codex/connect", {});
-            if (result.error) {
-                if (window.toast) toast.error(result.error, 5000);
-                return;
-            }
-            window.open(result.auth_url, "_blank");
-            this._showAuthWaitingModal();
-        } catch (e) {
-            if (window.toast) toast.error("Failed: " + e.message, 5000);
+            const result = await apiPost(this._authBase() + "/use-existing", {});
+            if (result.error) return this._showAuthError(result.error);
+            await this._finishAuth("Existing credentials connected.");
+        } catch (error) {
+            this._showAuthError(error.message || "Could not use existing credentials.");
         }
     },
 
-    _showAuthWaitingModal() {
-        const testStatus = document.getElementById("connection-test-status");
-        const footer = document.getElementById("connection-test-footer");
-        const title = document.getElementById("connection-test-title");
-        const header = document.getElementById("connection-test-header");
-
-        if (header) header.className = "flex justify-between items-center p-5 border-b border-indigo-200 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20";
-        title.textContent = "Connect to OpenAI Codex";
-        title.className = "m-0 text-indigo-700 dark:text-indigo-400";
-        testStatus.innerHTML =
-            '<div class="text-center py-4">' +
-            '<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Complete the login in the OpenAI page that just opened.</p>' +
-            '<p class="text-xs text-gray-400 mb-3">Waiting for authorization…</p>' +
-            '<div class="spinner mx-auto" style="width:24px;height:24px;border-width:2px;"></div>' +
-            '<p id="codex-poll-status" class="text-xs text-gray-400 mt-3"></p>' +
-            '<hr class="my-4 border-gray-200 dark:border-gray-700">' +
-            '<p class="text-xs text-gray-500 dark:text-gray-400 mb-2">Trouble auto-redirecting?</p>' +
-            '<p class="text-xs text-gray-400 mb-2">Paste the full callback URL from your browser address bar below:</p>' +
-            '<textarea id="codex-callback-url" rows="2" class="w-full text-xs p-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200" placeholder="http://localhost:1455/auth/callback?code=...&state=..."></textarea>' +
-            '<button onclick="settingsModels.pasteCallback()" class="mt-2 px-3 py-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded transition-colors">Submit</button>' +
-            '</div>';
-        footer.classList.add("hidden");
-        openModal("connection-test-modal");
-
-        this._pollAuthCallback();
+    async authStartNew() {
+        const providerId = this._authProviderId;
+        try {
+            if (this._authKind === "codex") {
+                const result = await apiPost(this._authBase() + "/device", {});
+                if (result.error) return this._showAuthError(result.error);
+                document.getElementById("provider-auth-content").innerHTML = `
+                    <div class="py-3 text-center">
+                        <p class="text-sm text-gray-600 dark:text-gray-300">Open the OpenAI sign-in page and enter this one-time code.</p>
+                        <div class="my-6"><code class="text-3xl font-semibold tracking-wider text-gray-900 dark:text-white select-all">${this._escapeHtml(result.user_code)}</code></div>
+                        <a href="${result.verification_url}" target="_blank" rel="noopener" class="inline-flex px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">Open OpenAI sign-in</a>
+                        <div class="mt-6 flex items-center justify-center gap-3 text-sm text-gray-600 dark:text-gray-300"><div class="spinner" style="width:20px;height:20px;border-width:2px;"></div><span id="provider-auth-progress">Waiting for approval…</span></div>
+                    </div>`;
+                window.open(result.verification_url, "_blank", "noopener");
+                this._pollCodexDevice(providerId, Math.max(3, result.interval || 5));
+            } else {
+                const result = await apiPost(this._authBase() + "/oauth", {});
+                if (result.error) return this._showAuthError(result.error);
+                document.getElementById("provider-auth-content").innerHTML = `
+                    <div class="py-2">
+                        <p class="text-sm text-gray-600 dark:text-gray-300">Authorize Evonic in the Claude page. Copy the full code shown after approval, including the part after <code>#</code>.</p>
+                        <a href="${result.auth_url}" target="_blank" rel="noopener" class="inline-flex mt-4 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">Open Claude authorization</a>
+                        <label for="provider-auth-code" class="block mt-6 mb-2 text-sm font-medium text-gray-900 dark:text-gray-100">Authorization code</label>
+                        <textarea id="provider-auth-code" rows="3" placeholder="code#state" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"></textarea>
+                        <button type="button" onclick="settingsModels.authCompleteClaude()" class="mt-3 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">Complete sign-in</button>
+                    </div>`;
+                window.open(result.auth_url, "_blank", "noopener");
+            }
+        } catch (error) {
+            this._showAuthError(error.message || "Could not start sign-in.");
+        }
     },
 
-    _pollAuthCallback() {
-        const deadline = Date.now() + 300_000;
-
-        const poll = setInterval(async () => {
-            if (Date.now() > deadline) {
-                clearInterval(poll);
-                const el = document.getElementById("codex-poll-status");
-                if (el) el.textContent = "Timed out. Close and try again.";
-                return;
-            }
+    _pollCodexDevice(providerId, interval) {
+        clearTimeout(this._authPollTimer);
+        this._authPollTimer = setTimeout(async () => {
+            if (this._authProviderId !== providerId) return;
             try {
-                const result = await apiPost("/api/provider/codex/poll", {});
-                if (result.status === "complete") {
-                    clearInterval(poll);
-                    closeModal("connection-test-modal");
-                    await this._checkCodexStatus();
-                    await this.reload();
-                    if (window.toast) toast.success("Connected to Codex!", 3000);
-                } else if (result.status === "error" || result.status === "expired") {
-                    clearInterval(poll);
-                    const el = document.getElementById("codex-poll-status");
-                    if (el) el.textContent = result.error || "Authorization failed.";
-                }
-            } catch (e) { /* ignore, retry next tick */ }
-        }, 3000);
-
-        this._codexPollTimer = poll;
+                const result = await apiPost(this._authBase() + "/device/poll", {});
+                if (result.status === "complete") return this._finishAuth("OpenAI Codex connected.");
+                if (["error", "expired"].includes(result.status)) return this._showAuthError(result.error || "Sign-in failed.");
+            } catch (error) {
+                const progress = document.getElementById("provider-auth-progress");
+                if (progress) progress.textContent = "Connection interrupted; retrying…";
+            }
+            this._pollCodexDevice(providerId, interval);
+        }, interval * 1000);
     },
 
-    async codexDisconnect() {
+    async authCompleteClaude() {
+        const code = document.getElementById("provider-auth-code")?.value.trim();
+        if (!code) return this._showAuthError("Paste the authorization code first.");
+        try {
+            const result = await apiPost(this._authBase() + "/oauth/complete", { code });
+            if (result.error) return this._showAuthError(result.error);
+            await this._finishAuth("Claude connected.");
+        } catch (error) {
+            this._showAuthError(error.message || "Could not complete sign-in.");
+        }
+    },
+
+    async authSaveSecret() {
+        const secret = document.getElementById("provider-auth-secret")?.value.trim();
+        if (!secret) return this._showAuthError("Enter an API key or setup-token first.");
+        try {
+            const result = await apiPost(this._authBase() + "/secret", { secret });
+            if (result.error) return this._showAuthError(result.error);
+            await this._finishAuth("Anthropic credential saved.");
+        } catch (error) {
+            this._showAuthError(error.message || "Could not save the credential.");
+        }
+    },
+
+    async authDisconnect() {
+        const provider = this.providers.find((item) => item.id === this._authProviderId);
         if (!(await showConfirm({
-            title: "Disconnect Codex",
-            message: "This will remove the stored OAuth tokens. You’ll need to reconnect to use Codex models.",
+            title: "Disconnect provider",
+            message: `Remove Evonic's active credential for ${provider?.name || "this provider"}? External CLI credentials are not deleted.`,
             confirmText: "Disconnect",
         }))) return;
-
         try {
-            const result = await apiPost("/api/provider/codex/disconnect", {});
-            if (result.success) {
-                this._codexStatus = null;
-                await this._checkCodexStatus();
-                this.render();
-                if (window.toast) toast.show("Codex disconnected", "success");
-            } else {
-                if (window.toast) toast.error(result.error || "Failed", 5000);
-            }
-        } catch (e) {
-            if (window.toast) toast.error("Failed: " + e.message, 5000);
+            const result = await apiPost(this._authBase() + "/disconnect", {});
+            if (result.error) return this._showAuthError(result.error);
+            await this._finishAuth("Provider disconnected.");
+        } catch (error) {
+            this._showAuthError(error.message || "Could not disconnect the provider.");
         }
     },
 
-    async pasteCallback() {
-        const textarea = document.getElementById("codex-callback-url");
-        const statusEl = document.getElementById("codex-poll-status");
-        const url = textarea ? textarea.value.trim() : "";
-
-        if (!url) {
-            if (window.toast) toast.error("Please paste the callback URL first.", 3000);
-            return;
+    _showAuthError(message) {
+        let error = document.getElementById("provider-auth-error");
+        if (!error) {
+            error = document.createElement("div");
+            error.id = "provider-auth-error";
+            error.setAttribute("role", "alert");
+            error.className = "mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-950/40 text-sm text-red-800 dark:text-red-200";
+            document.getElementById("provider-auth-content")?.prepend(error);
         }
+        error.textContent = message;
+    },
 
-        if (!url.includes("code=") || !url.includes("state=")) {
-            if (window.toast) toast.error("URL must contain 'code' and 'state' parameters. Paste the full URL.", 5000);
-            return;
-        }
+    async _finishAuth(message) {
+        this.closeCredentialSetup();
+        await this.reload();
+        if (window.toast) toast.success(message, 3000);
+    },
 
-        if (statusEl) statusEl.textContent = "Processing callback URL…";
-
-        try {
-            const result = await apiPost("/api/provider/codex/callback", { url });
-            if (result.success) {
-                if (statusEl) statusEl.textContent = "Connected!";
-                closeModal("connection-test-modal");
-                await this._checkCodexStatus();
-                await this.reload();
-                if (window.toast) toast.success("Connected to Codex!", 3000);
-            } else {
-                if (statusEl) statusEl.textContent = result.error || "Failed to process callback.";
-                if (window.toast) toast.error(result.error || "Failed", 5000);
-            }
-        } catch (e) {
-            if (statusEl) statusEl.textContent = "Error: " + e.message;
-            if (window.toast) toast.error("Failed: " + e.message, 5000);
-        }
+    closeCredentialSetup() {
+        clearTimeout(this._authPollTimer);
+        this._authPollTimer = null;
+        closeModal("provider-auth-modal");
+        this._authProviderId = null;
+        this._authKind = null;
     },
 
     closeTestModal() {
         closeModal("connection-test-modal");
-        if (this._codexPollTimer) {
-            clearInterval(this._codexPollTimer);
-            this._codexPollTimer = null;
-        }
         if (this._currentTestModelId) {
             const testBtn = document.querySelector(
                 `button[onclick*="testConnection('${this._currentTestModelId}')"]`,

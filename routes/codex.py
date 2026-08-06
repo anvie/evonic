@@ -13,15 +13,22 @@ from backend.provider.oauth_codex import (
     clear_tokens,
     receive_callback,
     process_callback_url,
+    poll_device_auth_flow,
+    read_codex_cli_credentials,
+    start_device_auth_flow,
+    use_codex_cli_credentials,
 )
 
 codex_bp = Blueprint("codex", __name__)
 
 
-def _find_codex_provider():
-    """Find the first provider with auth_type='oauth' or api_format='codex'."""
+def _find_codex_provider(provider_id=None):
+    """Resolve only Codex-format providers; OAuth alone is not provider identity."""
+    if provider_id:
+        provider = db.get_provider(provider_id)
+        return provider if provider and provider.get("api_format") == "codex" else None
     for p in db.get_providers():
-        if p.get("auth_type") == "oauth" or p.get("api_format") == "codex":
+        if p.get("api_format") == "codex":
             return p
     return None
 
@@ -60,9 +67,10 @@ def codex_auth_callback():
     return render_template_string(_CALLBACK_HTML, message="Authentication successful! You can close this tab.")
 
 
-@codex_bp.route("/api/provider/codex/status", methods=["GET"])
-def codex_status():
-    provider = _find_codex_provider()
+@codex_bp.route("/api/provider/codex/status", methods=["GET"], defaults={"provider_id": None})
+@codex_bp.route("/api/providers/<provider_id>/auth/codex/status", methods=["GET"])
+def codex_status(provider_id):
+    provider = _find_codex_provider(provider_id)
     if not provider:
         return jsonify({"connected": False, "provider_id": None})
 
@@ -70,11 +78,43 @@ def codex_status():
     connected = token is not None
     expires_at = provider.get("token_expires_at", 0) or 0
 
+    cli_creds = read_codex_cli_credentials()
     return jsonify({
         "connected": connected,
         "provider_id": provider["id"],
         "expires_at": expires_at,
+        "credential_source": provider.get("credential_source") or "",
+        "existing_available": cli_creds is not None,
+        "existing_source": cli_creds.get("source") if cli_creds else None,
+        "provider_kind": "codex",
     })
+
+
+@codex_bp.route("/api/providers/<provider_id>/auth/codex/use-existing", methods=["POST"])
+def codex_use_existing(provider_id):
+    provider = _find_codex_provider(provider_id)
+    if not provider:
+        return jsonify({"success": False, "error": "Codex provider not found."}), 404
+    result = use_codex_cli_credentials(db, provider_id)
+    return jsonify(result), (400 if result.get("error") else 200)
+
+
+@codex_bp.route("/api/providers/<provider_id>/auth/codex/device", methods=["POST"])
+def codex_device_start(provider_id):
+    if not _find_codex_provider(provider_id):
+        return jsonify({"success": False, "error": "Codex provider not found."}), 404
+    result = start_device_auth_flow(provider_id)
+    return jsonify(result), (502 if result.get("error") else 200)
+
+
+@codex_bp.route("/api/providers/<provider_id>/auth/codex/device/poll", methods=["POST"])
+def codex_device_poll(provider_id):
+    if not _find_codex_provider(provider_id):
+        return jsonify({"status": "error", "error": "Codex provider not found."}), 404
+    result = poll_device_auth_flow(provider_id)
+    if result.get("status") == "complete":
+        store_tokens(db, provider_id, result.pop("tokens"), credential_source="evonic_oauth")
+    return jsonify(result)
 
 
 @codex_bp.route("/api/provider/codex/connect", methods=["POST"])
@@ -147,9 +187,10 @@ def codex_paste_callback():
     return jsonify({"success": True, "status": "complete"})
 
 
-@codex_bp.route("/api/provider/codex/disconnect", methods=["POST"])
-def codex_disconnect():
-    provider = _find_codex_provider()
+@codex_bp.route("/api/provider/codex/disconnect", methods=["POST"], defaults={"provider_id": None})
+@codex_bp.route("/api/providers/<provider_id>/auth/codex/disconnect", methods=["POST"])
+def codex_disconnect(provider_id):
+    provider = _find_codex_provider(provider_id)
     if not provider:
         return jsonify({"success": False, "error": "No Codex provider found"}), 404
 
