@@ -1022,6 +1022,14 @@ class AgentRuntime:
         from backend.tools.lib.process_tracker import process_tracker
         process_tracker.kill(session_id)
 
+    def is_stop_requested(self, session_id: str) -> bool:
+        """True if /stop was signalled for this session and not yet consumed.
+
+        Public read-only view of the stop flag, for blocking tools (e.g. the
+        sync Explore wait) that must abort promptly instead of holding the
+        agent loop until their own timeout expires."""
+        return self._get_stop_event(session_id).is_set()
+
     def summarize_session(self, agent: dict, session_id: str) -> bool:
         """Trigger summarization for a session. Public API for slash commands.
 
