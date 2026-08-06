@@ -16,12 +16,15 @@ Admin endpoints (/api/ prefix → session auth required):
 
 import hashlib
 import json
+import logging
 import os
 import queue
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
+
+_logger = logging.getLogger(__name__)
 
 from flask import (
     Blueprint, Response, jsonify, render_template, request,
@@ -308,6 +311,33 @@ def create_blueprint():
         response_text = result.get('response', '')
         if result.get('error'):
             return jsonify({'error': result['error']}), 500
+
+        # handle_message returns response=None for buffered/async paths
+        # (message_buffer_seconds > 0). Poll the session's chatlog for the
+        # assistant reply instead of returning an empty completion.
+        if not response_text and not result.get('async'):
+            try:
+                from models.db import db
+                session_id = db.get_or_create_session(agent_id, external_user_id, None)
+                # Anchor: this message was saved before the buffered return,
+                # so the reply is any assistant message with id > this user msg.
+                user_msgs = [m for m in db.get_session_messages(session_id) if m.get('role') == 'user']
+                anchor_id = user_msgs[-1]['id'] if user_msgs else 0
+                import time as _time
+                deadline = _time.time() + 120
+                while _time.time() < deadline:
+                    for m in db.get_messages_after(session_id, anchor_id):
+                        if m.get('role') == 'assistant' and m.get('content'):
+                            response_text = m['content']
+                            break
+                    if response_text:
+                        break
+                    _time.sleep(0.3)
+            except Exception as e:
+                _logger.warning("agentapi poll reply failed for %s: %s", agent_id, e)
+
+        if not response_text:
+            return jsonify({'error': 'Agent returned no response'}), 504
 
         # --- Increment quota + log ---
         token_db.increment_quota(token_row)
