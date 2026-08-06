@@ -493,6 +493,10 @@ def _producer_chat(ring: BoundedRing, breaker: CircuitBreaker,
             'result': d.get('tool_result', {}),
             'error': d.get('has_error', False),
         }),
+        'state:changed': ('state:changed', lambda d: {
+            key: d[key] for key in ('mode', 'plan_file', 'tasks', 'loaded_skills')
+            if key in d
+        }),
         'tasks:auto_transition': ('tasks:auto_transition', lambda d: {
             key: d[key] for key in ('task_ids', 'tasks') if key in d
         }),

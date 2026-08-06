@@ -33,6 +33,19 @@ def test_live_and_gap_fill_transforms_forward_only_state_snapshot_fields():
     assert routes.count("('mode', 'plan_file', 'tasks', 'loaded_skills')") == 2
 
 
+def test_unified_realtime_stream_forwards_state_changed():
+    """The unified /api/realtime/stream is what the chat UI actually connects to.
+
+    Without a 'state:changed' transform there, an explicit update_tasks() call
+    consumes a chat seq that never reaches the browser, so the Session State
+    panel only catches up on the next gap-fill.
+    """
+    realtime = read_repo_file("routes/realtime.py")
+
+    assert "'state:changed': ('state:changed'" in realtime
+    assert "('mode', 'plan_file', 'tasks', 'loaded_skills')" in realtime
+
+
 def test_runtime_emits_fresh_state_snapshot_after_persist_and_tool_event():
     loop = read_repo_file("backend/agent_runtime/llm_loop.py")
 
