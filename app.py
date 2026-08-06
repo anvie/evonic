@@ -93,6 +93,7 @@ from routes.scheduler import scheduler_bp
 from routes.models import models_bp
 from routes.providers import providers_bp
 from routes.codex import codex_bp
+from routes.claude import claude_bp
 from routes.health import health_bp
 from routes.workplaces import workplaces_bp
 from routes.logs import logs_bp
@@ -240,6 +241,7 @@ app.register_blueprint(dashboard_bp)
 app.register_blueprint(models_bp)
 app.register_blueprint(providers_bp)
 app.register_blueprint(codex_bp)
+app.register_blueprint(claude_bp)
 app.register_blueprint(health_bp)
 app.register_blueprint(workplaces_bp)
 app.register_blueprint(logs_bp)

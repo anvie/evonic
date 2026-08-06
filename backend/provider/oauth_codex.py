@@ -11,10 +11,14 @@ import base64
 import hashlib
 import json as _json
 import logging
+import os
+import platform
 import secrets
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import urlencode, urlparse, parse_qs
 
@@ -35,6 +39,7 @@ REDIRECT_URI = "http://localhost:1455/auth/callback"
 
 # In-memory state for pending auth flows (keyed by OAuth state, not provider_id)
 _pending_auth: Dict[str, Dict] = {}
+_pending_device_auth: Dict[str, Dict] = {}
 _callback_server: Optional[HTTPServer] = None
 _callback_server_running: bool = False
 
@@ -57,6 +62,180 @@ def _generate_pkce():
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
     code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return code_verifier, code_challenge
+
+
+def _decode_jwt_claims(token: str) -> Dict:
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return _json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return {}
+
+
+def _access_token_is_expiring(token: str, skew_seconds: int = 120) -> bool:
+    exp = _decode_jwt_claims(token).get("exp")
+    return bool(exp and time.time() >= int(exp) - skew_seconds)
+
+
+def _codex_home() -> Path:
+    return Path(os.getenv("CODEX_HOME") or Path.home() / ".codex").expanduser()
+
+
+def _read_codex_keyring(codex_home: Path) -> Optional[Dict]:
+    """Read Codex's direct macOS keyring backend without changing it."""
+    if platform.system() != "Darwin":
+        return None
+    key = "cli|" + hashlib.sha256(str(codex_home.resolve()).encode()).hexdigest()[:16]
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "Codex Auth", "-a", key, "-w"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+        )
+        return _json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, _json.JSONDecodeError):
+        return None
+
+
+def read_codex_cli_credentials() -> Optional[Dict]:
+    """Read the freshest usable Codex CLI OAuth credential snapshot."""
+    codex_home = _codex_home()
+    candidates = []
+    keyring = _read_codex_keyring(codex_home)
+    if keyring:
+        candidates.append(("codex_keyring", keyring))
+    try:
+        auth_file = codex_home / "auth.json"
+        if auth_file.is_file():
+            candidates.append(("codex_auth_file", _json.loads(auth_file.read_text())))
+    except (OSError, _json.JSONDecodeError):
+        pass
+
+    usable = []
+    for source, payload in candidates:
+        tokens = payload.get("tokens") if isinstance(payload, dict) else None
+        if not isinstance(tokens, dict) or not tokens.get("access_token"):
+            continue
+        usable.append({
+            "source": source,
+            "access_token": tokens["access_token"],
+            "refresh_token": tokens.get("refresh_token", ""),
+            "account_id": tokens.get("account_id", ""),
+            "expires_at": int(_decode_jwt_claims(tokens["access_token"]).get("exp") or 0),
+        })
+    if not usable:
+        return None
+    return max(usable, key=lambda item: item["expires_at"])
+
+
+def use_codex_cli_credentials(db, provider_id: str) -> Dict:
+    creds = read_codex_cli_credentials()
+    if not creds:
+        return {"error": "No Codex CLI login found. Run `codex login` first."}
+    store_tokens(db, provider_id, {
+        "access_token": creds["access_token"],
+        "refresh_token": creds.get("refresh_token", ""),
+        "expires_at": creds.get("expires_at", 0),
+    }, credential_source="codex_cli_import")
+    return {"success": True, "detected_source": creds["source"]}
+
+
+def start_device_auth_flow(provider_id: str) -> Dict:
+    """Start the same device-code login flow used by the Codex CLI."""
+    try:
+        resp = requests.post(
+            "https://auth.openai.com/api/accounts/deviceauth/usercode",
+            json={"client_id": CLIENT_ID},
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        return {"error": f"Failed to request device code: {exc}"}
+    if resp.status_code != 200:
+        return {"error": f"Device login failed (HTTP {resp.status_code})."}
+    try:
+        data = resp.json()
+    except ValueError:
+        return {"error": "OpenAI returned an invalid device code response."}
+    user_code = data.get("user_code")
+    device_auth_id = data.get("device_auth_id")
+    if not user_code or not device_auth_id:
+        return {"error": "OpenAI returned an incomplete device code response."}
+    _pending_device_auth[provider_id] = {
+        "user_code": user_code,
+        "device_auth_id": device_auth_id,
+        "started_at": time.time(),
+        "interval": max(3, int(data.get("interval", 5))),
+    }
+    return {
+        "success": True,
+        "user_code": user_code,
+        "verification_url": "https://auth.openai.com/codex/device",
+        "interval": _pending_device_auth[provider_id]["interval"],
+    }
+
+
+def poll_device_auth_flow(provider_id: str) -> Dict:
+    pending = _pending_device_auth.get(provider_id)
+    if not pending:
+        return {"status": "error", "error": "No pending device login."}
+    if time.time() - pending["started_at"] > 900:
+        _pending_device_auth.pop(provider_id, None)
+        return {"status": "expired", "error": "Device login timed out."}
+    try:
+        resp = requests.post(
+            "https://auth.openai.com/api/accounts/deviceauth/token",
+            json={
+                "device_auth_id": pending["device_auth_id"],
+                "user_code": pending["user_code"],
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        return {"status": "error", "error": f"Device login polling failed: {exc}"}
+    if resp.status_code in {403, 404}:
+        return {"status": "pending"}
+    if resp.status_code != 200:
+        return {"status": "error", "error": f"Device login failed (HTTP {resp.status_code})."}
+
+    try:
+        data = resp.json()
+    except ValueError:
+        return {"status": "error", "error": "OpenAI returned invalid authorization data."}
+    code = data.get("authorization_code")
+    verifier = data.get("code_verifier")
+    if not code or not verifier:
+        return {"status": "error", "error": "OpenAI returned incomplete authorization data."}
+    try:
+        token_resp = requests.post(
+            TOKEN_ENDPOINT,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": "https://auth.openai.com/deviceauth/callback",
+                "client_id": CLIENT_ID,
+                "code_verifier": verifier,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        _pending_device_auth.pop(provider_id, None)
+        return {"status": "error", "error": f"Token exchange failed: {exc}"}
+    _pending_device_auth.pop(provider_id, None)
+    if token_resp.status_code != 200:
+        return {"status": "error", "error": f"Token exchange failed (HTTP {token_resp.status_code})."}
+    try:
+        tokens = token_resp.json()
+    except ValueError:
+        return {"status": "error", "error": "OpenAI returned an invalid token response."}
+    if not tokens.get("access_token"):
+        return {"status": "error", "error": "OpenAI did not return an access token."}
+    return {"status": "complete", "tokens": tokens}
 
 
 def _run_callback_server():
@@ -286,21 +465,9 @@ def exchange_code_for_tokens(provider_id: str) -> Dict:
 
 def extract_account_id(access_token: str) -> str:
     """Extract ChatGPT account ID from JWT access token claims."""
-    try:
-        parts = access_token.split(".")
-        if len(parts) < 2:
-            return ""
-        payload = parts[1]
-        padding = 4 - len(payload) % 4
-        if padding != 4:
-            payload += "=" * padding
-        claims = _json.loads(base64.urlsafe_b64decode(payload))
-        auth = claims.get("https://api.openai.com/auth", {})
-        if isinstance(auth, dict):
-            return auth.get("chatgpt_account_id", "")
-        return ""
-    except Exception:
-        return ""
+    claims = _decode_jwt_claims(access_token)
+    auth = claims.get("https://api.openai.com/auth", {})
+    return auth.get("chatgpt_account_id", "") if isinstance(auth, dict) else ""
 
 
 def refresh_access_token(refresh_token: str) -> Dict:
@@ -333,21 +500,24 @@ def refresh_access_token(refresh_token: str) -> Dict:
     }
 
 
-def store_tokens(db, provider_id: str, tokens: Dict) -> bool:
+def store_tokens(db, provider_id: str, tokens: Dict, credential_source: str = "evonic_oauth") -> bool:
     """Persist OAuth tokens to the provider row."""
-    expires_at = int(time.time()) + int(tokens.get("expires_in", 3600))
+    expires_at = int(tokens.get("expires_at") or 0)
+    if not expires_at:
+        expires_at = int(time.time()) + int(tokens.get("expires_in", 3600))
     return db.update_provider(provider_id, {
         "api_key": tokens["access_token"],
         "refresh_token": tokens.get("refresh_token", ""),
         "token_expires_at": expires_at,
         "auth_type": "oauth",
+        "credential_source": credential_source,
     })
 
 
 def get_valid_token(db, provider_id: str) -> Optional[str]:
     """Return a valid access token, refreshing if near expiry."""
     provider = db.get_provider(provider_id)
-    if not provider or provider.get("auth_type") != "oauth":
+    if not provider or provider.get("api_format") != "codex" or provider.get("auth_type") != "oauth":
         return None
 
     access_token = provider.get("api_key")
@@ -358,14 +528,25 @@ def get_valid_token(db, provider_id: str) -> Optional[str]:
     now = int(time.time())
 
     if expires_at > 0 and now >= (expires_at - 120):
+        source = provider.get("credential_source") or "evonic_oauth"
+        if source == "codex_cli_import":
+            live = read_codex_cli_credentials()
+            if live and not _access_token_is_expiring(live["access_token"]):
+                store_tokens(db, provider_id, {
+                    "access_token": live["access_token"],
+                    "refresh_token": live.get("refresh_token", ""),
+                    "expires_at": live.get("expires_at", 0),
+                }, credential_source=source)
+                return live["access_token"]
         refresh_token = provider.get("refresh_token", "")
         if refresh_token:
             new_tokens = refresh_access_token(refresh_token)
             if "error" not in new_tokens:
-                store_tokens(db, provider_id, new_tokens)
+                store_tokens(db, provider_id, new_tokens, credential_source=source)
                 return new_tokens["access_token"]
+        return None
 
-    return access_token
+    return access_token if not _access_token_is_expiring(access_token) else None
 
 
 def clear_tokens(db, provider_id: str) -> bool:
@@ -375,4 +556,5 @@ def clear_tokens(db, provider_id: str) -> bool:
         "refresh_token": "",
         "token_expires_at": 0,
         "auth_type": "",
+        "credential_source": "",
     })
