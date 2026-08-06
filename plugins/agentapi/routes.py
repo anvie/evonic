@@ -436,8 +436,9 @@ def create_blueprint():
             event_stream.on('tool_executed', on_tool_executed)
             events_registered.extend(['llm_response_chunk', 'turn_complete', 'tool_executed'])
 
+            result = None
             try:
-                agent_runtime.handle_message(
+                result = agent_runtime.handle_message(
                     agent_id=agent_id,
                     external_user_id=external_user_id,
                     message=user_message,
@@ -445,9 +446,17 @@ def create_blueprint():
                     skip_buffer=True,
                 )
             except Exception:
-                pass
+                result = None
             finally:
-                q.put_nowait((_SENTINEL, None))
+                # Only end the stream early when handle_message returned a real
+                # reply (non-buffered path). Buffered/async agents return
+                # response=None immediately — the real reply arrives later via
+                # event_stream (llm_response_chunk/turn_complete), so we must
+                # stay subscribed. If we put the sentinel here, generate()
+                # exits, the finally below unsubscribes, and the reply events
+                # are lost (SSE shows only stop + [DONE]).
+                if not result or result.get('response'):
+                    q.put_nowait((_SENTINEL, None))
 
         agent_thread = threading.Thread(target=run_agent, daemon=True)
         agent_thread.start()
