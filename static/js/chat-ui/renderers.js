@@ -41,16 +41,29 @@ function _walkSanitize(node) {
             const allowed = (ALLOWED_ATTRS[tag] || []).concat(ALLOWED_ATTRS['*'] || []);
             const attrsToRemove = [...child.attributes].filter(a => !allowed.includes(a.name));
             attrsToRemove.forEach(a => child.removeAttribute(a.name));
-            // Sanitize hrefs
+            // Sanitize hrefs / image sources: only web URLs, mailto:, anchors,
+            // and same-origin /api/ paths are user-accessible. Local filesystem
+            // paths and custom URI schemes (file:, sandbox:, ...) render as
+            // broken links in the browser, so they are neutralized here.
             if (tag === 'a') {
                 const href = child.getAttribute('href') || '';
-                if (/^javascript:/i.test(href) || /^data:/i.test(href)) {
+                if (!/^(https?:\/\/|mailto:|#|\/api\/)/i.test(href)) {
                     child.setAttribute('href', '#');
+                    child.setAttribute('title', 'Local path — not accessible via link');
                 }
                 child.setAttribute('rel', 'noopener noreferrer');
                 // Open external links in a new tab
                 if (/^https?:\/\//i.test(href)) {
                     child.setAttribute('target', '_blank');
+                }
+            }
+            if (tag === 'img') {
+                const src = child.getAttribute('src') || '';
+                if (!/^(https?:\/\/|\/api\/|data:image\/)/i.test(src)) {
+                    // Neutralize unsafe image sources (local paths, file:/sandbox:)
+                    child.removeAttribute('src');
+                    const alt = child.getAttribute('alt') || '';
+                    child.setAttribute('alt', alt ? alt + ' (unavailable)' : '(unavailable)');
                 }
             }
             _walkSanitize(child);

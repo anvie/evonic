@@ -1911,6 +1911,26 @@ def run_tool_loop(agent: Dict[str, Any],
             # follow-up instruction that forces the LLM back into the loop.
             from backend.plugin_manager import run_message_interceptors
             pre_final_injections = run_message_interceptors(agent_id, content, messages)
+
+            # Core guard: never let a final answer link local filesystem
+            # paths — the user cannot open them (they render as broken
+            # links). Detect such links and inject a corrective instruction
+            # so the LLM re-answers using send_file/save_artifact instead.
+            from backend.tools.local_path_link_guard import (
+                build_corrective_injection,
+                detect_local_path_links,
+            )
+            local_links = detect_local_path_links(content or "")
+            if local_links:
+                _logger.warning(
+                    "Local-path links blocked in final answer (agent=%s, session=%s): %s",
+                    agent_id, session_id, local_links,
+                )
+                pre_final_injections.append({
+                    "role": "user",
+                    "content": build_corrective_injection(local_links),
+                })
+
             if pre_final_injections:
                 # Save this response as an intermediate assistant message so the
                 # LLM sees it as context, then append the injected instructions.

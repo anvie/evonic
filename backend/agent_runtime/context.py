@@ -837,7 +837,9 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
                 "files appear in the Artifacts tab. "
                 f"Public URL: `/api/agents/{aid}/artifacts/<filename>`. "
                 f"Embed images with `<img src=\"/api/agents/{aid}/artifacts/filename.webp\" alt=\"...\">`. "
-                "On external chat channels, deliver images and files with `send_file`. "
+                "Deliver files to the user with `send_file` (or `save_artifact` for the Artifacts tab). "
+                "Never give local filesystem paths (e.g. `/home/...`, `sandbox:...`) as chat links — "
+                "the user cannot open them. "
                 f"`bash`/`runpy` must use `{artifacts_path}`, not `/_self/`."
             )
         else:
@@ -846,7 +848,9 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
                 "Save with `save_artifact(content=\"...\")` or `save_artifact(source_path=\"...\")`; "
                 "files are also available at `/_self/artifacts/` via file tools. "
                 f"Embed images with `<img src=\"/api/agents/{aid}/artifacts/filename.webp\" alt=\"...\">`. "
-                "On external chat channels, deliver images and files with `send_file`. "
+                "Deliver files to the user with `send_file` (or `save_artifact` for the Artifacts tab). "
+                "Never give local filesystem paths (e.g. `/home/...`, `sandbox:...`) as chat links — "
+                "the user cannot open them. "
                 "`bash`/`runpy` cannot use `/_self/`."
             )
         prompt += "\n\n## Artifacts Directory\n" + artifacts_note
