@@ -31,7 +31,7 @@ class AgentMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, send_file_allowed_path_regex, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, messaging_acl, messaging_acl_mode, memory_engine, kb_organizer_mode, enable_atg, enable_cmp, always_execute, hidden_slash_commands, disabled_slash_commands FROM agents WHERE id = ?", (agent_id,))
+            cursor.execute("SELECT id, name, description, system_prompt, vision_enabled, created_at, updated_at, summarize_threshold, summarize_tail, summarize_prompt, message_buffer_seconds, inject_agent_id, inject_datetime, send_intermediate_responses, outbound_buffer_seconds, enable_agent_state, workspace, is_super, enabled, default_model_id, sandbox_enabled, attachments_enabled, attachment_max_size_mb, send_file_allowed_path_regex, audio_enabled, video_enabled, artifacts_enabled, last_active_at, safety_checker_enabled, bash_exec_enabled, primary_channel_id, avatar_path, disable_parallel_tool_execution, disable_turn_prefetch, agent_messaging_enabled, session_count, fallback_model_id, model_id, tool_compression_enabled, message_wrapper_enabled, run_as_user, vision_model_id, inter_agent_clear_context, builtin_tools_enabled, workplace_id, messaging_acl, messaging_acl_mode, memory_engine, kb_organizer_mode, enable_atg, enable_cmp, always_execute, dm_only, hidden_slash_commands, disabled_slash_commands FROM agents WHERE id = ?", (agent_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -95,6 +95,7 @@ class AgentMixin:
                    'inter_agent_clear_context', 'builtin_tools_enabled', 'tool_compression_enabled',
                    'messaging_acl', 'messaging_acl_mode',
                    'memory_engine', 'kb_organizer_mode', 'enable_atg', 'enable_cmp', 'always_execute',
+                   'dm_only',
                    'hidden_slash_commands', 'disabled_slash_commands'}
         updates = {k: v for k, v in data.items() if k in allowed}
         if 'message_wrapper_enabled' in updates:
