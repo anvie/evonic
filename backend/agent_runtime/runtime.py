@@ -1124,6 +1124,44 @@ class AgentRuntime:
         if not agent.get('is_super') and not agent.get('enabled', True):
             return {"response": "This agent is currently disabled.", "tool_trace": []}
 
+        # Per-agent daily token limit — block turns that would exceed the cap
+        # (FINDING: token-limit). Fails open: any limiter error lets the turn proceed.
+        try:
+            from plugins.token_monitor.db import usage_db
+            from datetime import datetime, timezone
+            limit = agent.get('token_limit_daily')
+            if limit is None:
+                import os as _os
+                try:
+                    limit = int(_os.environ.get('EVONIC_TOKEN_LIMIT_DAILY_DEFAULT', '500000') or '500000')
+                except (TypeError, ValueError):
+                    limit = 500000
+            if limit and limit > 0 and not agent.get('is_super'):
+                day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+                _total = usage_db.agent_total_tokens(agent_id, since_iso=day_start)
+                if _total is not None and _total >= limit:
+                    _logger.info(
+                        "[handle_message] agent=%s token limit reached: %s >= %s — blocking turn.",
+                        agent_id, _total, limit,
+                    )
+                    from backend.event_stream import event_stream
+                    event_stream.emit('limit_hit', {
+                        'agent_id': agent_id,
+                        'agent_name': agent.get('name', ''),
+                        'session_id': session_id,
+                        'limit': limit,
+                        'total': _total,
+                    })
+                    return {
+                        "response": (
+                            "Batas penggunaan harian token tercapai untuk agen ini "
+                            f"({_total:,} token). Coba lagi besok."
+                        ),
+                        "tool_trace": [],
+                    }
+        except Exception as _lim_exc:
+            _logger.warning("[handle_message] token limit check failed (fails open): %s", _lim_exc)
+
         # Defense-in-depth: check if the user is blocked (FINDING-012).
         # Skip internal/system users (they have no user record to check).
         if external_user_id not in ('__system__', '') and not external_user_id.startswith('__agent__'):
