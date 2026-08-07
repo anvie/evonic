@@ -135,18 +135,30 @@ def test_binary_attachment_returns_metadata(tmp_path, monkeypatch):
     assert parsed['filename'] == 'photo.jpg'
 
 
-def test_pdf_no_pypdf_returns_unavailable(tmp_path, monkeypatch):
+def test_pdf_no_anydoc_returns_unavailable(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _make_agent('agent_pdf')
     aid, _ = _store('agent_pdf', b'%PDF-1.4 fake', name='doc.pdf',
                     mime='application/pdf', tmp_path=tmp_path)
-    # Force ImportError for pypdf
+    # Force ImportError for anydoc
     import sys
-    monkeypatch.setitem(sys.modules, 'pypdf', None)
+    monkeypatch.setitem(sys.modules, 'anydoc', None)
     result = ra.execute({'id': 'agent_pdf'}, {'attachment_id': aid})
     assert 'result' in result
     out = result['result']
-    assert 'PDF text extraction unavailable' in out or 'install' in out
+    assert 'Document text extraction unavailable' in out or 'install' in out
+
+
+def test_pdf_anydoc_conversion_failure_returns_metadata(tmp_path, monkeypatch):
+    """A malformed PDF should fall back to metadata, not crash."""
+    monkeypatch.chdir(tmp_path)
+    _make_agent('agent_pdf_bad')
+    aid, _ = _store('agent_pdf_bad', b'%PDF-1.4 fake', name='doc.pdf',
+                    mime='application/pdf', tmp_path=tmp_path)
+    result = ra.execute({'id': 'agent_pdf_bad'}, {'attachment_id': aid})
+    assert 'result' in result
+    out = result['result']
+    assert 'Document conversion failed' in out or 'metadata' in out.lower()
 
 
 def test_mock_shape_matches_execute(tmp_path, monkeypatch):
