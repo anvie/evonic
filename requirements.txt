@@ -11,3 +11,5 @@ APScheduler>=3.10
 paramiko>=3.0
 tiktoken>=0.7
 tomli>=2.0
+# optional: document (PDF/Office) -> Markdown conversion for read_attachment
+firecrawl-anydoc>=0.1.6

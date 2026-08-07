@@ -2,8 +2,9 @@
 
 Reads user-uploaded file attachments stored under data/attachments/<agent_id>/.
 Enforces per-agent isolation, reuses the existing read_file pagination core for
-text content, attempts PDF text extraction via pypdf when available, and falls
-back to a metadata block for opaque binary files.
+text content, converts documents (PDF and office formats) to Markdown via the
+optional anydoc converter (firecrawl-anydoc) when available, and falls back to
+a metadata block for opaque binary files.
 """
 
 import json
@@ -14,7 +15,15 @@ from backend.tools.read_file import read_file as _read_text_file
 
 
 _ATTACHMENTS_ROOT = os.path.join('data', 'attachments')
-_PDF_TEXT_CAP_BYTES = 100 * 1024  # 100 KB cap on extracted PDF text
+_DOC_TEXT_CAP_BYTES = 100 * 1024  # 100 KB cap on extracted document text
+
+# Document formats handled by the optional `anydoc` converter
+# (firecrawl-anydoc, imports as `anydoc`). When not installed these fall
+# back to the metadata block below.
+_ANYDOC_EXTS = frozenset({
+    '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt',
+    '.odt', '.ods', '.odp', '.rtf', '.epub',
+})
 
 _TEXTISH_MIMES = {
     'application/json',
@@ -53,6 +62,12 @@ def _is_pdf(mime_type: Optional[str], path: str) -> bool:
     if mime_type and mime_type.lower() == 'application/pdf':
         return True
     return path.lower().endswith('.pdf')
+
+
+def _is_anydoc(mime_type: Optional[str], path: str) -> bool:
+    """True for office/document formats handled by the optional anydoc converter."""
+    ext = os.path.splitext(path)[1].lower()
+    return ext in _ANYDOC_EXTS
 
 
 def _agent_root(agent_id: str) -> str:
@@ -102,60 +117,41 @@ def _format_metadata(row: Optional[Dict[str, Any]], fallback_path: str,
     )
 
 
-def _read_pdf_text(path: str, offset: int) -> str:
-    """Extract text from a PDF using pypdf if available; paginate by line."""
+def _read_anydoc_text(path: str, offset: int) -> str:
+    """Convert a document (PDF or office format) to Markdown via anydoc; paginate by line.
+
+    anydoc is an optional dependency (firecrawl-anydoc, imports as `anydoc`).
+    When unavailable, or when conversion fails, fall back to a metadata block.
+    """
     try:
-        from pypdf import PdfReader  # type: ignore
+        import anydoc  # type: ignore
     except ImportError:
-        try:
-            size = os.path.getsize(path)
-        except OSError:
-            size = None
-        return (
-            "[PDF text extraction unavailable: install 'pypdf' to enable]\n\n"
-            + json.dumps({
-                'filename': os.path.basename(path),
-                'mime_type': 'application/pdf',
-                'size_bytes': size,
-                'path': path,
-            }, indent=2)
+        return _format_metadata(None, path, None) + (
+            "\n\n[Document text extraction unavailable: install 'firecrawl-anydoc' to enable]"
         )
 
     try:
-        reader = PdfReader(path)
-    except Exception as e:  # pragma: no cover - depends on file contents
-        return f"Error: Failed to open PDF: {e}"
+        with open(path, 'rb') as fh:
+            data = fh.read()
+        body = anydoc.to_markdown_bytes(data)
+    except Exception as e:
+        return _format_metadata(None, path, None) + f"\n\n[Document conversion failed: {e}]"
 
-    out_parts = []
-    total = 0
-    truncated = False
-    for i, page in enumerate(reader.pages):
-        try:
-            txt = page.extract_text() or ''
-        except Exception:
-            txt = ''
-        header = f"--- Page {i + 1} ---\n"
-        chunk = header + txt + "\n"
-        if total + len(chunk) > _PDF_TEXT_CAP_BYTES:
-            remaining = _PDF_TEXT_CAP_BYTES - total
-            if remaining > 0:
-                out_parts.append(chunk[:remaining])
-            truncated = True
-            break
-        out_parts.append(chunk)
-        total += len(chunk)
-
-    body = ''.join(out_parts)
-    if not body.strip():
+    if not body or not body.strip():
         return (
-            "[PDF contains no extractable text — it may be image-only or scanned. "
+            "[Document contains no extractable text — it may be image-only or scanned. "
             "Returning metadata instead.]\n\n"
             + json.dumps({
                 'filename': os.path.basename(path),
-                'mime_type': 'application/pdf',
+                'mime_type': None,
                 'path': path,
             }, indent=2)
         )
+
+    # Cap output size before rendering.
+    truncated = len(body) > _DOC_TEXT_CAP_BYTES
+    if truncated:
+        body = body[:_DOC_TEXT_CAP_BYTES]
 
     # Paginate by lines using read_file core for consistency. Write to a temp
     # buffer is unnecessary — render manually since content already in memory.
@@ -174,7 +170,7 @@ def _read_pdf_text(path: str, offset: int) -> str:
         chars += len(line_str) + 1
         end_idx = i + 1
     header_line = (
-        f"[PDF: {os.path.basename(path)} | {total_lines} extracted lines | "
+        f"[Document: {os.path.basename(path)} | {total_lines} extracted lines | "
         f"showing lines {start_idx + 1}-{end_idx}"
         + (" | text truncated at 100KB" if truncated else "")
         + "]"
@@ -263,8 +259,9 @@ def execute(agent, args: dict) -> dict:
 
     # Dispatch — use the workplace path for operations that route through the
     # execution backend, and the original host path for direct filesystem access.
-    if _is_pdf(mime_type, resolved_path):
-        return {"result": _read_pdf_text(resolved_path, offset)}
+    assert resolved_path is not None  # guaranteed by the isfile checks above
+    if _is_anydoc(mime_type, resolved_path):
+        return {"result": _read_anydoc_text(resolved_path, offset)}
 
     if _is_textish(mime_type, resolved_path):
         return {"result": _read_text_file(workplace_path, offset=offset)}
