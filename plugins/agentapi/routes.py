@@ -661,4 +661,63 @@ def create_blueprint():
         """Return the current MODEL_AGENT_MAP for the admin UI."""
         return jsonify({'map': _get_model_agent_map()})
 
+    @bp.route('/api/agentapi/v1/usage', methods=['GET'])
+    def api_usage():
+        """Self-serve usage for the calling bearer token.
+
+        Returns the API-token quota (request count) plus the LLM token usage
+        for the agent(s) this token can reach (via MODEL_AGENT_MAP), so the
+        client dashboard can show used/limit visibility.
+        """
+        token_row, err = _validate_bearer_token()
+        if err:
+            return jsonify(err[0]), err[1]
+
+        quota_limit = token_row.get('quota_limit')
+        quota_used = token_row.get('quota_used', 0)
+
+        # LLM token usage — sum across agents this token can reach.
+        # Prefer the single mapped agent; fall back to all allowed models.
+        model_agent_map = _get_model_agent_map()
+        agent_ids = []
+        allowed = _parse_allowed_models(token_row.get('allowed_models'))
+        if len(model_agent_map) == 1:
+            agent_ids = list(model_agent_map.values())
+        elif allowed != ['*']:
+            agent_ids = [model_agent_map.get(m) for m in allowed if m in model_agent_map]
+        agent_ids = [a for a in dict.fromkeys(agent_ids) if a]
+
+        used_today = 0
+        limit_daily = None
+        from datetime import datetime, timezone
+        from plugins.token_monitor.db import usage_db
+        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        for aid in agent_ids:
+            t = usage_db.agent_total_tokens(aid, since_iso=day_start)
+            if t is not None:
+                used_today += t
+        if agent_ids:
+            from backend.db import db as _db
+            _agent = _db.get_agent(agent_ids[0])
+            if _agent:
+                limit_daily = _agent.get('token_limit_daily')
+                if limit_daily is None:
+                    import os as _os
+                    try:
+                        limit_daily = int(_os.environ.get('EVONIC_TOKEN_LIMIT_DAILY_DEFAULT', '500000') or '500000')
+                    except (TypeError, ValueError):
+                        limit_daily = 500000
+
+        return jsonify({
+            'quota': {
+                'limit': quota_limit,
+                'used': quota_used,
+            },
+            'llm_tokens': {
+                'used_today': used_today,
+                'limit_daily': limit_daily,
+                'agents': agent_ids,
+            },
+        })
+
     return bp
