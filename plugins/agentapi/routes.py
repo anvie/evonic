@@ -661,7 +661,7 @@ def create_blueprint():
         """Return the current MODEL_AGENT_MAP for the admin UI."""
         return jsonify({'map': _get_model_agent_map()})
 
-    @bp.route('/api/agentapi/v1/usage', methods=['GET'])
+    @bp.route('/plugin/agentapi/v1/usage', methods=['GET'])
     def api_usage():
         """Self-serve usage for the calling bearer token.
 
