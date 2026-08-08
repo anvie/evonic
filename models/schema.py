@@ -406,6 +406,12 @@ class SchemaMixin:
             except sqlite3.OperationalError:
                 pass
 
+            # Migration: per-agent daily token limit (NULL = use env default)
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN token_limit_daily INTEGER")
+            except sqlite3.OperationalError:
+                pass
+
             # Migration: add last_active_at to track most recently chatted agent
             try:
                 cursor.execute("ALTER TABLE agents ADD COLUMN last_active_at TIMESTAMP")
