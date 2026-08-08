@@ -1144,7 +1144,6 @@ class AgentRuntime:
                         "[handle_message] agent=%s token limit reached: %s >= %s — blocking turn.",
                         agent_id, _total, limit,
                     )
-                    from backend.event_stream import event_stream
                     event_stream.emit('limit_hit', {
                         'agent_id': agent_id,
                         'agent_name': agent.get('name', ''),
