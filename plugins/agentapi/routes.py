@@ -21,7 +21,7 @@ import queue
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from flask import (
     Blueprint, Response, jsonify, render_template, request,
@@ -689,9 +689,10 @@ def create_blueprint():
 
         used_today = 0
         limit_daily = None
-        from datetime import datetime, timezone
         from plugins.token_monitor.db import usage_db
-        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        now_utc = datetime.now(timezone.utc)
+        day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        next_midnight = (now_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         for aid in agent_ids:
             t = usage_db.agent_total_tokens(aid, since_iso=day_start)
             if t is not None:
@@ -717,6 +718,7 @@ def create_blueprint():
                 'used_today': used_today,
                 'limit_daily': limit_daily,
                 'agents': agent_ids,
+                'reset_at': next_midnight.isoformat(),
             },
         })
 
