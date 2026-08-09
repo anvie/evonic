@@ -156,6 +156,9 @@ class TurnPrefetcher:
             # build_message_entry so the hint is only injected when available.
             has_describe_image = 'describe_image' in assigned_tool_ids
 
+            from backend.channels.whatsapp_identity import resolve_identity
+            _identity = resolve_identity(ctx.channel_id, ctx.external_user_id)
+
             fresh_agent_context = {
                 'id': agent_id,
                 '_db_agent_id': agent.get('_db_agent_id', agent_id),
@@ -163,6 +166,9 @@ class TurnPrefetcher:
                 'agent_name': agent.get('name', ''),
                 'agent_model': None,
                 'user_id': ctx.external_user_id,
+                'user_phone': _identity['user_phone'],
+                'user_jid': _identity['user_jid'],
+                'user_id_namespace': _identity['user_id_namespace'],
                 'channel_id': ctx.channel_id,
                 'session_id': session_id,
                 'assigned_tool_ids': assigned_tool_ids,

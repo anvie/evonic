@@ -2086,6 +2086,12 @@ class AgentRuntime:
             else:
                 _workspace = agent.get('workspace') or None
 
+            # A LID-addressed WhatsApp DM reaches us as bare LID digits, which
+            # look exactly like a phone number. Resolve the real identity once
+            # here so tools never have to guess from user_id.
+            from backend.channels.whatsapp_identity import resolve_identity
+            _identity = resolve_identity(ctx.channel_id, ctx.external_user_id)
+
             agent_context = {
                 'id': agent_id,
                 '_db_agent_id': agent.get('_db_agent_id', agent_id),
@@ -2093,6 +2099,9 @@ class AgentRuntime:
                 'agent_name': agent.get('name', ''),
                 'agent_model': None,
                 'user_id': ctx.external_user_id,
+                'user_phone': _identity['user_phone'],
+                'user_jid': _identity['user_jid'],
+                'user_id_namespace': _identity['user_id_namespace'],
                 'channel_id': ctx.channel_id,
                 'session_id': ctx.session_id,
                 'assigned_tool_ids': assigned_tool_ids,

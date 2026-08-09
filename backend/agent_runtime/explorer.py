@@ -190,5 +190,8 @@ def build_config(
         'run_as_user': parent_agent.get('run_as_user'),
         # carry the parent's user/channel so report-back routing resolves
         'user_id': parent_agent.get('user_id', ''),
+        'user_phone': parent_agent.get('user_phone', ''),
+        'user_jid': parent_agent.get('user_jid', ''),
+        'user_id_namespace': parent_agent.get('user_id_namespace', ''),
         'channel_id': parent_agent.get('channel_id', '') or '',
     }
