@@ -121,6 +121,77 @@ def _is_status_broadcast(sender: str, jid: str) -> bool:
     return sender in {"status", "status@broadcast"} or jid == "status@broadcast"
 
 
+def _sanitize_attachment_filename(name: str) -> str:
+    """Return a bounded path-safe filename for an inbound WhatsApp document."""
+    basename = os.path.basename(str(name or '').replace('\\', '/'))
+    cleaned = re.sub(r'[^A-Za-z0-9._-]', '_', basename)[:120]
+    return cleaned.strip('.') or 'document'
+
+
+def _decode_document_payload(document_data: Any,
+                             max_bytes: int = 10 * 1024 * 1024) -> Optional[Dict[str, Any]]:
+    """Validate and decode bounded bridge document data without trusting metadata."""
+    if not isinstance(document_data, dict):
+        return None
+    encoded = document_data.get('base64')
+    if not isinstance(encoded, str) or not encoded:
+        return None
+
+    # Reject oversized data before allocating the decoded byte buffer. Four
+    # base64 characters encode at most three bytes, with a small padding margin.
+    if len(encoded) > ((max_bytes + 2) // 3) * 4:
+        _logger.warning("WhatsApp document rejected before decode: payload exceeds %s bytes",
+                        max_bytes)
+        return None
+    try:
+        document_bytes = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        _logger.warning("WhatsApp document decode failed: %s", exc)
+        return None
+    if not document_bytes or len(document_bytes) > max_bytes:
+        return None
+
+    declared_length = document_data.get('file_length')
+    if declared_length is not None:
+        try:
+            if int(declared_length) != len(document_bytes):
+                _logger.warning(
+                    "WhatsApp document length mismatch: declared=%s actual=%s",
+                    declared_length, len(document_bytes))
+                return None
+        except (TypeError, ValueError):
+            return None
+
+    mime_type = re.sub(
+        r'[\x00-\x1f\x7f]', '',
+        str(document_data.get('mimetype') or 'application/octet-stream'),
+    )[:255] or 'application/octet-stream'
+    return {
+        'bytes': document_bytes,
+        'filename': _sanitize_attachment_filename(document_data.get('filename')),
+        'mime_type': mime_type,
+    }
+
+
+def _human_size(size_bytes: int) -> str:
+    """Format an attachment size for the agent-visible attachment marker."""
+    size = float(size_bytes)
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if size < 1024 or unit == 'GB':
+            return f'{int(size)} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
+        size /= 1024
+    return f'{size_bytes} B'
+
+
+def _format_attachment_marker(attachment_info: Dict[str, Any]) -> str:
+    """Build the standard agent-readable attachment marker."""
+    return (
+        f"[Attached: {attachment_info['original_filename']} "
+        f"({attachment_info['mime_type']}, {_human_size(attachment_info['size_bytes'])}) "
+        f"id={attachment_info['attachment_id']} path={attachment_info['file_path']}]"
+    )
+
+
 def _format_quoted_context(quoted_text=None, quoted_message=None,
                            quoted_is_bot=False, quoted_sender_name='',
                            quoted_sender='', is_group=False) -> str:
@@ -726,6 +797,7 @@ class WhatsAppChannel(BaseChannel):
         image_data = payload.get('image')
         audio_data = payload.get('audio')
         video_data = payload.get('video')
+        document_data = payload.get('document')
         quoted_text = payload.get('quoted_text')
         quoted_message = payload.get('quoted_message')
         quoted_context = _format_quoted_context(
@@ -825,6 +897,7 @@ class WhatsAppChannel(BaseChannel):
         image_bytes = None  # decoded original bytes, persisted as attachment below
         audio_bytes = None  # decoded original bytes, persisted as attachment below
         audio_mime = None
+        document = _decode_document_payload(document_data)
 
         if image_data:
             try:
@@ -871,6 +944,11 @@ class WhatsAppChannel(BaseChannel):
             elif not text:
                 text = '[Video]'
 
+        if document and not text:
+            text = '[Document]'
+        elif payload.get('document_download_failed') and not text:
+            text = '[Document download failed]'
+
         if not text and not image_url and not video_url and not quoted_context:
             _logger.info("WhatsApp message dropped (no usable content): sender=%s", sender)
             return
@@ -904,9 +982,7 @@ class WhatsAppChannel(BaseChannel):
 
         session_id = db.get_or_create_session(agent_id, session_user_id, self.channel_id)
 
-        # Persist the image to disk and build attachment_info — the in-memory
-        # data URL alone is invisible to the agent (images are never auto-fed
-        # to the LLM; the describe_image tool needs a file path on disk).
+        # Persist media to disk so attachment tools can access the original bytes.
         attachment_info = None
         if image_bytes:
             attachment_info = self._save_image_attachment(
@@ -916,11 +992,22 @@ class WhatsAppChannel(BaseChannel):
             attachment_info = self._save_audio_attachment(
                 session_id, sender, audio_bytes, audio_mime or 'audio/ogg',
                 agent_id=agent_id)
+        elif document:
+            attachment_info = self._save_document_attachment(
+                session_id, sender, document['bytes'], document['mime_type'],
+                document['filename'], agent_id=agent_id)
+
+        # Append the standard marker only after persistence succeeds. This keeps
+        # paths and attachment IDs truthful and makes captionless PDFs usable.
+        if attachment_info and document:
+            marker = _format_attachment_marker(attachment_info)
+            final_text = f"{final_text}\n{marker}" if final_text else marker
 
         if not db.is_session_bot_enabled(session_id, agent_id=agent_id):
             _logger.info("WhatsApp message stored only — bot disabled for session %s (sender=%s)",
                          session_id, sender)
-            db.add_chat_message(session_id, 'user', text or '[Image]', agent_id=agent_id)
+            db.add_chat_message(session_id, 'user', final_text or text or '[Attachment]',
+                                agent_id=agent_id)
             return
 
         _logger.info("WhatsApp message received from %s (channel %s)", sender, self.channel_id)
@@ -1075,6 +1162,61 @@ class WhatsAppChannel(BaseChannel):
             }
         except Exception as e:
             _logger.error("Failed to persist WhatsApp audio attachment: %s", e, exc_info=True)
+            return None
+
+    def _save_document_attachment(self, session_id: str, external_user_id: str,
+                                  document_bytes: bytes, mime_type: str,
+                                  original_filename: str,
+                                  agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Persist a validated inbound WhatsApp document as an Evonic attachment."""
+        from models.db import db
+        agent_id = agent_id or self.agent_id
+        try:
+            cfg = db.get_agent_attachment_config(agent_id)
+            if not cfg.get('enabled'):
+                _logger.info("Skipping WhatsApp document for agent %s: attachments disabled",
+                             agent_id)
+                return None
+            max_bytes = cfg.get('max_size_mb', 10) * 1024 * 1024
+            if len(document_bytes) > max_bytes:
+                _logger.info(
+                    "Skipping WhatsApp document for agent %s: size %s exceeds %s bytes",
+                    agent_id, len(document_bytes), max_bytes)
+                return None
+
+            safe_name = _sanitize_attachment_filename(original_filename)
+            filename = f"{int(time.time())}_{safe_name}"
+            target_dir = os.path.join('data', 'attachments', agent_id, session_id)
+            os.makedirs(target_dir, exist_ok=True)
+            file_path = os.path.join(target_dir, filename)
+            with open(file_path, 'wb') as handle:
+                handle.write(document_bytes)
+            attachment_id = db.save_attachment(
+                agent_id=agent_id,
+                session_id=session_id,
+                filename=filename,
+                file_path=file_path,
+                external_user_id=external_user_id,
+                channel_id=self.channel_id,
+                channel_type='whatsapp',
+                original_filename=safe_name,
+                mime_type=mime_type,
+                file_type='document',
+                size_bytes=len(document_bytes),
+            )
+            _logger.info("WhatsApp document saved as attachment %s (%d bytes): %s",
+                         attachment_id, len(document_bytes), file_path)
+            return {
+                'attachment_id': attachment_id,
+                'filename': filename,
+                'original_filename': safe_name,
+                'mime_type': mime_type,
+                'size_bytes': len(document_bytes),
+                'file_path': file_path,
+            }
+        except Exception as exc:
+            _logger.error("Failed to persist WhatsApp document attachment: %s",
+                          exc, exc_info=True)
             return None
 
     def _clear_typing(self, external_user_id: str):
