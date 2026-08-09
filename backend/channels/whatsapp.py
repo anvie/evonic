@@ -121,6 +121,11 @@ def _is_status_broadcast(sender: str, jid: str) -> bool:
     return sender in {"status", "status@broadcast"} or jid == "status@broadcast"
 
 
+def _is_non_conversational_broadcast(sender: str, jid: str) -> bool:
+    """Return whether an inbound payload is a Status or Channel broadcast."""
+    return _is_status_broadcast(sender, jid) or jid.endswith('@newsletter')
+
+
 def _sanitize_attachment_filename(name: str) -> str:
     """Return a bounded path-safe filename for an inbound WhatsApp document."""
     basename = os.path.basename(str(name or '').replace('\\', '/'))
@@ -772,11 +777,11 @@ class WhatsAppChannel(BaseChannel):
         quoted_sender = payload.get('quoted_sender') or ''
         quoted_sender_name = payload.get('quoted_sender_name') or ''
 
-        # WhatsApp Status updates are broadcasts, not direct user messages.
-        # Routing them into an agent creates synthetic conversations and can
-        # pull workflow-specific agents away from their assigned domain.
-        if _is_status_broadcast(sender, jid):
-            _logger.info("WhatsApp status broadcast dropped (channel %s)",
+        # WhatsApp Status updates and Channel newsletters are broadcasts, not
+        # direct user messages. Routing them can create synthetic conversations
+        # or capture newsletter IDs as unassigned shared-channel senders.
+        if _is_non_conversational_broadcast(sender, jid):
+            _logger.info("WhatsApp broadcast/newsletter dropped (channel %s)",
                          self.channel_id)
             return
 
