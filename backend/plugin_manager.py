@@ -30,6 +30,8 @@ from backend.plugin_hooks import (  # noqa: F401
     # Turn Context Provider
     register_turn_context_provider, unregister_turn_context_provider,
     get_turn_context, apply_turn_context,
+    register_agent_state_summary_provider, unregister_agent_state_summary_provider,
+    get_agent_state_summaries,
     # Busy Message Provider
     register_busy_message_provider, unregister_busy_message_provider,
     get_busy_message,

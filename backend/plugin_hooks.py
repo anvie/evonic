@@ -243,6 +243,30 @@ def apply_turn_context(messages: list, tools: list, contexts: list) -> None:
     messages[1:1] = additions
 
 
+# Read-only plugin status shown in the chat Agent State panel.
+_agent_state_summary_providers: Dict[str, Callable] = {}
+
+
+def register_agent_state_summary_provider(namespace: str, fn: Callable) -> None:
+    _agent_state_summary_providers[namespace] = fn
+
+
+def unregister_agent_state_summary_provider(namespace: str) -> None:
+    _agent_state_summary_providers.pop(namespace, None)
+
+
+def get_agent_state_summaries(agent_id: str, session_id: str) -> dict:
+    summaries = {}
+    for namespace, provider in list(_agent_state_summary_providers.items()):
+        try:
+            summary = provider(agent_id, session_id)
+            if isinstance(summary, dict) and summary.get("state"):
+                summaries[namespace] = summary
+        except Exception:
+            _logger.exception("Plugin agent-state summary failed: %s", namespace)
+    return summaries
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Busy Message Provider Registry
 # ═══════════════════════════════════════════════════════════════════
@@ -388,4 +412,5 @@ def get_state_summary(agent_state) -> dict:
 def _get_all_registries():
     return (_tool_guards, _message_interceptors, _builtin_suppressors,
             _turn_context_providers, _busy_message_providers, _turn_gates,
-            _tool_result_gates, _attachment_policies)
+            _tool_result_gates, _attachment_policies,
+            _agent_state_summary_providers)
