@@ -1,4 +1,9 @@
-from backend.plugin_hooks import apply_turn_context
+from backend.plugin_hooks import (
+    apply_turn_context,
+    apply_user_message_transformers,
+    register_user_message_transformer,
+    unregister_user_message_transformer,
+)
 
 
 def test_turn_context_injects_prefill_before_history_and_deduplicates_tools():
@@ -51,3 +56,43 @@ def test_turn_context_validates_types_roles_and_size_limits():
     assert injected[0] == {"role": "system", "content": "s" * 32000}
     assert injected[1] == {"role": "user", "content": "m" * 16000}
     assert injected[-1] == {"role": "assistant", "content": "reply-6"}
+
+
+def test_user_message_transformers_only_change_newest_user_text_parts():
+    messages = [
+        {"role": "system", "content": "core"},
+        {"role": "user", "content": "old request"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": [
+            {"type": "text", "text": "new request"},
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,x"}},
+        ]},
+    ]
+    register_user_message_transformer("first", lambda _a, _s, text: text.upper())
+    register_user_message_transformer("second", lambda _a, _s, text: f"[{text}]")
+    try:
+        assert apply_user_message_transformers("agent", "session", messages)
+    finally:
+        unregister_user_message_transformer("first")
+        unregister_user_message_transformer("second")
+
+    assert messages[1]["content"] == "old request"
+    assert messages[-1]["content"] == [
+        {"type": "text", "text": "[NEW REQUEST]"},
+        {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,x"}},
+    ]
+
+
+def test_user_message_transformer_errors_fail_open(caplog):
+    def broken(_agent_id, _session_id, _text):
+        raise RuntimeError("broken")
+
+    messages = [{"role": "user", "content": "unchanged"}]
+    register_user_message_transformer("broken", broken)
+    try:
+        assert not apply_user_message_transformers("agent", "session", messages)
+    finally:
+        unregister_user_message_transformer("broken")
+
+    assert messages[0]["content"] == "unchanged"
+    assert "Plugin user-message transformer failed: broken" in caplog.text

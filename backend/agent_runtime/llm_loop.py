@@ -992,6 +992,8 @@ def run_tool_loop(agent: Dict[str, Any],
             if injected_parts:
                 merged = "\n\n".join(injected_parts)
                 messages.append({"role": "user", "content": merged})
+                from backend.plugin_manager import apply_user_message_transformers
+                apply_user_message_transformers(agent_id, session_id, messages)
                 # Reset iteration counter so injected tasks (e.g. next kanban task in
                 # autopilot mode) each get a fresh budget instead of sharing the counter
                 # with the previous task. Capped at MAX_INJECTIONS_PER_LOOP to prevent

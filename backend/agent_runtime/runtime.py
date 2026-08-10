@@ -36,7 +36,12 @@ from backend.agent_state import AgentState
 from backend.channels.registry import channel_manager
 from backend.channels.base import BaseChannel
 from backend.event_stream import event_stream
-from backend.plugin_manager import get_busy_message, get_turn_context, apply_turn_context
+from backend.plugin_manager import (
+    apply_turn_context,
+    apply_user_message_transformers,
+    get_busy_message,
+    get_turn_context,
+)
 from backend.slash_commands import parse_command, execute_command
 from backend.agent_runtime.prefetch import TurnPrefetcher
 import atexit
@@ -2334,6 +2339,10 @@ class AgentRuntime:
                 )
                 if not _already_injected:
                     messages.insert(1, {"role": "system", "content": _long_gap_ctx})
+
+        # Plugin transforms are ephemeral: state/CMP saw the original text, while
+        # only the provider-bound message copy is changed.
+        apply_user_message_transformers(agent_id, ctx.session_id, messages)
 
         # Apply preference wrapper prefix to user messages if enabled
         _apply_wrapper_prefix(messages, _should_wrap_user_message(agent),

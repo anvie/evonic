@@ -1,5 +1,5 @@
 """
-Plugin Hooks — six hook registries for extending agent behavior.
+Plugin Hooks — registries for extending agent behavior.
 
 Tool Guards, Message Interceptors, Turn Context Providers, Busy Message
 Providers, Builtin Suppressors, and State Handlers — all live here as
@@ -180,6 +180,62 @@ def run_message_interceptors(agent_id: str, content: str, messages: list) -> lis
 
 
 # ═══════════════════════════════════════════════════════════════════
+# User Message Transformer Registry
+# ═══════════════════════════════════════════════════════════════════
+
+_user_message_transformers: Dict[str, Callable] = {}
+
+
+def register_user_message_transformer(namespace: str, fn: Callable) -> None:
+    """Register a named transformer for the newest user message."""
+    _user_message_transformers[namespace] = fn
+
+
+def unregister_user_message_transformer(namespace: str) -> None:
+    _user_message_transformers.pop(namespace, None)
+
+
+def apply_user_message_transformers(agent_id: str, session_id: str,
+                                    messages: list) -> bool:
+    """Transform only the newest user message, preserving non-text media parts."""
+    target = next(
+        (message for message in reversed(messages)
+         if isinstance(message, dict) and message.get("role") == "user"),
+        None,
+    )
+    if target is None:
+        return False
+
+    changed = False
+
+    def transform(text: str) -> str:
+        nonlocal changed
+        current = text
+        for namespace, fn in list(_user_message_transformers.items()):
+            try:
+                result = fn(agent_id, session_id, current)
+                if isinstance(result, str):
+                    changed = changed or result != current
+                    current = result
+            except Exception:
+                _logger.exception("Plugin user-message transformer failed: %s", namespace)
+        return current
+
+    content = target.get("content")
+    if isinstance(content, str):
+        target["content"] = transform(content)
+    elif isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" \
+                    and isinstance(part.get("text"), str):
+                part = {**part, "text": transform(part["text"])}
+            parts.append(part)
+        target["content"] = parts
+    return changed
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Turn Context Provider Registry
 # ═══════════════════════════════════════════════════════════════════
 # Plugins can supply tools + system messages that should be present at the start of
@@ -213,7 +269,7 @@ def get_turn_context(agent_id: str, session_id: str) -> list:
             if ctx:
                 results.append(ctx)
         except Exception:
-            pass
+            _logger.exception("Plugin turn-context provider failed")
     return results
 
 
@@ -413,4 +469,4 @@ def _get_all_registries():
     return (_tool_guards, _message_interceptors, _builtin_suppressors,
             _turn_context_providers, _busy_message_providers, _turn_gates,
             _tool_result_gates, _attachment_policies,
-            _agent_state_summary_providers)
+            _agent_state_summary_providers, _user_message_transformers)

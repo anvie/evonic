@@ -27,6 +27,8 @@ from backend.plugin_hooks import (  # noqa: F401
     # Message Interceptor
     register_message_interceptor, unregister_message_interceptor,
     run_message_interceptors,
+    register_user_message_transformer, unregister_user_message_transformer,
+    apply_user_message_transformers,
     # Turn Context Provider
     register_turn_context_provider, unregister_turn_context_provider,
     get_turn_context, apply_turn_context,
