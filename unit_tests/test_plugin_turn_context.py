@@ -58,6 +58,29 @@ def test_turn_context_validates_types_roles_and_size_limits():
     assert injected[-1] == {"role": "assistant", "content": "reply-6"}
 
 
+def test_turn_context_system_modes_preserve_append_or_replace_request_prompt():
+    preserve = [{"role": "system", "content": "core"},
+                {"role": "user", "content": "request"}]
+    apply_turn_context(preserve, [], [{
+        "system_md": "plugin", "system_mode": "preserve",
+        "prefill_messages": [{"role": "assistant", "content": "primed"}],
+    }])
+    assert preserve == [
+        {"role": "system", "content": "core"},
+        {"role": "assistant", "content": "primed"},
+        {"role": "user", "content": "request"},
+    ]
+
+    append = [{"role": "system", "content": "core"}]
+    apply_turn_context(append, [], [{"system_md": "plugin", "system_mode": "append"}])
+    assert [message["content"] for message in append] == ["core", "plugin"]
+
+    replace = [{"role": "system", "content": "core"},
+               {"role": "user", "content": "request"}]
+    apply_turn_context(replace, [], [{"system_md": "plugin", "system_mode": "replace"}])
+    assert [message["content"] for message in replace] == ["plugin", "request"]
+
+
 def test_user_message_transformers_only_change_newest_user_text_parts():
     messages = [
         {"role": "system", "content": "core"},

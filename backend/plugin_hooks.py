@@ -243,6 +243,7 @@ def apply_user_message_transformers(agent_id: str, session_id: str,
 #   provider(agent_id: str, session_id: str) -> Optional[dict]
 # Return None to skip, or:
 #   {"id": "x", "tools": [...tool_defs...], "system_md": "...",
+#    "system_mode": "preserve|append|replace",
 #    "prefill_messages": [{"role": "user|assistant", "content": "..."}]}
 
 _turn_context_providers: list = []
@@ -276,13 +277,18 @@ def get_turn_context(agent_id: str, session_id: str) -> list:
 def apply_turn_context(messages: list, tools: list, contexts: list) -> None:
     """Apply validated, ephemeral plugin context before conversation history."""
     additions = []
+    replacement = None
     known_tools = {t.get("function", {}).get("name") for t in tools}
     for ctx in contexts:
         if not isinstance(ctx, dict):
             continue
         system_md = ctx.get("system_md")
         if isinstance(system_md, str) and system_md.strip():
-            additions.append({"role": "system", "content": system_md[:32000]})
+            mode = ctx.get("system_mode", "append")
+            if mode == "replace":
+                replacement = system_md[:32000]
+            elif mode != "preserve":
+                additions.append({"role": "system", "content": system_md[:32000]})
         prefill = ctx.get("prefill_messages")
         if isinstance(prefill, list):
             for msg in prefill[:8]:
@@ -296,6 +302,13 @@ def apply_turn_context(messages: list, tools: list, contexts: list) -> None:
             if name and name not in known_tools:
                 tools.append(tool)
                 known_tools.add(name)
+    if replacement is not None:
+        system = next((message for message in messages
+                       if isinstance(message, dict) and message.get("role") == "system"), None)
+        if system is None:
+            messages.insert(0, {"role": "system", "content": replacement})
+        else:
+            system["content"] = replacement
     messages[1:1] = additions
 
 
