@@ -179,6 +179,32 @@ def run_message_interceptors(agent_id: str, content: str, messages: list) -> lis
     return injections
 
 
+# Final-response handlers run before a no-tool response becomes visible or is
+# persisted. A handler may accept the response, replace its content, or request
+# one ephemeral provider retry with a revised message list.
+_final_response_handlers: Dict[str, Callable] = {}
+
+
+def register_final_response_handler(namespace: str, fn: Callable) -> None:
+    _final_response_handlers[namespace] = fn
+
+
+def unregister_final_response_handler(namespace: str) -> None:
+    _final_response_handlers.pop(namespace, None)
+
+
+def run_final_response_handlers(context: dict) -> Optional[dict]:
+    for namespace, handler in list(_final_response_handlers.items()):
+        try:
+            result = handler(context)
+            if isinstance(result, dict) and (
+                    result.get("retry") or isinstance(result.get("content"), str)):
+                return {**result, "namespace": namespace}
+        except Exception:
+            _logger.exception("Plugin final-response handler failed: %s", namespace)
+    return None
+
+
 # ═══════════════════════════════════════════════════════════════════
 # User Message Transformer Registry
 # ═══════════════════════════════════════════════════════════════════
@@ -482,4 +508,5 @@ def _get_all_registries():
     return (_tool_guards, _message_interceptors, _builtin_suppressors,
             _turn_context_providers, _busy_message_providers, _turn_gates,
             _tool_result_gates, _attachment_policies,
-            _agent_state_summary_providers, _user_message_transformers)
+            _agent_state_summary_providers, _user_message_transformers,
+            _final_response_handlers)

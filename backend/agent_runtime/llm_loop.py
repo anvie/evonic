@@ -449,6 +449,7 @@ def run_tool_loop(agent: Dict[str, Any],
     # disable later automatic transitions for unrelated implementation tools.
     _successful_mutation = False
     _tool_errors = False
+    _plugin_response_retry_count = 0
 
     def _is_mutating_tool(tool_name: str) -> bool:
         """Return whether a tool represents implementation work."""
@@ -1835,18 +1836,13 @@ def run_tool_loop(agent: Dict[str, Any],
             })
             continue
 
-        if content:
-            is_final = not bool(tool_calls)
-            # [DONE] is an internal nudge-response signal — never user-visible.
-            if content.strip() != "[DONE]":
-                event_stream.emit('llm_response_chunk', {
-                    'agent_id': agent_id, 'session_id': session_id,
-                    'external_user_id': external_user_id, 'channel_id': channel_id,
-                    'content': content, 'is_final': is_final,
-                    # Signal frontend to also render a standalone bubble for intermediate
-                    # responses when send_intermediate_responses is enabled on the agent.
-                    'send_as_message': is_final or bool(agent.get('send_intermediate_responses')),
-                })
+        if tool_calls and content and content.strip() != "[DONE]":
+            event_stream.emit('llm_response_chunk', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': external_user_id, 'channel_id': channel_id,
+                'content': content, 'is_final': False,
+                'send_as_message': bool(agent.get('send_intermediate_responses')),
+            })
 
         if not tool_calls:
             # Treat trivial single-character/punctuation-only responses (e.g. ">", "<")
@@ -1907,6 +1903,52 @@ def run_tool_loop(agent: Dict[str, Any],
             # Normalize "[No response needed]" variants to empty to suppress sending
             if content and content.strip().lower().startswith("[no response"):
                 content = ""
+
+            # Let plugins evaluate a final response before it is streamed or
+            # persisted. Revised messages remain ephemeral to this provider loop.
+            from backend.plugin_manager import run_final_response_handlers
+            _response_decision = run_final_response_handlers({
+                'agent_id': agent_id,
+                'session_id': session_id,
+                'content': content,
+                'messages': messages,
+                'provider': _request.provider,
+                'model': _request.model,
+                'retry_count': _plugin_response_retry_count,
+            })
+            if _response_decision:
+                _response_event = _response_decision.get('timeline')
+                if isinstance(_response_event, dict):
+                    timeline.append({
+                        'type': 'plugin_response_evaluation',
+                        'plugin': _response_decision.get('namespace'),
+                        **_response_event,
+                    })
+                _replacement = _response_decision.get('content')
+                if isinstance(_replacement, str):
+                    content = _replacement
+                _retry_messages = _response_decision.get('messages')
+                if (_response_decision.get('retry')
+                        and _plugin_response_retry_count < 2
+                        and isinstance(_retry_messages, list)
+                        and all(isinstance(message, dict) for message in _retry_messages)):
+                    messages[:] = _retry_messages
+                    _plugin_response_retry_count += 1
+                    event_stream.emit('plugin_response_retry', {
+                        'agent_id': agent_id, 'session_id': session_id,
+                        'external_user_id': external_user_id, 'channel_id': channel_id,
+                        'plugin': _response_decision.get('namespace'),
+                        'attempt': _plugin_response_retry_count,
+                    })
+                    continue
+
+            if content and content.strip() != "[DONE]":
+                event_stream.emit('llm_response_chunk', {
+                    'agent_id': agent_id, 'session_id': session_id,
+                    'external_user_id': external_user_id, 'channel_id': channel_id,
+                    'content': content, 'is_final': True,
+                    'send_as_message': True,
+                })
 
             # Run interceptors before committing the final answer.
             # Plugins (e.g. kanban) can inspect the content and inject a

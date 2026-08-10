@@ -1,7 +1,10 @@
 from backend.plugin_hooks import (
     apply_turn_context,
     apply_user_message_transformers,
+    register_final_response_handler,
     register_user_message_transformer,
+    run_final_response_handlers,
+    unregister_final_response_handler,
     unregister_user_message_transformer,
 )
 
@@ -119,3 +122,35 @@ def test_user_message_transformer_errors_fail_open(caplog):
 
     assert messages[0]["content"] == "unchanged"
     assert "Plugin user-message transformer failed: broken" in caplog.text
+
+
+def test_final_response_handler_can_retry_replace_or_fail_open(caplog):
+    register_final_response_handler(
+        "retry", lambda context: {
+            "retry": True,
+            "messages": context["messages"] + [{"role": "user", "content": "retry"}],
+        })
+    try:
+        decision = run_final_response_handlers({
+            "content": "refused", "messages": [{"role": "user", "content": "request"}],
+        })
+        assert decision["namespace"] == "retry"
+        assert decision["messages"][-1]["content"] == "retry"
+    finally:
+        unregister_final_response_handler("retry")
+
+    register_final_response_handler("replace", lambda _context: {"content": "accepted"})
+    try:
+        assert run_final_response_handlers({})["content"] == "accepted"
+    finally:
+        unregister_final_response_handler("replace")
+
+    def broken(_context):
+        raise RuntimeError("broken")
+
+    register_final_response_handler("broken", broken)
+    try:
+        assert run_final_response_handlers({}) is None
+    finally:
+        unregister_final_response_handler("broken")
+    assert "Plugin final-response handler failed: broken" in caplog.text
