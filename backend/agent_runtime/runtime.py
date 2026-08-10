@@ -36,7 +36,7 @@ from backend.agent_state import AgentState
 from backend.channels.registry import channel_manager
 from backend.channels.base import BaseChannel
 from backend.event_stream import event_stream
-from backend.plugin_manager import get_busy_message
+from backend.plugin_manager import get_busy_message, get_turn_context, apply_turn_context
 from backend.slash_commands import parse_command, execute_command
 from backend.agent_runtime.prefetch import TurnPrefetcher
 import atexit
@@ -1740,7 +1740,7 @@ class AgentRuntime:
             system_prompt = _prefetch.system_prompt
             tools = _prefetch.tools
             # Use prefetched messages as the base, then append fresh user message below
-            messages = _prefetch.messages
+            messages = list(_prefetch.messages)
             # Skip the heavy build phase — tools and system_prompt are already ready
             _tools_prebuilt = tools
             _agent_ctx_prebuilt = _prefetch.agent_context
@@ -2129,6 +2129,10 @@ class AgentRuntime:
                 'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
                 'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
             }
+
+        apply_turn_context(
+            messages, tools, get_turn_context(agent_id, ctx.session_id),
+        )
         _last_user = chatlog.get_last_entry(types=frozenset({'user'}))
         assigned_tool_ids, tools = _apply_restart_origin_guard(
             agent_context, assigned_tool_ids, tools,

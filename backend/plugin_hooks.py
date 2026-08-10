@@ -186,7 +186,8 @@ def run_message_interceptors(agent_id: str, content: str, messages: list) -> lis
 # each agent turn. Providers are called once per _run_tool_loop call.
 #   provider(agent_id: str, session_id: str) -> Optional[dict]
 # Return None to skip, or:
-#   {"id": "x", "tools": [...tool_defs...], "system_md": "..."}
+#   {"id": "x", "tools": [...tool_defs...], "system_md": "...",
+#    "prefill_messages": [{"role": "user|assistant", "content": "..."}]}
 
 _turn_context_providers: list = []
 
@@ -214,6 +215,32 @@ def get_turn_context(agent_id: str, session_id: str) -> list:
         except Exception:
             pass
     return results
+
+
+def apply_turn_context(messages: list, tools: list, contexts: list) -> None:
+    """Apply validated, ephemeral plugin context before conversation history."""
+    additions = []
+    known_tools = {t.get("function", {}).get("name") for t in tools}
+    for ctx in contexts:
+        if not isinstance(ctx, dict):
+            continue
+        system_md = ctx.get("system_md")
+        if isinstance(system_md, str) and system_md.strip():
+            additions.append({"role": "system", "content": system_md[:32000]})
+        prefill = ctx.get("prefill_messages")
+        if isinstance(prefill, list):
+            for msg in prefill[:8]:
+                if not isinstance(msg, dict) or msg.get("role") not in {"user", "assistant"}:
+                    continue
+                content = msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    additions.append({"role": msg["role"], "content": content[:16000]})
+        for tool in ctx.get("tools") or []:
+            name = tool.get("function", {}).get("name") if isinstance(tool, dict) else None
+            if name and name not in known_tools:
+                tools.append(tool)
+                known_tools.add(name)
+    messages[1:1] = additions
 
 
 # ═══════════════════════════════════════════════════════════════════

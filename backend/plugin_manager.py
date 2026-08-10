@@ -29,7 +29,7 @@ from backend.plugin_hooks import (  # noqa: F401
     run_message_interceptors,
     # Turn Context Provider
     register_turn_context_provider, unregister_turn_context_provider,
-    get_turn_context,
+    get_turn_context, apply_turn_context,
     # Busy Message Provider
     register_busy_message_provider, unregister_busy_message_provider,
     get_busy_message,
