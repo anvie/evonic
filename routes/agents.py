@@ -2026,7 +2026,14 @@ def api_chat_agent_state(agent_id):
         background_processes = []
         try:
             from backend.agent_runtime.background_jobs import background_jobs
-            for j in background_jobs.list_for_session(session_id):
+            jobs = background_jobs.list_for_session(session_id)
+            # Only hit the schedules table when there is something to annotate —
+            # this endpoint is polled by the browser.
+            watched = set()
+            if jobs:
+                from backend.agent_runtime import monitors
+                watched = monitors.monitored_job_ids(agent_id, session_id)
+            for j in jobs:
                 background_processes.append({
                     'job_id': j.job_id,
                     'command': j.command,
@@ -2037,6 +2044,7 @@ def api_chat_agent_state(agent_id):
                     'finished_at': j.finished_at,
                     'log_file': j.log_file,
                     'session_id': j.session_id,
+                    'monitored': j.job_id in watched,
                 })
         except Exception:
             pass

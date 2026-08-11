@@ -592,15 +592,20 @@ class Scheduler:
                 action_summary = f"{method} {url} -> {status_code}"
                 if resp_body:
                     action_output = resp_body
-            elif action_type == 'poll_background_job':
-                from backend.agent_runtime.background_jobs import run_poll_action
-                result = run_poll_action(action_config)
-                action_summary = (f"poll '{action_config.get('command', '?')}': "
+            elif action_type == 'poll_monitor':
+                from backend.agent_runtime.monitors import run_monitor_poll
+                result = run_monitor_poll(action_config)
+                action_summary = (f"monitor '{action_config.get('command', '?')}': "
                                   f"{result.get('state', '?')}")
                 if result.get('done'):
-                    # Job finished (or timed out) — agent already notified.
-                    # Self-delete so the interval stops running.
+                    # Monitor resolved (fired, ended, or expired) and the agent
+                    # was notified. Self-delete so the interval stops running.
                     _cancel_after = schedule_id
+            elif action_type == 'poll_background_job':
+                # Legacy auto-watch rows left in SQLite from before background
+                # processes became opt-in. Drain them silently on first tick.
+                action_summary = 'legacy background-job poll: removed'
+                _cancel_after = schedule_id
             else:
                 log.warning("Unknown action_type '%s' for %s",
                             action_type, schedule_id)
@@ -698,13 +703,13 @@ class Scheduler:
             'action_type': action_type, 'fired_at': fired_at,
         })
 
-        # Self-cleanup for finished background-job polls — runs last so the
+        # Self-cleanup for resolved monitors — runs last so the
         # row updates above don't touch an already-deleted schedule.
         if _cancel_after:
             try:
                 self.cancel_schedule(_cancel_after)
             except Exception as e:
-                log.warning("poll_background_job %s: self-cancel failed: %s",
+                log.warning("monitor %s: self-cancel failed: %s",
                             _cancel_after, e)
 
     def _action_emit_event(self, config: dict):
