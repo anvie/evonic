@@ -287,6 +287,69 @@ def build_manual_status_script(kind: str, session_name: str, pid_file: str,
             f'&& echo "RUNNING" || echo "DONE"')
 
 
+# Max jobs listed in the per-turn context block; the rest collapse to a count.
+_MAX_IN_CONTEXT = 8
+# Command chars kept per line — the full text stays in the Session State panel.
+_CONTEXT_CMD_CHARS = 70
+
+
+def _age(seconds: float) -> str:
+    secs = int(max(0, seconds))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
+
+
+def build_context_block(session_id: str, agent_id: str) -> str:
+    """Per-turn context block listing this session's running background jobs.
+
+    The registry is otherwise invisible to the agent: the ``background_job``
+    field on a bash result is seen once, at spawn time, and slash command output
+    never enters LLM context. Without this block the agent forgets processes it
+    started and leaves them to go stale.
+
+    Returns "" when nothing is running, so a session with no jobs pays nothing.
+    Status is whatever was last recorded — deliberately not refreshed here, as
+    that costs a shell round-trip per turn (see :func:`refresh_statuses`).
+    """
+    jobs = sorted(background_jobs.running_for_session(session_id),
+                  key=lambda j: j.started_at)
+    if not jobs:
+        return ""
+
+    try:
+        from backend.agent_runtime import monitors
+        watched = monitors.monitored_job_ids(agent_id, session_id)
+    except Exception as e:
+        _logger.warning("[bgjob] monitor lookup for context block failed: %s", e)
+        watched = set()
+
+    now = time.time()
+    lines = []
+    for j in jobs[:_MAX_IN_CONTEXT]:
+        cmd = " ".join((j.command or "").split())
+        if len(cmd) > _CONTEXT_CMD_CHARS:
+            cmd = cmd[:_CONTEXT_CMD_CHARS - 1] + "…"
+        flag = "monitored" if j.job_id in watched else "unmonitored"
+        lines.append(f"- `{j.job_id}` · {_age(now - j.started_at)} · {flag} — {cmd}")
+    if len(jobs) > _MAX_IN_CONTEXT:
+        lines.append(f"- …and {len(jobs) - _MAX_IN_CONTEXT} more")
+
+    plural = "es" if len(jobs) != 1 else ""
+    return (
+        "## Background Processes\n\n"
+        f"{len(jobs)} process{plural} you started {'are' if len(jobs) != 1 else 'is'} "
+        "still running in this session:\n\n"
+        + "\n".join(lines) +
+        "\n\nThese keep running until killed. If a process no longer matters, kill "
+        "it. If its outcome matters, attach a monitor — nothing will notify you "
+        "otherwise. Status is from the last check, not live; verify with bash if "
+        "it matters."
+    )
+
+
 def refresh_statuses(session_id: str, agent: dict) -> None:
     """Probe every running job of a session in one round-trip; update statuses.
 
