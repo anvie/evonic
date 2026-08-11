@@ -160,10 +160,35 @@ def parse_wrapper_script(script: str) -> Optional[dict]:
     }
 
 
-_TMUX_SPAWN_RE = re.compile(r'\btmux\s+(?:new-session|new)\b([^\n;|&]*)')
-_SCREEN_SPAWN_RE = re.compile(r'\bscreen\s+([^\n;|&]*)')
+_TMUX_SPAWN_RE = re.compile(r'\btmux\s+(?:new-session|new)\b(.*)', re.DOTALL)
+_SCREEN_SPAWN_RE = re.compile(r'\bscreen\s+(.*)', re.DOTALL)
 _NOHUP_LINE_RE = re.compile(r'^\s*nohup\s+(.+)$', re.MULTILINE)
 _PID_CAPTURE_RE = re.compile(r'echo\s+\$!\s*>>?\s*(\S+)')
+
+
+def _trim_unquoted(text: str) -> str:
+    """Cut ``text`` at the first ``;``/``|``/``&``/newline outside quotes.
+
+    Those metacharacters end the spawn only when the shell sees them — inside a
+    quoted argument they belong to the command being run, and cutting on them
+    truncates the command mid-string.
+    """
+    quote = ''
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == '\\' and quote != "'":
+            i += 2  # escaped char (backslash is literal inside single quotes)
+            continue
+        if quote:
+            if ch == quote:
+                quote = ''
+        elif ch in '"\'':
+            quote = ch
+        elif ch in ';|&\n':
+            return text[:i]
+        i += 1
+    return text
 
 
 def parse_manual_spawn(script: str) -> Optional[dict]:
@@ -185,7 +210,7 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
     # tmux new-session -d -s NAME 'cmd'
     m = _TMUX_SPAWN_RE.search(script)
     if m:
-        seg = m.group(1)
+        seg = _trim_unquoted(m.group(1))
         detached = re.search(r'\s-[A-Za-z]*d', ' ' + seg)
         name_m = re.search(r'-[A-Za-z]*s\s+["\']?([^\s"\';|&]+)', seg)
         if detached and name_m:
@@ -195,13 +220,13 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
                 "log_file": "",
                 "pid_file": "",
                 "pgrep_pattern": "",
-                "command": m.group(0).strip()[:1000],
+                "command": (script[m.start():m.start(1)] + seg).strip()[:1000],
             }
 
     # screen -dmS NAME cmd  (or -d -m -S NAME)
     m = _SCREEN_SPAWN_RE.search(script)
     if m:
-        seg = m.group(1)
+        seg = _trim_unquoted(m.group(1))
         name_m = re.search(r'-(?:[A-Za-z]*S)\s+["\']?([^\s"\';|&]+)', seg)
         detached = '-dmS' in seg or ('-d' in seg and '-m' in seg)
         if detached and name_m:
@@ -211,7 +236,7 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
                 "log_file": "",
                 "pid_file": "",
                 "pgrep_pattern": "",
-                "command": m.group(0).strip()[:1000],
+                "command": (script[m.start():m.start(1)] + seg).strip()[:1000],
             }
 
     # nohup CMD [> log 2>&1] &  [echo $! > pidfile]
