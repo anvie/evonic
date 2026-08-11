@@ -4,7 +4,7 @@ panel_add_action — add a new action button to an agent's panel.
 
 import json
 
-from plugins.panel.db import PanelDB
+from plugins.panel.db import PanelDB, validate_slash_command
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -20,6 +20,7 @@ def execute(agent: dict, args: dict) -> dict:
         content: Script body or prompt text.
         params: Array of parameter definitions (optional, default []).
         sort_order: Display order position (optional, default 0).
+        slash_command: Chat slash command that runs this action (optional).
 
     Returns:
         {success: true, action: {...}} on success
@@ -32,6 +33,7 @@ def execute(agent: dict, args: dict) -> dict:
     params = args.get("params")
     sort_order = args.get("sort_order")
     confirm_dialog = args.get("confirm_dialog", False)
+    slash_command = args.get("slash_command", "")
 
     # ── authorization ──────────────────────────────────────────
     caller_id = agent.get("id", "")
@@ -86,6 +88,11 @@ def execute(agent: dict, args: dict) -> dict:
         except (ValueError, TypeError):
             return {"success": False, "error": "sort_order must be an integer."}
 
+    # ── slash command ──────────────────────────────────────────
+    slash_command, slash_error = validate_slash_command(agent_id, slash_command)
+    if slash_error:
+        return {"success": False, "error": slash_error}
+
     # ── create action ──────────────────────────────────────────
     try:
         db = PanelDB(agent_id)
@@ -96,6 +103,7 @@ def execute(agent: dict, args: dict) -> dict:
             params=params_str,
             sort_order=sort_order,
             confirm_dialog=confirm_dialog,
+            slash_command=slash_command,
         )
         try:
             from backend.event_stream import event_stream

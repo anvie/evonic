@@ -9,6 +9,7 @@ SQLite is authoritative — file log is best-effort.
 import sqlite3
 import os
 import json
+import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Generator, Optional, Dict, Any, List
@@ -74,6 +75,7 @@ class PanelDB:
                     sort_order      INTEGER NOT NULL DEFAULT 0,
                     enabled         INTEGER NOT NULL DEFAULT 1,
                     confirm_dialog  INTEGER NOT NULL DEFAULT 0,
+                    slash_command   TEXT NOT NULL DEFAULT '',
                     created_at      TEXT NOT NULL,
                     updated_at      TEXT NOT NULL
                 )
@@ -81,6 +83,11 @@ class PanelDB:
             # Migration: add confirm_dialog column for existing databases
             try:
                 conn.execute("ALTER TABLE panel_actions ADD COLUMN confirm_dialog INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            # Migration: add slash_command column for existing databases
+            try:
+                conn.execute("ALTER TABLE panel_actions ADD COLUMN slash_command TEXT NOT NULL DEFAULT ''")
             except Exception:
                 pass
             conn.execute("""
@@ -128,7 +135,8 @@ class PanelDB:
 
     def add_action(self, label: str, action_type: str, content: str = '',
                    params: str = '[]', sort_order: int = 0,
-                   enabled: bool = True, confirm_dialog: bool = False) -> Dict[str, Any]:
+                   enabled: bool = True, confirm_dialog: bool = False,
+                   slash_command: str = '') -> Dict[str, Any]:
         """Create a new action. Returns the created row as a dict."""
         if action_type not in self.VALID_ACTION_TYPES:
             raise ValueError(f"Invalid action_type: {action_type!r}. Must be one of {self.VALID_ACTION_TYPES}")
@@ -139,9 +147,10 @@ class PanelDB:
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO panel_actions
-                   (agent_id, label, action_type, content, params, sort_order, enabled, confirm_dialog, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (self.agent_id, label, action_type, content, params, sort_order, enabled_int, confirm_int, now, now)
+                   (agent_id, label, action_type, content, params, sort_order, enabled, confirm_dialog, slash_command, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (self.agent_id, label, action_type, content, params, sort_order, enabled_int, confirm_int,
+                 slash_command or '', now, now)
             )
             row = conn.execute(
                 "SELECT * FROM panel_actions WHERE id = ?", (cursor.lastrowid,)
@@ -151,9 +160,11 @@ class PanelDB:
     def update_action(self, action_id: int, **fields) -> Optional[Dict[str, Any]]:
         """Update an action. Supports partial updates. Returns the updated row.
 
-        Allowed fields: label, action_type, content, params, sort_order, enabled.
+        Allowed fields: label, action_type, content, params, sort_order, enabled,
+        confirm_dialog, slash_command.
         """
-        allowed = {'label', 'action_type', 'content', 'params', 'sort_order', 'enabled', 'confirm_dialog'}
+        allowed = {'label', 'action_type', 'content', 'params', 'sort_order', 'enabled',
+                   'confirm_dialog', 'slash_command'}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return self.get_action(action_id)
@@ -181,6 +192,20 @@ class PanelDB:
             )
             row = conn.execute(
                 "SELECT * FROM panel_actions WHERE id = ?", (action_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def find_by_slash_command(self, name: str) -> Optional[Dict[str, Any]]:
+        """Return the enabled action assigned to `name`, or None."""
+        name = (name or '').strip().lower()
+        if not name:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM panel_actions
+                   WHERE agent_id = ? AND enabled = 1 AND LOWER(slash_command) = ?
+                   ORDER BY sort_order ASC, id ASC LIMIT 1""",
+                (self.agent_id, name)
             ).fetchone()
             return dict(row) if row else None
 
@@ -252,3 +277,40 @@ class PanelDB:
 def panel_db_factory(agent_id: str) -> PanelDB:
     """Return a PanelDB instance for the given agent_id."""
     return PanelDB(agent_id)
+
+
+SLASH_COMMAND_RE = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
+
+
+def validate_slash_command(agent_id: str, name: str,
+                           exclude_action_id: Optional[int] = None) -> tuple:
+    """Normalize and validate a slash command name for a panel action.
+
+    Returns (normalized_name, error). An empty name is valid — it clears the
+    assignment. Rejects bad syntax, built-in command names, and names already
+    taken by another action of the same agent.
+    """
+    name = (name or '').strip().lstrip('/').lower()
+    if not name:
+        return '', None
+
+    if not SLASH_COMMAND_RE.match(name):
+        return None, (f"Invalid slash_command '{name}'. Use 1-32 characters: a lowercase "
+                      "letter followed by lowercase letters, digits, '-' or '_'.")
+
+    try:
+        from backend.slash_commands import command_registry
+        if command_registry.get(name):
+            return None, (f"'/{name}' is a built-in command and cannot be assigned "
+                          "to a panel action.")
+    except Exception:
+        pass
+
+    # Disabled actions still reserve their name, so re-enabling can't create a duplicate.
+    existing = next((a for a in PanelDB(agent_id).list_actions()
+                     if (a.get('slash_command') or '').lower() == name), None)
+    if existing and existing['id'] != exclude_action_id:
+        return None, (f"'/{name}' is already assigned to the panel action "
+                      f"'{existing['label']}' (id {existing['id']}).")
+
+    return name, None

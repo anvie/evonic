@@ -41,18 +41,47 @@ class SlashCommandRegistry:
 
     def __init__(self):
         self._commands: Dict[str, SlashCommand] = {}
+        self._providers: Dict[str, Callable[[str], list]] = {}
 
     def register(self, name: str, handler: CommandHandler, description: str = "", parameters: list = None):
         """Register a command handler."""
         self._commands[name] = SlashCommand(name, handler, description, parameters)
 
+    def register_provider(self, key: str, provider: Callable[[str], list]):
+        """Register a per-agent command provider.
+
+        `provider(agent_id)` returns a list of SlashCommand objects that exist only
+        for that agent (e.g. panel actions with an assigned slash command).
+        Statically registered commands always win on a name clash.
+        """
+        self._providers[key] = provider
+
     def get(self, name: str) -> Optional[SlashCommand]:
-        """Get a command by name."""
+        """Get a statically registered command by name."""
         return self._commands.get(name)
 
     def list_commands(self) -> list:
-        """Return list of SlashCommand objects."""
+        """Return list of statically registered SlashCommand objects."""
         return list(self._commands.values())
+
+    def provided_commands(self, agent_id: str) -> list:
+        """Return provider commands for an agent, minus any static name clash."""
+        out = []
+        for key, provider in list(self._providers.items()):
+            try:
+                for cmd in provider(agent_id) or []:
+                    if cmd.name not in self._commands:
+                        out.append(cmd)
+            except Exception:
+                _logger.warning("Slash command provider %r failed for agent %s", key, agent_id, exc_info=True)
+        return out
+
+    def resolve(self, name: str, agent_id: str) -> Optional[SlashCommand]:
+        """Get a command by name for an agent — static first, then providers."""
+        cmd = self._commands.get(name)
+        if cmd:
+            return cmd
+        return next((c for c in self.provided_commands(agent_id) if c.name == name), None)
 
 
 def _expand_slash_list(raw_value: str, all_names: set) -> set:
@@ -95,7 +124,7 @@ def _persist_session_agent_state(chat_db, session_id: str, ms) -> None:
 
 def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> list:
     """Return registered commands available to an agent on the given channel."""
-    commands = command_registry.list_commands()
+    commands = command_registry.list_commands() + command_registry.provided_commands(agent_id)
     try:
         from models.db import db
         super_agent = db.get_super_agent()
@@ -176,7 +205,7 @@ def execute_command(
     Returns the command response string, or None if the command is not found
     (caller should then treat the message as normal chat).
     """
-    cmd = command_registry.get(cmd_name)
+    cmd = command_registry.resolve(cmd_name, agent_id)
     if not cmd:
         return None  # Unknown command — fall through to normal LLM processing
 
