@@ -6505,18 +6505,32 @@ async function loadAgentModelSelector() {
 
         const sel = document.getElementById('agent-model-select');
         const fbSel = document.getElementById('agent-fallback-model-select');
+        const modelsByProvider = new Map();
         (modelsData.models || []).forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m.id;
-            opt.textContent = `${m.name} (${m.model_name})`;
-            if (m.id === currentModelId) opt.selected = true;
-            sel.appendChild(opt);
+            const provider = m.provider || 'Other';
+            if (!modelsByProvider.has(provider)) modelsByProvider.set(provider, []);
+            modelsByProvider.get(provider).push(m);
+        });
+        modelsByProvider.forEach((models, provider) => {
+            const group = document.createElement('optgroup');
+            group.label = provider;
+            const fallbackGroup = document.createElement('optgroup');
+            fallbackGroup.label = provider;
+            models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = `${m.name} (${m.model_name})`;
+                if (m.id === currentModelId) opt.selected = true;
+                group.appendChild(opt);
 
-            const fbOpt = document.createElement('option');
-            fbOpt.value = m.id;
-            fbOpt.textContent = `${m.name} (${m.model_name})`;
-            if (m.id === currentFallbackModelId) fbOpt.selected = true;
-            fbSel.appendChild(fbOpt);
+                const fbOpt = document.createElement('option');
+                fbOpt.value = m.id;
+                fbOpt.textContent = `${m.name} (${m.model_name})`;
+                if (m.id === currentFallbackModelId) fbOpt.selected = true;
+                fallbackGroup.appendChild(fbOpt);
+            });
+            sel.appendChild(group);
+            fbSel.appendChild(fallbackGroup);
         });
         if (!currentModelId) sel.value = '';
         if (!currentFallbackModelId) fbSel.value = '';
