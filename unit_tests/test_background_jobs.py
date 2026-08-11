@@ -1,4 +1,7 @@
 """Tests for background job parsing and the per-turn context block."""
+import threading
+import time
+
 import pytest
 
 from backend.agent_runtime import background_jobs as bgmod
@@ -117,6 +120,103 @@ def test_job_list_is_capped():
     assert block.count('\n- `') == bgmod._MAX_IN_CONTEXT
     assert '…and 4 more' in block
     assert '12 processes you started are still running' in block
+
+
+def test_stale_running_job_is_still_reported_until_refreshed():
+    """The block reflects recorded status, not live truth — documented tradeoff."""
+    _job()
+    assert 'still running' in build_context_block('sess-bg', 'agent-1')
+
+
+# ---------------------------------------------------------------------------
+# refresh_statuses_async — the throttle that keeps the polled panel honest
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def clean_refresh_state():
+    bgmod._last_refresh.clear()
+    bgmod._refresh_inflight.clear()
+    yield
+    bgmod._last_refresh.clear()
+    bgmod._refresh_inflight.clear()
+
+
+def _count_refreshes(monkeypatch):
+    calls = []
+    done = threading.Event()
+
+    def fake(session_id, agent):
+        calls.append(session_id)
+        done.set()
+
+    monkeypatch.setattr(bgmod, 'refresh_statuses', fake)
+    return calls, done
+
+
+def test_async_refresh_noop_without_running_jobs(monkeypatch):
+    calls, _ = _count_refreshes(monkeypatch)
+    bgmod.refresh_statuses_async('sess-bg', {})
+    assert calls == []
+
+
+def test_async_refresh_runs_in_background(monkeypatch):
+    _job()
+    calls, done = _count_refreshes(monkeypatch)
+    bgmod.refresh_statuses_async('sess-bg', {})
+    assert done.wait(2), 'refresh thread did not run'
+    assert calls == ['sess-bg']
+
+
+def test_async_refresh_is_throttled(monkeypatch):
+    _job()
+    calls, done = _count_refreshes(monkeypatch)
+    bgmod.refresh_statuses_async('sess-bg', {}, max_age=60)
+    assert done.wait(2)
+    for _ in range(5):  # a browser polling every second
+        bgmod.refresh_statuses_async('sess-bg', {}, max_age=60)
+    assert calls == ['sess-bg'], 'throttle let extra probes through'
+
+
+def test_async_refresh_clears_inflight_on_failure(monkeypatch):
+    _job()
+    started = threading.Event()
+
+    def boom(session_id, agent):
+        started.set()
+        raise RuntimeError('backend down')
+
+    monkeypatch.setattr(bgmod, 'refresh_statuses', boom)
+    bgmod.refresh_statuses_async('sess-bg', {})
+    assert started.wait(2)
+    for _ in range(20):
+        if 'sess-bg' not in bgmod._refresh_inflight:
+            break
+        time.sleep(0.05)
+    assert 'sess-bg' not in bgmod._refresh_inflight
+
+
+def test_exited_job_drops_off_after_refresh(monkeypatch):
+    """End to end: a probe reporting DONE clears the job from list and block."""
+    alive = _job(command='tmux new-session -d -s alive "sleep 999"')
+    dead = _job(command='tmux new-session -d -s dead "make"')
+
+    class _Backend:
+        def run_bash(self, script, timeout, ctx):
+            return {'stdout': f'{alive.job_id}:RUNNING\n{dead.job_id}:DONE\n'}
+
+    from backend.tools.lib import exec_backend
+    monkeypatch.setattr(exec_backend.registry, 'get_backend',
+                        lambda s, a: _Backend())
+
+    bgmod.refresh_statuses('sess-bg', {})
+
+    running = {j.job_id for j in background_jobs.running_for_session('sess-bg')}
+    assert running == {alive.job_id}
+    assert background_jobs.get(dead.job_id).status == 'done'
+
+    block = build_context_block('sess-bg', 'agent-1')
+    assert 'sleep 999' in block
+    assert 'make' not in block
 
 
 def test_monitor_lookup_failure_does_not_break_the_block(monkeypatch):

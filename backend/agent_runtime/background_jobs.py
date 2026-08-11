@@ -350,11 +350,17 @@ def build_context_block(session_id: str, agent_id: str) -> str:
     )
 
 
+_refresh_guard = threading.Lock()
+_last_refresh: Dict[str, float] = {}   # session_id -> monotonic-ish timestamp
+_refresh_inflight: set = set()         # sessions with a refresh thread running
+
+
 def refresh_statuses(session_id: str, agent: dict) -> None:
     """Probe every running job of a session in one round-trip; update statuses.
 
-    On-demand only — nothing polls in the background. Called by the ``/jobs``
-    command so the listing reflects reality without any standing cost.
+    Synchronous and unthrottled — callers own the pacing. The ``/jobs`` command
+    calls it directly; browser-polled callers go through
+    :func:`refresh_statuses_async`.
     """
     from backend.tools.lib.exec_backend import registry
     from backend.tools.lib.long_running_guard import build_status_scripts
@@ -384,3 +390,40 @@ def refresh_statuses(session_id: str, agent: dict) -> None:
         job_id, _, state = line.partition(":")
         if state.strip() == "DONE":
             background_jobs.mark_finished(job_id.strip(), "done", None)
+
+
+def refresh_statuses_async(session_id: str, agent: dict,
+                           max_age: float = 10.0) -> None:
+    """Fire-and-forget :func:`refresh_statuses` for a browser-polled caller.
+
+    Without this, a job that exits is only ever noticed by the ``/jobs``
+    command or by an attached monitor — so an unmonitored process stayed
+    ``running`` in the registry forever, kept a live row in the Session State
+    panel and was re-stated to the agent every turn.
+
+    The probe is a shell round-trip, so it must not block the request: the
+    caller returns the current snapshot and the panel converges on its next
+    poll. One thread per session at a time.
+    """
+    if not background_jobs.running_for_session(session_id):
+        return
+
+    with _refresh_guard:
+        if session_id in _refresh_inflight:
+            return
+        if time.time() - _last_refresh.get(session_id, 0.0) < max_age:
+            return
+        _refresh_inflight.add(session_id)
+
+    def _run():
+        try:
+            refresh_statuses(session_id, agent)
+        except Exception as e:
+            _logger.warning("[bgjob] async status refresh failed: %s", e)
+        finally:
+            with _refresh_guard:
+                _last_refresh[session_id] = time.time()
+                _refresh_inflight.discard(session_id)
+
+    threading.Thread(target=_run, daemon=True,
+                     name=f"bgjob-refresh-{session_id[:8]}").start()
