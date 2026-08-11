@@ -311,13 +311,73 @@
         });
     }
 
+    function populateModelSelect(select, models, options) {
+        if (!select) return;
+        options = options || {};
+        var valueFor = options.valueFor || function (model) { return model.id; };
+        var labelFor = options.labelFor || function (model) {
+            return model.name + (model.model_name ? ' (' + model.model_name + ')' : '');
+        };
+        var providerFor = options.providerFor || function (model) { return model.provider || 'Other'; };
+        var selectedValue = options.selectedValue == null ? select.value : String(options.selectedValue);
+        var fragment = document.createDocumentFragment();
+
+        // Preserve the first empty option already present in the markup (e.g.
+        // "-- Use global default --", "-- None (no fallback) --", "— Default —").
+        // Pass emptyLabel: null explicitly to drop an existing placeholder
+        // (e.g. "Loading models...") instead of keeping it as a selectable row.
+        var emptyValue = options.emptyValue == null ? '' : String(options.emptyValue);
+        var emptyLabel = options.emptyLabel;
+        if (emptyLabel === undefined) {
+            var first = select.options[0];
+            emptyLabel = (first && first.value === '') ? first.textContent : null;
+        }
+
+        select.replaceChildren();
+        if (emptyLabel != null) {
+            var emptyOption = document.createElement('option');
+            emptyOption.value = emptyValue;
+            emptyOption.textContent = emptyLabel;
+            emptyOption.disabled = !!options.emptyDisabled;
+            fragment.appendChild(emptyOption);
+        }
+
+        var groups = new Map();
+        (models || []).forEach(function (model) {
+            var provider = providerFor(model) || 'Other';
+            if (!groups.has(provider)) groups.set(provider, []);
+            groups.get(provider).push(model);
+        });
+        groups.forEach(function (providerModels, provider) {
+            var group = document.createElement('optgroup');
+            group.label = provider;
+            providerModels.forEach(function (model) {
+                var option = document.createElement('option');
+                option.value = valueFor(model);
+                option.textContent = labelFor(model);
+                group.appendChild(option);
+            });
+            fragment.appendChild(group);
+        });
+        select.appendChild(fragment);
+
+        if (selectedValue && Array.from(select.options).some(function (option) {
+            return option.value === selectedValue;
+        })) {
+            select.value = selectedValue;
+        } else if (!selectedValue && emptyLabel != null) {
+            select.value = emptyValue;
+        }
+    }
+
     /* ====================================================================
      *  PUBLIC API
      * ==================================================================== */
     window.ui = {
         toast: toastApi,
         confirm: confirmApi,
-        addCopyButtons: addCopyButtons
+        addCopyButtons: addCopyButtons,
+        populateModelSelect: populateModelSelect
     };
 
     // Backward compatibility

@@ -107,25 +107,6 @@ window.settingsGeneral = {
     },
 
     _populateModelSelects(models, current) {
-        const options = (list, selectedId, emptyLabel) =>
-            '<option value="">' +
-            emptyLabel +
-            "</option>" +
-            list
-                .map(
-                    (m) =>
-                        '<option value="' +
-                        m.id +
-                        '"' +
-                        (selectedId === m.id ? " selected" : "") +
-                        ">" +
-                        m.name +
-                        " (" +
-                        m.model_name +
-                        ")</option>",
-                )
-                .join("");
-
         const fill = (id, list, selectedId, emptyLabel) => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -134,12 +115,20 @@ window.settingsGeneral = {
                     '<option value="">No models configured — add one in the Models section</option>';
                 return;
             }
-            el.innerHTML = options(list, selectedId, emptyLabel);
+            ui.populateModelSelect(el, list, {
+                selectedValue: selectedId || "",
+                emptyLabel: emptyLabel,
+            });
         };
 
         const enabled = models.filter((m) => m.enabled);
         fill("default-model-select", models, current.defaultModelId, "— Select model —");
-        fill("default-model-fallback-select", enabled, current.defaultModelFallbackId, "None / disabled");
+        fill(
+            "default-model-fallback-select",
+            enabled,
+            current.defaultModelFallbackId,
+            "None / disabled",
+        );
         fill(
             "vision-model-select",
             enabled.filter((m) => m.vision_supported),
@@ -147,13 +136,23 @@ window.settingsGeneral = {
             "Auto-detect (first vision-capable model)",
         );
         const visionModels = enabled.filter((m) => m.vision_supported);
-        fill("vision-fallback-model-select", visionModels, current.visionFallbackModelId, "No fallback");
-        fill("vision-fallback-model-2-select", visionModels, current.visionFallbackModel2Id, "No fallback");
+        fill(
+            "vision-fallback-model-select",
+            visionModels,
+            current.visionFallbackModelId,
+            "No fallback",
+        );
+        fill(
+            "vision-fallback-model-2-select",
+            visionModels,
+            current.visionFallbackModel2Id,
+            "No fallback",
+        );
         fill(
             "kb-organizer-model-select",
             enabled,
             current.kbOrganizerModelId,
-            "Use agent's default model",
+            "Use agent’s default model",
         );
         fill(
             "task-classifier-model-select",

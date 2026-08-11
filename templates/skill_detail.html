@@ -326,13 +326,11 @@ async function populateDynamicSelects() {
         console.error('Failed to load models for select:', e);
         return;
     }
-    const optsHtml = models.map(m => {
-        const label = (m.name || m.model_name || m.id) + (m.is_default ? ' (default)' : '');
-        return `<option value="${esc(String(m.id))}">${esc(label)}</option>`;
-    }).join('');
     sels.forEach(sel => {
-        sel.insertAdjacentHTML('beforeend', optsHtml);
-        sel.value = sel.dataset.current || '';
+        ui.populateModelSelect(sel, models, {
+            labelFor: m => (m.name || m.model_name || m.id) + (m.is_default ? ' (default)' : ''),
+            selectedValue: sel.dataset.current || ''
+        });
     });
 }
 
