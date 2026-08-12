@@ -29,6 +29,7 @@ from backend.plugin_sdk import PluginSDK
 from backend.plugin_hooks import (
     _tool_guards, _message_interceptors, _builtin_suppressors,
     _turn_gates, _tool_result_gates,
+    _tool_request_transformers, _tool_result_transformers,
     _state_handlers, _unload_plugin_state_handlers,
 )
 
@@ -260,6 +261,10 @@ class PluginManager:
                          _turn_gates, _tool_result_gates):
             registry[:] = [fn for fn in registry
                            if not getattr(fn, '__module__', '').startswith(prefix)]
+        for registry in (_tool_request_transformers, _tool_result_transformers):
+            for namespace, fn in list(registry.items()):
+                if getattr(fn, '__module__', '').startswith(prefix):
+                    registry.pop(namespace, None)
 
         self._blueprints.pop(plugin_id, None)
         self._dashboard_cards.pop(plugin_id, None)

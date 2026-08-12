@@ -1,10 +1,16 @@
 from backend.plugin_hooks import (
+    apply_tool_request_transformers,
+    apply_tool_result_transformers,
     apply_turn_context,
     apply_user_message_transformers,
     register_final_response_handler,
+    register_tool_request_transformer,
+    register_tool_result_transformer,
     register_user_message_transformer,
     run_final_response_handlers,
     unregister_final_response_handler,
+    unregister_tool_request_transformer,
+    unregister_tool_result_transformer,
     unregister_user_message_transformer,
 )
 
@@ -122,6 +128,46 @@ def test_user_message_transformer_errors_fail_open(caplog):
 
     assert messages[0]["content"] == "unchanged"
     assert "Plugin user-message transformer failed: broken" in caplog.text
+
+
+def test_tool_transformers_chain_nested_payloads_and_preserve_non_strings():
+    payload = {"prompt": "hello", "items": ["world", {"count": 2}]}
+    register_tool_request_transformer(
+        "first", lambda _a, _s, _t, value: {
+            **value, "prompt": value["prompt"].upper()})
+    register_tool_request_transformer(
+        "second", lambda _a, _s, _t, value: {
+            **value, "items": [value["items"][0].upper(), value["items"][1]]})
+    register_tool_result_transformer(
+        "result", lambda _a, _s, _t, value: {
+            **value, "data": [item.upper() if isinstance(item, str) else item
+                                for item in value["data"]]})
+    try:
+        assert apply_tool_request_transformers("agent", "session", "tool", payload) == {
+            "prompt": "HELLO", "items": ["WORLD", {"count": 2}]}
+        assert apply_tool_result_transformers(
+            "agent", "session", "tool", {"data": ["done", 1]}) == {
+                "data": ["DONE", 1]}
+    finally:
+        unregister_tool_request_transformer("first")
+        unregister_tool_request_transformer("second")
+        unregister_tool_result_transformer("result")
+
+
+def test_tool_transformer_errors_fail_open_and_none_keeps_payload(caplog):
+    def broken(_agent_id, _session_id, _tool_name, _payload):
+        raise RuntimeError("broken")
+
+    payload = {"text": "unchanged"}
+    register_tool_request_transformer("none", lambda *_args: None)
+    register_tool_request_transformer("broken", broken)
+    try:
+        assert apply_tool_request_transformers("agent", "session", "tool", payload) == payload
+    finally:
+        unregister_tool_request_transformer("none")
+        unregister_tool_request_transformer("broken")
+
+    assert "Plugin tool-request transformer failed: broken" in caplog.text
 
 
 def test_final_response_handler_can_retry_replace_or_fail_open(caplog):

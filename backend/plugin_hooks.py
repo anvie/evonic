@@ -210,6 +210,8 @@ def run_final_response_handlers(context: dict) -> Optional[dict]:
 # ═══════════════════════════════════════════════════════════════════
 
 _user_message_transformers: Dict[str, Callable] = {}
+_tool_request_transformers: Dict[str, Callable] = {}
+_tool_result_transformers: Dict[str, Callable] = {}
 
 
 def register_user_message_transformer(namespace: str, fn: Callable) -> None:
@@ -259,6 +261,55 @@ def apply_user_message_transformers(agent_id: str, session_id: str,
             parts.append(part)
         target["content"] = parts
     return changed
+
+
+# Tool transformers operate on parsed request arguments and completed results.
+# Each callback receives (agent_id, session_id, tool_name, payload) and may return
+# a replacement payload of the same logical type. Exceptions are fail-open.
+def register_tool_request_transformer(namespace: str, fn: Callable) -> None:
+    """Register a named transformer for parsed tool-call arguments."""
+    _tool_request_transformers[namespace] = fn
+
+
+def unregister_tool_request_transformer(namespace: str) -> None:
+    _tool_request_transformers.pop(namespace, None)
+
+
+def apply_tool_request_transformers(agent_id: str, session_id: str,
+                                    tool_name: str, args):
+    """Apply registered request transformers in registration order."""
+    current = args
+    for namespace, fn in list(_tool_request_transformers.items()):
+        try:
+            result = fn(agent_id, session_id, tool_name, current)
+            if result is not None:
+                current = result
+        except Exception:
+            _logger.exception("Plugin tool-request transformer failed: %s", namespace)
+    return current
+
+
+def register_tool_result_transformer(namespace: str, fn: Callable) -> None:
+    """Register a named transformer for completed tool results."""
+    _tool_result_transformers[namespace] = fn
+
+
+def unregister_tool_result_transformer(namespace: str) -> None:
+    _tool_result_transformers.pop(namespace, None)
+
+
+def apply_tool_result_transformers(agent_id: str, session_id: str,
+                                   tool_name: str, result):
+    """Apply registered result transformers in registration order."""
+    current = result
+    for namespace, fn in list(_tool_result_transformers.items()):
+        try:
+            transformed = fn(agent_id, session_id, tool_name, current)
+            if transformed is not None:
+                current = transformed
+        except Exception:
+            _logger.exception("Plugin tool-result transformer failed: %s", namespace)
+    return current
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -31,6 +31,10 @@ from backend.plugin_hooks import (  # noqa: F401
     run_final_response_handlers,
     register_user_message_transformer, unregister_user_message_transformer,
     apply_user_message_transformers,
+    register_tool_request_transformer, unregister_tool_request_transformer,
+    apply_tool_request_transformers,
+    register_tool_result_transformer, unregister_tool_result_transformer,
+    apply_tool_result_transformers,
     # Turn Context Provider
     register_turn_context_provider, unregister_turn_context_provider,
     get_turn_context, apply_turn_context,

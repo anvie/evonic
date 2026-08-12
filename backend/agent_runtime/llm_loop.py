@@ -2193,6 +2193,15 @@ def run_tool_loop(agent: Dict[str, Any],
                 _tool_records.append((tc, fn_name, None, {}))
                 continue
 
+            original_args = args
+            from backend.plugin_manager import apply_tool_request_transformers
+            args = apply_tool_request_transformers(
+                agent_id, session_id, fn_name, args)
+            if not isinstance(args, dict):
+                _logger.warning(
+                    "Tool-request transformer returned non-dict args for '%s'; ignoring it",
+                    fn_name)
+                args = original_args
             pt = _param_type_map.get(fn_name, {})
             timeline.append({"type": "tool_call", "tool": fn_name, "args": args, "param_types": pt})
             event_stream.emit('tool_call_started', {
@@ -2641,6 +2650,10 @@ def run_tool_loop(agent: Dict[str, Any],
                                 elif isinstance(tool_result, str):
                                     tool_result = _warning + tool_result
                             # 'log' mode: just logs, no modification
+
+            from backend.plugin_manager import apply_tool_result_transformers
+            tool_result = apply_tool_result_transformers(
+                agent_id, session_id, fn_name, tool_result)
 
             # Serialize tool result for LLM (always valid JSON when possible)
             try:
