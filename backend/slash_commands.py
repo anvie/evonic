@@ -819,6 +819,8 @@ def _register_builtins():
         channel_id: Optional[str],
         args: str,
     ) -> str:
+        import json
+
         from models.db import db
         from backend.agent_state import AgentState
         from models.chat import agent_chat_manager
@@ -858,6 +860,25 @@ def _register_builtins():
         # Agent state: per-session (mode/plan_file) from session_state, global (focus) from agent_state
         _db = agent_chat_manager.get(agent_id)
         session_content = _db.get_session_state(session_id)
+        try:
+            session_data = json.loads(session_content) if session_content else {}
+        except (TypeError, ValueError):
+            session_data = {}
+        if not isinstance(session_data, dict):
+            session_data = {}
+        try:
+            resolved_model = db.resolve_model_config(model) if model else {}
+        except Exception:
+            resolved_model = model or {}
+        from backend.provider.codex_client import model_supports_fast_mode
+        fast_available = (
+            resolved_model.get("api_format") == "codex"
+            and model_supports_fast_mode(resolved_model.get("model_name"))
+        )
+        lines.append(
+            f"Fast: {'on' if session_data.get('service_tier') == 'priority' else 'off'}"
+            if fast_available else "Fast: unavailable"
+        )
         if session_content:
             sess_ms = AgentState.deserialize(session_content)
             lines.append(f"Mode: {sess_ms.mode}")
@@ -1148,6 +1169,58 @@ def _register_builtins():
         model_handler,
         "Show or switch LLM model — /model, /model list|ls, /model [number|provider/model]",
         parameters=[{"name": "action", "options": ["current", "list", "set"]}, {"name": "model"}],
+    )
+
+    # /fast — Session-scoped Codex Priority Processing toggle
+    def fast_handler(
+        session_id: str,
+        agent_id: str,
+        external_user_id: str,
+        channel_id: Optional[str],
+        args: str,
+    ) -> str:
+        import json
+
+        from backend.provider.codex_client import model_supports_fast_mode
+        from models.chat import agent_chat_manager
+        from models.db import db
+
+        model = db.get_agent_model(agent_id)
+        model = db.resolve_model_config(model) if model else {}
+        if (model.get("api_format") != "codex"
+                or not model_supports_fast_mode(model.get("model_name"))):
+            return "Fast mode is not supported by the current model."
+
+        chat_db = agent_chat_manager.get(agent_id)
+        raw = chat_db.get_session_state(session_id)
+        try:
+            session_data = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            session_data = {}
+        if not isinstance(session_data, dict):
+            session_data = {}
+
+        action = args.strip().lower()
+        if action in ("", "status"):
+            mode = "on" if session_data.get("service_tier") == "priority" else "off"
+            return f"Fast mode: {mode}."
+        if action in ("on", "fast"):
+            session_data["service_tier"] = "priority"
+            reply = "Fast mode enabled for this session (higher credit usage)."
+        elif action in ("off", "normal"):
+            session_data.pop("service_tier", None)
+            reply = "Fast mode disabled for this session."
+        else:
+            return "Usage: /fast [on|off|status]"
+
+        chat_db.upsert_session_state(session_id, json.dumps(session_data))
+        return reply
+
+    command_registry.register(
+        "fast",
+        fast_handler,
+        "Show or set Codex Fast mode for this session — /fast [on|off|status]",
+        parameters=[{"name": "mode", "options": ["on", "off", "status", "fast", "normal"]}],
     )
 
 

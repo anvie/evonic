@@ -248,10 +248,12 @@ class LLMClient:
 
         Args:
             model_config: Dict with keys: base_url, api_key, model_name, timeout,
-                         thinking (bool), thinking_budget (int), max_tokens, temperature.
+                         thinking (bool), thinking_budget (int), max_tokens, temperature,
+                         and optional service_tier.
                          If None, uses the default model from DB or config.py defaults.
         """
         self.provider = None
+        self.service_tier = model_config.get("service_tier") if model_config else None
         self._model_api_key_override = False
         if model_config:
             self._model_api_key_override = bool(model_config.get("api_key"))
@@ -439,6 +441,7 @@ class LLMClient:
             reasoning=bool(self.thinking),
             timeout=self.timeout or 120,
             tool_choice=tool_choice,
+            service_tier=getattr(self, "service_tier", None),
         )
         duration_ms = int((time.time() - start_time) * 1000)
 

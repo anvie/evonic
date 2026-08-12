@@ -17,6 +17,18 @@ from backend.provider.oauth_codex import CODEX_BASE_URL, extract_account_id
 _log = logging.getLogger(__name__)
 
 
+def model_supports_fast_mode(model: Optional[str]) -> bool:
+    """Return whether Codex advertises Fast mode for this model family."""
+    model_id = str(model or "").strip().lower()
+    if "/" in model_id:
+        model_id = model_id.split("/", 1)[1]
+    model_id = model_id.split(":", 1)[0]
+    return (
+        model_id in {"gpt-5.4", "gpt-5.5", "gpt-5.6"}
+        or model_id.startswith("gpt-5.6-")
+    )
+
+
 def _classify_stream_error(code: str) -> str:
     """Map a Responses API error/incomplete code to an llm_loop error_type.
 
@@ -74,7 +86,12 @@ class CodexClient:
         """True when talking to the ChatGPT subscription backend (Codex CLI protocol)."""
         return "chatgpt.com" in self.base_url
 
-    def _headers(self, accept: str = "text/event-stream") -> Dict[str, str]:
+    def _headers(
+        self,
+        accept: str = "text/event-stream",
+        model: str = "",
+        service_tier: Optional[str] = None,
+    ) -> Dict[str, str]:
         h = {
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json",
@@ -84,6 +101,8 @@ class CodexClient:
         }
         if self._account_id:
             h["ChatGPT-Account-ID"] = self._account_id
+        if service_tier == "priority" and model_supports_fast_mode(model):
+            h["x-codex-routing-hint"] = f"model={model};tier=priority"
         return h
 
     def send_request(
@@ -97,6 +116,7 @@ class CodexClient:
         stream: bool = True,
         timeout: int = 120,
         tool_choice: Optional[str] = None,
+        service_tier: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a request to the Codex Responses API."""
         payload: Dict[str, Any] = {
@@ -107,6 +127,8 @@ class CodexClient:
         }
         if reasoning:
             payload["reasoning"] = {"summary": "auto"}
+        if service_tier == "priority" and model_supports_fast_mode(model):
+            payload["service_tier"] = "priority"
         # Cap the output so a reasoning model can't spend the whole budget
         # thinking and return an empty (incomplete) response. The ChatGPT
         # Codex backend only accepts the parameter set the Codex CLI sends,
@@ -159,7 +181,10 @@ class CodexClient:
                 "POST",
                 url,
                 json=payload,
-                headers=self._headers(),
+                headers=self._headers(
+                    model=payload.get("model", ""),
+                    service_tier=payload.get("service_tier"),
+                ),
             ) as resp:
                 if resp.status_code != 200:
                     body = resp.read().decode(errors="replace")[:500]
@@ -314,7 +339,11 @@ class CodexClient:
         resp = httpx.post(
             url,
             json=payload,
-            headers=self._headers(accept="application/json"),
+            headers=self._headers(
+                accept="application/json",
+                model=payload.get("model", ""),
+                service_tier=payload.get("service_tier"),
+            ),
             timeout=timeout,
         )
 
@@ -399,6 +428,7 @@ class CodexClient:
         tools: Optional[List[Dict]] = None,
         reasoning: bool = False,
         timeout: int = 120,
+        service_tier: Optional[str] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         """Yield SSE delta chunks for real-time streaming to the frontend."""
         payload: Dict[str, Any] = {
@@ -409,6 +439,8 @@ class CodexClient:
         }
         if reasoning:
             payload["reasoning"] = {"summary": "auto"}
+        if service_tier == "priority" and model_supports_fast_mode(model):
+            payload["service_tier"] = "priority"
         if tools:
             payload["tools"] = self._convert_tools(tools)
 
@@ -420,7 +452,10 @@ class CodexClient:
                 "POST",
                 url,
                 json=payload,
-                headers=self._headers(),
+                headers=self._headers(
+                    model=payload.get("model", ""),
+                    service_tier=payload.get("service_tier"),
+                ),
             ) as resp:
                 if resp.status_code != 200:
                     yield {
