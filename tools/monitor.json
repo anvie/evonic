@@ -1,0 +1,76 @@
+{
+  "id": "monitor",
+  "name": "Monitor",
+  "description": "Watch a background process, log file, or shell condition and get notified once when it is met.",
+  "function": {
+    "name": "monitor",
+    "description": "Attach a condition watcher to a background process, a log file, or a shell check. Background processes run UNWATCHED by default — nothing tells you when they finish. Attach a monitor only when the outcome actually matters; you will be notified exactly once (when the condition is met, when the watched process ends without meeting it, or on expiry) and the monitor removes itself. Never poll in a loop for something a monitor is watching.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["attach", "list", "detach"],
+          "description": "'attach' a new monitor, 'list' this session's monitors, 'detach' one by id. Default 'attach'."
+        },
+        "target": {
+          "type": "object",
+          "description": "What to watch. Use {\"job_id\": \"job1\"} for a background process (the job_id comes back in the bash result), or {\"log_file\": \"/tmp/x.log\"} for a bare log file. Omit entirely when using a 'shell' condition.",
+          "properties": {
+            "job_id": {
+              "type": "string",
+              "description": "Background job id returned by the bash tool."
+            },
+            "log_file": {
+              "type": "string",
+              "description": "Absolute path of a log file to watch."
+            }
+          }
+        },
+        "when": {
+          "type": "object",
+          "description": "Trigger condition(s). Multiple keys are OR'd — the monitor fires on the first one met.",
+          "properties": {
+            "on_exit": {
+              "type": "boolean",
+              "description": "Fire when the watched process ends, whatever the outcome. Requires a job_id target."
+            },
+            "on_failure": {
+              "type": "boolean",
+              "description": "Fire only when the process ends with a non-zero exit code. Requires a job_id target started via the long-running guard wrapper (exit codes are not observable for plain tmux/screen/nohup spawns)."
+            },
+            "log_match": {
+              "type": "string",
+              "description": "Extended regex (grep -E). Fires as soon as it matches anywhere in the log — including text already present when the monitor is attached."
+            },
+            "shell": {
+              "type": "string",
+              "description": "Shell command run in the session sandbox each tick; fires when it exits 0. E.g. 'curl -sf localhost:8080/health'."
+            }
+          }
+        },
+        "note": {
+          "type": "string",
+          "description": "Why you are watching. Echoed back to you when the monitor fires, so you remember the intent."
+        },
+        "interval": {
+          "type": "integer",
+          "description": "Seconds between checks. Default 30, clamped to 10-600. Use a larger value for slow builds."
+        },
+        "expires_in": {
+          "type": "integer",
+          "description": "Seconds before the monitor gives up. Default 21600 (6h), max 86400."
+        },
+        "monitor_id": {
+          "type": "string",
+          "description": "Required for action='detach'."
+        }
+      },
+      "required": []
+    }
+  },
+  "mock_response": "action = args.get('action', 'attach')\nif action == 'list':\n    result = {'monitors': []}\nelif action == 'detach':\n    result = {'status': 'detached', 'monitor_id': args.get('monitor_id', 'mon-mock')}\nelse:\n    result = {'monitor_id': 'mon-mock01', 'watching': str((args.get('target') or {}).get('job_id') or (args.get('target') or {}).get('log_file') or ''), 'condition': ', '.join((args.get('when') or {}).keys())}",
+  "mock_response_type": "python",
+  "created_at": "2026-08-11T00:00:00.000000",
+  "updated_at": "2026-08-11T00:00:00.000000"
+}

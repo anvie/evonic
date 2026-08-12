@@ -41,18 +41,47 @@ class SlashCommandRegistry:
 
     def __init__(self):
         self._commands: Dict[str, SlashCommand] = {}
+        self._providers: Dict[str, Callable[[str], list]] = {}
 
     def register(self, name: str, handler: CommandHandler, description: str = "", parameters: list = None):
         """Register a command handler."""
         self._commands[name] = SlashCommand(name, handler, description, parameters)
 
+    def register_provider(self, key: str, provider: Callable[[str], list]):
+        """Register a per-agent command provider.
+
+        `provider(agent_id)` returns a list of SlashCommand objects that exist only
+        for that agent (e.g. panel actions with an assigned slash command).
+        Statically registered commands always win on a name clash.
+        """
+        self._providers[key] = provider
+
     def get(self, name: str) -> Optional[SlashCommand]:
-        """Get a command by name."""
+        """Get a statically registered command by name."""
         return self._commands.get(name)
 
     def list_commands(self) -> list:
-        """Return list of SlashCommand objects."""
+        """Return list of statically registered SlashCommand objects."""
         return list(self._commands.values())
+
+    def provided_commands(self, agent_id: str) -> list:
+        """Return provider commands for an agent, minus any static name clash."""
+        out = []
+        for key, provider in list(self._providers.items()):
+            try:
+                for cmd in provider(agent_id) or []:
+                    if cmd.name not in self._commands:
+                        out.append(cmd)
+            except Exception:
+                _logger.warning("Slash command provider %r failed for agent %s", key, agent_id, exc_info=True)
+        return out
+
+    def resolve(self, name: str, agent_id: str) -> Optional[SlashCommand]:
+        """Get a command by name for an agent — static first, then providers."""
+        cmd = self._commands.get(name)
+        if cmd:
+            return cmd
+        return next((c for c in self.provided_commands(agent_id) if c.name == name), None)
 
 
 def _expand_slash_list(raw_value: str, all_names: set) -> set:
@@ -95,7 +124,7 @@ def _persist_session_agent_state(chat_db, session_id: str, ms) -> None:
 
 def list_available_commands(agent_id: str, channel_id: Optional[str] = None) -> list:
     """Return registered commands available to an agent on the given channel."""
-    commands = command_registry.list_commands()
+    commands = command_registry.list_commands() + command_registry.provided_commands(agent_id)
     try:
         from models.db import db
         super_agent = db.get_super_agent()
@@ -176,7 +205,7 @@ def execute_command(
     Returns the command response string, or None if the command is not found
     (caller should then treat the message as normal chat).
     """
-    cmd = command_registry.get(cmd_name)
+    cmd = command_registry.resolve(cmd_name, agent_id)
     if not cmd:
         return None  # Unknown command — fall through to normal LLM processing
 
@@ -1206,52 +1235,52 @@ def _register_builtins():
         args: str,
     ) -> str:
         from backend.agent_runtime import agent_runtime
-        from backend.agent_runtime.background_jobs import (
-            background_jobs, create_detach_schedule)
+        from backend.agent_runtime import monitors
+        from backend.agent_runtime.background_jobs import background_jobs
 
-        jobs = background_jobs.active_for_session(session_id)
+        jobs = background_jobs.running_for_session(session_id)
         if not jobs:
-            # Background processes are auto-watched at spawn now, so there is
-            # usually nothing left to detach — report what is being monitored.
-            watched = [j for j in background_jobs.list_for_session(session_id)
-                       if j.detached and j.status == 'running']
-            if watched:
-                names = ", ".join(f"`{j.command}`" for j in watched)
-                return (
-                    f"Already monitored automatically: {names}.\n"
-                    "You'll be notified when they finish. Check anytime with /jobs."
-                )
             return (
-                "No background process found for this session. Background "
-                "processes (tmux/screen/nohup) are monitored automatically "
-                "when started — check with /jobs."
+                "No running background process found for this session. "
+                "Check with /jobs."
             )
+
+        already = monitors.monitored_job_ids(agent_id, session_id)
+        pending = [j for j in jobs if j.job_id not in already]
+        if not pending:
+            names = ", ".join(f"`{j.command}`" for j in jobs)
+            return (f"Already monitored: {names}.\n"
+                    "I'll report back when they finish. See /jobs.")
 
         # End the current polling turn so the agent stops waiting and can chat.
         agent_runtime.request_stop(session_id)
 
-        detached = []
-        for job in jobs:
-            schedule_id = create_detach_schedule(
-                job, agent_id, external_user_id, channel_id)
-            if schedule_id:
-                background_jobs.mark_detached(job.job_id, schedule_id)
-                detached.append(job)
+        agent = {
+            'agent_id': agent_id, 'session_id': session_id,
+            'user_id': external_user_id, 'channel_id': channel_id,
+        }
+        attached, failed = [], []
+        for job in pending:
+            res = monitors.attach(agent, target={'job_id': job.job_id},
+                                  when={'on_exit': True},
+                                  note='attached via /detach')
+            (failed if res.get('error') else attached).append(job)
 
-        if not detached:
-            return "Failed to detach: could not create the background watcher."
+        if not attached:
+            return "Failed to detach: could not attach the monitor."
 
-        names = ", ".join(f"`{j.command}`" for j in detached)
-        return (
-            f"Detached {len(detached)} background job(s): {names}.\n"
-            "They keep running — I'll report back when they finish (even if the "
-            "server restarts). Check anytime with /jobs."
-        )
+        names = ", ".join(f"`{j.command}`" for j in attached)
+        msg = (f"Monitoring {len(attached)} background job(s): {names}.\n"
+               "They keep running — I'll report back when they finish (even if "
+               "the server restarts). Check anytime with /jobs.")
+        if failed:
+            msg += f"\nCould not monitor {len(failed)} job(s)."
+        return msg
 
     command_registry.register(
         "detach",
         detach_handler,
-        "Detach the running long-running process to the background",
+        "Stop waiting on the running long-running process and monitor it instead",
     )
 
     # /jobs — List background jobs tracked for this session
@@ -1263,42 +1292,52 @@ def _register_builtins():
         args: str,
     ) -> str:
         import time as _time
+        from backend.agent_runtime import monitors
         from backend.agent_runtime.background_jobs import (
-            background_jobs, SCHEDULE_OWNER_TYPE)
-        from backend.scheduler import scheduler
+            background_jobs, refresh_statuses)
+        from models.db import db
+
+        # Nothing polls these in the background, so refresh on demand — one
+        # round-trip for the whole session.
+        try:
+            agent = db.get_agent(agent_id) or {}
+            refresh_statuses(session_id, {**agent, 'agent_id': agent_id})
+        except Exception:
+            pass
+
+        by_job = {}
+        loose = []
+        for m in monitors.list_for_session(agent_id, session_id):
+            (by_job.setdefault(m['job_id'], []) if m.get('job_id')
+             else loose).append(m)
 
         lines = []
+        for j in background_jobs.list_for_session(session_id):
+            if j.status == 'running':
+                state = f"⏳ running, {int(_time.time() - j.started_at)}s"
+            else:
+                code = '' if j.exit_code is None else f" (exit {j.exit_code})"
+                state = f"✅ {j.status}{code}"
+            watchers = by_job.get(j.job_id) or []
+            watch = (" · 👁 " + "; ".join(m['condition'] for m in watchers)
+                     if watchers else " · unmonitored")
+            log = f" · log: {j.log_file}" if j.log_file else ""
+            lines.append(f"- `{j.job_id}` `{j.command}` — {state}{watch}{log}")
 
-        # Attached (not yet detached) jobs — live only in the in-memory registry.
-        for j in background_jobs.active_for_session(session_id):
-            elapsed = int(_time.time() - j.started_at)
-            lines.append(f"- `{j.command}` — ⏳ running (attached), {elapsed}s "
-                         f"· log: {j.log_file}")
-
-        # Detached jobs — persisted poll schedules for this session.
-        try:
-            schedules = scheduler.list_schedules(
-                owner_type=SCHEDULE_OWNER_TYPE, owner_id=agent_id)
-        except Exception:
-            schedules = []
-        for s in schedules:
-            cfg = s.get("action_config") or {}
-            if cfg.get("session_id") != session_id:
-                continue
-            cmd = cfg.get("command", "?")
-            log_file = cfg.get("log_file", "")
-            lines.append(f"- `{cmd}` — ⏳ running (detached, watched), "
-                         f"· log: {log_file}")
+        for m in loose:
+            lines.append(f"- `{m['monitor_id']}` watching `{m['watching']}` "
+                         f"— 👁 {m['condition']}")
 
         if not lines:
-            return ("No active background jobs for this session. "
-                    "(Finished jobs are reported in chat and then cleared.)")
+            return ("No background jobs or monitors for this session. "
+                    "Background processes run unwatched unless a monitor is "
+                    "attached to them.")
         return "**Background jobs:**\n" + "\n".join(lines)
 
     command_registry.register(
         "jobs",
         jobs_handler,
-        "List background jobs for this session",
+        "List background jobs for this session and their monitors",
     )
 
     # /kb-organize — Manually trigger KB organizer sub-agent for the current agent

@@ -4,7 +4,7 @@ panel_update_action — update an existing action button on an agent's panel.
 
 import json
 
-from plugins.panel.db import PanelDB
+from plugins.panel.db import PanelDB, validate_slash_command
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -25,6 +25,7 @@ def execute(agent: dict, args: dict) -> dict:
         params: New parameter definitions (optional).
         sort_order: New display order position (optional).
         enabled: Enable or disable the action (optional).
+        slash_command: Chat slash command that runs this action; "" clears it (optional).
 
     Returns:
         {success: true, action: {...}} on success
@@ -111,6 +112,16 @@ def execute(agent: dict, args: dict) -> dict:
         if not isinstance(args["confirm_dialog"], bool):
             return {"success": False, "error": "confirm_dialog must be a boolean."}
         fields["confirm_dialog"] = args["confirm_dialog"]
+
+    if "slash_command" in args and args["slash_command"] is not None:
+        if not isinstance(args["slash_command"], str):
+            return {"success": False, "error": "slash_command must be a string."}
+        normalized, slash_error = validate_slash_command(
+            agent_id, args["slash_command"], exclude_action_id=action_id
+        )
+        if slash_error:
+            return {"success": False, "error": slash_error}
+        fields["slash_command"] = normalized
 
     if not fields:
         return {"success": False, "error": "No fields to update were provided."}

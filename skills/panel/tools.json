@@ -46,6 +46,10 @@
           "confirm_dialog": {
             "type": "boolean",
             "description": "Whether to show a confirmation dialog before executing this action. Default: false."
+          },
+          "slash_command": {
+            "type": "string",
+            "description": "Optional chat slash command that runs this action, e.g. 'deploy' makes /deploy execute it. Lowercase letters, digits, '-' and '_', max 32 chars, must start with a letter. Must not collide with a built-in command or another action of this agent. Params are passed positionally: /deploy prod v2."
           }
         },
         "required": ["agent_id", "label", "action_type", "content"]
@@ -107,6 +111,10 @@
           "confirm_dialog": {
             "type": "boolean",
             "description": "Whether to show a confirmation dialog before executing this action (optional)."
+          },
+          "slash_command": {
+            "type": "string",
+            "description": "Chat slash command that runs this action, e.g. 'deploy' makes /deploy execute it (optional). Pass an empty string to remove the assignment. Must not collide with a built-in command or another action of this agent."
           }
         },
         "required": ["agent_id", "action_id"]

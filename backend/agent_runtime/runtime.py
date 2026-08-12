@@ -44,7 +44,7 @@ import json
 import re
 from config import AGENT_MAX_TOOL_RESULT_CHARS as MAX_TOOL_RESULT_CHARS
 from config import STALE_SESSION_INJECTION_ENABLED, STALE_SESSION_THRESHOLD_SECONDS
-from config import LONG_GAP_WEEKS
+from config import LONG_GAP_WEEKS, BACKGROUND_JOBS_INJECTION_ENABLED
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _LOGS_DIR = os.path.join(_BASE_DIR, 'logs')
@@ -2345,6 +2345,24 @@ class AgentRuntime:
             )
             if not _already_subagent_directive:
                 messages.insert(1, {"role": "system", "content": SUBAGENT_EXECUTE_DIRECTIVE})
+
+        # --- Background jobs injection ---
+        # The agent sees a background process once, in the bash result that
+        # spawned it; nothing surfaces it again. Re-state what is still running
+        # so it does not leave processes to go stale. Appended at the END: the
+        # list changes every turn, and inserting it up front would invalidate the
+        # prompt prefix cache for the whole history. Must run after
+        # _apply_wrapper_prefix, which identifies the current user message by
+        # position (last in the list).
+        if BACKGROUND_JOBS_INJECTION_ENABLED:
+            try:
+                from backend.agent_runtime.background_jobs import build_context_block
+                _bg_ctx = build_context_block(
+                    ctx.session_id, agent.get('agent_id') or agent.get('id') or '')
+                if _bg_ctx:
+                    messages.append({"role": "system", "content": _bg_ctx})
+            except Exception:
+                _logger.exception("[bgjob] context injection failed — continuing")
 
         # Call LLM with tool loop
         _inner_turn_start = time.time()

@@ -39,6 +39,16 @@ Each parameter in the `params` array has these fields:
 | `required` | boolean | Whether the parameter is mandatory |
 | `default` | string | Default value (optional) |
 
+## Slash Commands
+
+Any action can be assigned its own chat slash command via `slash_command`, so the user can run it straight from chat instead of clicking the button — e.g. `slash_command: "deploy"` makes `/deploy` execute that action.
+
+- Names are lowercase, start with a letter, may contain digits, `-` and `_`, max 32 chars.
+- They must not collide with a built-in command or with another action of the same agent.
+- Parameters are passed **positionally**, in the order they appear in `params`: `/deploy prod v2`. Missing required parameters produce a usage hint instead of running the action.
+- Assign one whenever the user asks to "run this with a slash command"; pass `""` to `panel_update_action` to remove it.
+- Every action also stays reachable through `/panel` (list) and `/panel:<label-slug>` (run).
+
 ## Best Practices
 
 1. **Clear button labels** — Use descriptive, action-oriented labels (e.g., "Deploy to Staging", not "Click me").
@@ -73,6 +83,7 @@ Parameters:
 - `content` (required) — Script body or prompt text. Use `{{param_name}}` for user-fillable placeholders.
 - `params` (optional) — Array of parameter definitions. Default: `[]`
 - `sort_order` (optional) — Display order position. Default: `0`
+- `slash_command` (optional) — Chat slash command that runs this action, e.g. `"deploy"` → `/deploy`
 
 ### panel_update_action
 
@@ -87,6 +98,7 @@ Parameters:
 - `params` (optional) — New parameter definitions
 - `sort_order` (optional) — New sort position
 - `enabled` (optional) — Enable or disable the action
+- `slash_command` (optional) — New chat slash command; `""` removes the assignment
 
 ### panel_remove_action
 
