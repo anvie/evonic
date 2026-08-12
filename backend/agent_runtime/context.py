@@ -778,6 +778,7 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
         ("/jobs", "List background jobs for this session and any monitors attached to them"),
         ("/dump", "Dump current session as JSONL file for download"),
         ("/model", "Show or switch LLM model"),
+        ("/fast", "Show or set Codex Fast mode for this session"),
     ]
     slash_commands.append(("/plan", "Switch to plan mode"))
     slash_commands.append(("/unfocus", "Force-clear focus mode — use when agent is stuck in focus after a failed task"))

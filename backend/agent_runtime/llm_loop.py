@@ -670,6 +670,17 @@ def run_tool_loop(agent: Dict[str, Any],
                     if _tid not in _assigned:
                         _assigned.append(_tid)
 
+    # Fast mode is a session preference. The Codex client revalidates support
+    # against every effective model, so it cannot leak into an incompatible fallback.
+    _session_service_tier = None
+    try:
+        _session_raw = db.get_session_state(session_id, agent_id=agent_id)
+        _session_data = json.loads(_session_raw) if _session_raw else {}
+        if isinstance(_session_data, dict) and _session_data.get('service_tier') == 'priority':
+            _session_service_tier = 'priority'
+    except (TypeError, ValueError):
+        pass
+
     # Helper: build model_config dict from a model DB row
     def _build_model_config(_model: dict) -> dict:
         return {
@@ -684,6 +695,7 @@ def run_tool_loop(agent: Dict[str, Any],
             'temperature': _model.get('temperature'),
             'vision_supported': bool(_model.get('vision_supported', False)),
             'api_format': _model.get('api_format', 'openai'),
+            'service_tier': _session_service_tier,
         }
 
     # Resolve agent's default model for LLM calls
