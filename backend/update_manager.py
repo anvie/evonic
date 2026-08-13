@@ -268,6 +268,13 @@ def _append_log(level: str, message: str):
 
 def _notify_listeners():
     snapshot = get_status()
+    try:
+        from backend.event_stream import event_stream
+        event_stream.emit('update_status', snapshot)
+        if snapshot.get('status') in ('success', 'failed'):
+            event_stream.emit('update_done', {'status': snapshot['status']})
+    except Exception as exc:
+        log.warning('Failed to publish update status: %s', exc)
     dead = []
     for q in _listeners:
         try:

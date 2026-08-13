@@ -419,6 +419,9 @@ def run_tool_loop(agent: Dict[str, Any],
     from backend.event_stream import event_stream
     from models.chatlog import chatlog_manager
 
+    def _message_id(value):
+        return value if type(value) in (int, str) else None
+
     agent_id = agent['id']
     db_agent_id = session_db_agent_id or agent_id  # which per-agent DB owns this session
     external_user_id = agent_context.get('user_id')
@@ -440,7 +443,6 @@ def run_tool_loop(agent: Dict[str, Any],
         _parent_agent_id = None
     _loop_ts = int(time.time() * 1000)
     chatlog.append({'type': 'turn_begin', 'session_id': session_id, 'ts': _loop_ts})
-    event_stream.emit('turn_begin', {'session_id': session_id, 'ts': _loop_ts})
 
     tool_trace = []
     timeline = []
@@ -510,10 +512,13 @@ def run_tool_loop(agent: Dict[str, Any],
     def _finalize_gate_response(response: str, source: str):
         duration = round(time.time() - _loop_start_time, 1)
         metadata = {'plugin_gate': source, 'thinking_duration': duration}
-        db.add_chat_message(session_id, 'assistant', response,
-                            agent_id=db_agent_id, metadata=metadata)
+        message_id = _message_id(db.add_chat_message(
+            session_id, 'assistant', response,
+            agent_id=db_agent_id, metadata=metadata,
+        ))
         chatlog.append({'type': 'final', 'session_id': session_id,
-                        'content': response, 'metadata': metadata})
+                        'content': response, 'metadata': metadata,
+                        'message_id': message_id})
         chatlog.append({'type': 'turn_end', 'session_id': session_id,
                         'thinking_duration': duration})
         event_stream.emit('final_answer', {
@@ -949,11 +954,14 @@ def run_tool_loop(agent: Dict[str, Any],
                 _logger.info("Stop signal received during ATG execution for session %s", session_id)
                 stop_msg = "Agent stopped by user request."
                 _atg_stop_dur = round(time.time() - _loop_start_time, 1)
-                db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                    metadata={"timeline": timeline, "stopped": True,
-                                              "thinking_duration": _atg_stop_dur})
+                message_id = _message_id(db.add_chat_message(
+                    session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                    metadata={"timeline": timeline, "stopped": True,
+                              "thinking_duration": _atg_stop_dur},
+                ))
                 chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                                'metadata': {'stopped': True, 'thinking_duration': _atg_stop_dur}})
+                                'metadata': {'stopped': True, 'thinking_duration': _atg_stop_dur},
+                                'message_id': message_id})
                 chatlog.append({'type': 'turn_end', 'session_id': session_id,
                                 'thinking_duration': _atg_stop_dur})
                 event_stream.emit('final_answer', {
@@ -1183,10 +1191,14 @@ def run_tool_loop(agent: Dict[str, Any],
             _logger.info("Stop signal received for session %s — aborting loop", session_id)
             stop_msg = "Agent stopped by user request."
             _stop_dur = round(time.time() - _loop_start_time, 1)
-            db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                metadata={"timeline": timeline, "stopped": True, "thinking_duration": _stop_dur})
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                metadata={"timeline": timeline, "stopped": True,
+                          "thinking_duration": _stop_dur},
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                            'metadata': {'stopped': True, 'thinking_duration': _stop_dur}})
+                            'metadata': {'stopped': True, 'thinking_duration': _stop_dur},
+                            'message_id': message_id})
             _stop_inj = ("[SYSTEM] Your previous reasoning and response were forcefully "
                          "interrupted by the user via /stop before completion. "
                          "Await the user's next instruction.")
@@ -1983,9 +1995,12 @@ def run_tool_loop(agent: Dict[str, Any],
                     'content': _display_content, 'is_final': True,
                     'send_as_message': True,
                 })
-            db.add_chat_message(session_id, 'assistant', _display_content, agent_id=db_agent_id, metadata=meta)
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', _display_content,
+                agent_id=db_agent_id, metadata=meta,
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': _display_content,
-                            'metadata': _cl_meta})
+                            'metadata': _cl_meta, 'message_id': message_id})
             chatlog.append({'type': 'turn_end', 'session_id': session_id, 'thinking_duration': _final_dur})
             # Archive sub-agent session at turn-end — single-turn only. Explorer &
             # kb-organizer are single-shot, so they archive on completion (no need to
@@ -2812,10 +2827,14 @@ def run_tool_loop(agent: Dict[str, Any],
             _logger.info("Stop signal received for session %s — aborting after tools", session_id)
             stop_msg = "Agent stopped by user request."
             _stopb_dur = round(time.time() - _loop_start_time, 1)
-            db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                metadata={"timeline": timeline, "stopped": True, "thinking_duration": _stopb_dur})
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                metadata={"timeline": timeline, "stopped": True,
+                          "thinking_duration": _stopb_dur},
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                            'metadata': {'stopped': True, 'thinking_duration': _stopb_dur}})
+                            'metadata': {'stopped': True, 'thinking_duration': _stopb_dur},
+                            'message_id': message_id})
             _stopb_inj = ("[SYSTEM] Your previous reasoning and response were forcefully "
                           "interrupted by the user via /stop before completion. "
                           "Await the user's next instruction.")

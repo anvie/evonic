@@ -3,7 +3,7 @@
 import json
 import queue
 
-from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context
+from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context, redirect
 
 from backend import update_manager
 
@@ -67,6 +67,7 @@ def api_update_restart():
 def api_update_stream():
     """SSE endpoint for real-time update progress.
     DEPRECATED: Use unified GET /api/realtime/stream?channels=update instead."""
+    return redirect('/api/realtime/stream?channels=update', code=307)
     import logging as _log_depr
     _log_depr.getLogger(__name__).warning(
         "DEPRECATED endpoint /api/system/update/stream used — "

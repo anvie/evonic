@@ -9,8 +9,9 @@ import shlex
 import uuid
 import queue
 import logging
+from urllib.parse import urlencode
 from typing import Dict, Any, List, Optional
-from flask import Blueprint, render_template, jsonify, request, Response, session, stream_with_context, g
+from flask import Blueprint, render_template, jsonify, request, Response, session, stream_with_context, g, redirect
 from models.db import db
 from models.chatlog import chatlog_manager, _DISPLAY_TYPES
 from backend.agent_portability import AgentPortabilityError, export_agent, import_agent, preflight_import
@@ -1646,6 +1647,7 @@ def api_chat(agent_id):
     if request.content_type and request.content_type.startswith('multipart/form-data'):
         message = (request.form.get('message') or '').strip()
         user_id = (request.form.get('user_id') or 'anonymous').strip()
+        client_message_id = (request.form.get('client_message_id') or '').strip()
         files = [f for f in request.files.getlist('files') if f and f.filename]
         if not files:
             legacy_file = request.files.get('file')
@@ -1654,7 +1656,11 @@ def api_chat(agent_id):
         data = request.get_json() or {}
         message = data.get('message', '').strip()
         user_id = data.get('user_id', 'anonymous')
+        client_message_id = (data.get('client_message_id') or '').strip()
         files = []
+
+    if client_message_id and not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', client_message_id):
+        return jsonify({'error': 'Invalid client_message_id'}), 400
 
     if not message and not files:
         return jsonify({'error': 'Message is required'}), 400
@@ -1708,9 +1714,9 @@ def api_chat(agent_id):
 
     image_url = image_urls[0] if image_urls else None
     attachment_info = attachment_infos[0] if attachment_infos else None
-    upload_meta = None
+    upload_meta = {'client_message_id': client_message_id} if client_message_id else None
     if attachment_infos:
-        upload_meta = {'attachment_infos': attachment_infos}
+        upload_meta = dict(upload_meta or {}, attachment_infos=attachment_infos)
         if len(attachment_infos) == 1:
             upload_meta['attachment_info'] = attachment_info
 
@@ -1721,14 +1727,24 @@ def api_chat(agent_id):
             metadata=upload_meta,
         )
         if result.get('buffered'):
-            resp = {'success': True, 'buffered': True}
+            resp = {
+                'success': True, 'buffered': True,
+                'message_id': result.get('message_id'),
+                'client_message_id': result.get('client_message_id'),
+                'turn_id': result.get('turn_id'),
+            }
             if attachment_infos:
                 resp['attachment_infos'] = attachment_infos
                 if len(attachment_infos) == 1:
                     resp['attachment_info'] = attachment_info
             return jsonify(resp)
         if result.get('injected'):
-            resp = {'success': True, 'injected': True}
+            resp = {
+                'success': True, 'injected': True,
+                'message_id': result.get('message_id'),
+                'client_message_id': result.get('client_message_id'),
+                'turn_id': result.get('turn_id'),
+            }
             if attachment_infos:
                 resp['attachment_infos'] = attachment_infos
                 if len(attachment_infos) == 1:
@@ -1742,6 +1758,10 @@ def api_chat(agent_id):
             'slash_command': result.get('slash_command', False),
             'bash_exec': result.get('bash_exec', False),
             'clear_ui': result.get('clear_ui', False),
+            'message_id': result.get('message_id'),
+            'response_message_id': result.get('response_message_id'),
+            'client_message_id': result.get('client_message_id'),
+            'turn_id': result.get('turn_id'),
         }
         if attachment_infos:
             resp['attachment_infos'] = attachment_infos
@@ -1768,6 +1788,8 @@ def api_chat_jsonl(agent_id):
     Response: {"entries": [...], "has_more": bool}
       has_more is true when exactly `limit` entries were returned.
     """
+    from backend.realtime_store import realtime_store
+    realtime_cursor = realtime_store.high_water()
     user_id = request.args.get('user_id', 'anonymous')
     session_id = request.args.get('session_id')
     to_ts = request.args.get('to_ts', type=int)
@@ -1794,15 +1816,21 @@ def api_chat_jsonl(agent_id):
         # fall through to tail_by_messages instead.
         all_entries = chatlog.get_entries_after_ts(after_ts, types=_DISPLAY_TYPES)
         entries = all_entries[:limit]
-        return jsonify({'entries': entries, 'has_more': len(all_entries) > limit})
+        response = jsonify({'entries': entries, 'has_more': len(all_entries) > limit})
+        response.headers['X-Evonic-Realtime-Cursor'] = str(realtime_cursor)
+        return response
 
     # Backward (tail) scan: entries older than to_ts, counted by logical messages
     entries, has_more = chatlog.tail_by_messages(limit=limit, to_ts=to_ts)
-    return jsonify({'entries': entries, 'has_more': has_more})
+    response = jsonify({'entries': entries, 'has_more': has_more})
+    response.headers['X-Evonic-Realtime-Cursor'] = str(realtime_cursor)
+    return response
 
 
 @agents_bp.route('/api/agents/<agent_id>/chat/history', methods=['GET'])
 def api_chat_history(agent_id):
+    from backend.realtime_store import realtime_store
+    realtime_cursor = realtime_store.high_water()
     user_id = request.args.get('user_id', 'anonymous')
     session_id = db.get_session_id(agent_id, user_id) or db.get_or_create_session(agent_id, user_id)
     messages = db.get_session_messages(session_id, limit=50, agent_id=agent_id)
@@ -1828,7 +1856,9 @@ def api_chat_history(agent_id):
             if m.get('metadata'):
                 entry['metadata'] = m['metadata']
             filtered.append(entry)
-    return jsonify({'messages': filtered})
+    response = jsonify({'messages': filtered})
+    response.headers['X-Evonic-Realtime-Cursor'] = str(realtime_cursor)
+    return response
 
 
 @agents_bp.route('/api/agents/<agent_id>/chat/poll', methods=['GET'])
@@ -2367,6 +2397,14 @@ def api_chat_stream(agent_id):
     session_id = request.args.get('session_id')
     if not session_id:
         return jsonify({'error': 'session_id required'}), 400
+    after = request.args.get('after', '0')
+    return redirect(
+        '/api/realtime/stream?' + urlencode({
+            'chat': 1, 'agent_id': agent_id,
+            'session_id': session_id, 'after': after,
+        }),
+        code=307,
+    )
 
     from backend.event_stream import event_stream
 
@@ -2601,6 +2639,7 @@ def api_approvals_stream():
     """Global SSE endpoint — pushes ALL approval events (any agent, any session)
     to every connected client.
     DEPRECATED: Use unified GET /api/realtime/stream?channels=approvals instead."""
+    return redirect('/api/realtime/stream?channels=approvals', code=307)
     import logging as _log_depr
     _log_depr.getLogger(__name__).warning(
         "DEPRECATED endpoint /api/approvals/stream used — "
@@ -2694,7 +2733,7 @@ def api_approvals_stream():
 
 @agents_bp.route('/api/agents/<agent_id>/chat/events', methods=['GET'])
 def api_chat_events(agent_id):
-    """Fetch missed SSE events by sequence range for gap-detection recovery."""
+    """Compatibility reader backed by the durable realtime journal."""
     session_id = request.args.get('session_id')
     after_seq = request.args.get('after', type=int)
     up_to_seq = request.args.get('up_to', type=int)
@@ -2703,61 +2742,17 @@ def api_chat_events(agent_id):
     if up_to_seq is not None and up_to_seq - after_seq > 200:
         return jsonify({'error': 'range too large (max 200)'}), 400
 
-    from backend.event_stream import event_stream
-
-    _TRANSFORM_MAP = {
-        'turn_begin':        ('turn_begin',      lambda d: {'ts': d.get('ts', 0)}),
-        'llm_thinking':      ('thinking',        lambda d: {'content': d.get('thinking', '')}),
-        'tool_call_started': ('tool_call_started', lambda d: {'tool': d.get('tool_name', ''), 'args': d.get('tool_args', {}), 'param_types': d.get('param_types', {})}),
-        'tool_executed':     ('tool_executed',    lambda d: {'tool': d.get('tool_name', ''), 'args': d.get('tool_args', {}), 'result': d.get('tool_result', {}), 'error': d.get('has_error', False)}),
-        'state:changed':     ('state:changed',    lambda d: {key: d[key] for key in ('mode', 'plan_file', 'tasks', 'loaded_skills') if key in d}),
-        'tasks:auto_transition': ('tasks:auto_transition', lambda d: {key: d[key] for key in ('task_ids', 'tasks') if key in d}),
-        'tasks:stale':       ('tasks:stale',       lambda d: {key: d[key] for key in ('task_ids', 'tasks') if key in d}),
-        'llm_response_chunk':('response_chunk',  lambda d: {'content': d.get('content', ''), 'is_final': d.get('is_final', False), 'send_as_message': d.get('send_as_message', False)}),
-        'turn_complete':     ('done',             lambda d: {
-            'thinking_duration': d.get('thinking_duration'),
-            'response': d.get('response', ''),
-            'slash_command': d.get('slash_command', False),
-        }),
-        'approval_required': ('approval_required', lambda d: {'approval_id': d.get('approval_id', ''), 'agent_id': d.get('agent_id', ''), 'source_agent_id': d.get('source_agent_id', ''), 'source_agent_name': d.get('source_agent_name', ''), 'tool': d.get('tool_name', ''), 'args': d.get('tool_args', {}), 'approval_info': d.get('approval_info', {}), 'reasons': d.get('reasons', []), 'score': d.get('score')}),
-        'approval_resolved': ('approval_resolved', lambda d: {'approval_id': d.get('approval_id', ''), 'decision': d.get('decision', ''), 'timed_out': d.get('timed_out', False)}),
-        'llm_retry':         ('retry',             lambda d: {'retry_count': d.get('retry_count', 0), 'max_retries': d.get('max_retries', 0), 'error_type': d.get('error_type', ''), 'message': d.get('user_message', '')}),
-        'message_injected':  ('message_injected',  lambda d: {'message': d.get('message', '')}),
-        'message_injection_applied': ('message_injection_applied', lambda d: {'content': d.get('content', ''), 'count': d.get('count', 1)}),
-        'message_received':  ('message_received', lambda d: {'message': d.get('message', ''), 'metadata': d.get('metadata', {})}),
-        'session_clear':     ('session_clear',     lambda d: {'session_id': d.get('session_id', ''), 'agent_id': d.get('agent_id', '')}),
-        'turn_split':        ('turn_split',        lambda d: {}),
-        'evonic:agent-state-changed': ('state_changed', lambda d: {'agent_id': d.get('agent_id', ''), 'session_id': d.get('session_id', '')}),
-    }
-
-    if up_to_seq is None:
-        raw = event_stream.get_session_events(session_id, after_seq)
-    else:
-        raw = event_stream.get_events_in_range(session_id, after_seq, up_to_seq)
-
-    # Strip boundary events (turn_complete, session_clear) on fresh requests so
-    # restoreActiveReasoning() never replays completed turns or past session_clear
-    # events that would create a stale thinking bubble. Mirror the SSE stream logic
-    # at lines 1668-1674. Only strip when after_seq==0; on gap-fill reconnects
-    # (after_seq>0), the client hasn't seen these events and needs them.
-    if after_seq == 0:
-        last_boundary = -1
-        for i, e in enumerate(raw):
-            if e['event'] in ('turn_complete', 'session_clear'):
-                last_boundary = i
-        if last_boundary >= 0:
-            raw = raw[last_boundary + 1:]
-
-    events = []
-    for entry in raw:
-        event_name = entry['event']
-        if event_name in _TRANSFORM_MAP:
-            sse_name, transform = _TRANSFORM_MAP[event_name]
-            payload = transform(entry['data'])
-            payload['seq'] = entry['chat_seq']
-            events.append({'event': sse_name, 'seq': entry['chat_seq'], 'data': payload})
-
-    return jsonify({'events': events})
+    from backend.realtime_store import realtime_store
+    active_only = after_seq == 0 and up_to_seq is None
+    rows = realtime_store.events_after(
+        after_seq, {'chat'}, session_id=session_id, agent_id=agent_id,
+        up_to_id=up_to_seq, active_only=active_only,
+        limit=200 if up_to_seq is not None else 5000,
+    )
+    return jsonify({'events': [
+        {'event': row['event'], 'seq': row['id'], 'data': row['data']}
+        for row in rows
+    ]})
 
 
 @agents_bp.route('/api/agents/<agent_id>/chat/approve', methods=['POST'])
@@ -2831,6 +2826,7 @@ def api_agents_status_stream():
         data: {"agent_id": "...", "agent_name": "...", "response": "...",
                "external_user_id": "...", "session_id": "..."}
     """
+    return redirect('/api/realtime/stream?channels=status', code=307)
     import logging as _log_depr
     _log_depr.getLogger(__name__).warning(
         "DEPRECATED endpoint /api/agents/status/stream used — "

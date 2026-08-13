@@ -357,7 +357,7 @@ export class Turn {
             console.warn('[turn] done event turn=%s _finalized=%s _finalContent=%s', this.id, this._finalized, !!this._finalContent);
             this._finalizeBubble(data.thinking_duration);
             // Fire final:response so page-level code can render the response bubble
-            // synchronously — no dependency on pollForResponse JSONL poll.
+            // synchronously from the durable stream.
             if (this._finalContent) {
                 console.warn('[turn] firing final:response turn=%s contentLen=%d', this.id, this._finalContent.length);
                 this._onTrigger('final:response', {

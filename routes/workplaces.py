@@ -8,7 +8,7 @@ import uuid
 import queue
 import threading
 
-from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context
+from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context, redirect
 
 from models.db import db
 
@@ -154,6 +154,7 @@ def api_workplace_status(workplace_id):
 def api_workplace_events(workplace_id):
     """SSE stream for real-time workplace status changes (connector connect/disconnect, status).
     DEPRECATED: Use unified GET /api/realtime/stream?workplace=<id> instead."""
+    return redirect(f'/api/realtime/stream?workplace={workplace_id}', code=307)
     import logging as _log_depr
     _log_depr.getLogger(__name__).warning(
         "DEPRECATED endpoint /api/workplaces/<id>/events used — "

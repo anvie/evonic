@@ -1116,17 +1116,27 @@ def _exec_send_channel_message(args: dict, agent_context: dict) -> dict:
 
     # ---- Record in chat log ----
     try:
-        db.add_chat_message(
+        message_id = db.add_chat_message(
             session_id, 'assistant', message,
             agent_id=sender_id,
             metadata={'channel_send': True},
         )
+        message_id = message_id if type(message_id) in (int, str) else None
         from models.chatlog import chatlog_manager
         chatlog_manager.get(sender_id, session_id).append({
             'type': 'final',
             'session_id': session_id,
             'content': message,
             'metadata': {'channel_send': True},
+            'message_id': message_id,
+        })
+        from backend.event_stream import event_stream
+        event_stream.emit('message_received', {
+            'agent_id': sender_id, 'session_id': session_id,
+            'external_user_id': external_user_id, 'channel_id': channel_id,
+            'message': message, 'message_id': message_id,
+            'metadata': {'channel_send': True},
+            'role': 'assistant', 'sender': sender_id,
         })
     except Exception as e:
         _logger.warning("send_channel_message: chat log error: %s", e)

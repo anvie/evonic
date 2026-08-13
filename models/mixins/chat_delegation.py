@@ -132,6 +132,8 @@ class ChatDelegationMixin:
             llm_trace_manager.get(agent_id, session_id).clear()
             llm_trace_manager.evict(agent_id, session_id)
             self._remove_session_index(session_id)
+            from backend.realtime_store import realtime_store
+            realtime_store.purge_session(session_id)
 
     def get_last_message_timestamp(self, session_id: str, agent_id: str = None) -> Optional[float]:
         """Return the unix timestamp of the most recent message in a session.
@@ -201,6 +203,8 @@ class ChatDelegationMixin:
                 pass
             self._refresh_session_count(agent_id)
             self._remove_session_index(session_id)
+            from backend.realtime_store import realtime_store
+            realtime_store.purge_session(session_id)
             # Wipe attachments tied to this session (rows + on-disk files) so
             # they don't linger unreachable after the conversation is gone.
             try:

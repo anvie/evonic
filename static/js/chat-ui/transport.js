@@ -14,8 +14,7 @@ const SSE_EVENTS = [
     'turn_begin', 'turn_split', 'thinking', 'tool_call_started', 'tool_executed',
     'state:changed', 'tasks:auto_transition', 'tasks:stale', 'response_chunk', 'done', 'approval_required', 'approval_resolved', 'retry',
     'message_injected', 'message_injection_applied', 'message_received', 'whatsapp_restriction_warning', 'session_clear',
-    'state_changed',
-    'heartbeat',
+    'state_changed', 'turn_queued', 'ready', 'heartbeat', 'auth_expired',
 ];
 
 // If no event (including heartbeats) arrives within this window, the connection
@@ -28,7 +27,7 @@ export class SSEAdapter {
      * @param {object} [opts]
      * @param {string} [opts.agentId]
      * @param {string} [opts.sessionId]
-     * @param {number} [opts.afterSeq=0]  - resume from this seq (gap-fill will request from here)
+     * @param {number} [opts.afterSeq=0]  - durable journal resume cursor
      */
     constructor(url, opts = {}) {
         this._url = url;
@@ -37,8 +36,6 @@ export class SSEAdapter {
         this._lastSeq = opts.afterSeq || 0;
         this._handler = null;
         this._es = null;
-        this._fillingGap = false;
-        this._pendingQueue = [];
         this._log = log('sse');
         this._lastEventAt = 0;
         this._livenessInterval = null;
@@ -126,10 +123,10 @@ export class SSEAdapter {
 
         es.onerror = () => {
             this._log.warn('SSE error/closed', url);
-            console.warn('[sse] error/closed _lastSeq=', this._lastSeq, '_fillingGap=', this._fillingGap, '_pendingQueue=', this._pendingQueue.length);
+            console.warn('[sse] error/closed _lastSeq=', this._lastSeq);
             es.close();
             if (this._es === es) this._es = null;
-            // Only reconnect if this was NOT an intentional stop (e.g. after 'done')
+            // Only reconnect if this adapter was not explicitly stopped.
             if (this._intentionallyStopped) {
                 this._log.info('intentionally stopped — no reconnect');
                 return;
@@ -170,7 +167,7 @@ export class SSEAdapter {
                     resumeUrl = u.pathname + u.search;
                 }
                 this._log.info('reconnecting from seq', this._lastSeq, resumeUrl);
-                console.warn('[sse] reconnecting _lastSeq=', this._lastSeq, '_fillingGap=', this._fillingGap, '_pendingQueue=', this._pendingQueue.length, 'url=', resumeUrl);
+                console.warn('[sse] reconnecting _lastSeq=', this._lastSeq, 'url=', resumeUrl);
                 this._connect(resumeUrl);
             }, delay);
         };
@@ -178,80 +175,21 @@ export class SSEAdapter {
 
     _handleRaw(evtName, data) {
         const seq = data.seq || 0;
-
-        if (this._fillingGap) {
-            this._log.debug('queued while filling gap', evtName, 'seq', seq, 'queueLen', this._pendingQueue.length);
-            if (this._pendingQueue.length >= 1 && this._pendingQueue.length % 10 === 0) {
-                console.warn('[sse] pendingQueue grew to', this._pendingQueue.length, 'while filling gap — possible reconnect storm');
-            }
-            this._pendingQueue.push({ evtName, data });
-            return;
-        }
-
         if (seq && seq <= this._lastSeq) {
             this._log.debug('dedup skip', evtName, 'seq', seq, '≤ lastSeq', this._lastSeq);
-            console.log('[sse] dedup skip', evtName, 'seq=', seq, '_lastSeq=', this._lastSeq);
             return;
         }
-
-        if (seq && this._lastSeq > 0 && seq > this._lastSeq + 1) {
-            this._log.warn('seq gap detected', this._lastSeq, '→', seq, '— filling');
-            this._fillingGap = true;
-            this._pendingQueue.push({ evtName, data });
-            this._fillGap(this._lastSeq, seq).then(() => {
-                this._fillingGap = false;
-                console.warn('[sse] draining pendingQueue len=', this._pendingQueue.length, '_lastSeq=', this._lastSeq);
-                this._drainQueue();
-            });
-            return;
-        }
-
         if (seq) this._lastSeq = seq;
+        if (evtName === 'ready') return;
         this._dispatch(evtName, data);
     }
 
-    async _fillGap(afterSeq, upToSeq) {
-        try {
-            const agentId = this._agentId || this._url.match(/\/agents\/([^/?]+)\//)?.[1] || '';
-            const res = await $.getJSON(
-                `/api/agents/${encodeURIComponent(agentId)}/chat/events?session_id=${encodeURIComponent(this._sessionId)}&after=${afterSeq}&up_to=${upToSeq}`
-            );
-            const evts = res.events || [];
-            this._log.warn('gap-fill response: afterSeq=' + afterSeq + ' upToSeq=' + upToSeq + ' returned=' + evts.length + ' seqs=' + evts.map(e=>e.seq).join(','));
-            console.warn('[gap-fill] returned', evts.length, 'events for after=', afterSeq, 'up_to=', upToSeq, 'seqs:', evts.map(e=>e.seq).join(','));
-            for (const ev of evts) {
-                if (ev.seq <= this._lastSeq) continue;
-                this._lastSeq = ev.seq;
-                this._dispatch(ev.event, ev.data);
-            }
-        } catch (err) {
-            this._log.warn('gap-fill failed', err, '— skipping gap');
-            this._lastSeq = upToSeq - 1;
-        }
-    }
-
-    // Drain _pendingQueue asynchronously — one event per animation frame so we
-    // never block the main thread with a large synchronous burst.
-    _drainQueue() {
-        if (this._pendingQueue.length === 0) {
-            console.warn('[sse] queue drain done _lastSeq=', this._lastSeq);
-            return;
-        }
-        const item = this._pendingQueue.shift();
-        const itemSeq = item.data.seq || 0;
-        if (itemSeq && itemSeq <= this._lastSeq) {
-            console.log('[sse] queue dedup skip', item.evtName, 'seq=', itemSeq);
-            // Skip but continue draining without waiting — dedup is cheap
-            this._drainQueue();
-            return;
-        }
-        if (itemSeq) this._lastSeq = itemSeq;
-        this._dispatch(item.evtName, item.data);
-        // Yield to the browser between each real event
-        requestAnimationFrame(() => this._drainQueue());
-    }
-
     _dispatch(evtName, data) {
+        if (evtName === 'auth_expired') {
+            this.stop();
+            window.location.href = '/login';
+            return;
+        }
         if (evtName === 'state_changed') {
             // Not turn-scoped — bridge straight to the document-level event that
             // agent_detail.html / sessions.html already listen for (debounced refresh).
@@ -266,11 +204,8 @@ export class SSEAdapter {
             this._handler({ event: 'session_clear', data, seq: data.seq || 0 });
             return;
         }
-        // done: stop reconnecting after this
         if (evtName === 'done') {
-            console.warn('[sse] _dispatch done _lastSeq=', this._lastSeq, 'data.seq=', data.seq);
             this._handler({ event: 'done', data, seq: data.seq || 0 });
-            this.stop();
             return;
         }
         this._handler({ event: evtName, data, seq: data.seq || 0 });
