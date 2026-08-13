@@ -147,17 +147,13 @@ def execute(agent, args: dict) -> dict:
     # workplace sync is needed just to return metadata and native guidance.
     if category and not _is_textish(mime_type, original_name):
         guidance = analysis_guidance(
-            original_name, mime_type, attachment_id, enabled=True
+            original_name, mime_type, resolved_path, enabled=True
         )
         return {
             "result": (
                 _format_metadata(row, resolved_path)
                 + "\n\nDocument contents are not parsed locally. "
-                + (
-                    f"Call `analyze_document` with attachment_id={attachment_id}."
-                    if attachment_id is not None else
-                    (guidance or "Use the numeric Attachment ID with `analyze_document`.")
-                )
+                + guidance
             )
         }
 

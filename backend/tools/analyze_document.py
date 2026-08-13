@@ -1,4 +1,4 @@
-"""Analyze an attachment with a provider's native document input."""
+"""Analyze a document with a provider's native document input."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 from backend.llm_client import LLMClient, strip_thinking_tags
-from backend.tools._attachment import resolve_attachment_path
 from backend.tools._document import (
     OFFICE,
     PDF,
@@ -18,6 +17,12 @@ from backend.tools._document import (
     capability_for,
     document_category,
     document_extension,
+)
+from backend.tools._workspace import (
+    effective_agent_id,
+    is_self_path,
+    resolve_self_path,
+    resolve_workspace_path,
 )
 
 
@@ -32,6 +37,14 @@ _SYSTEM_PROMPT = (
     "user's question from the document, preserve important details, and state "
     "when the document does not contain enough evidence."
 )
+
+_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_ATTACHMENTS_ROOT = os.path.realpath(os.path.join(_BASE_DIR, "data", "attachments"))
+
+try:
+    from config import SANDBOX_WORKSPACE as _WORKSPACE_ROOT
+except ImportError:
+    _WORKSPACE_ROOT = _BASE_DIR
 
 
 def _adapter_supports(model: dict, category: str, filename: str) -> bool:
@@ -170,60 +183,147 @@ def _call_file_model(
     return (cleaned.strip(), "") if cleaned.strip() else (None, "model returned no text")
 
 
+def _local_path(path: str) -> str:
+    target = path if os.path.isabs(path) else os.path.join(_BASE_DIR, path)
+    return os.path.realpath(target)
+
+
+def _read_host_path(path: str) -> tuple[Optional[bytes], str]:
+    try:
+        if not os.path.isfile(path):
+            return None, "File not found or path is not a file."
+        if os.path.getsize(path) > _MAX_DOCUMENT_BYTES:
+            return None, (
+                f"Document exceeds the "
+                f"{_MAX_DOCUMENT_BYTES // (1024 * 1024)} MB native input limit."
+            )
+        with open(path, "rb") as handle:
+            data = handle.read(_MAX_DOCUMENT_BYTES + 1)
+        if len(data) > _MAX_DOCUMENT_BYTES:
+            return None, (
+                f"Document exceeds the "
+                f"{_MAX_DOCUMENT_BYTES // (1024 * 1024)} MB native input limit."
+            )
+        return data, ""
+    except (OSError, PermissionError) as exc:
+        return None, f"Failed to read document: {exc}"
+
+
+def _uploaded_document(agent: dict, path: str) -> tuple[Optional[dict], str, str]:
+    """Resolve an upload path only when it belongs to this agent and session."""
+    candidates = [_local_path(path)]
+    workspace_path = resolve_workspace_path(agent, path, _WORKSPACE_ROOT)
+    workspace_candidate = _local_path(workspace_path)
+    if workspace_candidate not in candidates:
+        candidates.append(workspace_candidate)
+
+    upload_paths = []
+    for candidate in candidates:
+        try:
+            if os.path.commonpath((candidate, _ATTACHMENTS_ROOT)) == _ATTACHMENTS_ROOT:
+                upload_paths.append(candidate)
+        except ValueError:
+            pass
+    if not upload_paths:
+        return None, candidates[0], ""
+
+    agent_id = agent.get("_db_agent_id") or agent.get("id")
+    session_id = agent.get("session_id")
+    if agent_id and session_id:
+        from models.db import db
+
+        for row in db.list_session_attachments(session_id, agent_id):
+            stored_path = _local_path(str(row.get("file_path") or ""))
+            if stored_path in upload_paths:
+                return row, stored_path, ""
+    return (
+        None,
+        upload_paths[0],
+        "Access denied — attachment path does not belong to this agent and session.",
+    )
+
+
+def _read_path(
+    agent: dict, path: str
+) -> tuple[Optional[bytes], str, str, str]:
+    """Read an agent-visible path without falling back across environments."""
+    row, resolved_upload, upload_error = _uploaded_document(agent, path)
+    if upload_error:
+        return None, "", "", upload_error
+    if row:
+        data, error = _read_host_path(resolved_upload)
+        name = str(row.get("original_filename") or row.get("filename") or path)
+        return data, name, str(row.get("mime_type") or ""), error
+
+    if is_self_path(path):
+        resolved = resolve_self_path(effective_agent_id(agent), path)
+        if not resolved:
+            return None, "", "", "Access denied — path is outside this agent's directory."
+        data, error = _read_host_path(resolved)
+        return data, os.path.basename(resolved), "", error
+
+    from backend.tools.lib.exec_backend import registry
+
+    try:
+        backend = registry.get_backend(agent.get("session_id") or "default", agent)
+        target = resolve_workspace_path(agent, path, _WORKSPACE_ROOT)
+        target = backend.resolve_path(target)
+        stat = backend.file_stat(target)
+        if not stat.get("exists"):
+            return None, "", "", "File not found in the agent's execution environment."
+        if int(stat.get("size") or 0) > _MAX_DOCUMENT_BYTES:
+            return None, "", "", (
+                f"Document exceeds the "
+                f"{_MAX_DOCUMENT_BYTES // (1024 * 1024)} MB native input limit."
+            )
+        result = backend.cat_file_bytes(target)
+    except Exception as exc:
+        return None, "", "", f"Failed to access execution environment: {exc}"
+    if "error" in result:
+        return None, "", "", f"Failed to read document: {result['error']}"
+    data = result.get("bytes")
+    if not isinstance(data, bytes):
+        return None, "", "", "Failed to read document: execution backend returned invalid data."
+    if len(data) > _MAX_DOCUMENT_BYTES:
+        return None, "", "", (
+            f"Document exceeds the "
+            f"{_MAX_DOCUMENT_BYTES // (1024 * 1024)} MB native input limit."
+        )
+    return data, os.path.basename(path), "", ""
+
+
 def execute(agent: dict, args: dict) -> Any:
-    """Analyze an owned document attachment and return plain text."""
+    """Analyze an agent-visible document path."""
     if not isinstance(agent, dict) or not isinstance(args, dict):
         return "Error: Invalid document analysis context or arguments."
     if not agent.get("document_enabled", 1):
         return "Error: Document analysis is not enabled for this agent (document_enabled=0)."
 
-    attachment_id = args.get("attachment_id")
-    try:
-        if isinstance(attachment_id, bool) or not isinstance(attachment_id, (int, str)):
-            raise ValueError
-        if isinstance(attachment_id, str) and not attachment_id.strip().isdigit():
-            raise ValueError
-        attachment_id = int(attachment_id)
-        if attachment_id <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        return "Error: 'attachment_id' is required and must be a positive integer."
+    raw_path = args.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return "Error: 'path' must be a non-empty filesystem path."
+    path = raw_path.strip()
+    parsed_path = urlsplit(path)
+    if (
+        parsed_path.scheme.lower() in {"data", "file", "ftp", "ftps", "http", "https"}
+        or "://" in path
+    ):
+        return "Error: 'path' must be a filesystem path, not a URL."
 
-    owner_context = dict(agent)
-    owner_context["id"] = agent.get("_db_agent_id") or agent.get("id", "")
-    backend, path_or_error = resolve_attachment_path(
-        owner_context, f"/_attachment/{attachment_id}"
-    )
-    if backend is None:
-        return f"Error: {path_or_error}"
-    path = path_or_error
+    document_data, original_name, declared_mime, read_error = _read_path(agent, path)
+    if read_error:
+        return f"Error: {read_error}"
+    file_size = len(document_data)
 
-    from models.db import db
-    row = db.get_attachment(attachment_id) or {}
-    current_session = agent.get("session_id")
-    if current_session and row.get("session_id") and row["session_id"] != current_session:
-        return "Error: Access denied — attachment belongs to a different session."
-
-    declared_mime = str(row.get("mime_type") or "")
-    original_name = str(row.get("original_filename") or row.get("filename") or path)
     category = document_category(original_name, declared_mime)
     if not category:
-        return "Error: Attachment format is unsupported or its MIME type does not match its filename."
-
-    try:
-        file_size = os.path.getsize(path)
-        if file_size > _MAX_DOCUMENT_BYTES:
-            return (
-                f"Error: Document exceeds the "
-                f"{_MAX_DOCUMENT_BYTES // (1024 * 1024)} MB native input limit."
-            )
-        with open(path, "rb") as handle:
-            document_data = handle.read()
-    except (OSError, PermissionError) as exc:
-        return f"Error: Failed to read document: {exc}"
+        return (
+            "Error: Document format is unsupported or its MIME type does not "
+            "match its filename."
+        )
 
     if category == PDF and b"%PDF-" not in document_data[:1024]:
-        return "Error: Attachment does not contain a valid PDF signature."
+        return "Error: Document does not contain a valid PDF signature."
 
     models, error = _resolve_document_models(agent, category, original_name)
     if error:
@@ -237,7 +337,8 @@ def execute(agent: dict, args: dict) -> Any:
     user_text = (
         f"Analyze the attached document and answer this question: {query}"
         if query else
-        "Summarize this document and identify its key facts, conclusions, and important visual information."
+        "Summarize this document and identify its key facts, conclusions, and "
+        "important visual information."
     )
     filename = os.path.basename(original_name).replace("\r", "_").replace("\n", "_")[:200]
     mime_type = _native_mime(filename, declared_mime, category)

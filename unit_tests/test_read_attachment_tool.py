@@ -144,7 +144,7 @@ def test_binary_document_points_to_native_analysis_tool(tmp_path, monkeypatch):
     assert 'result' in result
     out = result['result']
     assert 'not parsed locally' in out
-    assert f'attachment_id={aid}' in out
+    assert 'with path `' in out
     assert 'analyze_document' in out
 
 

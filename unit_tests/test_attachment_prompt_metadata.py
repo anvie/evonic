@@ -119,12 +119,16 @@ def test_document_uploads_stay_metadata_only_and_get_native_tool_hint(tmp_path, 
     assert 'TOP SECRET BODY' not in note
     assert 'analyze_document' in note
     assert f"Attachment ID: {result['attachment_info']['attachment_id']}" in note
+    assert 'with path `' in note
     assert 'analyze_document' not in context.build_attachment_note(
         result['attachment_info'], document_enabled=False
     )
     without_id = dict(result['attachment_info'])
     without_id.pop('attachment_id')
-    assert 'analyze_document' not in context.build_attachment_note(without_id)
+    assert 'analyze_document' in context.build_attachment_note(without_id)
+    without_path = dict(result['attachment_info'])
+    without_path.pop('file_path')
+    assert 'analyze_document' not in context.build_attachment_note(without_path)
 
     text_upload = FileStorage(
         stream=io.BytesIO(b'TEXT BODY MUST NOT ENTER PROMPT'),

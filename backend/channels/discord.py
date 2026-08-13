@@ -547,7 +547,7 @@ class DiscordChannel(BaseChannel):
                 guidance = analysis_guidance(
                     original_filename,
                     content_type,
-                    attachment_id,
+                    target_path,
                     enabled=bool(agent and agent.get('document_enabled', 1)),
                 )
                 if guidance:

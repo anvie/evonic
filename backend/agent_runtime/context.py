@@ -1179,7 +1179,7 @@ def build_attachment_note(attachment_info: dict,
     guidance = analysis_guidance(
         attachment_info.get('original_filename') or filename,
         mime_type,
-        attachment_id,
+        file_path,
         enabled=document_enabled,
     )
     if guidance:

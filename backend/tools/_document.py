@@ -121,12 +121,12 @@ def model_supports_any_document(model: dict) -> bool:
     return any(model.get(column) for column in DOCUMENT_CAPABILITIES.values())
 
 
-def analysis_guidance(filename: str, mime_type: Optional[str], attachment_id,
+def analysis_guidance(filename: str, mime_type: Optional[str], path,
                       enabled: bool = True) -> str:
     category = document_category(filename, mime_type)
-    if not enabled or not category or attachment_id is None:
+    if not enabled or not category or not path:
         return ""
     return (
-        "Use the `analyze_document` tool with this Attachment ID to analyze "
-        f"the {category} document natively."
+        f"Use `analyze_document` with path `{path}` to analyze the "
+        f"{category} document natively."
     )

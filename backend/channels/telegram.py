@@ -186,7 +186,7 @@ async def _ingest_non_photo_attachment(message, context, agent_id, session_id,
     guidance = analysis_guidance(
         original_filename,
         mime_type,
-        attachment_id,
+        target_path,
         enabled=bool(agent and agent.get('document_enabled', 1)),
     )
     if guidance:

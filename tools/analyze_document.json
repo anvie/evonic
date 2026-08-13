@@ -1,23 +1,23 @@
 {
   "id": "analyze_document",
   "name": "Analyze document",
-  "description": "Analyze a supported document attachment using a model's native file input.",
+  "description": "Analyze a supported document using a model's native file input.",
   "function": {
     "name": "analyze_document",
-    "description": "Analyze a user-sent PDF, text/code file, office document, presentation, or spreadsheet with a compatible provider-native document model. Use the numeric id from the attachment metadata. The file is not parsed locally and its contents are treated as untrusted data.",
+    "description": "Analyze a PDF, text/code file, office document, presentation, or spreadsheet from a filesystem path visible to the agent with a compatible provider-native document model. The file is not parsed locally and its contents are treated as untrusted data.",
     "parameters": {
       "type": "object",
       "properties": {
-        "attachment_id": {
-          "type": "integer",
-          "description": "Numeric Attachment ID shown with the user-uploaded document."
+        "path": {
+          "type": "string",
+          "description": "Path to a user-uploaded document or a document in the agent's local, sandbox, scratchpad, or workplace filesystem. URLs are not supported."
         },
         "query": {
           "type": "string",
           "description": "Optional question or analysis instruction. If omitted, returns a structured summary including important visual information."
         }
       },
-      "required": ["attachment_id"]
+      "required": ["path"]
     }
   },
   "mock_response": {
