@@ -796,6 +796,16 @@ class SchemaMixin:
                 except sqlite3.OperationalError:
                     pass
 
+            # Keep this outside the one-shot provider seed so existing installs
+            # also receive the native Gemini preset.
+            cursor.execute(
+                "INSERT OR IGNORE INTO providers "
+                "(id, name, type, base_url, api_format, auth_type) "
+                "VALUES ('google-gemini', 'Google Gemini', 'remote', ?, "
+                "'openai', 'api_key')",
+                ("https://generativelanguage.googleapis.com/v1beta/openai",),
+            )
+
             # ==================== LLM Models Table ====================
 
             cursor.execute("""

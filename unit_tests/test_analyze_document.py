@@ -145,6 +145,50 @@ def test_codex_converter_maps_file_to_responses_input_file():
     }
 
 
+def test_gemini_uses_direct_generate_content_with_inline_pdf(tmp_path, monkeypatch):
+    agent_id = _agent('gemini_pdf_agent')
+    path = _attachment(tmp_path, agent_id)
+    model_id = _model(
+        'gemini-model',
+        provider='google-gemini',
+        base_url='',
+        api_key='gemini-key',
+    )
+    with db._connect() as conn:
+        conn.execute(
+            "UPDATE llm_models SET model_name = 'models/gemini-2.5-pro' WHERE id = ?",
+            (model_id,),
+        )
+        conn.commit()
+    db.set_setting('document_model_id', model_id)
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {'candidates': [{'content': {'parts': [{'text': 'Gemini answer'}]}}]}
+
+    def fake_post(url, **kwargs):
+        captured['url'] = url
+        captured.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(ap.requests, 'post', fake_post)
+    result = ap.execute(
+        {'id': agent_id, 'session_id': 's1', 'document_enabled': 1},
+        {'path': path},
+    )
+
+    assert result == 'Gemini answer'
+    assert captured['url'].endswith('/v1beta/models/gemini-2.5-pro:generateContent')
+    assert captured['headers']['x-goog-api-key'] == 'gemini-key'
+    inline = captured['json']['contents'][0]['parts'][1]['inline_data']
+    assert inline['mime_type'] == 'application/pdf'
+    assert inline['data']
+    assert 'untrusted' in captured['json']['system_instruction']['parts'][0]['text']
+
+
 def test_falls_back_to_second_native_model(tmp_path, monkeypatch):
     agent_id = _agent('fallback_pdf_agent')
     path = _attachment(tmp_path, agent_id)
@@ -405,3 +449,26 @@ def test_category_routing_skips_incompatible_primary(tmp_path, monkeypatch):
         {'path': path},
     ) == 'sheet answer'
     assert calls == ['spreadsheet-model']
+
+
+def test_gemini_skips_binary_office_even_when_capability_is_checked(tmp_path):
+    agent_id = _agent('gemini_office_agent')
+    path = _attachment(
+        tmp_path, agent_id, name='report.docx',
+        mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        body=b'docx bytes',
+    )
+    db.set_setting('document_model_id', _model(
+        'gemini-office', provider='google-gemini', base_url='', category='office'
+    ))
+    result = ap.execute(
+        {'id': agent_id, 'session_id': 's1', 'document_enabled': 1},
+        {'path': path},
+    )
+    assert 'No native office-document model' in result
+
+
+def test_google_gemini_provider_is_seeded():
+    provider = db.get_provider('google-gemini')
+    assert provider['base_url'] == 'https://generativelanguage.googleapis.com/v1beta/openai'
+    assert provider['api_format'] == 'openai'

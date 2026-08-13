@@ -6,7 +6,9 @@ import base64
 import mimetypes
 import os
 from typing import Any, Optional
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
+
+import requests
 
 from backend.llm_client import LLMClient, strip_thinking_tags
 from backend.tools._document import (
@@ -15,6 +17,7 @@ from backend.tools._document import (
     SPREADSHEET,
     capability_for,
     document_category,
+    document_extension,
     is_text_document,
 )
 from backend.tools._workspace import (
@@ -45,7 +48,18 @@ except ImportError:
     _WORKSPACE_ROOT = _BASE_DIR
 
 
+def _is_gemini(model: dict) -> bool:
+    base_url = str(model.get("base_url") or "").lower()
+    return (
+        "generativelanguage.googleapis.com" in base_url
+        or model.get("provider") == "google-gemini"
+    )
+
+
 def _adapter_supports(model: dict, category: str, filename: str) -> bool:
+    ext = document_extension(filename)
+    if _is_gemini(model):
+        return category == PDF or (category == OFFICE and ext == ".rtf")
     api_format = str(model.get("api_format") or "openai").lower()
     if api_format == "anthropic":
         return category == PDF
@@ -98,6 +112,19 @@ def _resolve_document_models(
     )
 
 
+def _gemini_endpoint(model: dict) -> str:
+    parsed = urlsplit(str(model.get("base_url") or ""))
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("Gemini provider has no valid base URL")
+    model_name = str(model.get("model_name") or "").removeprefix("models/")
+    if not model_name:
+        raise ValueError("Gemini model name is missing")
+    return (
+        f"{parsed.scheme}://{parsed.netloc}/v1beta/models/"
+        f"{quote(model_name, safe='')}:generateContent"
+    )
+
+
 def _native_mime(filename: str, declared_mime: str, category: str) -> str:
     declared = declared_mime.split(";", 1)[0].strip().lower()
     if declared and declared not in ("application/octet-stream", "binary/octet-stream"):
@@ -110,6 +137,60 @@ def _native_mime(filename: str, declared_mime: str, category: str) -> str:
         OFFICE: "application/octet-stream",
         SPREADSHEET: "application/octet-stream",
     }[category]
+
+
+def _gemini_mime(filename: str, mime_type: str, category: str) -> str:
+    ext = document_extension(filename)
+    if category == OFFICE and ext == ".rtf":
+        return "text/rtf"
+    return _native_mime(filename, mime_type, category)
+
+
+def _call_gemini(
+    model: dict, document_b64: str, mime_type: str, user_text: str
+) -> tuple[Optional[str], str]:
+    api_key = str(model.get("api_key") or "")
+    if not api_key:
+        return None, "Gemini API key is not configured"
+    try:
+        endpoint = _gemini_endpoint(model)
+    except ValueError as exc:
+        return None, str(exc)
+
+    payload = {
+        "system_instruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": user_text},
+                {"inline_data": {"mime_type": mime_type, "data": document_b64}},
+            ],
+        }],
+        "generationConfig": {"maxOutputTokens": _MAX_OUTPUT_TOKENS},
+    }
+    timeout = max(1, min(int(model.get("timeout") or 120), 120))
+    try:
+        response = requests.post(
+            endpoint,
+            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+            json=payload,
+            timeout=timeout,
+        )
+        body = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        return None, str(exc)
+
+    if response.status_code >= 400:
+        error = body.get("error", {}) if isinstance(body, dict) else {}
+        detail = error.get("message") if isinstance(error, dict) else str(error)
+        return None, f"HTTP {response.status_code}: {detail or 'Gemini request failed'}"
+
+    try:
+        parts = body["candidates"][0]["content"]["parts"]
+        text = "\n".join(part.get("text", "") for part in parts if part.get("text"))
+    except (KeyError, IndexError, TypeError):
+        text = ""
+    return (text.strip(), "") if text.strip() else (None, "Gemini returned no text")
 
 
 def _call_file_model(
@@ -330,7 +411,14 @@ def execute(agent: dict, args: dict) -> Any:
     for model in models:
         model_name = str(model.get("name") or model.get("id") or "unknown")
         api_format = str(model.get("api_format") or "openai").lower()
-        if api_format in ("openai", "anthropic", "codex"):
+        if _is_gemini(model):
+            text, failure = _call_gemini(
+                model,
+                document_b64,
+                _gemini_mime(filename, mime_type, category),
+                user_text,
+            )
+        elif api_format in ("openai", "anthropic", "codex"):
             if api_format == "anthropic" and file_size > _ANTHROPIC_MAX_BYTES:
                 text, failure = None, "document exceeds Anthropic's safe 23 MB native input limit"
             else:
