@@ -7391,7 +7391,7 @@ window.softSwitchAgent = async function (newId, opts = {}) {
     _agentChatEs = null;
     _agentChatSessionId = null;
     _agentChatCursor = 0;
-    updateBusyBadge(false); // cleared now; resynced for the new agent below
+    updateBusyBadge(false); // cleared now; the new chat stream snapshot restores it
     const gearDd = document.getElementById('gear-dropdown');
     if (gearDd) gearDd.classList.add('hidden');
     if (_qrPollInterval) closeQRModal();
@@ -7472,7 +7472,6 @@ window.softSwitchAgent = async function (newId, opts = {}) {
         history.pushState({agentId: newId}, '', '/agents/' + encodeURIComponent(newId) + '#chat');
     }
     window._softSwitched = true;
-    resyncBusyBadge(); // fetch the new agent's current busy state; live updates via stream
     showTab('chat'); // chatLoaded=false → loads new agent's history/session/state
     return true;
 };

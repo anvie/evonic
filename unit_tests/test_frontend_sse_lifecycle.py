@@ -88,6 +88,7 @@ def test_agent_detail_refresh_uses_one_persistent_session_stream():
     assert "X-Evonic-Realtime-Cursor" in detail
     assert "new EventSource(url)" in restore
     assert "if (_agentChatEs && _agentChatSessionId === sessionId) return;" in restore
+    assert "'agent_busy_changed'" in restore
     assert "turn_queued" in restore
     assert "message_received" in restore
     assert "Last-Event-ID" in restore
@@ -95,6 +96,11 @@ def test_agent_detail_refresh_uses_one_persistent_session_stream():
     assert "/busy" not in restore
     assert "pollForResponse" not in detail
     assert "if (data.agent_id && data.agent_id !== AGENT_ID) return;" in detail
+
+    soft_switch_start = detail.index("window.softSwitchAgent = async function")
+    soft_switch = detail[soft_switch_start:detail.index("window.addEventListener('popstate'", soft_switch_start)]
+    assert "resyncBusyBadge" not in soft_switch
+    assert "showTab('chat')" in soft_switch
 
 
 def test_chat_messages_sync_across_tabs_without_content_polling():
