@@ -852,7 +852,8 @@ def _escape_html(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def start_script_execution(agent_id: str, agent: dict, action: dict,
-                           user_params: dict):
+                           user_params: dict, session_id: str = None,
+                           notify_on_complete: threading.Event = None):
     """Start a script action in a background daemon thread.
 
     Returns (execution_id, err). err is None on success, or:
@@ -879,7 +880,8 @@ def start_script_execution(agent_id: str, agent: dict, action: dict,
 
     thread = threading.Thread(
         target=_run_script,
-        args=(agent_id, agent, action, user_params, execution_id, lock),
+        args=(agent_id, agent, action, user_params, execution_id, lock,
+              session_id, notify_on_complete),
         daemon=True,
     )
     thread.start()
@@ -887,8 +889,33 @@ def start_script_execution(agent_id: str, agent: dict, action: dict,
     return execution_id, None
 
 
+def _notify_script_completion(agent_id: str, action: dict, exit_code,
+                              output: str, session_id: str):
+    """Best-effort push of a finished script result to the originating chat.
+
+    Only used when the slash handler already replied "still running in the
+    background" (i.e. the synchronous wait timed out). Failures here must
+    never break the execution flow, so everything is swallowed.
+    """
+    try:
+        from backend.agent_runtime.notifier import notify_agent
+        notify_agent(
+            agent_id=agent_id,
+            tag="Panel",
+            message=(f"**{action['label']}** finished (exit {exit_code}):\n"
+                     f"```\n{output or '(no output)'}\n```"),
+            session_id=session_id,
+            dedup=False,
+            trigger_llm=True,
+        )
+    except Exception:
+        pass  # Best-effort; never break the execution flow
+
+
 def _run_script(agent_id: str, agent: dict, action: dict, user_params: dict,
-                execution_id: str, lock: threading.Lock):
+                execution_id: str, lock: threading.Lock,
+                session_id: str = None,
+                notify_on_complete: threading.Event = None):
     """
     Execute a script action in a background daemon thread.
 
@@ -980,6 +1007,12 @@ def _run_script(agent_id: str, agent: dict, action: dict, user_params: dict,
         except Exception:
             pass  # Best-effort logging
 
+        # If the slash handler already replied "still running in the
+        # background", push the final result to the originating chat session.
+        if notify_on_complete is not None and notify_on_complete.is_set():
+            _notify_script_completion(agent_id, action, exit_code,
+                                      log_text[-2000:], session_id)
+
     except Exception as e:
         with _buffers_lock:
             buf = _execution_buffers.get(execution_id)
@@ -987,6 +1020,11 @@ def _run_script(agent_id: str, agent: dict, action: dict, user_params: dict,
                 buf["status"] = "error"
                 buf["output_lines"].append(f"\n[Execution error: {str(e)}]\n")
                 buf["exit_code"] = -1
+
+        if notify_on_complete is not None and notify_on_complete.is_set():
+            _notify_script_completion(
+                agent_id, action, -1,
+                f"[Execution error: {str(e)}]", session_id)
 
     finally:
         lock.release()
@@ -1106,7 +1144,14 @@ def _run_panel_action(agent_id: str, action: dict, session_id=None, params: dict
     if not agent:
         return f"Agent '{agent_id}' not found."
 
-    execution_id, err = start_script_execution(agent_id, agent, action, params)
+    # Arm a completion notification only if the bounded wait below times out:
+    # short scripts already return their output inline, and arming for those
+    # would produce a duplicate follow-up message.
+    notify_on_complete = threading.Event()
+
+    execution_id, err = start_script_execution(
+        agent_id, agent, action, params,
+        session_id=session_id, notify_on_complete=notify_on_complete)
     if err == "busy":
         return (f"Cannot run **{action['label']}**: a script is already "
                 "running for this agent.")
@@ -1122,8 +1167,19 @@ def _run_panel_action(agent_id: str, action: dict, session_id=None, params: dict
             return (f"**{action['label']}** finished (exit {buf.get('exit_code')}):\n"
                     f"```\n{output or '(no output)'}\n```")
         time.sleep(0.5)
+
+    # Final check right before arming: closes the race where the script
+    # finishes between the last loop iteration and the event being set.
+    with _buffers_lock:
+        buf = dict(_execution_buffers.get(execution_id) or {})
+    if buf.get("status") in ("completed", "error"):
+        output = "".join(buf.get("output_lines", []))[-2000:]
+        return (f"**{action['label']}** finished (exit {buf.get('exit_code')}):\n"
+                f"```\n{output or '(no output)'}\n```")
+
+    notify_on_complete.set()
     return (f"**{action['label']}** is still running in the background — "
-            "the result will be recorded in the panel execution log.")
+            "the result will be sent here when it finishes.")
 
 
 def _panel_slash_handler(session_id, agent_id, external_user_id, channel_id, args):
