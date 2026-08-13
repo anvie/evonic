@@ -79,6 +79,8 @@ class RealtimeStore:
         self._condition = threading.Condition()
         self._cleanup_lock = threading.Lock()
         self._last_cleanup_ms = 0
+        self._recovery_lock = threading.Lock()
+        self._recovered: set[tuple[int, str]] = set()
 
     @contextmanager
     def _connect(self):
@@ -180,6 +182,16 @@ class RealtimeStore:
     def high_water(self) -> int:
         with self._connect() as conn:
             row = conn.execute('SELECT COALESCE(MAX(id), 0) AS id FROM realtime_events').fetchone()
+        return int(row['id'])
+
+    def last_session_clear_id(self, session_id: str, up_to_id: int) -> int:
+        with self._connect() as conn:
+            row = conn.execute("""
+                SELECT COALESCE(MAX(id), 0) AS id FROM realtime_events
+                WHERE session_id = ? AND event_type = 'session_clear'
+                    AND id <= ?
+                    AND (expires_at_ms IS NULL OR expires_at_ms > ?)
+            """, (session_id, up_to_id, _now_ms())).fetchone()
         return int(row['id'])
 
     def publish(self, channel: str, event_type: str, payload: dict, *,
@@ -285,10 +297,11 @@ class RealtimeStore:
         }
 
     def wait_for_events(self, after_id: int, timeout: float = 15) -> None:
-        if self.high_water() > after_id:
-            return
         with self._condition:
-            self._condition.wait(timeout)
+            self._condition.wait_for(
+                lambda: self.high_water() > after_id,
+                timeout,
+            )
 
     def queue_turn(self, agent_id: str, session_id: str,
                    turn_id: str | None = None) -> tuple[str, bool]:
@@ -332,16 +345,52 @@ class RealtimeStore:
     def start_turn(self, turn_id: str) -> dict | None:
         now = _now_ms()
         with self._connect() as conn:
-            conn.execute("""
+            cursor = conn.execute("""
                 UPDATE active_turns SET state = 'running', started_at_ms = ?,
-                    updated_at_ms = ?, owner_pid = ? WHERE turn_id = ?
+                    updated_at_ms = ?, owner_pid = ?
+                WHERE turn_id = ? AND state = 'queued'
             """, (now, now, os.getpid(), turn_id))
+            if cursor.rowcount != 1:
+                return None
             row = conn.execute(
                 'SELECT * FROM active_turns WHERE turn_id = ?', (turn_id,),
             ).fetchone()
         with self._condition:
             self._condition.notify_all()
         return dict(row) if row else None
+
+    def cancel_queued_turns(self, session_id: str,
+                            turn_id: str | None = None) -> list[dict]:
+        """Atomically remove queued work so a racing worker cannot start it."""
+        now = _now_ms()
+        with self._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            clauses = ["session_id = ?", "state = 'queued'"]
+            params = [session_id]
+            if turn_id:
+                clauses.append('turn_id = ?')
+                params.append(turn_id)
+            rows = conn.execute(
+                f"SELECT * FROM active_turns WHERE {' AND '.join(clauses)}",
+                params,
+            ).fetchall()
+            turn_ids = [row['turn_id'] for row in rows]
+            if turn_ids:
+                placeholders = ','.join('?' for _ in turn_ids)
+                conn.execute(
+                    f'DELETE FROM active_turns WHERE turn_id IN ({placeholders}) '
+                    "AND state = 'queued'",
+                    turn_ids,
+                )
+                conn.execute(
+                    f'UPDATE realtime_events SET expires_at_ms = ? '
+                    f'WHERE turn_id IN ({placeholders})',
+                    [now + RETENTION_MS, *turn_ids],
+                )
+        if rows:
+            with self._condition:
+                self._condition.notify_all()
+        return [dict(row) for row in rows]
 
     def finish_turn(self, turn_id: str) -> None:
         now = _now_ms()
@@ -405,44 +454,62 @@ class RealtimeStore:
 
     def purge_session(self, session_id: str) -> None:
         with self._connect() as conn:
-            conn.execute('DELETE FROM active_turns WHERE session_id = ?', (session_id,))
-            conn.execute('DELETE FROM realtime_events WHERE session_id = ?', (session_id,))
+            conn.execute("""
+                DELETE FROM realtime_events
+                WHERE session_id = ? AND (
+                    turn_id IS NULL OR NOT EXISTS (
+                        SELECT 1 FROM active_turns a
+                        WHERE a.turn_id = realtime_events.turn_id
+                    )
+                )
+            """, (session_id,))
         with self._condition:
             self._condition.notify_all()
 
     def purge_all(self) -> None:
         with self._connect() as conn:
-            conn.execute('DELETE FROM active_turns')
-            conn.execute('DELETE FROM realtime_events')
+            conn.execute("""
+                DELETE FROM realtime_events
+                WHERE turn_id IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM active_turns a
+                    WHERE a.turn_id = realtime_events.turn_id
+                )
+            """)
         with self._condition:
             self._condition.notify_all()
 
     def interrupt_stale_turns(self) -> list[dict]:
-        self._maybe_cleanup(_now_ms())
-        stale = []
-        for turn in self.active_turns():
-            if turn.get('owner_pid') == os.getpid():
-                continue
-            stale.append(turn)
-        for turn in stale:
-            payload = {
-                'agent_id': turn['agent_id'],
-                'session_id': turn['session_id'],
-                'response': '',
-                'interrupted': True,
-                'is_error': True,
-                'reason': 'server_restart',
-            }
-            self.publish('chat', 'done', payload,
-                         agent_id=turn['agent_id'], session_id=turn['session_id'],
-                         turn_id=turn['turn_id'])
-            self.publish('status', 'agent_busy_changed', {
-                'agent_id': turn['agent_id'], 'session_id': turn['session_id'],
-                'busy': False, 'interrupted': True,
-            }, agent_id=turn['agent_id'], session_id=turn['session_id'],
-               turn_id=turn['turn_id'])
-            self.finish_turn(turn['turn_id'])
-        return stale
+        key = (os.getpid(), self._resolve_db_path())
+        with self._recovery_lock:
+            if key in self._recovered:
+                return []
+            self._maybe_cleanup(_now_ms())
+            stale = self.active_turns()
+            for turn in stale:
+                payload = {
+                    'agent_id': turn['agent_id'],
+                    'session_id': turn['session_id'],
+                    'response': '',
+                    'interrupted': True,
+                    'is_error': True,
+                    'reason': 'server_restart',
+                }
+                self.publish('chat', 'done', payload,
+                             agent_id=turn['agent_id'], session_id=turn['session_id'],
+                             turn_id=turn['turn_id'])
+                self.finish_turn(turn['turn_id'])
+                remaining = self.busy_agents().get(turn['agent_id'])
+                self.publish('status', 'agent_busy_changed', {
+                    'agent_id': turn['agent_id'],
+                    'session_id': remaining.get('session_id', turn['session_id']) if remaining else turn['session_id'],
+                    'session_ids': remaining.get('session_ids', []) if remaining else [],
+                    'active_count': remaining.get('active_count', 0) if remaining else 0,
+                    'state': remaining.get('state', 'idle') if remaining else 'idle',
+                    'busy': bool(remaining),
+                    'interrupted': True,
+                }, agent_id=turn['agent_id'], session_id=turn['session_id'])
+            self._recovered.add(key)
+            return stale
 
     def _maybe_cleanup(self, now_ms: int) -> None:
         if now_ms - self._last_cleanup_ms < _CLEANUP_INTERVAL_MS:
@@ -469,8 +536,6 @@ def record_internal_event(event_name: str, data: dict) -> list[int]:
     session_id = data.get('session_id') or None
     agent_id = data.get('agent_id') or None
     workplace_id = data.get('workplace_id') or None
-    if event_name == 'session_clear' and session_id:
-        realtime_store.purge_session(session_id)
     turn_id = (
         data.get('turn_id') if 'turn_id' in data
         else (realtime_store.current_turn_id(session_id) if session_id else None)
@@ -509,6 +574,7 @@ def record_internal_event(event_name: str, data: dict) -> list[int]:
             'message_id': data.get('message_id'),
             'is_error': data.get('is_error', False),
             'interrupted': data.get('interrupted', False),
+            'reason': data.get('reason'),
         }
         specs.append(('chat', 'done', done))
         if data.get('response') and not data.get('is_error'):

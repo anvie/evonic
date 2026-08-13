@@ -2359,13 +2359,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 })
 
                 # Escalation: ensure a human can see the approval.
-                # We always fan-out to BOTH web SSE AND messaging channels,
-                # because has_web_listener() is unreliable — it only checks
-                # listener registration, not actual SSE delivery. If SSE
-                # disconnects and reconnects, the approval event may already
-                # be gone from the ring buffer. Web SSE delivers the approval
-                # modal in the browser; messaging channels deliver a fallback
-                # notification via Telegram/WhatsApp.
+                # Always fan out to BOTH durable web SSE and messaging channels.
+                # Messaging remains the out-of-browser fallback.
                 # List of (session_id, external_user_id, channel_id) that received
                 # approval_required — used to fan-out approval_resolved to all of them.
                 _escalation_targets: list = []
@@ -2400,31 +2395,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         })
                         _escalation_targets.append((_human_session_id, _web_uid, _web_cid))
 
-                    # Channel (Telegram/WhatsApp): always notify via the super
-                    # agent's messaging channel as a fallback. We no longer gate
-                    # this behind has_web_listener() because the registration
-                    # may exist while the SSE connection is not delivering.
-
-                    # Verify web SSE delivery with heartbeat-aware check.
-                    # has_web_listener() only confirms a callback is registered;
-                    # this confirms the SSE connection is actually sending heartbeats.
-                    _web_sse_active = False
-                    try:
-                        from routes.realtime import has_active_web_sse
-                        _web_sse_active = (
-                            has_active_web_sse(session_id) or
-                            (_human_session_id and has_active_web_sse(_human_session_id))
-                        )
-                    except Exception:
-                        pass  # routes.realtime may not be importable in all contexts
-
-                    if not _web_sse_active:
-                        _logger.info(
-                            "approval %s: web SSE appears inactive for session %s "
-                            "(heartbeat not received within window) — relying on "
-                            "messaging channel fallback",
-                            pending.approval_id, session_id,
-                        )
+                    # Channel (Telegram/WhatsApp) remains an unconditional
+                    # fallback; browser connection liveness is not authoritative.
                     _super = db.get_super_agent()
                     if _super and _super['id'] != agent_id:
                         _su_uid, _su_cid = _resolve_agent_target(_super['id'])

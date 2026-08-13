@@ -27,33 +27,6 @@ from typing import Callable, Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
 
-# Event types forwarded by the deprecated per-session stream.  The durable
-# gateway uses realtime_events.id instead; this counter remains only so old
-# clients keep working during the compatibility window.
-CHAT_FORWARDED_EVENTS = frozenset({
-    'turn_begin',
-    'llm_thinking',
-    'tool_call_started',
-    'tool_executed',
-    'state:changed',
-    'tasks:auto_transition',
-    'tasks:stale',
-    'llm_response_chunk',
-    'turn_complete',
-    'required_tool_enforced',
-    'approval_required',
-    'approval_resolved',
-    'llm_retry',
-    'message_injected',
-    'message_injection_applied',
-    'message_received',
-    'whatsapp_restriction_warning',
-    'session_clear',
-    'turn_split',
-    'evonic:agent-state-changed',
-})
-
-
 class EventStream:
     def __init__(self):
         self._listeners: Dict[str, List[Callable]] = {}
@@ -67,9 +40,6 @@ class EventStream:
         self._log_file: str = None  # resolved lazily to avoid import-time circular deps
         # Raw in-process sequence is retained for plugin compatibility only.
         self._seq_counter = itertools.count(1)
-        self._buffer_lock = threading.Lock()
-        self._session_chat_seq: Dict[str, int] = {}
-        self._web_listeners: Dict[str, int] = {}
 
     def _get_log_file(self) -> str:
         if self._log_file is None:
@@ -140,12 +110,6 @@ class EventStream:
         seq = next(self._seq_counter)
         data['_seq'] = seq
         data['_event'] = event_name
-        session_id = data.get('session_id')
-        with self._buffer_lock:
-            if session_id and event_name in CHAT_FORWARDED_EVENTS:
-                chat_seq = self._session_chat_seq.get(session_id, 0) + 1
-                self._session_chat_seq[session_id] = chat_seq
-                data['_chat_seq'] = chat_seq
         # Journal synchronously before asynchronous plugin listeners.  This is
         # what gives browser replay a stable total order even though raw plugin
         # callbacks still run concurrently.
@@ -160,25 +124,6 @@ class EventStream:
             listeners = list(self._listeners.get(event_name, []))
         for cb in listeners:
             self._executor.submit(self._safe_call, event_name, cb, data)
-
-    def cleanup_session_buffer(self, session_id: str):
-        """Deprecated no-op; durable event retention replaces delayed cleanup."""
-
-    def register_web_listener(self, session_id: str):
-        with self._lock:
-            self._web_listeners[session_id] = self._web_listeners.get(session_id, 0) + 1
-
-    def unregister_web_listener(self, session_id: str):
-        with self._lock:
-            count = self._web_listeners.get(session_id, 0) - 1
-            if count <= 0:
-                self._web_listeners.pop(session_id, None)
-            else:
-                self._web_listeners[session_id] = count
-
-    def has_web_listener(self, session_id: str) -> bool:
-        with self._lock:
-            return self._web_listeners.get(session_id, 0) > 0
 
     def _safe_call(self, event_name: str, cb: Callable, data: dict):
         try:

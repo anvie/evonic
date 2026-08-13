@@ -117,6 +117,50 @@ def test_chat_messages_sync_across_tabs_without_content_polling():
     realtime = read_repo_file("static/js/realtime.js")
     assert "this._after = Math.max" in realtime
     assert "if (this._after) params.push('after=' + this._after);" in realtime
+    assert "params.push('cursor_version=2');" in realtime
+    assert "params.push('snapshot=' + (this._after ? '0' : '1'));" in realtime
     assert "this._disconnect();" in realtime
     assert "if (this._started) this._connect();" in realtime
     assert "_pauseBuffer" not in realtime
+
+
+def test_realtime_regression_guards_cover_long_turns_badges_and_panels():
+    realtime = read_repo_file("static/js/realtime.js")
+    transport = read_repo_file("static/js/chat-ui/transport.js")
+    turn = read_repo_file("static/js/chat-ui/turn.js")
+    bundle = read_repo_file("static/js/chat-ui.js")
+    detail = read_repo_file("templates/agent_detail.html")
+
+    assert realtime.count("'panel_updated'") >= 2
+    for source in (transport, bundle):
+        assert "cursor_version=2&snapshot=1" in source
+        assert "cursor_version=2&snapshot=' +" in source
+        assert "(this._lastSeq > 0 ? '0' : '1')" in source
+    for source in (turn, bundle):
+        assert "STALE_TIMEOUT_MS" not in source
+        assert "_staleTimeout" not in source
+
+    assert "let _agentBusy = false;" in detail
+    assert "updateBusyBadge(_chatBusy || _agentBusy);" in detail
+    assert "updateBusyBadge(_agentBusy);" in detail
+    assert "cursor_version=2&snapshot=1" in detail
+
+
+def test_realtime_assets_are_cache_busted_and_legacy_buffers_are_gone():
+    base = read_repo_file("templates/base.html")
+    detail = read_repo_file("templates/agent_detail.html")
+    sessions = read_repo_file("templates/sessions.html")
+    event_stream = read_repo_file("backend/event_stream.py")
+    agents = read_repo_file("routes/agents.py")
+    update_manager = read_repo_file("backend/update_manager.py")
+    runtime = read_repo_file("backend/agent_runtime/runtime.py")
+
+    assert "realtime.js') }}?v=2" in base
+    assert "chat-ui.js') }}?v=61" in detail
+    assert "chat-ui.js') }}?v=61" in sessions
+    assert "get_session_events" not in agents
+    assert "register_web_listener" not in event_stream
+    assert "_session_chat_seq" not in event_stream
+    assert "register_listener" not in update_manager
+    assert "_start_listener_cleanup" not in update_manager
+    assert "result['response_message_id'] = response_message_id" in runtime

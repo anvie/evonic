@@ -4,11 +4,9 @@ import os
 import secrets
 import string
 import uuid
+from urllib.parse import urlencode
 
-import queue
-import threading
-
-from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context, redirect
+from flask import Blueprint, Response, jsonify, render_template, request, redirect
 
 from models.db import db
 
@@ -154,71 +152,16 @@ def api_workplace_status(workplace_id):
 def api_workplace_events(workplace_id):
     """SSE stream for real-time workplace status changes (connector connect/disconnect, status).
     DEPRECATED: Use unified GET /api/realtime/stream?workplace=<id> instead."""
-    return redirect(f'/api/realtime/stream?workplace={workplace_id}', code=307)
-    import logging as _log_depr
-    _log_depr.getLogger(__name__).warning(
-        "DEPRECATED endpoint /api/workplaces/<id>/events used — "
-        "migrate to /api/realtime/stream?workplace=<id>")
     workplace = db.get_workplace(workplace_id)
     if not workplace:
         return jsonify({'error': 'Not found'}), 404
-
-    # Release the thread-local DB connection — this SSE thread is long-lived.
-    db.close()
-
-    # SSE connection limiting (max 5 concurrent per user/IP, FINDING-004)
-    from flask import session as _flsk_sess
-    from models.api_rate_limit import sse_register, sse_unregister, SSE_MAX_CONCURRENT
-    _sse_ident = (
-        'user:' + (_flsk_sess.get('_user_id', 'admin') if _flsk_sess.get('authenticated') else '')
-        if _flsk_sess.get('authenticated')
-        else 'ip:' + (request.remote_addr or '0.0.0.0')
-    )
-    _ok, _cnt = sse_register(_sse_ident)
-    if not _ok:
-        return jsonify({
-            'error': 'too_many_sse_connections',
-            'message': 'Maximum ' + str(SSE_MAX_CONCURRENT) + ' concurrent SSE connections allowed.',
-            'retry_after': 30,
-        }), 429, {'Retry-After': '30'}
-
-    q = queue.Queue(maxsize=20)
-
-    _WATCHED = ('connector_connected', 'connector_disconnected', 'connector_paired', 'workplace_status_changed')
-
-    def handler(data):
-        if data.get('workplace_id') == workplace_id:
-            try:
-                q.put_nowait(data)
-            except queue.Full:
-                pass
-
-    from backend.event_stream import event_stream
-    for ev in _WATCHED:
-        event_stream.on(ev, handler)
-
-    @stream_with_context
-    def generate():
-        try:
-            while True:
-                try:
-                    data = q.get(timeout=30)
-                    yield f"event: {data['_event']}\ndata: {json.dumps(data)}\n\n"
-                except queue.Empty:
-                    yield ": heartbeat\n\n"
-        finally:
-            for ev in _WATCHED:
-                event_stream.off(ev, handler)
-            sse_unregister(_sse_ident)
-
-    return Response(
-        generate(),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
-            'Connection': 'keep-alive',
-        }
+    return redirect(
+        '/api/realtime/stream?' + urlencode({
+            'workplace': workplace_id,
+            'legacy': 'workplace',
+            'snapshot': 1,
+        }),
+        code=307,
     )
 
 

@@ -832,7 +832,7 @@ class AgentRuntime:
                                     )
                         except Exception as e:
                             _logger.error("Channel send error for session %s: %s", task.ctx.session_id, e)
-                elif task.send_via_channel:
+                elif task.send_via_channel and not result.get('stopped'):
                     # DIAGNOSTIC (shared-channel reply loss): the reply was generated
                     # and saved (so it shows in the web session) but the channel send
                     # was skipped. Log exactly which precondition failed.
@@ -898,10 +898,18 @@ class AgentRuntime:
 
     def _mark_task_queued(self, task: '_QueueTask') -> None:
         from backend.realtime_store import realtime_store
-        turn_id, _created = realtime_store.queue_turn(
-            task.agent['id'], task.ctx.session_id, task.ctx.turn_id,
-        )
-        task.ctx.turn_id = turn_id
+        # ponytail: one runtime lock preserves queue/stop event order; use
+        # per-session locks only if message-ingress contention is measured.
+        with self._buffer_lock:
+            turn_id, _created = realtime_store.queue_turn(
+                task.agent['id'], task.ctx.session_id, task.ctx.turn_id,
+            )
+            task.ctx.turn_id = turn_id
+            # Queue insertion is the acceptance point: a stop racing before it
+            # applies to the old turn; a stop racing after it can cancel this row.
+            self._get_stop_event(task.ctx.session_id).clear()
+            from backend.tools.lib.process_tracker import process_tracker
+            process_tracker.clear_stop(task.ctx.session_id)
 
     def _put_task(self, task: '_QueueTask', *, already_queued: bool = False) -> None:
         if not already_queued:
@@ -914,27 +922,38 @@ class AgentRuntime:
 
     def _fail_queued_task(self, task: '_QueueTask', reason: str) -> None:
         from backend.realtime_store import realtime_store
-        if not any(t['turn_id'] == task.ctx.turn_id for t in realtime_store.active_turns()):
-            return
+        with self._buffer_lock:
+            cancelled = realtime_store.cancel_queued_turns(
+                task.ctx.session_id, task.ctx.turn_id,
+            )
+            if not cancelled:
+                return
+            self._emit_cancelled_turn(cancelled[0], reason, task)
+
+    def _emit_cancelled_turn(self, turn: dict, reason: str,
+                             task: '_QueueTask | None' = None) -> None:
+        from backend.realtime_store import realtime_store
+        agent_id = turn['agent_id']
+        session_id = turn['session_id']
         event_stream.emit('turn_complete', {
-            'agent_id': task.agent.get('id', ''),
-            'agent_name': task.agent.get('name', ''),
-            'session_id': task.ctx.session_id,
-            'external_user_id': task.ctx.external_user_id,
-            'channel_id': task.ctx.channel_id,
-            'turn_id': task.ctx.turn_id,
+            'agent_id': agent_id,
+            'agent_name': task.agent.get('name', '') if task else '',
+            'session_id': session_id,
+            'external_user_id': task.ctx.external_user_id if task else '',
+            'channel_id': task.ctx.channel_id if task else None,
+            'turn_id': turn['turn_id'],
             'response': '',
             'tool_trace': [],
             'is_error': True,
             'interrupted': True,
             'reason': reason,
         })
-        realtime_store.finish_turn(task.ctx.turn_id)
-        remaining = realtime_store.busy_agents().get(task.agent.get('id', ''))
+        realtime_store.finish_turn(turn['turn_id'])
+        remaining = realtime_store.busy_agents().get(agent_id)
         event_stream.emit('agent_busy_changed', {
-            'agent_id': task.agent.get('id', ''),
+            'agent_id': agent_id,
             'busy': bool(remaining),
-            'session_id': remaining.get('session_id', task.ctx.session_id) if remaining else task.ctx.session_id,
+            'session_id': remaining.get('session_id', session_id) if remaining else session_id,
             'session_ids': remaining.get('session_ids', []) if remaining else [],
             'active_count': remaining.get('active_count', 0) if remaining else 0,
             'state': remaining.get('state', 'idle') if remaining else 'idle',
@@ -993,11 +1012,14 @@ class AgentRuntime:
         """Signal the agent loop for this session to stop after the current LLM call.
         Also cancels any pending buffer timer so no new task is enqueued.
         Kills any running tool subprocess immediately via process_tracker."""
+        from backend.realtime_store import realtime_store
         with self._buffer_lock:
+            self._get_stop_event(session_id).set()
             timer = self._buffer_timers.pop(session_id, None)
-        if timer is not None:
-            timer.cancel()
-        self._get_stop_event(session_id).set()
+            if timer is not None:
+                timer.cancel()
+            for turn in realtime_store.cancel_queued_turns(session_id):
+                self._emit_cancelled_turn(turn, 'stopped')
         # Kill any running tool subprocess for this session
         from backend.tools.lib.process_tracker import process_tracker
         process_tracker.kill(session_id)
@@ -1579,10 +1601,10 @@ class AgentRuntime:
         agent_id = agent['id']
         from backend.realtime_store import realtime_store
         if not realtime_store.start_turn(ctx.turn_id):
-            ctx.turn_id, _ = realtime_store.queue_turn(
-                agent_id, ctx.session_id, uuid.uuid4().hex,
-            )
-            realtime_store.start_turn(ctx.turn_id)
+            return {
+                'response': None, 'stopped': True,
+                'tool_trace': [], 'timeline': [],
+            }
         self._set_busy(ctx.session_id, True)
         active = realtime_store.busy_agents().get(agent_id, {})
         event_stream.emit('agent_busy_changed', {
@@ -1761,11 +1783,6 @@ class AgentRuntime:
         """
         agent_id = agent['id']
         db_agent_id = ctx.session_db_agent_id or agent_id
-
-        # Clear any stale stop flag so a previous /stop doesn't kill this new request
-        self._get_stop_event(ctx.session_id).clear()
-        from backend.tools.lib.process_tracker import process_tracker
-        process_tracker.clear_stop(ctx.session_id)
 
         # Send typing indicator now that processing is actually starting
         if ctx.channel_id:
@@ -2550,6 +2567,7 @@ class AgentRuntime:
             if last_assistant and last_assistant.get('content') == response_text
             else None
         )
+        result['response_message_id'] = response_message_id
         # Emit turn_complete event
         event_stream.emit('turn_complete', {
             'agent_id': agent_id,
@@ -2820,8 +2838,6 @@ class AgentRuntime:
         """Clear chat history for a user's session."""
         session_id = db.get_or_create_session(agent_id, external_user_id, channel_id)
         db.clear_session(session_id, agent_id=agent_id)
-        from backend.realtime_store import realtime_store
-        realtime_store.purge_session(session_id)
         event_stream.emit('session_clear', {
             'agent_id': agent_id,
             'session_id': session_id,

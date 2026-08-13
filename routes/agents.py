@@ -1656,7 +1656,10 @@ def api_chat(agent_id):
         data = request.get_json() or {}
         message = data.get('message', '').strip()
         user_id = data.get('user_id', 'anonymous')
-        client_message_id = (data.get('client_message_id') or '').strip()
+        raw_client_message_id = data.get('client_message_id')
+        if raw_client_message_id is not None and not isinstance(raw_client_message_id, str):
+            return jsonify({'error': 'Invalid client_message_id'}), 400
+        client_message_id = (raw_client_message_id or '').strip()
         files = []
 
     if client_message_id and not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', client_message_id):
@@ -2389,11 +2392,7 @@ def api_chat_session(agent_id):
 
 @agents_bp.route('/api/agents/<agent_id>/chat/stream', methods=['GET'])
 def api_chat_stream(agent_id):
-    """SSE endpoint — pushes live thinking/tool events for a session to the browser.
-
-    Still the active chat transport: the chat UI bundle has not been migrated to the
-    unified GET /api/realtime/stream?chat=1 (the unified chat path needs its own
-    seq-correctness work first). Kept intentionally; do not remove."""
+    """Compatibility redirect to the durable realtime chat gateway."""
     session_id = request.args.get('session_id')
     if not session_id:
         return jsonify({'error': 'session_id required'}), 400
@@ -2402,235 +2401,9 @@ def api_chat_stream(agent_id):
         '/api/realtime/stream?' + urlencode({
             'chat': 1, 'agent_id': agent_id,
             'session_id': session_id, 'after': after,
+            'legacy': 'chat', 'snapshot': 1,
         }),
         code=307,
-    )
-
-    from backend.event_stream import event_stream
-
-    # Release the thread-local DB connection acquired by enforce_auth.
-    # This SSE thread will block for 30+s; without close() it leaks an FD.
-    db.close()
-
-    # SSE connection limiting — max 5 concurrent per user/IP (FINDING-004)
-    from flask import session as _flask_session
-    from models.api_rate_limit import sse_register, sse_unregister, SSE_MAX_CONCURRENT
-    _sse_id = (
-        f"user:{_flask_session.get('_user_id', 'admin')}"
-        if _flask_session.get('authenticated')
-        else f"ip:{request.remote_addr or '0.0.0.0'}"
-    )
-    _sse_allowed, _sse_count = sse_register(_sse_id)
-    if not _sse_allowed:
-        return jsonify({
-            'error': 'too_many_sse_connections',
-            'message': f'Maximum {SSE_MAX_CONCURRENT} concurrent SSE connections allowed.',
-            'retry_after': 30,
-        }), 429, {'Retry-After': '30'}
-
-    q = queue.Queue(maxsize=200)
-
-    _SENTINEL = object()
-
-    def _make_handler(sse_event_name, transform):
-        def handler(data):
-            if data.get('session_id') != session_id:
-                return
-            try:
-                payload = transform(data)
-                if payload is not None:
-                    payload['seq'] = data.get('_chat_seq')
-                    q.put_nowait((sse_event_name, payload, data.get('_chat_seq')))
-            except queue.Full:
-                pass
-        return handler
-
-    _TRANSFORMS = {
-        'turn_begin':         ('turn_begin',       lambda d: {'ts': d.get('ts', 0)}),
-        'llm_thinking':       ('thinking',         lambda d: {'content': d.get('thinking', '')}),
-        'tool_call_started':  ('tool_call_started', lambda d: {
-            'tool': d.get('tool_name', ''),
-            'args': d.get('tool_args', {}),
-            'param_types': d.get('param_types', {}),
-        }),
-        'tool_executed':      ('tool_executed',    lambda d: {
-            'tool': d.get('tool_name', ''),
-            'args': d.get('tool_args', {}),
-            'result': d.get('tool_result', {}),
-            'error': d.get('has_error', False),
-        }),
-        'state:changed':      ('state:changed',    lambda d: {
-            key: d[key] for key in ('mode', 'plan_file', 'tasks', 'loaded_skills')
-            if key in d
-        }),
-        'tasks:auto_transition': ('tasks:auto_transition', lambda d: {
-            key: d[key] for key in ('task_ids', 'tasks') if key in d
-        }),
-        'tasks:stale': ('tasks:stale', lambda d: {
-            key: d[key] for key in ('task_ids', 'tasks') if key in d
-        }),
-        'llm_response_chunk': ('response_chunk',  lambda d: {
-            'content': d.get('content', ''),
-            'is_final': d.get('is_final', False),
-            'send_as_message': d.get('send_as_message', False),
-        }),
-        'turn_complete':      ('done',             lambda d: {
-            'thinking_duration': d.get('thinking_duration'),
-            'response': d.get('response', ''),
-            'slash_command': d.get('slash_command', False),
-        }),
-        'approval_required':  ('approval_required', lambda d: {
-            'approval_id': d.get('approval_id', ''),
-            'agent_id': d.get('agent_id', ''),
-            'source_agent_id': d.get('source_agent_id', ''),
-            'source_agent_name': d.get('source_agent_name', ''),
-            'tool': d.get('tool_name', ''),
-            'args': d.get('tool_args', {}),
-            'approval_info': d.get('approval_info', {}),
-            'reasons': d.get('reasons', []),
-            'score': d.get('score'),
-        }),
-        'approval_resolved':  ('approval_resolved', lambda d: {
-            'approval_id': d.get('approval_id', ''),
-            'decision': d.get('decision', ''),
-            'timed_out': d.get('timed_out', False),
-        }),
-        'llm_retry': ('retry', lambda d: {
-            'retry_count': d.get('retry_count', 0),
-            'max_retries': d.get('max_retries', 0),
-            'error_type': d.get('error_type', ''),
-            'message': d.get('user_message', ''),
-        }),
-        'message_injected': ('message_injected', lambda d: {
-            'message': d.get('message', ''),
-        }),
-        'message_injection_applied': ('message_injection_applied', lambda d: {
-            'content': d.get('content', ''),
-            'count': d.get('count', 1),
-        }),
-        'message_received': ('message_received', lambda d: {
-            'message': d.get('message', ''),
-            'metadata': d.get('metadata', {}),
-        }),
-        'session_clear': ('session_clear', lambda d: {
-            'session_id': d.get('session_id', ''),
-            'agent_id': d.get('agent_id', ''),
-        }),
-        'turn_split': ('turn_split', lambda d: {}),
-        'evonic:agent-state-changed': ('state_changed', lambda d: {
-            'agent_id': d.get('agent_id', ''),
-            'session_id': d.get('session_id', ''),
-        }),
-    }
-
-    handlers = {
-        event_name: _make_handler(sse_name, transform)
-        for event_name, (sse_name, transform) in _TRANSFORMS.items()
-    }
-
-    # Client passes ?after=N when it has already replayed events 1..N via /chat/events.
-    # We only pre-fill the gap (events N+1..M) that arrived between the client's replay
-    # fetch and this SSE subscription, avoiding duplicate delivery of already-seen events.
-    after_seq = request.args.get('after', 0, type=int)
-
-    # Subscribe to live events BEFORE snapshotting the buffer. This ensures no events
-    # are lost in the window between snapshot and subscribe. Overlap (events captured
-    # by both snapshot and live handler) is safely deduplicated by seq on the client.
-    for event_name, handler in handlers.items():
-        event_stream.on(event_name, handler)
-
-    event_stream.register_web_listener(session_id)
-
-    # Snapshot buffered events after subscribing — any event emitted after this point
-    # is caught by the live handler; events before are in the snapshot.
-    buffered_raw = event_stream.get_session_events(session_id, after_seq)
-
-    # Only pre-fill events from the current in-progress turn.
-    # Treat turn_complete and session_clear as "boundary" events — discard everything
-    # up to and including the last one so a fresh SSE connection never replays a
-    # completed turn or a past session_clear that would wipe the UI.
-    # IMPORTANT: Only strip on fresh connections (after_seq == 0). On reconnections
-    # (after_seq > 0), the client hasn't seen these events yet and needs them —
-    # especially turn_complete which finalizes the thinking bubble.
-    if after_seq == 0:
-        last_complete = -1
-        for i, e in enumerate(buffered_raw):
-            if e['event'] in ('turn_complete', 'session_clear'):
-                last_complete = i
-        if last_complete >= 0:
-            buffered_raw = buffered_raw[last_complete + 1:]
-
-    # Prune resolved approval cycles — if an approval_required has already been
-    # followed by a matching approval_resolved, discard both. Only keep the most
-    # recent unresolved approval (if any) so a reconnecting client never re-shows
-    # an approval modal that was already handled.
-    active_approvals = {}
-    discard_set = set()
-    for i, e in enumerate(buffered_raw):
-        if e['event'] == 'approval_required':
-            d = e.get('data', {})
-            if isinstance(d, dict):
-                aid = d.get('approval_id', '')
-                if aid:
-                    # Replace any previous unresolved approval with the same id
-                    # (shouldn't happen, but guard against duplicates)
-                    if aid in active_approvals:
-                        discard_set.add(active_approvals[aid])
-                    active_approvals[aid] = i
-        elif e['event'] == 'approval_resolved':
-            d = e.get('data', {})
-            if isinstance(d, dict):
-                aid = d.get('approval_id', '')
-                if aid and aid in active_approvals:
-                    discard_set.add(active_approvals[aid])
-                    discard_set.add(i)
-                    del active_approvals[aid]
-    if discard_set:
-        buffered_raw = [e for i, e in enumerate(buffered_raw) if i not in discard_set]
-
-    # Pre-fill the queue with buffered events so a reconnecting client immediately
-    # sees the in-progress reasoning trace without waiting for the next live event.
-    for entry in buffered_raw:
-        sse_name_transform = _TRANSFORMS.get(entry['event'])
-        if sse_name_transform:
-            sse_name, transform = sse_name_transform
-            payload = transform(entry['data'])
-            payload['seq'] = entry['chat_seq']
-            try:
-                q.put_nowait((sse_name, payload, entry['chat_seq']))
-            except queue.Full:
-                break
-
-    def generate():
-        try:
-            while True:
-                try:
-                    item = q.get(timeout=30)
-                except queue.Empty:
-                    # No events for 30s — send a heartbeat as a real SSE event so the
-                    # client can detect it (EventSource ignores comment-only lines).
-                    yield "event: heartbeat\ndata: {}\n\n"
-                    continue
-                sse_event, payload, seq = item
-                id_line = f"id: {seq}\n" if seq is not None else ''
-                yield f"{id_line}event: {sse_event}\ndata: {json.dumps(payload)}\n\n"
-                if sse_event == 'done':
-                    break
-        finally:
-            event_stream.unregister_web_listener(session_id)
-            for event_name, handler in handlers.items():
-                event_stream.off(event_name, handler)
-            # Unregister SSE connection (FINDING-004)
-            sse_unregister(_sse_id)
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
-            'Connection': 'keep-alive',
-        }
     )
 
 
@@ -2639,95 +2412,9 @@ def api_approvals_stream():
     """Global SSE endpoint — pushes ALL approval events (any agent, any session)
     to every connected client.
     DEPRECATED: Use unified GET /api/realtime/stream?channels=approvals instead."""
-    return redirect('/api/realtime/stream?channels=approvals', code=307)
-    import logging as _log_depr
-    _log_depr.getLogger(__name__).warning(
-        "DEPRECATED endpoint /api/approvals/stream used — "
-        "migrate to /api/realtime/stream?channels=approvals")
-    from backend.event_stream import event_stream
-
-    # Release the thread-local DB connection acquired by enforce_auth.
-    db.close()
-
-    # SSE connection limiting — max 5 concurrent per user/IP (FINDING-004)
-    from flask import session as _flask_session
-    from models.api_rate_limit import sse_register, sse_unregister, SSE_MAX_CONCURRENT
-    _sse_id = (
-        f"user:{_flask_session.get('_user_id', 'admin')}"
-        if _flask_session.get('authenticated')
-        else f"ip:{request.remote_addr or '0.0.0.0'}"
-    )
-    _sse_allowed, _sse_count = sse_register(_sse_id)
-    if not _sse_allowed:
-        return jsonify({
-            'error': 'too_many_sse_connections',
-            'message': f'Maximum {SSE_MAX_CONCURRENT} concurrent SSE connections allowed.',
-            'retry_after': 30,
-        }), 429, {'Retry-After': '30'}
-
-    q = queue.Queue(maxsize=200)
-
-    _TRANSFORMS = {
-        'approval_required': ('approval_required', lambda d: {
-            'approval_id': d.get('approval_id', ''),
-            'agent_id': d.get('agent_id', ''),
-            'source_agent_id': d.get('source_agent_id', ''),
-            'source_agent_name': d.get('source_agent_name', ''),
-            'tool': d.get('tool_name', ''),
-            'args': d.get('tool_args', {}),
-            'approval_info': d.get('approval_info', {}),
-            'reasons': d.get('reasons', []),
-            'score': d.get('score'),
-        }),
-        'approval_resolved': ('approval_resolved', lambda d: {
-            'approval_id': d.get('approval_id', ''),
-            'decision': d.get('decision', ''),
-            'timed_out': d.get('timed_out', False),
-        }),
-    }
-
-    def _make_handler(sse_event_name, transform):
-        def handler(data):
-            try:
-                payload = transform(data)
-                if payload is not None:
-                    payload['seq'] = data.get('_seq')
-                    q.put_nowait((sse_event_name, payload, data.get('_seq')))
-            except queue.Full:
-                pass
-        return handler
-
-    handlers = {}
-    for event_name, (sse_name, transform) in _TRANSFORMS.items():
-        h = _make_handler(sse_name, transform)
-        handlers[event_name] = h
-        event_stream.on(event_name, h)
-
-    def generate():
-        try:
-            while True:
-                try:
-                    item = q.get(timeout=30)
-                except queue.Empty:
-                    yield "event: heartbeat\ndata: {}\n\n"
-                    continue
-                sse_event, payload, seq = item
-                id_line = f"id: {seq}\n" if seq is not None else ''
-                yield f"{id_line}event: {sse_event}\ndata: {json.dumps(payload)}\n\n"
-        finally:
-            for event_name, handler in handlers.items():
-                event_stream.off(event_name, handler)
-            # Unregister SSE connection (FINDING-004)
-            sse_unregister(_sse_id)
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
-            'Connection': 'keep-alive',
-        }
+    return redirect(
+        '/api/realtime/stream?channels=approvals&legacy=approvals&snapshot=1',
+        code=307,
     )
 
 
@@ -2735,14 +2422,27 @@ def api_approvals_stream():
 def api_chat_events(agent_id):
     """Compatibility reader backed by the durable realtime journal."""
     session_id = request.args.get('session_id')
-    after_seq = request.args.get('after', type=int)
-    up_to_seq = request.args.get('up_to', type=int)
-    if not session_id or after_seq is None:
+    if not session_id or request.args.get('after') is None:
         return jsonify({'error': 'session_id and after required'}), 400
+    from backend.realtime_store import realtime_store
+    if request.args.get('cursor_version') != '2':
+        return jsonify({
+            'events': [], 'reset': True,
+            'cursor': realtime_store.high_water(),
+        })
+    try:
+        after_seq = int(request.args['after'])
+        raw_up_to = request.args.get('up_to')
+        up_to_seq = int(raw_up_to) if raw_up_to is not None else None
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid realtime cursor'}), 400
+    max_cursor = 2**63 - 1
+    if not 0 <= after_seq <= max_cursor or (
+            up_to_seq is not None and not 0 <= up_to_seq <= max_cursor):
+        return jsonify({'error': 'Invalid realtime cursor'}), 400
     if up_to_seq is not None and up_to_seq - after_seq > 200:
         return jsonify({'error': 'range too large (max 200)'}), 400
 
-    from backend.realtime_store import realtime_store
     active_only = after_seq == 0 and up_to_seq is None
     rows = realtime_store.events_after(
         after_seq, {'chat'}, session_id=session_id, agent_id=agent_id,
@@ -2826,90 +2526,9 @@ def api_agents_status_stream():
         data: {"agent_id": "...", "agent_name": "...", "response": "...",
                "external_user_id": "...", "session_id": "..."}
     """
-    return redirect('/api/realtime/stream?channels=status', code=307)
-    import logging as _log_depr
-    _log_depr.getLogger(__name__).warning(
-        "DEPRECATED endpoint /api/agents/status/stream used — "
-        "migrate to /api/realtime/stream?channels=status")
-    import queue as _queue
-    from backend.event_stream import event_stream
-
-    # Release the thread-local DB connection acquired by enforce_auth.
-    db.close()
-
-    # SSE connection limiting (max 5 concurrent per user/IP, FINDING-004)
-    from flask import session as _flsk_sess
-    from models.api_rate_limit import sse_register, sse_unregister, SSE_MAX_CONCURRENT
-    _sse_ident = (
-        'user:' + (_flsk_sess.get('_user_id', 'admin') if _flsk_sess.get('authenticated') else '')
-        if _flsk_sess.get('authenticated')
-        else 'ip:' + (request.remote_addr or '0.0.0.0')
-    )
-    _ok, _cnt = sse_register(_sse_ident)
-    if not _ok:
-        return jsonify({
-            'error': 'too_many_sse_connections',
-            'message': 'Maximum ' + str(SSE_MAX_CONCURRENT) + ' concurrent SSE connections allowed.',
-            'retry_after': 30,
-        }), 429, {'Retry-After': '30'}
-
-    q = _queue.Queue(maxsize=200)
-
-    def busy_handler(data):
-        try:
-            payload = {
-                'agent_id': data.get('agent_id', ''),
-                'busy': data.get('busy', False),
-                'session_id': data.get('session_id', ''),
-            }
-            q.put_nowait(('busy', payload))
-        except _queue.Full:
-            pass
-
-    def turn_handler(data):
-        try:
-            response = data.get('response', '')
-            if not response or data.get('is_error'):
-                return
-            payload = {
-                'agent_id': data.get('agent_id', ''),
-                'agent_name': data.get('agent_name', ''),
-                'response': response,
-                'session_id': data.get('session_id', ''),
-                'external_user_id': data.get('external_user_id', ''),
-            }
-            q.put_nowait(('turn', payload))
-        except _queue.Full:
-            pass
-
-    event_stream.on('agent_busy_changed', busy_handler)
-    event_stream.on('turn_complete', turn_handler)
-
-    def generate():
-        try:
-            while True:
-                try:
-                    kind, payload = q.get(timeout=30)
-                except _queue.Empty:
-                    yield 'event: heartbeat\ndata: {}\n\n'
-                    continue
-                if kind == 'busy':
-                    yield f'event: agent_busy_changed\ndata: {json.dumps(payload)}\n\n'
-                elif kind == 'turn':
-                    yield f'event: agent_turn_complete\ndata: {json.dumps(payload)}\n\n'
-        finally:
-            event_stream.off('agent_busy_changed', busy_handler)
-            event_stream.off('turn_complete', turn_handler)
-            sse_unregister(_sse_ident)
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
-            'Connection': 'keep-alive',
-        }
+    return redirect(
+        '/api/realtime/stream?channels=status&legacy=status&snapshot=1',
+        code=307,
     )
 
 

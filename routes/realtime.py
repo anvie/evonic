@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 import time
-import uuid
 from datetime import datetime
 
 from flask import Blueprint, Response, request, stream_with_context
@@ -18,20 +16,8 @@ log = logging.getLogger(__name__)
 realtime_bp = Blueprint('realtime', __name__)
 
 HEARTBEAT_INTERVAL = 15
-WEB_SSE_HEARTBEAT_MAX_AGE = 45
+SQLITE_MAX_ID = 2**63 - 1
 _ALLOWED_CHANNELS = {'chat', 'status', 'approvals', 'update', 'workplace'}
-_connections: dict[str, dict] = {}
-_conn_lock = threading.Lock()
-
-
-def has_active_web_sse(session_id: str) -> bool:
-    now = time.monotonic()
-    with _conn_lock:
-        return any(
-            item.get('session_id') == session_id
-            and now - item.get('last_heartbeat', 0) < WEB_SSE_HEARTBEAT_MAX_AGE
-            for item in _connections.values()
-        )
 
 
 def _json_default(value):
@@ -53,14 +39,15 @@ def _format_sse_event(event_name: str, data: dict,
     return '\n'.join(lines) + '\n\n'
 
 
-def _parse_cursor(value) -> int:
-    text = str(value or '').strip()
-    if ':' in text:  # Accept IDs produced by the former channel:seq gateway.
-        text = text.rsplit(':', 1)[-1]
+def _parse_cursor(value) -> int | None:
+    text = str(value).strip() if value is not None else ''
+    if not text:
+        return None
     try:
-        return max(0, int(text))
+        cursor = int(text)
     except (TypeError, ValueError):
-        return 0
+        return None
+    return cursor if 0 <= cursor <= SQLITE_MAX_ID else None
 
 
 def _snapshot_payload(channel: str, payload: dict) -> dict:
@@ -73,8 +60,11 @@ def _snapshot_payload(channel: str, payload: dict) -> dict:
 
 def _build_snapshot(channels: set[str], session_id: str | None = None,
                     agent_id: str | None = None,
-                    workplace_id: str | None = None) -> list[tuple[str, str, dict]]:
+                    workplace_id: str | None = None,
+                    skip_approval_ids: set[str] | None = None
+                    ) -> list[tuple[str, str, dict]]:
     events: list[tuple[str, str, dict]] = []
+    skip_approval_ids = skip_approval_ids or set()
 
     if 'status' in channels or session_id:
         try:
@@ -100,6 +90,8 @@ def _build_snapshot(channels: set[str], session_id: str | None = None,
             from models.db import db
             for approval in db.get_pending_tool_approvals() or []:
                 approval_session = approval.get('session_id')
+                if str(approval.get('id', '')) in skip_approval_ids:
+                    continue
                 if session_id and 'approvals' not in channels \
                         and approval_session != session_id:
                     continue
@@ -169,10 +161,38 @@ def api_realtime_stream():
             status=400, mimetype='application/json',
         )
 
-    query_cursor = _parse_cursor(request.args.get('after'))
-    header_cursor = _parse_cursor(request.headers.get('Last-Event-ID'))
-    cursor = max(query_cursor, header_cursor)
-    fresh_connection = header_cursor == 0
+    raw_query_cursor = request.args.get('after')
+    raw_header_cursor = request.headers.get('Last-Event-ID')
+    versioned_cursor = request.args.get('cursor_version') == '2'
+    query_cursor = _parse_cursor(raw_query_cursor) if versioned_cursor else None
+    header_cursor = _parse_cursor(raw_header_cursor) if versioned_cursor else None
+    supplied_cursor = bool(
+        str(raw_query_cursor or '').strip() or str(raw_header_cursor or '').strip()
+    )
+    valid_cursors = [value for value in (query_cursor, header_cursor) if value is not None]
+    cursor = max(valid_cursors) if valid_cursors else 0
+    reset_cursor = not versioned_cursor or (supplied_cursor and not valid_cursors)
+    valid_header_cursor = header_cursor is not None and bool(str(raw_header_cursor or '').strip())
+    snapshot_arg = request.args.get('snapshot')
+    send_snapshot = (
+        snapshot_arg == '1' if snapshot_arg in {'0', '1'}
+        else not supplied_cursor
+    )
+    if reset_cursor:
+        send_snapshot = True
+    if valid_header_cursor:
+        # Native EventSource reconnects reuse the original snapshot=1 URL but
+        # provide Last-Event-ID. Durable replay is sufficient on reconnect.
+        send_snapshot = False
+    legacy = request.args.get('legacy', '').strip()
+
+    def public_event_name(event_name: str) -> str:
+        if legacy == 'update':
+            return {
+                'update_status': 'status',
+                'update_done': 'done',
+            }.get(event_name, event_name)
+        return event_name
 
     from flask import session as flask_session
     from models.api_rate_limit import sse_register, sse_unregister, SSE_MAX_CONCURRENT
@@ -195,36 +215,33 @@ def api_realtime_stream():
 
     from models.db import db
     db.close()
-    connection_id = uuid.uuid4().hex
     connected_at = time.time()
-    with _conn_lock:
-        _connections[connection_id] = {
-            'session_id': session_id,
-            'last_heartbeat': time.monotonic(),
-        }
 
     @stream_with_context
     def generate():
-        nonlocal cursor
+        nonlocal cursor, send_snapshot
         try:
             yield 'retry: 3000\n\n'
 
-            # Snapshots repair current state on a fresh page load. Reconnects
-            # use only durable replay from Last-Event-ID.
-            if fresh_connection:
-                for channel, event_name, payload in _build_snapshot(
-                        channels, session_id, agent_id, workplace_id):
-                    yield _format_sse_event(
-                        event_name, _snapshot_payload(channel, payload),
-                    )
+            high_water = realtime_store.high_water()
+            if reset_cursor or cursor > high_water:
+                cursor = high_water
+                send_snapshot = True
+            elif not supplied_cursor:
+                cursor = high_water
 
-            if fresh_connection and session_id:
-                high_water = cursor or realtime_store.high_water()
-                snapshot_cursor = 0
-                while snapshot_cursor < high_water:
+            replayed_approval_ids: set[str] = set()
+
+            # Restore telemetry already represented by the HTTP chat history
+            # before sending current-state snapshots such as pending approval.
+            if send_snapshot and session_id:
+                snapshot_cursor = realtime_store.last_session_clear_id(
+                    session_id, cursor,
+                )
+                while snapshot_cursor < cursor:
                     active_events = realtime_store.events_after(
                         snapshot_cursor, {'chat'}, session_id=session_id,
-                        agent_id=agent_id, up_to_id=high_water,
+                        agent_id=agent_id, up_to_id=cursor,
                         active_only=True, limit=500,
                     )
                     if not active_events:
@@ -236,14 +253,44 @@ def api_realtime_stream():
                         data['source_event_id'] = event['id']
                         data['event_id'] = 0
                         data['seq'] = 0
-                        yield _format_sse_event(event['event'], data)
-                if cursor == 0:
-                    cursor = high_water
+                        if event['event'] == 'approval_required':
+                            approval_id = str(data.get('approval_id', ''))
+                            if approval_id:
+                                replayed_approval_ids.add(approval_id)
+                        yield _format_sse_event(
+                            public_event_name(event['event']), data,
+                        )
 
-            # A brand-new global stream starts from current state. Historical
-            # rows are replayed only when the browser supplies a cursor.
-            if fresh_connection and cursor == 0:
-                cursor = realtime_store.high_water()
+            # Close the history-to-stream handoff gap before taking state
+            # snapshots. Filtered global IDs may be skipped safely.
+            if send_snapshot and cursor < high_water:
+                while cursor < high_water:
+                    events = realtime_store.events_after(
+                        cursor, channels, session_id=session_id, agent_id=agent_id,
+                        workplace_id=workplace_id, up_to_id=high_water,
+                    )
+                    if not events:
+                        break
+                    for event in events:
+                        cursor = event['id']
+                        if event['event'] == 'approval_required':
+                            approval_id = str(event['data'].get('approval_id', ''))
+                            if approval_id:
+                                replayed_approval_ids.add(approval_id)
+                        yield _format_sse_event(
+                            public_event_name(event['event']),
+                            event['data'], event['id'],
+                        )
+                cursor = high_water
+
+            if send_snapshot:
+                for channel, event_name, payload in _build_snapshot(
+                        channels, session_id, agent_id, workplace_id,
+                        replayed_approval_ids):
+                    yield _format_sse_event(
+                        public_event_name(event_name),
+                        _snapshot_payload(channel, payload),
+                    )
 
             yield _format_sse_event('ready', {
                 'event_id': cursor, 'seq': cursor,
@@ -267,23 +314,18 @@ def api_realtime_stream():
                     for event in events:
                         cursor = event['id']
                         yield _format_sse_event(
-                            event['event'], event['data'], event['id'],
+                            public_event_name(event['event']),
+                            event['data'], event['id'],
                         )
                     continue
 
                 realtime_store.wait_for_events(observed_high_water, HEARTBEAT_INTERVAL)
                 if realtime_store.high_water() <= observed_high_water:
-                    with _conn_lock:
-                        item = _connections.get(connection_id)
-                        if item is not None:
-                            item['last_heartbeat'] = time.monotonic()
                     yield 'event: heartbeat\ndata: {}\n\n'
         except GeneratorExit:
             pass
         finally:
             realtime_store.close()
-            with _conn_lock:
-                _connections.pop(connection_id, None)
             sse_unregister(sse_identity)
 
     return Response(
