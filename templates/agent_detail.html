@@ -5716,7 +5716,7 @@ async function sendChat() {
     const container = document.getElementById('chat-messages');
     const userWrappers = container ? container.querySelectorAll('[data-msg-role="user"]') : [];
     const userMsgEl = userWrappers.length ? userWrappers[userWrappers.length - 1] : null;
-    chatUI.scrollToBottom();
+    requestAnimationFrame(function () { chatUI.scrollToBottom(); });
     setChatBusy(true);
 
     // Post chat message — uses XHR for uploads so all attachment progress is tracked together.
