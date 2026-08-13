@@ -1696,7 +1696,7 @@ html.dark .agent-tab.active {
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=61" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=63" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=6" defer></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
@@ -4965,16 +4965,20 @@ document.addEventListener('evonic:message-received', function (event) {
     const key = `${_chatSessionId}:${data.message_id}`;
     if (_seenRealtimeMessages.has(key)) return;
     _seenRealtimeMessages.add(key);
-    const optimistic = data.client_message_id && _optimisticMessages.get(data.client_message_id);
+    let $message = data.client_message_id && _optimisticMessages.get(data.client_message_id);
+    const optimistic = $message;
     if (optimistic) {
         optimistic.attr('data-message-id', data.message_id);
         _optimisticMessages.delete(data.client_message_id);
-        return;
+    } else {
+        $message = chatUI.appendMessage(data.role || 'user', data.content || data.message || '', {
+            metadata: data.metadata || {},
+            timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : null,
+        }).attr('data-message-id', data.message_id);
     }
-    chatUI.appendMessage(data.role || 'user', data.content || data.message || '', {
-        metadata: data.metadata || {},
-        timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : null,
-    }).attr('data-message-id', data.message_id);
+    if ((data.role || 'user') === 'user' && data.turn_id) {
+        chatUI.markLastUserBubbleQueued($message);
+    }
     chatUI.scrollToBottom();
 });
 

@@ -67,7 +67,8 @@ def test_sessions_refresh_restores_active_turn_from_durable_stream():
     assert "function _beginSessionTurn(startTs = null, anchor = null)" in sessions
     assert "evtName === 'turn_queued'" in sessions
     assert "showStopBtn(true);" in sessions
-    assert "_completeSessionTurn(seq);" in sessions
+    assert "_completeSessionTurn(seq, data.thinking_duration);" in sessions
+    assert "_completeSessionTurn(doneSeq, payload.thinking_duration)" in sessions
     assert "afterSeq = Math.max(afterSeq, _sessionTurn.lastSeq, _sessionTurn.terminalSeq);" in sessions
     assert "es.addEventListener('history_resync_required'" in sessions
     assert "selectSession(sessionId).finally" in sessions
@@ -117,6 +118,17 @@ def test_chat_messages_sync_across_tabs_without_content_polling():
         assert "_seenRealtimeMessages" in source
         assert "pollNewMessages" not in source
         assert "pollForResponse" not in source
+        assert "data.turn_id" in source
+        assert "markLastUserBubbleQueued($message)" in source
+
+
+def test_turn_split_duration_survives_durable_replay():
+    turn = read_repo_file("static/js/chat-ui/turn.js")
+    index = read_repo_file("static/js/chat-ui/index.js")
+
+    assert "(data.timestamp - this._startTime) / 1000" in turn
+    assert "timestamp: data.timestamp" in turn
+    assert "newTurn._startTime = data.timestamp" in index
 
     realtime = read_repo_file("static/js/realtime.js")
     assert "this._after = Math.max" in realtime
@@ -160,8 +172,8 @@ def test_realtime_assets_are_cache_busted_and_legacy_buffers_are_gone():
     runtime = read_repo_file("backend/agent_runtime/runtime.py")
 
     assert "realtime.js') }}?v=2" in base
-    assert "chat-ui.js') }}?v=61" in detail
-    assert "chat-ui.js') }}?v=61" in sessions
+    assert "chat-ui.js') }}?v=63" in detail
+    assert "chat-ui.js') }}?v=63" in sessions
     assert "get_session_events" not in agents
     assert "register_web_listener" not in event_stream
     assert "_session_chat_seq" not in event_stream

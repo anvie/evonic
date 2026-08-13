@@ -715,6 +715,9 @@ class AgentRuntime:
         """Mark session as active (called on every turn)."""
         with cls._cleanup_tracker._guard:
             cls._cleanup_tracker._ttl[session_id] = time.time()
+            if (os.environ.get('EVONIC_TESTING') == '1'
+                    or os.environ.get('EVONIC_SMOKE_TEST') == '1'):
+                return
             if cls._cleanup_tracker._timer is None:
                 cls._cleanup_tracker._timer = threading.Timer(cls._cleanup_tracker._interval, cls._cleanup_idle_sessions)
                 cls._cleanup_tracker._timer.daemon = True
@@ -727,35 +730,41 @@ class AgentRuntime:
         self._buffer_timers: Dict[str, threading.Timer] = {}
         self._buffer_lock = threading.Lock()
         self._workers: list[threading.Thread] = []
-        try:
-            from backend.realtime_store import realtime_store
-            interrupted = realtime_store.interrupt_stale_turns()
-            if interrupted:
-                _logger.warning("Marked %d turn(s) interrupted after restart", len(interrupted))
-        except Exception as exc:
-            _logger.error("Failed to recover durable active turns: %s", exc)
-        # Read worker count from DB (user-configurable), fall back to config default
-        try:
-            from models.db import db as _db
-            _db_workers = _db.get_setting('agent_queue_workers')
-            initial_workers = max(1, min(32, int(_db_workers))) if _db_workers else AGENT_QUEUE_WORKERS
-        except Exception:
-            initial_workers = AGENT_QUEUE_WORKERS
-        for i in range(initial_workers):
-            t = threading.Thread(target=self._worker, name=f'agent-worker-{i}', daemon=True)
-            t.start()
-            self._workers.append(t)
-        _logger.info("Started %d queue worker(s)", initial_workers)
+        background_enabled = not (
+            os.environ.get('EVONIC_TESTING') == '1'
+            or os.environ.get('EVONIC_SMOKE_TEST') == '1'
+        )
+        if background_enabled:
+            try:
+                from backend.realtime_store import realtime_store
+                interrupted = realtime_store.interrupt_stale_turns()
+                if interrupted:
+                    _logger.warning("Marked %d turn(s) interrupted after restart", len(interrupted))
+            except Exception as exc:
+                _logger.error("Failed to recover durable active turns: %s", exc)
+            # Read worker count from DB (user-configurable), fall back to config default
+            try:
+                from models.db import db as _db
+                _db_workers = _db.get_setting('agent_queue_workers')
+                initial_workers = max(1, min(32, int(_db_workers))) if _db_workers else AGENT_QUEUE_WORKERS
+            except Exception:
+                initial_workers = AGENT_QUEUE_WORKERS
+            for i in range(initial_workers):
+                t = threading.Thread(target=self._worker, name=f'agent-worker-{i}', daemon=True)
+                t.start()
+                self._workers.append(t)
+            _logger.info("Started %d queue worker(s)", initial_workers)
         AgentRuntime._llm_serializer._concurrency_mgr = ConcurrencyManager()
         self._session_skill_mds: Dict[str, Dict[str, str]] = {}    # session_id -> {skill_id: system_md}
         self._session_skill_tools: Dict[str, Dict[str, list]] = {}  # session_id -> {skill_id: [tool_defs]}
         self._prefetcher = TurnPrefetcher()  # pre-loads messages for next turn
-        # Register signal handlers + atexit for graceful shutdown (once only)
-        AgentRuntime._register_signal_handlers()
-        atexit.register(self._atexit_shutdown)
         # Schedule periodic cleanup of stale buffer timers
         self._buffer_timer_stats = {"created": 0, "cancelled": 0, "leaked": 0}
-        self._stale_timer_cleanup()
+        if background_enabled:
+            # Register signal handlers + atexit for graceful shutdown (once only)
+            AgentRuntime._register_signal_handlers()
+            atexit.register(self._atexit_shutdown)
+            self._stale_timer_cleanup()
 
     def _atexit_shutdown(self) -> None:
         AgentRuntime.graceful_shutdown()

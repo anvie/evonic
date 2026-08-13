@@ -483,6 +483,7 @@ export class ChatUI {
                     const $lastUser = this.$container.find('[data-msg-role="user"]').last();
                     const $anchor = $lastUser.length ? $lastUser : (opts.userMsgEl ? $(opts.userMsgEl) : turn.$anchor);
                     const newTurn = this.beginTurn($anchor);
+                    if (data.timestamp) newTurn._startTime = data.timestamp;
                     this._lastLiveTurnId = newTurn.id;
                     this.markQueuedAsDelivered();
                     // Re-route the SSE adapter to the new turn so subsequent events

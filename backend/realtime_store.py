@@ -146,7 +146,12 @@ def _public_message(value: str) -> str:
 class RealtimeStore:
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path
-        self._tls = threading.local()
+        self._conn = None
+        self._conn_path = None
+        self._conn_pid = None
+        # ponytail: one lock keeps the journal's connection count bounded;
+        # add a small pool only if realtime DB contention is measured.
+        self._conn_lock = threading.Lock()
         self._schema_lock = threading.Lock()
         self._schema_paths: set[str] = set()
         self._condition = threading.Condition()
@@ -159,27 +164,35 @@ class RealtimeStore:
     def _connect(self):
         db_path = self._resolve_db_path()
         self._ensure_schema(db_path)
-        conn = getattr(self._tls, 'conn', None)
-        if conn is not None and (
-                getattr(self._tls, 'db_path', None) != db_path
-                or getattr(self._tls, 'pid', None) != os.getpid()):
-            conn.close()
-            conn = None
-        if conn is None:
-            os.makedirs(os.path.dirname(db_path), exist_ok=True)
-            conn = sqlite3.connect(
-                f'file:{db_path}?mode=rwc&busy_timeout=10000',
-                uri=True, timeout=10,
-            )
-            conn.row_factory = sqlite3.Row
-            conn.execute('PRAGMA busy_timeout=10000')
-            conn.execute('PRAGMA journal_mode=WAL')
-            conn.execute('PRAGMA synchronous=NORMAL')
-            self._tls.conn = conn
-            self._tls.db_path = db_path
-            self._tls.pid = os.getpid()
-        with conn:
-            yield conn
+        with self._conn_lock:
+            conn = self._conn
+            if conn is not None and (
+                    self._conn_path != db_path or self._conn_pid != os.getpid()):
+                conn.close()
+                conn = None
+                self._conn = None
+            if conn is not None:
+                try:
+                    conn.execute('SELECT 1')
+                except sqlite3.Error:
+                    conn.close()
+                    conn = None
+                    self._conn = None
+            if conn is None:
+                os.makedirs(os.path.dirname(db_path), exist_ok=True)
+                conn = sqlite3.connect(
+                    f'file:{db_path}?mode=rwc&busy_timeout=10000',
+                    uri=True, timeout=10, check_same_thread=False,
+                )
+                conn.row_factory = sqlite3.Row
+                conn.execute('PRAGMA busy_timeout=10000')
+                conn.execute('PRAGMA journal_mode=WAL')
+                conn.execute('PRAGMA synchronous=NORMAL')
+                self._conn = conn
+                self._conn_path = db_path
+                self._conn_pid = os.getpid()
+            with conn:
+                yield conn
 
     def _resolve_db_path(self) -> str:
         if self.db_path:
@@ -254,12 +267,12 @@ class RealtimeStore:
             self._schema_paths.add(db_path)
 
     def close(self):
-        conn = getattr(self._tls, 'conn', None)
-        if conn is not None:
-            conn.close()
-            self._tls.conn = None
-            self._tls.db_path = None
-            self._tls.pid = None
+        with self._conn_lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+                self._conn_path = None
+                self._conn_pid = None
 
     def high_water(self) -> int:
         with self._connect() as conn:

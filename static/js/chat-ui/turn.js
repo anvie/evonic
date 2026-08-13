@@ -349,9 +349,12 @@ export class Turn {
         }
 
         if (evtName === 'turn_split') {
-            this._finalizeBubble(null);
+            const splitDuration = data.timestamp && this._startTime
+                ? Math.max(0, (data.timestamp - this._startTime) / 1000)
+                : null;
+            this._finalizeBubble(splitDuration);
             // ChatUI will create a new Turn for the continuation
-            this._onTrigger('turn:split', { turnId: this.id });
+            this._onTrigger('turn:split', { turnId: this.id, timestamp: data.timestamp });
             return;
         }
 

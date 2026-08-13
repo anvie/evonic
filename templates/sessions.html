@@ -442,7 +442,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=61"></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=63"></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=5"></script>
 <script>
 let allSessions = [];
@@ -468,16 +468,20 @@ function handleRealtimeMessage(data, sessionId) {
     const key = `${sessionId}:${data.message_id}`;
     if (_seenRealtimeMessages.has(key)) return;
     _seenRealtimeMessages.add(key);
-    const optimistic = data.client_message_id && _optimisticMessages.get(data.client_message_id);
+    let $message = data.client_message_id && _optimisticMessages.get(data.client_message_id);
+    const optimistic = $message;
     if (optimistic) {
         optimistic.attr('data-message-id', data.message_id);
         _optimisticMessages.delete(data.client_message_id);
-        return;
+    } else {
+        $message = chatUI.appendMessage(data.role || 'user', data.content || data.message || '', {
+            metadata: data.metadata || {},
+            timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : null,
+        }).attr('data-message-id', data.message_id);
     }
-    chatUI.appendMessage(data.role || 'user', data.content || data.message || '', {
-        metadata: data.metadata || {},
-        timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : null,
-    }).attr('data-message-id', data.message_id);
+    if ((data.role || 'user') === 'user' && data.turn_id) {
+        chatUI.markLastUserBubbleQueued($message);
+    }
     chatUI.scrollToBottom();
 }
 let _chatPerspective = 'A';  // 'A' (right) or 'B' (left) — controls which side your messages appear on
@@ -499,13 +503,13 @@ function _beginSessionTurn(startTs = null, anchor = null) {
     return _sseThinkingId;
 }
 
-function _completeSessionTurn(seq = 0) {
+function _completeSessionTurn(seq = 0, thinkingDuration = null) {
     if (_sessionTurn.phase === 'complete') return false;
     _sessionTurn.phase = 'complete';
     _sessionTurn.terminalSeq = Math.max(_sessionTurn.terminalSeq, seq || 0, _sessionTurn.lastSeq);
     showStopBtn(false);
     if (_sseThinkingId) {
-        chatUI.finalizeThinkingBubble(_sseThinkingId);
+        chatUI.finalizeThinkingBubble(_sseThinkingId, thinkingDuration);
         _sseThinkingId = null;
     }
     return true;
@@ -581,7 +585,7 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         chatUI.appendMessage('system', formatWhatsAppRestriction(data.content, data.metadata),
             {metadata: data.metadata || {}});
     } else if (evtName === 'done') {
-        _completeSessionTurn(seq);
+        _completeSessionTurn(seq, data.thinking_duration);
     } else if (evtName === 'session_clear') {
         // Clear the rendered history when this session is reset.
         chatUI.clearContainer();
@@ -1092,7 +1096,7 @@ function connectSessionStream(sessionId, afterSeq = 0) {
         try { payload = JSON.parse(e.data); } catch(_) {}
         const doneSeq = payload.seq || 0;
         _sessionTurn.lastSeq = Math.max(_sessionTurn.lastSeq, doneSeq);
-        if (!_completeSessionTurn(doneSeq)) return;
+        if (!_completeSessionTurn(doneSeq, payload.thinking_duration)) return;
 
         if (payload.slash_command && payload.response) {
             // Slash command response — finalize any thinking bubble and display the response.
