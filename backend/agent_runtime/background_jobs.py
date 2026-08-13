@@ -160,10 +160,35 @@ def parse_wrapper_script(script: str) -> Optional[dict]:
     }
 
 
-_TMUX_SPAWN_RE = re.compile(r'\btmux\s+(?:new-session|new)\b([^\n;|&]*)')
-_SCREEN_SPAWN_RE = re.compile(r'\bscreen\s+([^\n;|&]*)')
+_TMUX_SPAWN_RE = re.compile(r'\btmux\s+(?:new-session|new)\b(.*)', re.DOTALL)
+_SCREEN_SPAWN_RE = re.compile(r'\bscreen\s+(.*)', re.DOTALL)
 _NOHUP_LINE_RE = re.compile(r'^\s*nohup\s+(.+)$', re.MULTILINE)
 _PID_CAPTURE_RE = re.compile(r'echo\s+\$!\s*>>?\s*(\S+)')
+
+
+def _trim_unquoted(text: str) -> str:
+    """Cut ``text`` at the first ``;``/``|``/``&``/newline outside quotes.
+
+    Those metacharacters end the spawn only when the shell sees them — inside a
+    quoted argument they belong to the command being run, and cutting on them
+    truncates the command mid-string.
+    """
+    quote = ''
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == '\\' and quote != "'":
+            i += 2  # escaped char (backslash is literal inside single quotes)
+            continue
+        if quote:
+            if ch == quote:
+                quote = ''
+        elif ch in '"\'':
+            quote = ch
+        elif ch in ';|&\n':
+            return text[:i]
+        i += 1
+    return text
 
 
 def parse_manual_spawn(script: str) -> Optional[dict]:
@@ -185,7 +210,7 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
     # tmux new-session -d -s NAME 'cmd'
     m = _TMUX_SPAWN_RE.search(script)
     if m:
-        seg = m.group(1)
+        seg = _trim_unquoted(m.group(1))
         detached = re.search(r'\s-[A-Za-z]*d', ' ' + seg)
         name_m = re.search(r'-[A-Za-z]*s\s+["\']?([^\s"\';|&]+)', seg)
         if detached and name_m:
@@ -195,13 +220,13 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
                 "log_file": "",
                 "pid_file": "",
                 "pgrep_pattern": "",
-                "command": m.group(0).strip()[:1000],
+                "command": (script[m.start():m.start(1)] + seg).strip()[:1000],
             }
 
     # screen -dmS NAME cmd  (or -d -m -S NAME)
     m = _SCREEN_SPAWN_RE.search(script)
     if m:
-        seg = m.group(1)
+        seg = _trim_unquoted(m.group(1))
         name_m = re.search(r'-(?:[A-Za-z]*S)\s+["\']?([^\s"\';|&]+)', seg)
         detached = '-dmS' in seg or ('-d' in seg and '-m' in seg)
         if detached and name_m:
@@ -211,7 +236,7 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
                 "log_file": "",
                 "pid_file": "",
                 "pgrep_pattern": "",
-                "command": m.group(0).strip()[:1000],
+                "command": (script[m.start():m.start(1)] + seg).strip()[:1000],
             }
 
     # nohup CMD [> log 2>&1] &  [echo $! > pidfile]
@@ -262,11 +287,80 @@ def build_manual_status_script(kind: str, session_name: str, pid_file: str,
             f'&& echo "RUNNING" || echo "DONE"')
 
 
+# Max jobs listed in the per-turn context block; the rest collapse to a count.
+_MAX_IN_CONTEXT = 8
+# Command chars kept per line — the full text stays in the Session State panel.
+_CONTEXT_CMD_CHARS = 70
+
+
+def _age(seconds: float) -> str:
+    secs = int(max(0, seconds))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
+
+
+def build_context_block(session_id: str, agent_id: str) -> str:
+    """Per-turn context block listing this session's running background jobs.
+
+    The registry is otherwise invisible to the agent: the ``background_job``
+    field on a bash result is seen once, at spawn time, and slash command output
+    never enters LLM context. Without this block the agent forgets processes it
+    started and leaves them to go stale.
+
+    Returns "" when nothing is running, so a session with no jobs pays nothing.
+    Status is whatever was last recorded — deliberately not refreshed here, as
+    that costs a shell round-trip per turn (see :func:`refresh_statuses`).
+    """
+    jobs = sorted(background_jobs.running_for_session(session_id),
+                  key=lambda j: j.started_at)
+    if not jobs:
+        return ""
+
+    try:
+        from backend.agent_runtime import monitors
+        watched = monitors.monitored_job_ids(agent_id, session_id)
+    except Exception as e:
+        _logger.warning("[bgjob] monitor lookup for context block failed: %s", e)
+        watched = set()
+
+    now = time.time()
+    lines = []
+    for j in jobs[:_MAX_IN_CONTEXT]:
+        cmd = " ".join((j.command or "").split())
+        if len(cmd) > _CONTEXT_CMD_CHARS:
+            cmd = cmd[:_CONTEXT_CMD_CHARS - 1] + "…"
+        flag = "monitored" if j.job_id in watched else "unmonitored"
+        lines.append(f"- `{j.job_id}` · {_age(now - j.started_at)} · {flag} — {cmd}")
+    if len(jobs) > _MAX_IN_CONTEXT:
+        lines.append(f"- …and {len(jobs) - _MAX_IN_CONTEXT} more")
+
+    plural = "es" if len(jobs) != 1 else ""
+    return (
+        "## Background Processes\n\n"
+        f"{len(jobs)} process{plural} you started {'are' if len(jobs) != 1 else 'is'} "
+        "still running in this session:\n\n"
+        + "\n".join(lines) +
+        "\n\nThese keep running until killed. If a process no longer matters, kill "
+        "it. If its outcome matters, attach a monitor — nothing will notify you "
+        "otherwise. Status is from the last check, not live; verify with bash if "
+        "it matters."
+    )
+
+
+_refresh_guard = threading.Lock()
+_last_refresh: Dict[str, float] = {}   # session_id -> monotonic-ish timestamp
+_refresh_inflight: set = set()         # sessions with a refresh thread running
+
+
 def refresh_statuses(session_id: str, agent: dict) -> None:
     """Probe every running job of a session in one round-trip; update statuses.
 
-    On-demand only — nothing polls in the background. Called by the ``/jobs``
-    command so the listing reflects reality without any standing cost.
+    Synchronous and unthrottled — callers own the pacing. The ``/jobs`` command
+    calls it directly; browser-polled callers go through
+    :func:`refresh_statuses_async`.
     """
     from backend.tools.lib.exec_backend import registry
     from backend.tools.lib.long_running_guard import build_status_scripts
@@ -296,3 +390,40 @@ def refresh_statuses(session_id: str, agent: dict) -> None:
         job_id, _, state = line.partition(":")
         if state.strip() == "DONE":
             background_jobs.mark_finished(job_id.strip(), "done", None)
+
+
+def refresh_statuses_async(session_id: str, agent: dict,
+                           max_age: float = 10.0) -> None:
+    """Fire-and-forget :func:`refresh_statuses` for a browser-polled caller.
+
+    Without this, a job that exits is only ever noticed by the ``/jobs``
+    command or by an attached monitor — so an unmonitored process stayed
+    ``running`` in the registry forever, kept a live row in the Session State
+    panel and was re-stated to the agent every turn.
+
+    The probe is a shell round-trip, so it must not block the request: the
+    caller returns the current snapshot and the panel converges on its next
+    poll. One thread per session at a time.
+    """
+    if not background_jobs.running_for_session(session_id):
+        return
+
+    with _refresh_guard:
+        if session_id in _refresh_inflight:
+            return
+        if time.time() - _last_refresh.get(session_id, 0.0) < max_age:
+            return
+        _refresh_inflight.add(session_id)
+
+    def _run():
+        try:
+            refresh_statuses(session_id, agent)
+        except Exception as e:
+            _logger.warning("[bgjob] async status refresh failed: %s", e)
+        finally:
+            with _refresh_guard:
+                _last_refresh[session_id] = time.time()
+                _refresh_inflight.discard(session_id)
+
+    threading.Thread(target=_run, daemon=True,
+                     name=f"bgjob-refresh-{session_id[:8]}").start()

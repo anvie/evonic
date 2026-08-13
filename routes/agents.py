@@ -2025,8 +2025,16 @@ def api_chat_agent_state(agent_id):
     if session_id:
         background_processes = []
         try:
-            from backend.agent_runtime.background_jobs import background_jobs
+            from backend.agent_runtime.background_jobs import (
+                background_jobs, refresh_statuses_async)
             jobs = background_jobs.list_for_session(session_id)
+            # Nothing else notices an unmonitored process exiting, so a finished
+            # job would keep a live row here forever. Probe in the background
+            # (throttled) and let the next poll pick up the result.
+            if any(j.status == 'running' for j in jobs):
+                refresh_statuses_async(
+                    session_id,
+                    {**(db.get_agent(agent_id) or {}), 'agent_id': agent_id})
             # Only hit the schedules table when there is something to annotate —
             # this endpoint is polled by the browser.
             watched = set()
