@@ -37,6 +37,10 @@ class TestSlashedIdRoutes:
         model_id = _create(client)
         assert model_id == "openrouter/anthropic/claude-3.5-sonnet"
 
+    def test_create_preserves_vision_capability(self, client):
+        model_id = _create(client, model_name="vision-model", vision_supported=1)
+        assert db.get_model_by_id(model_id)["vision_supported"] == 1
+
     def test_get_with_multi_segment_id(self, client):
         model_id = _create(client)
         resp = client.get(f"/api/models/{model_id}")

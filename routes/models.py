@@ -90,6 +90,7 @@ def api_create_model():
                 "enabled": data.get("enabled", 1),
                 "is_default": data.get("is_default", 0),
                 "model_max_concurrent": data.get("model_max_concurrent", 3),
+                "vision_supported": data.get("vision_supported", 0),
                 "context_window": data.get("context_window", 0),
             }
         )
