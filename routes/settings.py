@@ -874,6 +874,9 @@ def api_get_general_settings():
         'vision_model_id': db.get_setting('vision_model_id', ''),
         'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
         'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
+        'pdf_model_id': db.get_setting('pdf_model_id', ''),
+        'pdf_fallback_model_id': db.get_setting('pdf_fallback_model_id', ''),
+        'pdf_fallback_model_2_id': db.get_setting('pdf_fallback_model_2_id', ''),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
         'kb_organizer_nightly_time': db.get_setting(
             'kb_organizer_nightly_time',
@@ -1132,6 +1135,41 @@ def api_batch_save():
                     results[key] = model['id']
                 elif model:
                     errors.append(f'{key}: Model does not support vision')
+                else:
+                    errors.append(f'{key}: Model not found')
+            else:
+                db.set_setting(key, '')
+                results[key] = ''
+
+    # Native PDF routing chain (primary + two fallbacks)
+    pdf_setting_keys = (
+        'pdf_model_id',
+        'pdf_fallback_model_id',
+        'pdf_fallback_model_2_id',
+    )
+    if any(key in settings for key in pdf_setting_keys):
+        pdf_ids = {
+            key: settings.get(key, db.get_setting(key, ''))
+            for key in pdf_setting_keys
+        }
+        duplicate_pdf_ids = {
+            model_id for model_id in pdf_ids.values() if model_id
+            and list(pdf_ids.values()).count(model_id) > 1
+        }
+        for key in pdf_setting_keys:
+            if key not in settings:
+                continue
+            model_id = pdf_ids[key]
+            if model_id in duplicate_pdf_ids:
+                errors.append(f'{key}: Must differ from the other configured PDF models')
+                continue
+            if model_id:
+                model = db.get_model_by_id(model_id)
+                if model and model.get('pdf_supported'):
+                    db.set_setting(key, model['id'])
+                    results[key] = model['id']
+                elif model:
+                    errors.append(f'{key}: Model does not support native PDF input')
                 else:
                     errors.append(f'{key}: Model not found')
             else:

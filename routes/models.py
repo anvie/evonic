@@ -90,6 +90,9 @@ def api_create_model():
                 "enabled": data.get("enabled", 1),
                 "is_default": data.get("is_default", 0),
                 "model_max_concurrent": data.get("model_max_concurrent", 3),
+                "api_format": data.get("api_format", "openai"),
+                "vision_supported": data.get("vision_supported", 0),
+                "pdf_supported": data.get("pdf_supported", 0),
                 "context_window": data.get("context_window", 0),
             }
         )
@@ -187,6 +190,7 @@ def api_clone_model(model_id):
         "model_max_concurrent": source.get("model_max_concurrent", 1),
         "api_format": source.get("api_format", "openai"),
         "vision_supported": source.get("vision_supported", 0),
+        "pdf_supported": source.get("pdf_supported", 0),
     }
     new_id = db.create_model(clone_data)
     return jsonify({"success": True, "model_id": new_id})

@@ -102,6 +102,7 @@ ARTIFACT_TOOLS = frozenset({
 })
 
 VISION_TOOLS = frozenset({'describe_image'})
+PDF_TOOLS = frozenset({'analyze_pdf'})
 
 
 def _validate_user_id(user_id: str) -> str:
@@ -370,6 +371,11 @@ def api_create_agent():
         if vision_enabled is None or vision_enabled:
             for tool_id in VISION_TOOLS:
                 db.add_agent_tool(agent_id, tool_id)
+        # Add native PDF tools for agents with PDF analysis enabled
+        pdf_enabled = data.get('pdf_enabled')
+        if pdf_enabled is None or pdf_enabled:
+            for tool_id in PDF_TOOLS:
+                db.add_agent_tool(agent_id, tool_id)
 
         # Copy default knowledge base files from defaults/ directory
         import shutil as _shutil
@@ -446,6 +452,17 @@ def api_update_agent(agent_id):
                     db.add_agent_tool(agent_id, tool_id)
             else:
                 for tool_id in VISION_TOOLS:
+                    db.remove_agent_tool(agent_id, tool_id)
+    # Handle pdf_enabled toggle: manage native PDF tools
+    if 'pdf_enabled' in data:
+        old_pdf = bool(existing.get('pdf_enabled', 1))
+        new_pdf = bool(data['pdf_enabled'])
+        if new_pdf != old_pdf:
+            if new_pdf:
+                for tool_id in PDF_TOOLS:
+                    db.add_agent_tool(agent_id, tool_id)
+            else:
+                for tool_id in PDF_TOOLS:
                     db.remove_agent_tool(agent_id, tool_id)
     if 'model_id' in data and data['model_id'] == '':
         data['model_id'] = None  # empty string resets to global default
@@ -570,6 +587,14 @@ def api_set_agent_tools(agent_id):
                     tool_ids.append(tool_id)
         else:
             tool_ids = [tid for tid in tool_ids if tid not in VISION_TOOLS]
+        # Enforce pdf_enabled lock: PDF tools managed by PDF Analysis setting
+        pdf_enabled = agent.get('pdf_enabled', 1)
+        if pdf_enabled:
+            for tool_id in PDF_TOOLS:
+                if tool_id not in tool_ids:
+                    tool_ids.append(tool_id)
+        else:
+            tool_ids = [tid for tid in tool_ids if tid not in PDF_TOOLS]
     db.set_agent_tools(agent_id, tool_ids)
     return jsonify({'success': True, 'tools': tool_ids})
 

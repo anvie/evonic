@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from app import app
 from backend.tools.describe_image import _resolve_vision_models
+from backend.tools.analyze_pdf import _resolve_pdf_models
 from models.db import db
 
 
@@ -10,6 +11,14 @@ def _vision_model(model_id, vision_supported=1):
         'id': model_id, 'name': model_id, 'type': 'openai',
         'provider': 'openai', 'model_name': model_id,
         'enabled': 1, 'vision_supported': vision_supported,
+    })
+
+
+def _pdf_model(model_id, pdf_supported=1):
+    db.create_model({
+        'id': model_id, 'name': model_id, 'type': 'openai',
+        'provider': 'openai', 'model_name': model_id,
+        'enabled': 1, 'pdf_supported': pdf_supported,
     })
 
 
@@ -151,4 +160,64 @@ def test_vision_resolver_orders_both_explicit_fallbacks_before_implicit_models()
     assert error is None
     assert [model['id'] for model in models] == [
         'primary', 'fallback_1', 'fallback_2', 'agent_model', 'automatic',
+    ]
+
+
+def test_general_settings_returns_and_saves_pdf_fallback_chain():
+    for model_id in ('pdf_primary', 'pdf_fallback_1', 'pdf_fallback_2'):
+        _pdf_model(model_id)
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['authenticated'] = True
+
+    response = client.post('/api/settings/batch', json={'settings': {
+        'pdf_model_id': 'pdf_primary',
+        'pdf_fallback_model_id': 'pdf_fallback_1',
+        'pdf_fallback_model_2_id': 'pdf_fallback_2',
+    }})
+
+    assert response.get_json() == {'success': True, 'results': {
+        'pdf_model_id': 'pdf_primary',
+        'pdf_fallback_model_id': 'pdf_fallback_1',
+        'pdf_fallback_model_2_id': 'pdf_fallback_2',
+    }}
+    general = client.get('/api/settings/general').get_json()
+    assert general['pdf_fallback_model_2_id'] == 'pdf_fallback_2'
+
+
+def test_pdf_settings_reject_duplicates_and_non_pdf_models():
+    _pdf_model('pdf_ok')
+    _pdf_model('text_only', pdf_supported=0)
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['authenticated'] = True
+
+    duplicate = client.post('/api/settings/batch', json={'settings': {
+        'pdf_model_id': 'pdf_ok',
+        'pdf_fallback_model_id': 'pdf_ok',
+    }}).get_json()
+    assert duplicate['partial'] is True
+    assert len(duplicate['errors']) == 2
+
+    unsupported = client.post('/api/settings/batch', json={'settings': {
+        'pdf_model_id': 'text_only',
+    }}).get_json()
+    assert unsupported['errors'] == [
+        'pdf_model_id: Model does not support native PDF input'
+    ]
+
+
+def test_pdf_resolver_orders_explicit_chain_before_agent_and_automatic_models():
+    for model_id in ('pdf_primary', 'pdf_fallback_1', 'pdf_fallback_2',
+                     'pdf_agent', 'pdf_automatic'):
+        _pdf_model(model_id)
+    db.set_setting('pdf_model_id', 'pdf_primary')
+    db.set_setting('pdf_fallback_model_id', 'pdf_fallback_1')
+    db.set_setting('pdf_fallback_model_2_id', 'pdf_fallback_2')
+    with patch.object(db, 'get_agent_model', return_value=db.get_model_by_id('pdf_agent')):
+        models, error = _resolve_pdf_models({'id': 'test_super_agent'})
+    assert error is None
+    assert [model['id'] for model in models] == [
+        'pdf_primary', 'pdf_fallback_1', 'pdf_fallback_2',
+        'pdf_agent', 'pdf_automatic',
     ]

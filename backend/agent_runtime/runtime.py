@@ -68,31 +68,14 @@ def _append_attachment_context(content: str, attachment_infos, attachment_info,
     attachment_infos = [info for info in attachment_infos if isinstance(info, dict)]
     if not attachment_infos and isinstance(attachment_info, dict):
         attachment_infos = [attachment_info]
-
-    notes = []
-    for index, info in enumerate(attachment_infos, 1):
-        fp = info.get('file_path', '')
-        if fp and not os.path.isabs(fp):
-            fp = os.path.abspath(os.path.join(_BASE_DIR, fp))
-        fn = info.get('filename', '')
-        mt = info.get('mime_type', '')
-        sb = int(info.get('size_bytes', 0) or 0)
-        is_img = bool(mt and mt.startswith('image/'))
-        is_audio = bool(mt and mt.startswith('audio/'))
-        if sb >= 1048576:
-            sz = f"{sb / 1048576:.1f} MB"
-        elif sb >= 1024:
-            sz = f"{sb / 1024:.1f} KB"
-        else:
-            sz = f"{sb} B"
-        label = f"Attachment #{index}" if len(attachment_infos) > 1 else "Attachment"
-        note = f"\n\n[{label}: {fn} ({mt}, {sz})]\nFile path: {fp}"
-        if is_img and has_describe_image:
-            note += "\nUse the `describe_image` tool to view and analyze this image."
-        if is_audio and agent.get('audio_enabled'):
-            note += "\nUse the `transcribe_audio` tool to listen to this audio."
-        notes.append(note)
-    return content.rstrip() + ''.join(notes) if notes else content
+    if not attachment_infos:
+        return content
+    return content.rstrip() + _ctx.build_attachment_notes(
+        attachment_infos,
+        has_describe_image=has_describe_image,
+        audio_enabled=bool(agent.get('audio_enabled')),
+        pdf_enabled=bool(agent.get('pdf_enabled', 1)),
+    )
 
 
 # --- Configuration constants ---
@@ -1802,6 +1785,7 @@ class AgentRuntime:
                     _att,
                     has_describe_image=_has_describe_image,
                     audio_enabled=bool(agent.get('audio_enabled')),
+                    pdf_enabled=bool(agent.get('pdf_enabled', 1)),
                 )
             video = msg.pop('_video_url', None) if agent.get('video_enabled') else msg.pop('_video_url', None) and None
             if not video:
@@ -2059,6 +2043,10 @@ class AgentRuntime:
             if agent.get('vision_enabled', 1) and 'describe_image' not in assigned_tool_ids:
                 assigned_tool_ids.append('describe_image')
 
+            # Agents with PDF analysis enabled automatically get analyze_pdf.
+            if agent.get('pdf_enabled', 1) and 'analyze_pdf' not in assigned_tool_ids:
+                assigned_tool_ids.append('analyze_pdf')
+
             # Agents with audio_enabled automatically get transcribe_audio.
             if agent.get('audio_enabled') and 'transcribe_audio' not in assigned_tool_ids:
                 assigned_tool_ids.append('transcribe_audio')
@@ -2123,6 +2111,7 @@ class AgentRuntime:
                 'run_as_user': agent.get('run_as_user'),
                 'vision_model_id': agent.get('vision_model_id'),
                 'vision_enabled': agent.get('vision_enabled', 1),
+                'pdf_enabled': agent.get('pdf_enabled', 1),
                 'audio_enabled': agent.get('audio_enabled', 0),
                 'messaging_acl': agent.get('messaging_acl'),
                 'messaging_acl_mode': agent.get('messaging_acl_mode', 'whitelist'),

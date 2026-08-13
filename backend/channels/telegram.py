@@ -173,10 +173,16 @@ async def _ingest_non_photo_attachment(message, context, agent_id, session_id,
         f"{_human_size(real_size)}) "
         f"id={attachment_id} path={target_path}]"
     )
-    if file_type in ('voice', 'audio'):
-        agent = db.get_agent(agent_id)
-        if agent and agent.get('audio_enabled'):
-            info_line += "\nUse the `transcribe_audio` tool to listen to this audio."
+    agent = db.get_agent(agent_id)
+    if file_type in ('voice', 'audio') and agent and agent.get('audio_enabled'):
+        info_line += "\nUse the `transcribe_audio` tool to listen to this audio."
+    if ((mime_type or '').lower() == 'application/pdf'
+            or original_filename.lower().endswith('.pdf')):
+        if agent and agent.get('pdf_enabled', 1):
+            info_line += (
+                "\nUse the `analyze_pdf` tool with this attachment ID "
+                "to analyze the PDF natively."
+            )
     return info_line, False
 
 

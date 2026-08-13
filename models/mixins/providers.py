@@ -89,7 +89,7 @@ class ProvidersMixin:
                 "SELECT id, name, type, provider, base_url, api_key, model_name, "
                 "max_tokens, timeout, thinking, thinking_budget, temperature, "
                 "enabled, is_default, created_at, updated_at, model_max_concurrent, "
-                "api_format, vision_supported, legacy_id, shortcode, context_window "
+                "api_format, vision_supported, pdf_supported, legacy_id, shortcode, context_window "
                 "FROM llm_models WHERE provider = ? ORDER BY name",
                 (provider_id,),
             )

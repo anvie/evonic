@@ -528,6 +528,13 @@ class SchemaMixin:
             except sqlite3.OperationalError:
                 pass
 
+            # Migration: enable native PDF analysis per agent by default
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN pdf_enabled BOOLEAN DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
+            cursor.execute("UPDATE agents SET pdf_enabled = 1 WHERE pdf_enabled IS NULL")
+
             # Migration: add inter_agent_clear_context for clearing session context on inter-agent message
             try:
                 cursor.execute("ALTER TABLE agents ADD COLUMN inter_agent_clear_context BOOLEAN DEFAULT 0")
@@ -789,6 +796,16 @@ class SchemaMixin:
                 except sqlite3.OperationalError:
                     pass
 
+            # Keep this outside the one-shot provider seed so existing installs
+            # also receive the native Gemini preset.
+            cursor.execute(
+                "INSERT OR IGNORE INTO providers "
+                "(id, name, type, base_url, api_format, auth_type) "
+                "VALUES ('google-gemini', 'Google Gemini', 'remote', ?, "
+                "'openai', 'api_key')",
+                ("https://generativelanguage.googleapis.com/v1beta/openai",),
+            )
+
             # ==================== LLM Models Table ====================
 
             cursor.execute("""
@@ -833,6 +850,12 @@ class SchemaMixin:
             # Migration: add vision_supported column to llm_models if missing
             try:
                 cursor.execute("ALTER TABLE llm_models ADD COLUMN vision_supported BOOLEAN DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+
+            # Migration: add native PDF capability flag to llm_models
+            try:
+                cursor.execute("ALTER TABLE llm_models ADD COLUMN pdf_supported BOOLEAN DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
 
@@ -1273,8 +1296,10 @@ class SchemaMixin:
                     )
                 except sqlite3.OperationalError:
                     pass  # legacy column may have been dropped
-            for key in ("vision_model_id", "kb_organizer_model_id",
-                        "task_classifier_model_id", "audio_model_id"):
+            for key in ("vision_model_id", "pdf_model_id",
+                        "pdf_fallback_model_id", "pdf_fallback_model_2_id",
+                        "kb_organizer_model_id", "task_classifier_model_id",
+                        "audio_model_id"):
                 cursor.execute(
                     "UPDATE app_settings SET value = ? WHERE key = ? AND value = ?",
                     (new_id, key, old_id),

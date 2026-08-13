@@ -100,3 +100,28 @@ def test_attachment_note_keeps_media_tool_guidance(tmp_path):
 
     assert 'Attachment ID: 186' in note
     assert 'transcribe_audio' in note
+
+
+def test_pdf_upload_stays_metadata_only_and_gets_native_tool_hint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    agent_id = 'pdf_upload_agent'
+    db.create_agent({'id': agent_id, 'name': agent_id, 'system_prompt': ''})
+    upload = FileStorage(
+        stream=io.BytesIO(b'%PDF-1.7\nTOP SECRET BODY MUST NOT ENTER PROMPT'),
+        filename='report.pdf',
+        content_type='application/pdf',
+    )
+
+    result = _process_upload(upload, agent_id, 'pdf-session', 'user-1', 'channel-1')
+
+    assert result['text_prefix'] is None
+    note = context.build_attachment_note(result['attachment_info'], pdf_enabled=True)
+    assert 'TOP SECRET BODY' not in note
+    assert 'analyze_pdf' in note
+    assert f"Attachment ID: {result['attachment_info']['attachment_id']}" in note
+    assert 'analyze_pdf' not in context.build_attachment_note(
+        result['attachment_info'], pdf_enabled=False
+    )
+    without_id = dict(result['attachment_info'])
+    without_id.pop('attachment_id')
+    assert 'analyze_pdf' not in context.build_attachment_note(without_id)

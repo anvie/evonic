@@ -148,6 +148,60 @@
                 </div>
             </div>
         </section>
+        <section class="setting-subgroup vision-models-group" aria-label="PDF Models">
+            <div class="setting-subgroup-head">
+                <i data-lucide="file-text" aria-hidden="true"></i>
+                <p>Configure the primary model and fallback order for native PDF analysis.</p>
+            </div>
+            <div class="setting-subgroup-body">
+                <div class="setting-row stacked" data-search="pdf document primary fallback native analysis">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">PDF Model (Primary)</div>
+                        <div class="setting-row-desc">
+                            First PDF-capable model used by the <code>analyze_pdf</code>
+                            tool. Only models with native PDF support are listed.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="pdf-model-select" class="setting-select"
+                                data-setting-key="pdf_model_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="setting-row stacked" data-search="pdf fallback 1 document secondary backup">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">PDF Fallback 1</div>
+                        <div class="setting-row-desc">
+                            First backup model used when the primary PDF model fails.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="pdf-fallback-model-select" class="setting-select"
+                                data-setting-key="pdf_fallback_model_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="setting-row stacked" data-search="pdf fallback 2 document tertiary backup">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">PDF Fallback 2</div>
+                        <div class="setting-row-desc">
+                            Second backup model used when the primary model and Fallback 1 fail.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="pdf-fallback-model-2-select" class="setting-select"
+                                data-setting-key="pdf_fallback_model_2_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
+                </div>
+            </div>
+        </section>
         <div class="setting-row stacked" data-search="kb organizer model knowledge base memory vault background sub-agent">
             <div class="setting-row-text">
                 <div class="setting-row-title">KB Organizer Model</div>

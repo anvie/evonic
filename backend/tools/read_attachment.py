@@ -2,8 +2,8 @@
 
 Reads user-uploaded file attachments stored under data/attachments/<agent_id>/.
 Enforces per-agent isolation, reuses the existing read_file pagination core for
-text content, attempts PDF text extraction via pypdf when available, and falls
-back to a metadata block for opaque binary files.
+text content, and returns metadata for binary files. PDFs are analyzed by the
+separate analyze_pdf tool using native model document input.
 """
 
 import json
@@ -14,8 +14,6 @@ from backend.tools.read_file import read_file as _read_text_file
 
 
 _ATTACHMENTS_ROOT = os.path.join('data', 'attachments')
-_PDF_TEXT_CAP_BYTES = 100 * 1024  # 100 KB cap on extracted PDF text
-
 _TEXTISH_MIMES = {
     'application/json',
     'application/xml',
@@ -102,94 +100,6 @@ def _format_metadata(row: Optional[Dict[str, Any]], fallback_path: str,
     )
 
 
-def _read_pdf_text(path: str, offset: int) -> str:
-    """Extract text from a PDF using pypdf if available; paginate by line."""
-    try:
-        from pypdf import PdfReader  # type: ignore
-    except ImportError:
-        try:
-            size = os.path.getsize(path)
-        except OSError:
-            size = None
-        return (
-            "[PDF text extraction unavailable: install 'pypdf' to enable]\n\n"
-            + json.dumps({
-                'filename': os.path.basename(path),
-                'mime_type': 'application/pdf',
-                'size_bytes': size,
-                'path': path,
-            }, indent=2)
-        )
-
-    try:
-        reader = PdfReader(path)
-    except Exception as e:  # pragma: no cover - depends on file contents
-        return f"Error: Failed to open PDF: {e}"
-
-    out_parts = []
-    total = 0
-    truncated = False
-    for i, page in enumerate(reader.pages):
-        try:
-            txt = page.extract_text() or ''
-        except Exception:
-            txt = ''
-        header = f"--- Page {i + 1} ---\n"
-        chunk = header + txt + "\n"
-        if total + len(chunk) > _PDF_TEXT_CAP_BYTES:
-            remaining = _PDF_TEXT_CAP_BYTES - total
-            if remaining > 0:
-                out_parts.append(chunk[:remaining])
-            truncated = True
-            break
-        out_parts.append(chunk)
-        total += len(chunk)
-
-    body = ''.join(out_parts)
-    if not body.strip():
-        return (
-            "[PDF contains no extractable text — it may be image-only or scanned. "
-            "Returning metadata instead.]\n\n"
-            + json.dumps({
-                'filename': os.path.basename(path),
-                'mime_type': 'application/pdf',
-                'path': path,
-            }, indent=2)
-        )
-
-    # Paginate by lines using read_file core for consistency. Write to a temp
-    # buffer is unnecessary — render manually since content already in memory.
-    lines = body.splitlines()
-    total_lines = len(lines)
-    start_idx = max(0, min(offset - 1, max(total_lines - 1, 0)))
-    chunk_chars = 8000
-    output_lines = []
-    chars = 0
-    end_idx = start_idx
-    for i in range(start_idx, total_lines):
-        line_str = f"{i + 1}: {lines[i].rstrip()}"
-        if chars + len(line_str) + 1 > chunk_chars and output_lines:
-            break
-        output_lines.append(line_str)
-        chars += len(line_str) + 1
-        end_idx = i + 1
-    header_line = (
-        f"[PDF: {os.path.basename(path)} | {total_lines} extracted lines | "
-        f"showing lines {start_idx + 1}-{end_idx}"
-        + (" | text truncated at 100KB" if truncated else "")
-        + "]"
-    )
-    content = "\n".join(output_lines)
-    if end_idx < total_lines:
-        remaining = total_lines - end_idx
-        footer = (
-            f"\n[...{remaining} lines remaining. "
-            f"Call read_attachment with offset={end_idx + 1} to continue.]"
-        )
-        return f"{header_line}\n\n{content}{footer}"
-    return f"{header_line}\n\n{content}"
-
-
 def execute(agent, args: dict) -> dict:
     """Tool entrypoint. Returns a dict or a string result."""
     agent = agent or {}
@@ -249,6 +159,20 @@ def execute(agent, args: dict) -> dict:
     else:
         return {"error": "Provide either 'attachment_id' or 'path'."}
 
+    mime_type = (row or {}).get('mime_type')
+
+    # PDF bytes are consumed on the host by analyze_pdf, so no workplace sync
+    # is needed just to return their metadata and native-analysis guidance.
+    if _is_pdf(mime_type, resolved_path):
+        return {
+            "result": (
+                _format_metadata(row, resolved_path)
+                + "\n\nPDF contents are not parsed locally. Call `analyze_pdf` "
+                + (f"with attachment_id={attachment_id}." if attachment_id is not None
+                   else "with the numeric Attachment ID.")
+            )
+        }
+
     # If the agent operates in a remote workplace (SSH/tunnel/etc.), ensure the
     # attachment file is available on the remote filesystem.  This is needed
     # because _read_text_file routes through the execution backend when the
@@ -259,13 +183,8 @@ def execute(agent, args: dict) -> dict:
     except (ImportError, RuntimeError) as e:
         return {"error": f"Failed to prepare attachment for workplace: {e}"}
 
-    mime_type = (row or {}).get('mime_type')
-
     # Dispatch — use the workplace path for operations that route through the
     # execution backend, and the original host path for direct filesystem access.
-    if _is_pdf(mime_type, resolved_path):
-        return {"result": _read_pdf_text(resolved_path, offset)}
-
     if _is_textish(mime_type, resolved_path):
         return {"result": _read_text_file(workplace_path, offset=offset)}
 

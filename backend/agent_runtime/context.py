@@ -952,6 +952,10 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     if agent.get('vision_enabled', 1):
         assigned_ids.add('describe_image')
 
+    # Auto-assign analyze_pdf for PDF-enabled agents.
+    if agent.get('pdf_enabled', 1):
+        assigned_ids.add('analyze_pdf')
+
     # Auto-assign transcribe_audio for audio-enabled agents.
     if agent.get('audio_enabled'):
         assigned_ids.add('transcribe_audio')
@@ -1139,7 +1143,8 @@ def command_hint_from_content(content: str) -> str:
 
 def build_attachment_note(attachment_info: dict,
                           has_describe_image: bool = True,
-                          audio_enabled: bool = False) -> str:
+                          audio_enabled: bool = False,
+                          pdf_enabled: bool = True) -> str:
     """Render authoritative attachment metadata for model-visible context.
 
     The database attachment ID is intentionally explicit so the model can call
@@ -1170,12 +1175,15 @@ def build_attachment_note(attachment_info: dict,
         note += "\nUse the `describe_image` tool to view and analyze this image."
     if mime_type.startswith('audio/') and audio_enabled:
         note += "\nUse the `transcribe_audio` tool to listen to this audio."
+    if mime_type == 'application/pdf' and pdf_enabled and attachment_id is not None:
+        note += "\nUse the `analyze_pdf` tool with this Attachment ID to analyze the PDF natively."
     return note
 
 
 def build_attachment_notes(attachment_infos: list,
                            has_describe_image: bool = True,
-                           audio_enabled: bool = False) -> str:
+                           audio_enabled: bool = False,
+                           pdf_enabled: bool = True) -> str:
     """Render notes for multiple attachments, numbered when more than one."""
     notes = []
     count = len(attachment_infos)
@@ -1184,6 +1192,7 @@ def build_attachment_notes(attachment_infos: list,
             info,
             has_describe_image=has_describe_image,
             audio_enabled=audio_enabled,
+            pdf_enabled=pdf_enabled,
         )
         if count > 1:
             note = note.replace('[Attachment:', f'[Attachment #{index}:', 1)
@@ -1269,12 +1278,14 @@ def sync_session_attachment_manifest(messages: list, session_id: str,
 def append_attachment_note(msg: dict,
                            attachment_info: dict,
                            has_describe_image: bool = True,
-                           audio_enabled: bool = False) -> dict:
+                           audio_enabled: bool = False,
+                           pdf_enabled: bool = True) -> dict:
     """Append structured attachment metadata to a model message in-place."""
     note = build_attachment_note(
         attachment_info,
         has_describe_image=has_describe_image,
         audio_enabled=audio_enabled,
+        pdf_enabled=pdf_enabled,
     )
     content = msg.get('content', '') or ''
     msg['content'] = content.rstrip() + note
@@ -1305,12 +1316,14 @@ def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True)
             attachment_infos,
             has_describe_image=has_describe_image,
             audio_enabled=bool(agent.get('audio_enabled')),
+            pdf_enabled=bool(agent.get('pdf_enabled', 1)),
         )
     elif attachment_info and isinstance(attachment_info, dict):
         attachment_note = build_attachment_note(
             attachment_info,
             has_describe_image=has_describe_image,
             audio_enabled=bool(agent.get('audio_enabled')),
+            pdf_enabled=bool(agent.get('pdf_enabled', 1)),
         )
 
     if has_video:

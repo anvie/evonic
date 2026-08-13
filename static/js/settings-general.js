@@ -31,6 +31,9 @@ window.settingsGeneral = {
                 visionModelId: general.vision_model_id || "",
                 visionFallbackModelId: general.vision_fallback_model_id || "",
                 visionFallbackModel2Id: general.vision_fallback_model_2_id || "",
+                pdfModelId: general.pdf_model_id || "",
+                pdfFallbackModelId: general.pdf_fallback_model_id || "",
+                pdfFallbackModel2Id: general.pdf_fallback_model_2_id || "",
                 kbOrganizerModelId: general.kb_organizer_model_id || "",
                 classifierModelId: classifier ? classifier.model_id || "" : "",
                 cmpModelId: cmpModel ? cmpModel.model_id || "" : "",
@@ -100,6 +103,9 @@ window.settingsGeneral = {
             visionModelId: val("vision-model-select"),
             visionFallbackModelId: val("vision-fallback-model-select"),
             visionFallbackModel2Id: val("vision-fallback-model-2-select"),
+            pdfModelId: val("pdf-model-select"),
+            pdfFallbackModelId: val("pdf-fallback-model-select"),
+            pdfFallbackModel2Id: val("pdf-fallback-model-2-select"),
             kbOrganizerModelId: val("kb-organizer-model-select"),
             classifierModelId: val("task-classifier-model-select"),
             cmpModelId: val("cmp-model-select"),
@@ -149,6 +155,25 @@ window.settingsGeneral = {
         const visionModels = enabled.filter((m) => m.vision_supported);
         fill("vision-fallback-model-select", visionModels, current.visionFallbackModelId, "No fallback");
         fill("vision-fallback-model-2-select", visionModels, current.visionFallbackModel2Id, "No fallback");
+        const pdfModels = enabled.filter((m) => m.pdf_supported);
+        fill(
+            "pdf-model-select",
+            pdfModels,
+            current.pdfModelId,
+            "Auto-detect (first PDF-capable model)",
+        );
+        fill(
+            "pdf-fallback-model-select",
+            pdfModels,
+            current.pdfFallbackModelId,
+            "No fallback",
+        );
+        fill(
+            "pdf-fallback-model-2-select",
+            pdfModels,
+            current.pdfFallbackModel2Id,
+            "No fallback",
+        );
         fill(
             "kb-organizer-model-select",
             enabled,

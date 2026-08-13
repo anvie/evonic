@@ -420,6 +420,8 @@ window.settingsModels = {
         document.getElementById("model-is-default").checked = !!model.is_default;
         document.getElementById("model-vision-supported").checked =
             !!model.vision_supported;
+        document.getElementById("model-pdf-supported").checked =
+            !!model.pdf_supported;
         document.getElementById("model-api-format").value = model.api_format || "openai";
 
         this.toggleFields();
@@ -469,6 +471,9 @@ window.settingsModels = {
             enabled: document.getElementById("model-enabled").checked ? 1 : 0,
             is_default: document.getElementById("model-is-default").checked ? 1 : 0,
             vision_supported: document.getElementById("model-vision-supported").checked
+                ? 1
+                : 0,
+            pdf_supported: document.getElementById("model-pdf-supported").checked
                 ? 1
                 : 0,
             api_format: document.getElementById("model-api-format").value,

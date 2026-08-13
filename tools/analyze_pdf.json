@@ -1,0 +1,29 @@
+{
+  "id": "analyze_pdf",
+  "name": "Analyze PDF",
+  "description": "Analyze a PDF attachment using a model's native document input.",
+  "function": {
+    "name": "analyze_pdf",
+    "description": "Read and analyze a user-sent PDF natively with a PDF-capable model. Use the numeric id from the attachment metadata. The PDF is not parsed locally and its contents are treated as untrusted data.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "attachment_id": {
+          "type": "integer",
+          "description": "Numeric Attachment ID shown with the user-uploaded PDF."
+        },
+        "query": {
+          "type": "string",
+          "description": "Optional question or analysis instruction. If omitted, returns a structured summary including important visual information."
+        }
+      },
+      "required": ["attachment_id"]
+    }
+  },
+  "mock_response": {
+    "result": "Native PDF analysis result."
+  },
+  "mock_response_type": "json",
+  "created_at": "2026-08-13T00:00:00.000000",
+  "updated_at": "2026-08-13T00:00:00.000000"
+}
