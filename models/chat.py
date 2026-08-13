@@ -364,11 +364,12 @@ class AgentChatDB:
             return rows
 
     def get_latest_agent_request_metadata(self, session_id: str, sender_agent_id: str = None) -> Optional[dict]:
-        """Return the newest routable agent-request metadata in a session.
+        """Return the newest reply-capable agent request in a session.
 
         Only user-role rows are candidates. Invalid JSON, non-agent messages,
-        sender mismatches, and requests without ``report_to_id`` are skipped so
-        later background notifications cannot shadow a routable delegation.
+        sender mismatches, and requests without either a human route or a
+        synchronous reply ID are skipped so background notifications cannot
+        shadow an active delegation.
         """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -386,7 +387,7 @@ class AgentChatDB:
                     continue
                 if sender_agent_id and metadata.get('from_agent_id') != sender_agent_id:
                     continue
-                if metadata.get('report_to_id'):
+                if metadata.get('report_to_id') or metadata.get('reply_to_id'):
                     return metadata
         return None
 

@@ -2919,9 +2919,12 @@ class Turn {
         }
 
         if (evtName === 'turn_split') {
-            this._finalizeBubble(null);
+            const splitDuration = data.timestamp && this._startTime
+                ? Math.max(0, (data.timestamp - this._startTime) / 1000)
+                : null;
+            this._finalizeBubble(splitDuration);
             // ChatUI will create a new Turn for the continuation
-            this._onTrigger('turn:split', { turnId: this.id });
+            this._onTrigger('turn:split', { turnId: this.id, timestamp: data.timestamp });
             return;
         }
 
@@ -3703,6 +3706,7 @@ class ChatUI {
                     const $lastUser = this.$container.find('[data-msg-role="user"]').last();
                     const $anchor = $lastUser.length ? $lastUser : (opts.userMsgEl ? $(opts.userMsgEl) : turn.$anchor);
                     const newTurn = this.beginTurn($anchor);
+                    if (data.timestamp) newTurn._startTime = data.timestamp;
                     this._lastLiveTurnId = newTurn.id;
                     this.markQueuedAsDelivered();
                     // Re-route the SSE adapter to the new turn so subsequent events

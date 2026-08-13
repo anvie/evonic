@@ -12,6 +12,7 @@ import unittest
 import unittest.mock as mock
 import sys
 import os
+from contextlib import nullcontext
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -101,6 +102,7 @@ def setup_module(module):
     sys.modules['backend.agent_runtime.approval'] = _approval_stub
 
     _ar_stub = types.ModuleType('backend.agent_runtime')
+    _ar_stub.__path__ = [os.path.join(_repo_root, 'backend', 'agent_runtime')]
     _ar_stub.agent_runtime = mock.MagicMock()
     _ar_stub.notifier = _notifier_stub
     _ar_stub.approval = _approval_stub
@@ -263,6 +265,43 @@ class TestExecSendAgentMessage(unittest.TestCase):
         self.assertTrue(meta.get('agent_message'))
         self.assertEqual(meta.get('from_agent_id'), 'agent_a')
         self.assertEqual(meta.get('report_to_id'), 'user_123')
+
+    def test_immediate_reply_wakes_waiter_without_human_route(self):
+        """The waiter exists before notify_agent can synchronously finish the target."""
+        from backend.tools.agent_messaging import _on_final_answer
+
+        concurrency_stub = types.ModuleType('backend.agent_runtime.concurrency')
+        concurrency_stub.paused_model_gate = nullcontext
+
+        def immediate_reply(**kwargs):
+            with mock.patch(
+                'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+                return_value=kwargs['metadata'],
+            ):
+                _on_final_answer({
+                    'external_user_id': '__agent__agent_a',
+                    'agent_id': 'agent_b',
+                    'session_id': 'delegated-session',
+                    'answer': 'Hello immediately',
+                })
+            return {'success': True}
+
+        target = _make_target_agent()
+        with mock.patch('backend.tools.agent_messaging.db.get_agent', return_value=target), \
+             mock.patch('backend.agent_runtime.notifier.notify_agent', side_effect=immediate_reply), \
+             mock.patch.dict(sys.modules, {
+                 'backend.agent_runtime.concurrency': concurrency_stub,
+             }):
+            result = self._call({
+                'target_agent_id': 'agent_b',
+                'message': 'Hello',
+                'wait_for_reply': True,
+                'wait_timeout': 10,
+            }, agent_context=_make_agent_context(user_id='', session_id=''))
+
+        self.assertTrue(result.get('success'))
+        self.assertEqual(result.get('reply'), 'Hello immediately')
+        self.assertFalse(result.get('timed_out', False))
 
     def test_self_messaging_blocked(self):
         """Agent cannot message itself."""
@@ -886,6 +925,31 @@ class TestOnFinalAnswer(unittest.TestCase):
         ), mock.patch('backend.agent_runtime.notifier.notify_agent') as mock_notify:
             self._call(self._build_data())
         mock_notify.assert_not_called()
+
+    def test_no_report_to_id_still_wakes_internal_waiter(self):
+        """Synchronous callers do not depend on browser auto-forward routing."""
+        from backend.tools.agent_messaging import (
+            _WAIT_REGISTRY, _WAIT_REGISTRY_LOCK, Queue,
+        )
+        reply_queue = Queue()
+        with _WAIT_REGISTRY_LOCK:
+            _WAIT_REGISTRY['reply-1'] = reply_queue
+        metadata = {
+            'agent_message': True,
+            'from_agent_id': 'agent_a',
+            'reply_to_id': 'reply-1',
+        }
+        try:
+            with mock.patch(
+                'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+                return_value=metadata,
+            ), mock.patch('backend.agent_runtime.notifier.notify_agent') as mock_notify:
+                self._call(self._build_data(answer='Wait result'))
+            self.assertEqual(reply_queue.get_nowait(), 'Wait result')
+            mock_notify.assert_not_called()
+        finally:
+            with _WAIT_REGISTRY_LOCK:
+                _WAIT_REGISTRY.pop('reply-1', None)
 
     def test_inter_agent_forwards_reply(self):
         """Inter-agent session with valid metadata forwards reply to A."""

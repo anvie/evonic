@@ -334,6 +334,32 @@ def test_wait_for_events_wakes_immediately_after_publish():
         store.close()
 
 
+def test_store_reuses_one_connection_across_ephemeral_threads():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        connection_ids = []
+        errors = []
+
+        def read_high_water():
+            try:
+                with store._connect() as conn:
+                    connection_ids.append(id(conn))
+                    conn.execute('SELECT 1').fetchone()
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=read_high_water) for _ in range(40)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert errors == []
+        assert len(set(connection_ids)) == 1
+        store.close()
+        assert store._conn is None
+
+
 def test_cancelled_queue_cannot_be_started_again():
     with tempfile.TemporaryDirectory() as tmpdir:
         store = make_store(tmpdir)

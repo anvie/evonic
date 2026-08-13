@@ -343,7 +343,6 @@ def api_realtime_stream():
         except GeneratorExit:
             pass
         finally:
-            realtime_store.close()
             sse_unregister(sse_identity)
 
     return Response(

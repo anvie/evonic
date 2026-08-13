@@ -17,31 +17,6 @@ os.environ['EVONIC_TESTING'] = '1'
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ── Force daemon threads ────────────────────────────────────────────────────
-# AgentRuntime starts non-daemon worker threads which prevent pytest from
-# exiting after all tests complete.  Override Thread.__init__ so every thread
-# created during the test session is a daemon thread, allowing clean exit.
-_orig_thread_init = _threading.Thread.__init__
-
-
-def _force_daemon_init(self, group=None, target=None, name=None,
-                       args=(), kwargs=None, *, daemon=None):
-    _orig_thread_init(self, group=group, target=target, name=name,
-                      args=args, kwargs=kwargs, daemon=True)
-
-
-_threading.Thread.__init__ = _force_daemon_init
-
-
-def pytest_sessionfinish(session, exitstatus):
-    """Force-exit to skip AgentRuntime atexit handlers that wait 30s for workers."""
-    import os
-    import sys
-    sys.stdout.flush()
-    sys.stderr.flush()
-    # os._exit(int(exitstatus))  # disabled for debugging
-
-
 @pytest.fixture(autouse=True)
 def use_test_database(monkeypatch, tmp_path):
     """
@@ -56,17 +31,33 @@ def use_test_database(monkeypatch, tmp_path):
     
     # Store original path
     original_path = db_module.db.db_path
-    
+
+    # Close cached handles before redirecting every SQLite-backed global used
+    # by Flask hooks and durable realtime state.
+    db_module.db.close()
+    import models.api_rate_limit as api_rate_limit
+    import models.rate_limit as login_rate_limit
+    from backend.realtime_store import realtime_store
+    api_rate_limit.close()
+    login_rate_limit.close()
+    realtime_store.close()
+
     # Set test database path and clear cached connection so _connect() uses the new path
     db_module.db.db_path = test_db_path
     db_module.db._tls = _threading.local()
+    monkeypatch.setattr(api_rate_limit, '_DB_PATH', str(tmp_path / 'api_rate_limit.db'))
+    monkeypatch.setattr(login_rate_limit, '_RATE_LIMIT_DB', str(tmp_path / 'rate_limit.db'))
 
     # Reinitialize tables in test database
     db_module.db._init_tables()
     
     yield
 
-    # Restore original path and reset connection cache
+    # Restore original path only after every temporary store has been closed.
+    db_module.db.close()
+    api_rate_limit.close()
+    login_rate_limit.close()
+    realtime_store.close()
     db_module.db._tls = _threading.local()
     db_module.db.db_path = original_path
 
@@ -95,7 +86,7 @@ def ensure_super_agent(use_test_database):
 
 
 @pytest.fixture(autouse=True)
-def enable_testing_mode():
+def enable_testing_mode(use_test_database):
     """Set TESTING=True so the Werkzeug test client bypasses CSRF protection.
 
     flask.Flask.test_client() does NOT automatically set TESTING=True,
