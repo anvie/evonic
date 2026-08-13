@@ -4981,6 +4981,7 @@ document.addEventListener('evonic:message-received', function (event) {
 let _agentChatEs = null;
 let _agentChatSessionId = null;
 let _agentChatCursor = 0;
+let _agentHistoryResyncing = false;
 const _renderedTurnIds = new Set();
 
 function _ensureRealtimeTurn(startTs = null) {
@@ -5088,6 +5089,14 @@ async function restoreActiveReasoning() {
         try { data = JSON.parse(event.data); } catch (_) {}
         _handleAgentRealtime(evtName, data, sessionId);
     }));
+    es.addEventListener('history_resync_required', () => {
+        if (_agentChatEs !== es || _chatSessionId !== sessionId || _agentHistoryResyncing) return;
+        _agentHistoryResyncing = true;
+        es.close();
+        _agentChatEs = null;
+        _agentChatSessionId = null;
+        loadChatHistory().finally(() => { _agentHistoryResyncing = false; });
+    });
     es.addEventListener('auth_expired', () => {
         es.close();
         window.location.href = '/login';

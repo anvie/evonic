@@ -9,7 +9,7 @@ from datetime import datetime
 
 from flask import Blueprint, Response, request, stream_with_context
 
-from backend.realtime_store import realtime_store
+from backend.realtime_store import RETENTION_MS, realtime_store
 
 
 log = logging.getLogger(__name__)
@@ -224,6 +224,24 @@ def api_realtime_stream():
             yield 'retry: 3000\n\n'
 
             high_water = realtime_store.high_water()
+            resync_reason = None
+            if chat_enabled and versioned_cursor and supplied_cursor:
+                if not valid_cursors:
+                    resync_reason = 'invalid_cursor'
+                elif cursor > high_water:
+                    resync_reason = 'cursor_ahead'
+                elif cursor < realtime_store.replay_floor(session_id):
+                    resync_reason = 'cursor_expired'
+            if resync_reason:
+                yield _format_sse_event('history_resync_required', {
+                    'reason': resync_reason,
+                    'retention_seconds': RETENTION_MS // 1000,
+                    'event_id': high_water,
+                    'seq': high_water,
+                    'timestamp': int(time.time() * 1000),
+                    'channel': 'system',
+                }, high_water)
+                return
             if reset_cursor or cursor > high_water:
                 cursor = high_water
                 send_snapshot = True

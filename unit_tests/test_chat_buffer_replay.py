@@ -1,5 +1,6 @@
 """Regression checks for durable chat replay."""
 
+import json
 import os
 import tempfile
 import threading
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 from flask import Flask
 
 import backend.realtime_store as realtime_module
-from backend.realtime_store import RealtimeStore
+from backend.realtime_store import MAX_EVENT_PAYLOAD_BYTES, RETENTION_MS, RealtimeStore
 from routes import realtime as realtime_route
 
 
@@ -50,10 +51,111 @@ def test_active_turn_replays_in_order_after_refresh():
             0, {"chat"}, session_id="session-a", agent_id="agent-a",
             active_only=True,
         ) == []
-        # Terminal telemetry remains replayable for the 24-hour retention window.
+        # Terminal telemetry remains replayable for the one-hour retention window.
         assert len(store.events_after(
             0, {"chat"}, session_id="session-a", agent_id="agent-a",
         )) == 4
+        store.close()
+
+
+def test_default_store_uses_a_dedicated_realtime_database(monkeypatch, tmp_path):
+    from models.db import db
+
+    main_db = tmp_path / "evonic.db"
+    monkeypatch.setattr(db, "db_path", str(main_db))
+    store = RealtimeStore()
+
+    store.publish("status", "agent_busy_changed", {"busy": False})
+
+    assert store._resolve_db_path() == str(tmp_path / "realtime.db")
+    assert (tmp_path / "realtime.db").exists()
+    assert not main_db.exists()
+    store.close()
+
+
+def test_active_events_expire_one_hour_after_turn_finishes(monkeypatch):
+    clock = [10_000_000]
+    monkeypatch.setattr(realtime_module, "_now_ms", lambda: clock[0])
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        event_id = store.publish(
+            "chat", "thinking", {"content": "still working"},
+            agent_id="agent-a", session_id="session-a", turn_id=turn_id,
+        )
+
+        clock[0] += RETENTION_MS * 2
+        store._maybe_cleanup(clock[0])
+        assert any(event["id"] == event_id for event in store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        ))
+
+        finished_at = clock[0]
+        store.finish_turn(turn_id)
+        with store._connect() as conn:
+            row = conn.execute(
+                "SELECT expires_at_ms FROM realtime_events WHERE id = ?", (event_id,),
+            ).fetchone()
+        assert row["expires_at_ms"] == finished_at + RETENTION_MS
+
+        clock[0] = finished_at + RETENTION_MS - 1
+        assert store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        )
+        clock[0] += 1
+        store._last_cleanup_ms = 0
+        store._maybe_cleanup(clock[0])
+        assert store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        ) == []
+        assert store.replay_floor("session-a") == event_id
+        store.close()
+
+
+def test_cursor_stays_monotonic_after_session_purge():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        first = store.publish(
+            "chat", "message_received", {"content": "old"},
+            agent_id="agent-a", session_id="session-a",
+        )
+
+        store.purge_session("session-a")
+
+        assert store.high_water() == first
+        assert store.replay_floor("session-a") == first
+        second = store.publish(
+            "chat", "message_received", {"content": "new"},
+            agent_id="agent-b", session_id="session-b",
+        )
+        assert second == first + 1
+        store.close()
+
+
+def test_oversized_event_payload_is_bounded_and_marked():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        small_id = store.publish("chat", "thinking", {"content": "ok"})
+        large_id = store.publish("chat", "tool_executed", {
+            "tool": "document_reader",
+            "result": {"text": "😀" * 100_000},
+            "error": False,
+        })
+        with store._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, payload_json FROM realtime_events WHERE id IN (?, ?)",
+                (small_id, large_id),
+            ).fetchall()
+        payloads = {row["id"]: row["payload_json"] for row in rows}
+
+        assert payloads[small_id] == '{"content":"ok"}'
+        assert len(payloads[large_id].encode("utf-8")) <= MAX_EVENT_PAYLOAD_BYTES
+        bounded = json.loads(payloads[large_id])
+        assert bounded["truncated"] is True
+        assert bounded["original_bytes"] > MAX_EVENT_PAYLOAD_BYTES
+        assert bounded["tool"] == "document_reader"
+        assert bounded["result"]["truncated"] is True
         store.close()
 
 
@@ -91,6 +193,27 @@ def test_restart_marks_old_turn_interrupted():
         assert events[-2]["event"] == "done"
         assert events[-2]["data"]["interrupted"] is True
         assert events[-1]["event"] == "agent_busy_changed"
+        store.close()
+
+
+def test_restart_does_not_duplicate_an_existing_terminal_event():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        store.publish(
+            "chat", "done", {"response": "already finished"},
+            agent_id="agent-a", session_id="session-a", turn_id=turn_id,
+        )
+
+        store.interrupt_stale_turns()
+
+        events = store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        )
+        done = [event for event in events if event["event"] == "done"]
+        assert len(done) == 1
+        assert done[0]["data"]["response"] == "already finished"
         store.close()
 
 
@@ -370,6 +493,61 @@ def test_gateway_resets_invalid_and_future_v2_cursors(monkeypatch):
             response.close()
             assert f"id: {high_water}" in chunks[1]
             assert "event: ready" in chunks[1]
+        store.close()
+
+
+def test_chat_gateway_requests_history_resync_for_unusable_cursors(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        high_water = store.publish(
+            "chat", "message_received", {"content": "old"},
+            agent_id="agent-a", session_id="session-a",
+        )
+        store.purge_session("session-a")
+        monkeypatch.setattr(realtime_route, "realtime_store", store)
+        client = make_app().test_client()
+
+        for cursor, reason in (
+            ("0", "cursor_expired"),
+            (str(high_water + 1), "cursor_ahead"),
+            ("status:9", "invalid_cursor"),
+        ):
+            response = client.get(
+                "/api/realtime/stream?chat=1&agent_id=agent-a&session_id=session-a"
+                f"&cursor_version=2&snapshot=0&after={cursor}",
+                buffered=False,
+            )
+            output = b"".join(response.response).decode()
+            response.close()
+            assert "event: history_resync_required" in output
+            assert f'"reason":"{reason}"' in output
+            assert f'"retention_seconds":{RETENTION_MS // 1000}' in output
+            assert f"id: {high_water}" in output
+            assert "event: ready" not in output
+        store.close()
+
+
+def test_replay_floor_from_another_session_does_not_force_resync(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        store.publish(
+            "chat", "message_received", {"content": "A"},
+            agent_id="agent-a", session_id="session-a",
+        )
+        store.purge_session("session-a")
+        monkeypatch.setattr(realtime_route, "realtime_store", store)
+
+        response = make_app().test_client().get(
+            "/api/realtime/stream?chat=1&agent_id=agent-b&session_id=session-b"
+            "&cursor_version=2&snapshot=0&after=0",
+            buffered=False,
+        )
+        chunks = [next(response.response).decode() for _ in range(2)]
+        response.close()
+        output = "".join(chunks)
+
+        assert "event: ready" in output
+        assert "history_resync_required" not in output
         store.close()
 
 
