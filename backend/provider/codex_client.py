@@ -495,6 +495,13 @@ class CodexClient:
                             if isinstance(url, dict):
                                 url = url.get("url", "")
                             block = {"type": "input_image", "image_url": url}
+                        elif btype == "file":
+                            file_info = block.get("file") or {}
+                            block = {
+                                "type": "input_file",
+                                "filename": file_info.get("filename", "document"),
+                                "file_data": file_info.get("file_data", ""),
+                            }
                         converted_content.append(block)
                     converted.append({"role": "user", "content": converted_content})
                 else:

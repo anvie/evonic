@@ -148,6 +148,60 @@
                 </div>
             </div>
         </section>
+        <section class="setting-subgroup vision-models-group" aria-label="Document Models">
+            <div class="setting-subgroup-head">
+                <i data-lucide="file-text" aria-hidden="true"></i>
+                <p>Configure the shared primary model and fallback order for native document analysis.</p>
+            </div>
+            <div class="setting-subgroup-body">
+                <div class="setting-row stacked" data-search="document primary fallback native analysis">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">Document Model (Primary)</div>
+                        <div class="setting-row-desc">
+                            First compatible model used by <code>analyze_document</code>.
+                            Models with at least one document capability are listed.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="document-model-select" class="setting-select"
+                                data-setting-key="document_model_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="setting-row stacked" data-search="document fallback 1 secondary backup">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">Document Fallback 1</div>
+                        <div class="setting-row-desc">
+                            First compatible backup when the primary model fails or lacks the file category.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="document-fallback-model-select" class="setting-select"
+                                data-setting-key="document_fallback_model_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div class="setting-row stacked" data-search="document fallback 2 tertiary backup">
+                    <div class="setting-row-text">
+                        <div class="setting-row-title">Document Fallback 2</div>
+                        <div class="setting-row-desc">
+                            Second backup model used when the primary model and Fallback 1 fail.
+                        </div>
+                    </div>
+                    <div class="setting-row-control">
+                        <select id="document-fallback-model-2-select" class="setting-select"
+                                data-setting-key="document_fallback_model_2_id">
+                            <option value="">Loading models…</option>
+                        </select>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
+                </div>
+            </div>
+        </section>
         <div class="setting-row stacked" data-search="kb organizer model knowledge base memory vault background sub-agent">
             <div class="setting-row-text">
                 <div class="setting-row-title">KB Organizer Model</div>

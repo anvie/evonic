@@ -9,6 +9,7 @@ from typing import Dict, Any
 from flask import Blueprint, render_template, jsonify, request, Response, stream_with_context
 
 from backend.audit_logger import audit
+from backend.tools._document import model_supports_any_document
 import config
 from models.boolean import FALSE_VALUES, TRUE_VALUES
 from models.db import db
@@ -874,6 +875,9 @@ def api_get_general_settings():
         'vision_model_id': db.get_setting('vision_model_id', ''),
         'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
         'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
+        'document_model_id': db.get_setting('document_model_id', ''),
+        'document_fallback_model_id': db.get_setting('document_fallback_model_id', ''),
+        'document_fallback_model_2_id': db.get_setting('document_fallback_model_2_id', ''),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
         'kb_organizer_nightly_time': db.get_setting(
             'kb_organizer_nightly_time',
@@ -1132,6 +1136,41 @@ def api_batch_save():
                     results[key] = model['id']
                 elif model:
                     errors.append(f'{key}: Model does not support vision')
+                else:
+                    errors.append(f'{key}: Model not found')
+            else:
+                db.set_setting(key, '')
+                results[key] = ''
+
+    # Native document routing chain (primary + two fallbacks)
+    document_setting_keys = (
+        'document_model_id',
+        'document_fallback_model_id',
+        'document_fallback_model_2_id',
+    )
+    if any(key in settings for key in document_setting_keys):
+        document_ids = {
+            key: settings.get(key, db.get_setting(key, ''))
+            for key in document_setting_keys
+        }
+        duplicate_document_ids = {
+            model_id for model_id in document_ids.values() if model_id
+            and list(document_ids.values()).count(model_id) > 1
+        }
+        for key in document_setting_keys:
+            if key not in settings:
+                continue
+            model_id = document_ids[key]
+            if model_id in duplicate_document_ids:
+                errors.append(f'{key}: Must differ from the other configured document models')
+                continue
+            if model_id:
+                model = db.get_model_by_id(model_id)
+                if model and model_supports_any_document(model):
+                    db.set_setting(key, model['id'])
+                    results[key] = model['id']
+                elif model:
+                    errors.append(f'{key}: Model has no native document capability enabled')
                 else:
                     errors.append(f'{key}: Model not found')
             else:

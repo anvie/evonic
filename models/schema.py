@@ -528,6 +528,13 @@ class SchemaMixin:
             except sqlite3.OperationalError:
                 pass
 
+            # Migration: enable native document analysis per agent by default
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN document_enabled BOOLEAN DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
+            cursor.execute("UPDATE agents SET document_enabled = 1 WHERE document_enabled IS NULL")
+
             # Migration: add inter_agent_clear_context for clearing session context on inter-agent message
             try:
                 cursor.execute("ALTER TABLE agents ADD COLUMN inter_agent_clear_context BOOLEAN DEFAULT 0")
@@ -835,6 +842,20 @@ class SchemaMixin:
                 cursor.execute("ALTER TABLE llm_models ADD COLUMN vision_supported BOOLEAN DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+
+            # Native document capabilities are explicit and opt-in per model.
+            for capability in (
+                "document_pdf_supported",
+                "document_text_supported",
+                "document_office_supported",
+                "document_spreadsheet_supported",
+            ):
+                try:
+                    cursor.execute(
+                        f"ALTER TABLE llm_models ADD COLUMN {capability} BOOLEAN DEFAULT 0"
+                    )
+                except sqlite3.OperationalError:
+                    pass
 
             # Migration: add legacy_id column to llm_models if missing
             try:
@@ -1273,8 +1294,10 @@ class SchemaMixin:
                     )
                 except sqlite3.OperationalError:
                     pass  # legacy column may have been dropped
-            for key in ("vision_model_id", "kb_organizer_model_id",
-                        "task_classifier_model_id", "audio_model_id"):
+            for key in ("vision_model_id", "document_model_id",
+                        "document_fallback_model_id", "document_fallback_model_2_id",
+                        "kb_organizer_model_id", "task_classifier_model_id",
+                        "audio_model_id"):
                 cursor.execute(
                     "UPDATE app_settings SET value = ? WHERE key = ? AND value = ?",
                     (new_id, key, old_id),

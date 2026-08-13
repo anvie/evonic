@@ -135,18 +135,17 @@ def test_binary_attachment_returns_metadata(tmp_path, monkeypatch):
     assert parsed['filename'] == 'photo.jpg'
 
 
-def test_pdf_no_pypdf_returns_unavailable(tmp_path, monkeypatch):
+def test_binary_document_points_to_native_analysis_tool(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _make_agent('agent_pdf')
     aid, _ = _store('agent_pdf', b'%PDF-1.4 fake', name='doc.pdf',
                     mime='application/pdf', tmp_path=tmp_path)
-    # Force ImportError for pypdf
-    import sys
-    monkeypatch.setitem(sys.modules, 'pypdf', None)
     result = ra.execute({'id': 'agent_pdf'}, {'attachment_id': aid})
     assert 'result' in result
     out = result['result']
-    assert 'PDF text extraction unavailable' in out or 'install' in out
+    assert 'not parsed locally' in out
+    assert f'attachment_id={aid}' in out
+    assert 'analyze_document' in out
 
 
 def test_mock_shape_matches_execute(tmp_path, monkeypatch):

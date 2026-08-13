@@ -275,3 +275,86 @@ def test_telegram_voice_info_line_no_hint_when_audio_disabled(tmp_path, monkeypa
     assert rejected is False
     assert info_line.startswith('[Attached: voice.ogg')
     assert 'transcribe_audio' not in info_line
+
+
+def _msg_with_pdf(file_id='tg_pdf'):
+    document = SimpleNamespace(
+        file_id=file_id,
+        file_name='report.pdf',
+        mime_type='application/pdf',
+        file_size=3,
+    )
+    return SimpleNamespace(
+        document=document, audio=None, voice=None, video=None,
+        video_note=None, animation=None, sticker=None, photo=None,
+        reply_text=AsyncMock(),
+    )
+
+
+def test_telegram_pdf_info_line_uses_native_analysis_hint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from backend.channels.telegram import _ingest_non_photo_attachment
+    agent_id = _make_agent('tg_pdf_hint')
+    bot = MagicMock()
+    bot.get_file = AsyncMock(return_value=_FakeTgFile())
+    info_line, rejected = _run(_ingest_non_photo_attachment(
+        _msg_with_pdf(), SimpleNamespace(bot=bot), agent_id,
+        's1', 'u1', 'ch1', db,
+    ))
+
+    assert rejected is False
+    assert info_line.startswith('[Attached: report.pdf')
+    assert 'analyze_document' in info_line
+
+
+def test_telegram_pdf_hint_respects_agent_toggle(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from backend.channels.telegram import _ingest_non_photo_attachment
+    agent_id = _make_agent('tg_pdf_hint_off')
+    db.update_agent(agent_id, {'document_enabled': 0})
+    bot = MagicMock()
+    bot.get_file = AsyncMock(return_value=_FakeTgFile())
+    info_line, rejected = _run(_ingest_non_photo_attachment(
+        _msg_with_pdf('tg_pdf_off'), SimpleNamespace(bot=bot), agent_id,
+        's1', 'u1', 'ch1', db,
+    ))
+
+    assert rejected is False
+    assert 'analyze_document' not in info_line
+
+
+def test_telegram_text_document_uses_same_native_analysis_hint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from backend.channels.telegram import _ingest_non_photo_attachment
+    agent_id = _make_agent('tg_text_hint')
+    message = _msg_with_pdf('tg_text')
+    message.document.file_name = 'notes.txt'
+    message.document.mime_type = 'text/plain'
+    bot = MagicMock()
+    bot.get_file = AsyncMock(return_value=_FakeTgFile())
+
+    info_line, rejected = _run(_ingest_non_photo_attachment(
+        message, SimpleNamespace(bot=bot), agent_id, 's1', 'u1', 'ch1', db,
+    ))
+
+    assert rejected is False
+    assert 'analyze_document' in info_line
+
+
+def test_telegram_rejects_zip_before_download(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from backend.channels.telegram import _ingest_non_photo_attachment
+    agent_id = _make_agent('tg_zip_rejected')
+    message = _msg_with_pdf('tg_zip')
+    message.document.file_name = 'archive.zip'
+    message.document.mime_type = 'application/zip'
+    bot = MagicMock()
+    bot.get_file = AsyncMock(return_value=_FakeTgFile())
+
+    info_line, rejected = _run(_ingest_non_photo_attachment(
+        message, SimpleNamespace(bot=bot), agent_id, 's1', 'u1', 'ch1', db,
+    ))
+
+    assert (info_line, rejected) == (None, True)
+    message.reply_text.assert_awaited_once()
+    bot.get_file.assert_not_awaited()

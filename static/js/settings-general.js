@@ -31,6 +31,9 @@ window.settingsGeneral = {
                 visionModelId: general.vision_model_id || "",
                 visionFallbackModelId: general.vision_fallback_model_id || "",
                 visionFallbackModel2Id: general.vision_fallback_model_2_id || "",
+                documentModelId: general.document_model_id || "",
+                documentFallbackModelId: general.document_fallback_model_id || "",
+                documentFallbackModel2Id: general.document_fallback_model_2_id || "",
                 kbOrganizerModelId: general.kb_organizer_model_id || "",
                 classifierModelId: classifier ? classifier.model_id || "" : "",
                 cmpModelId: cmpModel ? cmpModel.model_id || "" : "",
@@ -100,6 +103,9 @@ window.settingsGeneral = {
             visionModelId: val("vision-model-select"),
             visionFallbackModelId: val("vision-fallback-model-select"),
             visionFallbackModel2Id: val("vision-fallback-model-2-select"),
+            documentModelId: val("document-model-select"),
+            documentFallbackModelId: val("document-fallback-model-select"),
+            documentFallbackModel2Id: val("document-fallback-model-2-select"),
             kbOrganizerModelId: val("kb-organizer-model-select"),
             classifierModelId: val("task-classifier-model-select"),
             cmpModelId: val("cmp-model-select"),
@@ -149,6 +155,30 @@ window.settingsGeneral = {
         const visionModels = enabled.filter((m) => m.vision_supported);
         fill("vision-fallback-model-select", visionModels, current.visionFallbackModelId, "No fallback");
         fill("vision-fallback-model-2-select", visionModels, current.visionFallbackModel2Id, "No fallback");
+        const documentModels = enabled.filter((m) =>
+            m.document_pdf_supported ||
+            m.document_text_supported ||
+            m.document_office_supported ||
+            m.document_spreadsheet_supported
+        );
+        fill(
+            "document-model-select",
+            documentModels,
+            current.documentModelId,
+            "Auto-detect (first compatible document model)",
+        );
+        fill(
+            "document-fallback-model-select",
+            documentModels,
+            current.documentFallbackModelId,
+            "No fallback",
+        );
+        fill(
+            "document-fallback-model-2-select",
+            documentModels,
+            current.documentFallbackModel2Id,
+            "No fallback",
+        );
         fill(
             "kb-organizer-model-select",
             enabled,

@@ -102,6 +102,7 @@ ARTIFACT_TOOLS = frozenset({
 })
 
 VISION_TOOLS = frozenset({'describe_image'})
+DOCUMENT_TOOLS = frozenset({'analyze_document'})
 
 
 def _validate_user_id(user_id: str) -> str:
@@ -370,6 +371,11 @@ def api_create_agent():
         if vision_enabled is None or vision_enabled:
             for tool_id in VISION_TOOLS:
                 db.add_agent_tool(agent_id, tool_id)
+        # Add native document tools for agents with document analysis enabled.
+        document_enabled = data.get('document_enabled')
+        if document_enabled is None or document_enabled:
+            for tool_id in DOCUMENT_TOOLS:
+                db.add_agent_tool(agent_id, tool_id)
 
         # Copy default knowledge base files from defaults/ directory
         import shutil as _shutil
@@ -446,6 +452,17 @@ def api_update_agent(agent_id):
                     db.add_agent_tool(agent_id, tool_id)
             else:
                 for tool_id in VISION_TOOLS:
+                    db.remove_agent_tool(agent_id, tool_id)
+    # Handle document_enabled toggle: manage native document tools.
+    if 'document_enabled' in data:
+        old_documents = bool(existing.get('document_enabled', 1))
+        new_documents = bool(data['document_enabled'])
+        if new_documents != old_documents:
+            if new_documents:
+                for tool_id in DOCUMENT_TOOLS:
+                    db.add_agent_tool(agent_id, tool_id)
+            else:
+                for tool_id in DOCUMENT_TOOLS:
                     db.remove_agent_tool(agent_id, tool_id)
     if 'model_id' in data and data['model_id'] == '':
         data['model_id'] = None  # empty string resets to global default
@@ -570,6 +587,14 @@ def api_set_agent_tools(agent_id):
                     tool_ids.append(tool_id)
         else:
             tool_ids = [tid for tid in tool_ids if tid not in VISION_TOOLS]
+        # Enforce document_enabled lock: tool is managed by Document Analysis.
+        document_enabled = agent.get('document_enabled', 1)
+        if document_enabled:
+            for tool_id in DOCUMENT_TOOLS:
+                if tool_id not in tool_ids:
+                    tool_ids.append(tool_id)
+        else:
+            tool_ids = [tid for tid in tool_ids if tid not in DOCUMENT_TOOLS]
     db.set_agent_tools(agent_id, tool_ids)
     return jsonify({'success': True, 'tools': tool_ids})
 
@@ -1684,6 +1709,8 @@ def api_chat(agent_id):
                 return jsonify({'error': f'File too large (max {cfg.get("max_size_mb", 20)}MB)'}), 400
             try:
                 upload = _process_upload(file, agent_id, session_id, user_id, None)
+            except ValueError as e:
+                return jsonify({'error': str(e)}), 400
             except Exception as e:
                 print(f"[WebChat] Upload processing failed: {e}")
                 return jsonify({'error': 'Failed to process uploaded file'}), 500

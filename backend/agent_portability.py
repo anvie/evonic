@@ -15,7 +15,7 @@ VARIABLE_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MAX_TEXT_LENGTH = 102400
 MAX_KB_FILE_LENGTH = 1024 * 1024
 CONFIG_KEYS = frozenset({
-    "enabled", "vision_enabled", "summarize_threshold", "summarize_tail",
+    "enabled", "vision_enabled", "document_enabled", "summarize_threshold", "summarize_tail",
     "summarize_prompt", "message_buffer_seconds", "inject_agent_id",
     "inject_datetime", "send_intermediate_responses", "outbound_buffer_seconds",
     "enable_agent_state", "sandbox_enabled", "attachments_enabled",

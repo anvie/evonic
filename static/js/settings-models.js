@@ -420,6 +420,10 @@ window.settingsModels = {
         document.getElementById("model-is-default").checked = !!model.is_default;
         document.getElementById("model-vision-supported").checked =
             !!model.vision_supported;
+        for (const category of ["pdf", "text", "office", "spreadsheet"]) {
+            document.getElementById(`model-document-${category}-supported`).checked =
+                !!model[`document_${category}_supported`];
+        }
         document.getElementById("model-api-format").value = model.api_format || "openai";
 
         this.toggleFields();
@@ -473,6 +477,11 @@ window.settingsModels = {
                 : 0,
             api_format: document.getElementById("model-api-format").value,
         };
+        for (const category of ["pdf", "text", "office", "spreadsheet"]) {
+            modelData[`document_${category}_supported`] = document.getElementById(
+                `model-document-${category}-supported`,
+            ).checked ? 1 : 0;
+        }
 
         try {
             let result;
