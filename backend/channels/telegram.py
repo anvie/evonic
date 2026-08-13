@@ -188,6 +188,7 @@ async def _ingest_non_photo_attachment(message, context, agent_id, session_id,
         mime_type,
         target_path,
         enabled=bool(agent and agent.get('document_enabled', 1)),
+        attachment_id=attachment_id,
     )
     if guidance:
         info_line += f"\n{guidance}"

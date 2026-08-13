@@ -420,7 +420,7 @@ window.settingsModels = {
         document.getElementById("model-is-default").checked = !!model.is_default;
         document.getElementById("model-vision-supported").checked =
             !!model.vision_supported;
-        for (const category of ["pdf", "text", "office", "spreadsheet"]) {
+        for (const category of ["pdf", "office", "spreadsheet"]) {
             document.getElementById(`model-document-${category}-supported`).checked =
                 !!model[`document_${category}_supported`];
         }
@@ -477,7 +477,7 @@ window.settingsModels = {
                 : 0,
             api_format: document.getElementById("model-api-format").value,
         };
-        for (const category of ["pdf", "text", "office", "spreadsheet"]) {
+        for (const category of ["pdf", "office", "spreadsheet"]) {
             modelData[`document_${category}_supported`] = document.getElementById(
                 `model-document-${category}-supported`,
             ).checked ? 1 : 0;

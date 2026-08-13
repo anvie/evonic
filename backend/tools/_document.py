@@ -13,7 +13,6 @@ SPREADSHEET = "spreadsheet"
 
 DOCUMENT_CAPABILITIES = {
     PDF: "document_pdf_supported",
-    TEXT: "document_text_supported",
     OFFICE: "document_office_supported",
     SPREADSHEET: "document_spreadsheet_supported",
 }
@@ -122,9 +121,18 @@ def model_supports_any_document(model: dict) -> bool:
 
 
 def analysis_guidance(filename: str, mime_type: Optional[str], path,
-                      enabled: bool = True) -> str:
+                      enabled: bool = True, attachment_id=None) -> str:
     category = document_category(filename, mime_type)
-    if not enabled or not category or not path:
+    if not category:
+        return ""
+    if is_text_document(filename, mime_type):
+        if attachment_id is None:
+            return ""
+        return (
+            f"Use `read_attachment` with attachment_id={attachment_id} to read "
+            "this text-based file exactly."
+        )
+    if not enabled or not path:
         return ""
     return (
         f"Use `analyze_document` with path `{path}` to analyze the "

@@ -157,7 +157,6 @@ window.settingsGeneral = {
         fill("vision-fallback-model-2-select", visionModels, current.visionFallbackModel2Id, "No fallback");
         const documentModels = enabled.filter((m) =>
             m.document_pdf_supported ||
-            m.document_text_supported ||
             m.document_office_supported ||
             m.document_spreadsheet_supported
         );

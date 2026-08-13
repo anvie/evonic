@@ -203,7 +203,7 @@ def test_bot_authored_messages_ignored():
     assert len(pendings) == 1
 
 
-def test_document_attachment_gets_native_hint(tmp_path, monkeypatch):
+def test_text_attachment_gets_exact_read_hint(tmp_path, monkeypatch):
     from models.db import db
     chan = _make_discord_channel(db)
     db.update_agent('disc_agent', {'attachments_enabled': 1})
@@ -217,7 +217,9 @@ def test_document_attachment_gets_native_hint(tmp_path, monkeypatch):
     ))
 
     assert len(info_lines) == 1
-    assert 'analyze_document' in info_lines[0]
+    assert 'read_attachment' in info_lines[0]
+    assert 'attachment_id=1' in info_lines[0]
+    assert 'analyze_document' not in info_lines[0]
     assert fake_channel.sent == []
 
 

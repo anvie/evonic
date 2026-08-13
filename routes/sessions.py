@@ -150,8 +150,8 @@ def _process_upload(file_storage, agent_id: str, session_id: str,
             image_url = None
         return {'image_url': image_url, 'text_prefix': None, 'attachment_info': attachment_info}
 
-    # Documents stay metadata-only. analyze_document sends the original bytes
-    # to a compatible provider; read_attachment remains available for exact text.
+    # Documents stay metadata-only. Non-text formats use native analysis;
+    # read_attachment remains the exact reader for text-based uploads.
     return {'image_url': None, 'text_prefix': None, 'attachment_info': attachment_info}
 
 

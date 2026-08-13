@@ -141,4 +141,9 @@ def test_document_uploads_stay_metadata_only_and_get_native_tool_hint(tmp_path, 
     assert text_result['text_prefix'] is None
     text_note = context.build_attachment_note(text_result['attachment_info'])
     assert 'TEXT BODY' not in text_note
-    assert 'analyze_document' in text_note
+    assert 'read_attachment' in text_note
+    assert 'attachment_id=' in text_note
+    assert 'analyze_document' not in text_note
+    assert 'read_attachment' in context.build_attachment_note(
+        text_result['attachment_info'], document_enabled=False
+    )

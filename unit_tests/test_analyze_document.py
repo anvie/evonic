@@ -348,63 +348,32 @@ def test_tool_schema_exposes_only_path_and_query():
     assert parameters['required'] == ['path']
 
 
-def test_text_document_is_native_and_not_eagerly_parsed(tmp_path, monkeypatch):
-    agent_id = _agent('text_document_agent')
-    path = _attachment(
-        tmp_path, agent_id, name='notes.txt', mime='text/plain', body=b'hello document'
-    )
-    db.set_setting('document_model_id', _model('openai-text', category='text'))
-    captured = {}
+@pytest.mark.parametrize(('name', 'mime'), [
+    ('notes.txt', 'text/plain'),
+    ('README.md', 'text/markdown'),
+    ('script.py', 'text/x-python'),
+    ('data.json', 'application/json'),
+    ('table.csv', 'text/csv'),
+    ('table.tsv', 'text/tab-separated-values'),
+    ('ledger.iif', 'application/vnd.shana.informed.interchange'),
+])
+def test_text_based_files_are_routed_to_read_tools(
+    tmp_path, monkeypatch, name, mime
+):
+    agent_id = _agent('text_route_agent')
+    path = _attachment(tmp_path, agent_id, name=name, mime=mime, body=b'exact text')
 
-    class FakeClient:
-        timeout = 60
+    def fail_if_models_are_resolved(*args, **kwargs):
+        raise AssertionError('text-based files must not call a native document model')
 
-        def __init__(self, model_config):
-            pass
-
-        def chat_completion(self, **kwargs):
-            captured.update(kwargs)
-            return _success('text answer')
-
-    monkeypatch.setattr(ap, 'LLMClient', FakeClient)
-    assert ap.execute(
+    monkeypatch.setattr(ap, '_resolve_document_models', fail_if_models_are_resolved)
+    result = ap.execute(
         {'id': agent_id, 'session_id': 's1', 'document_enabled': 1},
         {'path': path},
-    ) == 'text answer'
-    file_data = captured['messages'][1]['content'][1]['file']['file_data']
-    assert file_data.startswith('data:text/plain;base64,')
-    assert 'hello document' not in str(captured['messages'])
-
-
-def test_anthropic_text_uses_plain_text_document_source(tmp_path, monkeypatch):
-    agent_id = _agent('anthropic_text_agent')
-    path = _attachment(
-        tmp_path, agent_id, name='notes.md', mime='text/markdown', body=b'# Native text'
     )
-    db.set_setting('document_model_id', _model(
-        'anthropic-text', api_format='anthropic', category='text'
-    ))
-    captured = {}
 
-    class FakeClient:
-        timeout = 60
-
-        def __init__(self, model_config):
-            pass
-
-        def chat_completion(self, **kwargs):
-            captured.update(kwargs)
-            return _success('anthropic answer')
-
-    monkeypatch.setattr(ap, 'LLMClient', FakeClient)
-    assert ap.execute(
-        {'id': agent_id, 'session_id': 's1', 'document_enabled': 1},
-        {'path': path},
-    ) == 'anthropic answer'
-    source = captured['messages'][1]['content'][1]['source']
-    assert source == {
-        'type': 'text', 'media_type': 'text/plain', 'data': '# Native text'
-    }
+    assert '`read_file`' in result
+    assert '`read_attachment`' in result
 
 
 def test_category_routing_skips_incompatible_primary(tmp_path, monkeypatch):

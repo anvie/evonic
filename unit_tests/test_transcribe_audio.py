@@ -323,10 +323,13 @@ def test_telegram_pdf_hint_respects_agent_toggle(tmp_path, monkeypatch):
     assert 'analyze_document' not in info_line
 
 
-def test_telegram_text_document_uses_same_native_analysis_hint(tmp_path, monkeypatch):
+def test_telegram_text_document_uses_exact_read_hint_even_when_native_is_off(
+    tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     from backend.channels.telegram import _ingest_non_photo_attachment
     agent_id = _make_agent('tg_text_hint')
+    db.update_agent(agent_id, {'document_enabled': 0})
     message = _msg_with_pdf('tg_text')
     message.document.file_name = 'notes.txt'
     message.document.mime_type = 'text/plain'
@@ -338,7 +341,9 @@ def test_telegram_text_document_uses_same_native_analysis_hint(tmp_path, monkeyp
     ))
 
     assert rejected is False
-    assert 'analyze_document' in info_line
+    assert 'read_attachment' in info_line
+    assert 'attachment_id=' in info_line
+    assert 'analyze_document' not in info_line
 
 
 def test_telegram_rejects_zip_before_download(tmp_path, monkeypatch):

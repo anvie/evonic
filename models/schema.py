@@ -846,7 +846,6 @@ class SchemaMixin:
             # Native document capabilities are explicit and opt-in per model.
             for capability in (
                 "document_pdf_supported",
-                "document_text_supported",
                 "document_office_supported",
                 "document_spreadsheet_supported",
             ):

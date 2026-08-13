@@ -41,6 +41,24 @@ def test_read_text_attachment_by_id(tmp_path, monkeypatch):
     assert '3: line3' in content
 
 
+@pytest.mark.parametrize(('name', 'mime'), [
+    ('table.csv', 'text/csv'),
+    ('table.tsv', 'text/tab-separated-values'),
+    ('ledger.iif', 'application/vnd.shana.informed.interchange'),
+])
+def test_read_plain_text_spreadsheet_by_id(tmp_path, monkeypatch, name, mime):
+    monkeypatch.chdir(tmp_path)
+    _make_agent('agent_table')
+    aid, _ = _store(
+        'agent_table', b'column1,column2\nvalue1,value2\n',
+        name=name, mime=mime, tmp_path=tmp_path,
+    )
+
+    result = ra.execute({'id': 'agent_table'}, {'attachment_id': aid})
+
+    assert '1: column1,column2' in result['result']
+
+
 def test_cross_agent_denial(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _make_agent('alpha')

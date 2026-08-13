@@ -217,10 +217,6 @@ def _convert_multimodal_to_claude(messages: List[Dict[str, Any]]) -> List[Dict[s
                     })
                 else:
                     new_parts.append(part)
-            elif ptype == "document":
-                # analyze_document may already provide an Anthropic-native
-                # document source (notably text/plain for non-PDF files).
-                new_parts.append(part)
             elif ptype == "input_audio":
                 # Convert to Claude audio format if supported; otherwise pass through
                 audio_info = part.get("input_audio") or {}

@@ -4,7 +4,7 @@
   "description": "Read a user-uploaded file attachment that was delivered via a channel (e.g. Telegram).",
   "function": {
     "name": "read_attachment",
-    "description": "Read the exact content of a user-sent text/code attachment, or return metadata for binary documents. Use the id=N value from the [Attached: ...] line. Prefer analyze_document when the document should be interpreted by a provider-native model. Files are isolated per agent and expire after 7 days.",
+    "description": "Read the exact content of an uploaded text/code/CSV/TSV/IIF attachment, or return metadata and an analyze_document path hint for supported non-text documents. Use the id=N value from the [Attached: ...] line. Files are isolated per agent and expire after 7 days.",
     "parameters": {
       "properties": {
         "attachment_id": {
