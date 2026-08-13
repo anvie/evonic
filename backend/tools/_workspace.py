@@ -205,6 +205,22 @@ def resolve_workspace_path(agent, file_path: str, fallback_workspace: str) -> st
     # be treated as relative and joined with the workspace base (wrong).
     file_path = os.path.expanduser(file_path)
 
+    # Artifacts registry: /workspace/shared/agents/<id>/artifacts ALWAYS maps to
+    # the HOST registry BASE_DIR/shared/agents/<id>/artifacts that the web UI,
+    # list_artifacts, fetch_artifact and save_artifact serve — independent of
+    # the agent's workspace.  Without this, an agent whose workspace differs
+    # from BASE_DIR (e.g. workspace=agents/<id>/) would resolve the artifacts
+    # path to a workspace-relative COPY that the UI never reads (silent
+    # artifact divergence).  Sandbox backends translate this host registry path
+    # to the container bind path in resolve_path(); local agents use it as-is.
+    if file_path.startswith('/workspace/shared/agents/'):
+        eff_id = effective_agent_id(agent)
+        tail = file_path[len('/workspace/shared/agents/'):]
+        if tail == eff_id or tail.startswith(eff_id + '/'):
+            sub = tail[len(eff_id):].lstrip('/')
+            if sub == 'artifacts' or sub.startswith('artifacts/'):
+                return os.path.join(_SHARED_AGENTS_DIR, eff_id, sub)
+
     workspace = (agent or {}).get('workspace')
     if workspace and os.path.isabs(file_path):
         try:
