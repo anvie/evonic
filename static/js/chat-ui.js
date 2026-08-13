@@ -2320,7 +2320,7 @@ class SSEAdapter {
         this._log = log('sse');
         this._lastEventAt = 0;
         this._livenessInterval = null;
-        this._usingUnified = false; // true when using unified /api/realtime/stream
+        this._usingUnified = url.indexOf('/api/realtime/stream') !== -1;
         this._reconnectAttempts = 0; // consecutive immediate failures (for backoff)
         this._connectStartTime = 0;  // when the current EventSource was opened
     }
@@ -2350,7 +2350,7 @@ class SSEAdapter {
             const agentId = this._agentId || (url.match(/\/agents\/([^/?]+)\//) || [])[1] || '';
             const sessionId = this._sessionId || u.searchParams.get('session_id') || '';
             const after = this._lastSeq;
-            let newUrl = '/api/realtime/stream?chat=1';
+            let newUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=1';
             if (agentId) newUrl += '&agent_id=' + encodeURIComponent(agentId);
             if (sessionId) newUrl += '&session_id=' + encodeURIComponent(sessionId);
             if (after > 0) newUrl += '&after=' + after;
@@ -2377,7 +2377,8 @@ class SSEAdapter {
                 if (this._usingUnified) {
                     const agentId = this._agentId || '';
                     const sessionId = this._sessionId || '';
-                    resumeUrl = '/api/realtime/stream?chat=1';
+                    resumeUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=' +
+                        (this._lastSeq > 0 ? '0' : '1');
                     if (agentId) resumeUrl += '&agent_id=' + encodeURIComponent(agentId);
                     if (sessionId) resumeUrl += '&session_id=' + encodeURIComponent(sessionId);
                     if (this._lastSeq > 0) resumeUrl += '&after=' + this._lastSeq;
@@ -2438,7 +2439,8 @@ class SSEAdapter {
                 if (this._usingUnified) {
                     const agentId = this._agentId || '';
                     const sessionId = this._sessionId || '';
-                    resumeUrl = '/api/realtime/stream?chat=1';
+                    resumeUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=' +
+                        (this._lastSeq > 0 ? '0' : '1');
                     if (agentId) resumeUrl += '&agent_id=' + encodeURIComponent(agentId);
                     if (sessionId) resumeUrl += '&session_id=' + encodeURIComponent(sessionId);
                     if (this._lastSeq > 0) resumeUrl += '&after=' + this._lastSeq;
@@ -2613,8 +2615,6 @@ class ReplayAdapter {
 
 // ── turn.js ─────────────────────────────────────────────────────
 
-const STALE_TIMEOUT_MS = 300_000; // 5 minutes — safety net for truly abandoned turns
-
 const TERMINAL_PHASES = new Set(['final', 'done', 'aborted']);
 
 function reduceTurn(phase, eventKind, isFinal = false) {
@@ -2690,7 +2690,6 @@ class Turn {
         this._lastSeq = 0;
         this._transports = [];
         this._timerInterval = null;
-        this._staleTimeout = null;
         this._scrollRAF = null;
         this._startTime = Date.now();
         this._finalized = false;
@@ -2704,7 +2703,6 @@ class Turn {
 
         this._buildDOM();
         this._startTimer();
-        this._armStaleTimeout();
     }
 
     // ── DOM ──────────────────────────────────────────────────────────────────
@@ -2766,16 +2764,8 @@ class Turn {
         }, 100);
     }
 
-    _armStaleTimeout() {
-        this._staleTimeout = setTimeout(() => {
-            this._log.warn('stale timeout reached, auto-finalizing', this.id);
-            this._finalizeBubble(null);
-        }, STALE_TIMEOUT_MS);
-    }
-
     _clearTimers() {
         if (this._timerInterval) { clearInterval(this._timerInterval); this._timerInterval = null; }
-        if (this._staleTimeout)  { clearTimeout(this._staleTimeout);   this._staleTimeout = null; }
         if (this._scrollRAF)     { cancelAnimationFrame(this._scrollRAF); this._scrollRAF = null; }
     }
 
@@ -2799,15 +2789,6 @@ class Turn {
             return;
         }
         if (seq) this._lastSeq = seq;
-
-        // Reset stale timeout on every live event — turn is clearly still active
-        if (this._staleTimeout) {
-            clearTimeout(this._staleTimeout);
-            this._staleTimeout = setTimeout(() => {
-                this._log.warn('stale timeout reached, auto-finalizing', this.id);
-                this._finalizeBubble(null);
-            }, STALE_TIMEOUT_MS);
-        }
 
         this._log.debug('ingest', evtName, seq, '→ phase was', this.phase, this.id);
 

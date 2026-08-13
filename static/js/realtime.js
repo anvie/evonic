@@ -89,6 +89,8 @@ var RealtimeClient = (function () {
     RealtimeClient.prototype._buildUrl = function () {
         var params = [];
         params.push('channels=' + encodeURIComponent(this._channels.join(',')));
+        params.push('cursor_version=2');
+        params.push('snapshot=' + (this._after ? '0' : '1'));
         if (this._chat) {
             params.push('chat=1');
             if (this._sessionId) params.push('session_id=' + encodeURIComponent(this._sessionId));
@@ -132,6 +134,7 @@ var RealtimeClient = (function () {
         // inner catch (in _dispatch) handles handler errors.
         var ALL_EVENTS = [
             'agent_busy_changed', 'agent_turn_complete', 'whatsapp_bridge_status',
+            'panel_updated',
             'approval_required', 'approval_resolved',
             'update_status', 'update_done',
             'turn_begin', 'thinking', 'tool_call_started', 'tool_executed',
@@ -229,7 +232,7 @@ var RealtimeClient = (function () {
         // Status channel events
         if (evtName === 'agent_busy_changed' || evtName === 'agent_turn_complete' ||
             evtName === 'turn_queued' ||
-            evtName === 'whatsapp_bridge_status') {
+            evtName === 'whatsapp_bridge_status' || evtName === 'panel_updated') {
             return 'status';
         }
         // Approval channel events

@@ -1696,7 +1696,7 @@ html.dark .agent-tab.active {
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=60" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=61" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=6" defer></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
@@ -4573,11 +4573,10 @@ document.addEventListener('DOMContentLoaded', function () {
             window._evRealtime.on('status', 'panel_updated', function (payload) {
                 if (payload && payload.agent_id === AGENT_ID) refreshPluginTab('panel');
             });
-            // Busy state is pushed by the unified stream; this session's own
-            // active turn takes precedence over the agent-wide snapshot.
             window._evRealtime.on('status', 'agent_busy_changed', function (payload) {
-                if (payload && payload.agent_id === AGENT_ID && !_chatBusy) {
-                    updateBusyBadge(payload.busy);
+                if (payload && payload.agent_id === AGENT_ID) {
+                    _agentBusy = Boolean(payload.busy);
+                    updateBusyBadge(_chatBusy || _agentBusy);
                 }
             });
         } else if (++bindTries < 10) {
@@ -4995,7 +4994,7 @@ function _ensureRealtimeTurn(startTs = null) {
         abortController: null, thinkingId: turn,
     };
     _chatBusy = true;
-    updateBusyBadge(true);
+    updateBusyBadge(_chatBusy || _agentBusy);
     return turn;
 }
 
@@ -5034,7 +5033,9 @@ function _handleAgentRealtime(evtName, data, sessionId) {
         if (data.agent_id && data.agent_id !== AGENT_ID) return;
         const ownsSession = data.session_id === sessionId ||
             (data.session_ids || []).includes(sessionId);
-        updateBusyBadge(Boolean(data.busy));
+        _agentBusy = Boolean(data.busy);
+        _chatBusy = Boolean(data.busy && ownsSession);
+        updateBusyBadge(_chatBusy || _agentBusy);
         if (data.busy && ownsSession) _ensureRealtimeTurn();
         return;
     }
@@ -5060,7 +5061,7 @@ function _handleAgentRealtime(evtName, data, sessionId) {
         _renderTurnResponse(data);
         _currentTurn = null;
         _chatBusy = false;
-        updateBusyBadge(false);
+        updateBusyBadge(_agentBusy);
     }
 }
 
@@ -5071,7 +5072,7 @@ async function restoreActiveReasoning() {
     if (_agentChatEs) _agentChatEs.close();
     _agentChatSessionId = sessionId;
     _agentChatCursor = Number(window._chatHistoryCursor || 0);
-    const url = `/api/realtime/stream?chat=1&agent_id=${encodeURIComponent(AGENT_ID)}&session_id=${encodeURIComponent(sessionId)}&after=${_agentChatCursor}`;
+    const url = `/api/realtime/stream?chat=1&cursor_version=2&snapshot=1&agent_id=${encodeURIComponent(AGENT_ID)}&session_id=${encodeURIComponent(sessionId)}&after=${_agentChatCursor}`;
     const es = new EventSource(url);
     _agentChatEs = es;
     const events = [
@@ -5097,6 +5098,7 @@ async function restoreActiveReasoning() {
 }
 
 let _chatBusy = false;
+let _agentBusy = false;
 let _currentTurn = null;  // { abortController, thinkingId }
 
 function updateBusyBadge(busy) {
@@ -5130,7 +5132,7 @@ function _destroyCurrentTurn() {
 function setChatBusy(busy) {
     console.warn('[setChatBusy] busy=%s _chatBusy=%s hasActiveStream=%s', busy, _chatBusy, chatUI.hasActiveStream());
     _chatBusy = busy;
-    updateBusyBadge(busy);
+    updateBusyBadge(_chatBusy || _agentBusy);
     const input = document.getElementById('chat-input');
     if (!busy) {
         input.focus();
@@ -7391,6 +7393,8 @@ window.softSwitchAgent = async function (newId, opts = {}) {
     _agentChatEs = null;
     _agentChatSessionId = null;
     _agentChatCursor = 0;
+    _chatBusy = false;
+    _agentBusy = false;
     updateBusyBadge(false); // cleared now; the new chat stream snapshot restores it
     const gearDd = document.getElementById('gear-dropdown');
     if (gearDd) gearDd.classList.add('hidden');
@@ -7404,6 +7408,7 @@ window.softSwitchAgent = async function (newId, opts = {}) {
     _chatSessionId = null;
     chatLoaded = false;
     _chatBusy = false;
+    _agentBusy = false;
     _planEditorFetchedFor = null;
     _planEditorOriginal = null;
     window.chatUI = _createChatUI();

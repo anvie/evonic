@@ -39,7 +39,7 @@ export class SSEAdapter {
         this._log = log('sse');
         this._lastEventAt = 0;
         this._livenessInterval = null;
-        this._usingUnified = false; // true when using unified /api/realtime/stream
+        this._usingUnified = url.indexOf('/api/realtime/stream') !== -1;
         this._reconnectAttempts = 0; // consecutive immediate failures (for backoff)
         this._connectStartTime = 0;  // when the current EventSource was opened
     }
@@ -69,7 +69,7 @@ export class SSEAdapter {
             const agentId = this._agentId || (url.match(/\/agents\/([^/?]+)\//) || [])[1] || '';
             const sessionId = this._sessionId || u.searchParams.get('session_id') || '';
             const after = this._lastSeq;
-            let newUrl = '/api/realtime/stream?chat=1';
+            let newUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=1';
             if (agentId) newUrl += '&agent_id=' + encodeURIComponent(agentId);
             if (sessionId) newUrl += '&session_id=' + encodeURIComponent(sessionId);
             if (after > 0) newUrl += '&after=' + after;
@@ -96,7 +96,8 @@ export class SSEAdapter {
                 if (this._usingUnified) {
                     const agentId = this._agentId || '';
                     const sessionId = this._sessionId || '';
-                    resumeUrl = '/api/realtime/stream?chat=1';
+                    resumeUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=' +
+                        (this._lastSeq > 0 ? '0' : '1');
                     if (agentId) resumeUrl += '&agent_id=' + encodeURIComponent(agentId);
                     if (sessionId) resumeUrl += '&session_id=' + encodeURIComponent(sessionId);
                     if (this._lastSeq > 0) resumeUrl += '&after=' + this._lastSeq;
@@ -157,7 +158,8 @@ export class SSEAdapter {
                 if (this._usingUnified) {
                     const agentId = this._agentId || '';
                     const sessionId = this._sessionId || '';
-                    resumeUrl = '/api/realtime/stream?chat=1';
+                    resumeUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=' +
+                        (this._lastSeq > 0 ? '0' : '1');
                     if (agentId) resumeUrl += '&agent_id=' + encodeURIComponent(agentId);
                     if (sessionId) resumeUrl += '&session_id=' + encodeURIComponent(sessionId);
                     if (this._lastSeq > 0) resumeUrl += '&after=' + this._lastSeq;

@@ -442,7 +442,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=60"></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=61"></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=5"></script>
 <script>
 let allSessions = [];
@@ -1026,7 +1026,7 @@ function connectSessionStream(sessionId, afterSeq = 0) {
     }
     if (!currentAgentId) return;
     afterSeq = Math.max(afterSeq, _sessionTurn.lastSeq, _sessionTurn.terminalSeq);
-    const url = `/api/realtime/stream?chat=1&agent_id=${encodeURIComponent(currentAgentId)}&session_id=${encodeURIComponent(sessionId)}&after=${afterSeq}`;
+    const url = `/api/realtime/stream?chat=1&cursor_version=2&snapshot=1&agent_id=${encodeURIComponent(currentAgentId)}&session_id=${encodeURIComponent(sessionId)}&after=${afterSeq}`;
     // LOG-A: track every connect/reconnect and whether _lastSeq will reset
     console.log(`[sse] connect afterSeq=${afterSeq} sseThinkingId=${!!_sseThinkingId} url=${url}`);
     if (afterSeq === 0 && _sseThinkingId) {

@@ -223,7 +223,10 @@ def api_session_reply(session_id):
         data = request.get_json() or {}
         text = (data.get('text') or '').strip()
         perspective = (data.get('perspective') or 'A').strip()
-        client_message_id = (data.get('client_message_id') or '').strip()
+        raw_client_message_id = data.get('client_message_id')
+        if raw_client_message_id is not None and not isinstance(raw_client_message_id, str):
+            return jsonify({'error': 'Invalid client_message_id'}), 400
+        client_message_id = (raw_client_message_id or '').strip()
         file = None
 
     if client_message_id and not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', client_message_id):
@@ -381,8 +384,6 @@ def api_clear_all_sessions():
     """Delete all chat sessions, messages, summaries, and attachments
     across all agents."""
     db.clear_all_sessions()
-    from backend.realtime_store import realtime_store
-    realtime_store.purge_all()
     audit.log_session(user_id='admin', session_id='*', action='clear_all', ip=request.remote_addr or '')
     return jsonify({'success': True})
 

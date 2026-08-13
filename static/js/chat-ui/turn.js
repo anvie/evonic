@@ -23,8 +23,6 @@
 import { log, assert } from './debug.js';
 import { buildSavedArtifactsBlock } from './artifacts.js';
 
-const STALE_TIMEOUT_MS = 300_000; // 5 minutes — safety net for truly abandoned turns
-
 const TERMINAL_PHASES = new Set(['final', 'done', 'aborted']);
 
 /**
@@ -119,7 +117,6 @@ export class Turn {
         this._lastSeq = 0;
         this._transports = [];
         this._timerInterval = null;
-        this._staleTimeout = null;
         this._scrollRAF = null;
         this._startTime = Date.now();
         this._finalized = false;
@@ -133,7 +130,6 @@ export class Turn {
 
         this._buildDOM();
         this._startTimer();
-        this._armStaleTimeout();
     }
 
     // ── DOM ──────────────────────────────────────────────────────────────────
@@ -195,16 +191,8 @@ export class Turn {
         }, 100);
     }
 
-    _armStaleTimeout() {
-        this._staleTimeout = setTimeout(() => {
-            this._log.warn('stale timeout reached, auto-finalizing', this.id);
-            this._finalizeBubble(null);
-        }, STALE_TIMEOUT_MS);
-    }
-
     _clearTimers() {
         if (this._timerInterval) { clearInterval(this._timerInterval); this._timerInterval = null; }
-        if (this._staleTimeout)  { clearTimeout(this._staleTimeout);   this._staleTimeout = null; }
         if (this._scrollRAF)     { cancelAnimationFrame(this._scrollRAF); this._scrollRAF = null; }
     }
 
@@ -231,15 +219,6 @@ export class Turn {
             return;
         }
         if (seq) this._lastSeq = seq;
-
-        // Reset stale timeout on every live event — turn is clearly still active
-        if (this._staleTimeout) {
-            clearTimeout(this._staleTimeout);
-            this._staleTimeout = setTimeout(() => {
-                this._log.warn('stale timeout reached, auto-finalizing', this.id);
-                this._finalizeBubble(null);
-            }, STALE_TIMEOUT_MS);
-        }
 
         this._log.debug('ingest', evtName, seq, '→ phase was', this.phase, this.id);
 
