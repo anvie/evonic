@@ -69,6 +69,8 @@ def test_sessions_refresh_restores_active_turn_from_durable_stream():
     assert "showStopBtn(true);" in sessions
     assert "_completeSessionTurn(seq);" in sessions
     assert "afterSeq = Math.max(afterSeq, _sessionTurn.lastSeq, _sessionTurn.terminalSeq);" in sessions
+    assert "es.addEventListener('history_resync_required'" in sessions
+    assert "selectSession(sessionId).finally" in sessions
 
     error_handler = sessions[
         sessions.index("es.onerror = () =>"):
@@ -96,6 +98,8 @@ def test_agent_detail_refresh_uses_one_persistent_session_stream():
     assert "/busy" not in restore
     assert "pollForResponse" not in detail
     assert "if (data.agent_id && data.agent_id !== AGENT_ID) return;" in detail
+    assert "es.addEventListener('history_resync_required'" in detail
+    assert "loadChatHistory().finally" in detail
 
     soft_switch_start = detail.index("window.softSwitchAgent = async function")
     soft_switch = detail[soft_switch_start:detail.index("window.addEventListener('popstate'", soft_switch_start)]

@@ -22,8 +22,10 @@ import config
 
 log = logging.getLogger(__name__)
 
-RETENTION_MS = 24 * 60 * 60 * 1000
+RETENTION_MS = 60 * 60 * 1000
 _CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+MAX_EVENT_PAYLOAD_BYTES = 256 * 1024
+_PAYLOAD_PREVIEW_BYTES = 32 * 1024
 _ATTACHMENT_KEYS = frozenset({
     'attachment_id', 'filename', 'mime_type', 'size_bytes', 'is_image',
 })
@@ -37,6 +39,77 @@ def _json_default(value):
     if isinstance(value, datetime):
         return value.isoformat()
     return str(value)
+
+
+def _json_dumps(value) -> str:
+    return json.dumps(value, separators=(',', ':'), default=_json_default)
+
+
+def _utf8_prefix(value: str, max_bytes: int) -> str:
+    return value.encode('utf-8')[:max_bytes].decode('utf-8', errors='ignore')
+
+
+def _bounded_payload_json(payload: dict) -> str:
+    """Serialize one browser payload without letting telemetry grow unbounded."""
+    body = _json_dumps(payload)
+    original_body = body
+    original_bytes = len(body.encode('utf-8'))
+    if original_bytes <= MAX_EVENT_PAYLOAD_BYTES:
+        return body
+
+    bounded = dict(payload)
+    field_sizes = sorted(
+        (
+            (len(_json_dumps(value).encode('utf-8')), key)
+            for key, value in payload.items()
+        ),
+        reverse=True,
+    )
+    truncated_fields = {}
+    for field_bytes, key in field_sizes:
+        value = payload[key]
+        if isinstance(value, str):
+            bounded[key] = _utf8_prefix(value, _PAYLOAD_PREVIEW_BYTES)
+        else:
+            raw_value = _json_dumps(value)
+            bounded[key] = {
+                'truncated': True,
+                'original_bytes': len(raw_value.encode('utf-8')),
+                'preview': _utf8_prefix(raw_value, _PAYLOAD_PREVIEW_BYTES),
+            }
+        truncated_fields[key] = field_bytes
+        bounded['truncated'] = True
+        bounded['original_bytes'] = original_bytes
+        bounded['truncated_fields'] = truncated_fields
+        body = _json_dumps(bounded)
+        if len(body.encode('utf-8')) <= MAX_EVENT_PAYLOAD_BYTES:
+            return body
+
+    # Pathological objects with many small keys still get one valid bounded row.
+    fallback = {
+        'truncated': True,
+        'original_bytes': original_bytes,
+    }
+    for key in (
+            'tool', 'error', 'message_id', 'client_message_id', 'approval_id',
+            'decision', 'is_final', 'is_error', 'interrupted', 'reason'):
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if isinstance(value, (bool, int, float)) or value is None:
+            fallback[key] = value
+        elif isinstance(value, str):
+            fallback[key] = _utf8_prefix(value, 2048)
+
+    preview_budget = MAX_EVENT_PAYLOAD_BYTES - len(_json_dumps(fallback).encode('utf-8')) - 64
+    fallback['preview'] = _utf8_prefix(original_body, max(0, preview_budget))
+    body = _json_dumps(fallback)
+    while len(body.encode('utf-8')) > MAX_EVENT_PAYLOAD_BYTES and fallback['preview']:
+        fallback['preview'] = _utf8_prefix(
+            fallback['preview'], max(0, len(fallback['preview'].encode('utf-8')) - 1024),
+        )
+        body = _json_dumps(fallback)
+    return body
 
 
 def _public_attachment(value):
@@ -111,11 +184,15 @@ class RealtimeStore:
     def _resolve_db_path(self) -> str:
         if self.db_path:
             return os.path.abspath(self.db_path)
+        app_db_path = config.DB_PATH
         try:
             from models.db import db
-            return os.path.abspath(db.db_path)
+            app_db_path = db.db_path
         except Exception:
-            return os.path.abspath(config.DB_PATH)
+            pass
+        return os.path.abspath(
+            os.path.join(os.path.dirname(app_db_path), 'realtime.db')
+        )
 
     def _ensure_schema(self, db_path: str):
         if db_path in self._schema_paths:
@@ -165,6 +242,11 @@ class RealtimeStore:
                         ON active_turns(agent_id, updated_at_ms);
                     CREATE INDEX IF NOT EXISTS idx_active_turns_session
                         ON active_turns(session_id, updated_at_ms);
+
+                    CREATE TABLE IF NOT EXISTS realtime_replay_floors (
+                        session_id TEXT PRIMARY KEY,
+                        event_id INTEGER NOT NULL
+                    );
                 """)
                 conn.commit()
             finally:
@@ -181,7 +263,42 @@ class RealtimeStore:
 
     def high_water(self) -> int:
         with self._connect() as conn:
-            row = conn.execute('SELECT COALESCE(MAX(id), 0) AS id FROM realtime_events').fetchone()
+            row = conn.execute("""
+                SELECT COALESCE(
+                    (SELECT seq FROM sqlite_sequence WHERE name = 'realtime_events'),
+                    0
+                ) AS id
+            """).fetchone()
+        return int(row['id'])
+
+    def _advance_replay_floor(self, conn: sqlite3.Connection,
+                              session_id: str, event_id: int | None) -> None:
+        if not session_id or not event_id:
+            return
+        conn.execute("""
+            INSERT INTO realtime_replay_floors(session_id, event_id) VALUES (?, ?)
+            ON CONFLICT(session_id) DO UPDATE
+                SET event_id = MAX(event_id, excluded.event_id)
+        """, (session_id, int(event_id)))
+
+    def replay_floor(self, session_id: str) -> int:
+        """Highest session event ID that may no longer be replayable."""
+        if not session_id:
+            return 0
+        with self._connect() as conn:
+            row = conn.execute("""
+                SELECT MAX(
+                    COALESCE((
+                        SELECT event_id FROM realtime_replay_floors
+                        WHERE session_id = ?
+                    ), 0),
+                    COALESCE((
+                        SELECT MAX(id) FROM realtime_events
+                        WHERE session_id = ? AND expires_at_ms IS NOT NULL
+                            AND expires_at_ms <= ?
+                    ), 0)
+                ) AS id
+            """, (session_id, session_id, _now_ms())).fetchone()
         return int(row['id'])
 
     def last_session_clear_id(self, session_id: str, up_to_id: int) -> int:
@@ -200,7 +317,7 @@ class RealtimeStore:
                 occurred_at_ms: int | None = None) -> int:
         now = occurred_at_ms or _now_ms()
         expires_at = None if turn_id else now + RETENTION_MS
-        body = json.dumps(payload, separators=(',', ':'), default=_json_default)
+        body = _bounded_payload_json(payload)
         with self._connect() as conn:
             cursor = conn.execute("""
                 INSERT INTO realtime_events (
@@ -454,6 +571,16 @@ class RealtimeStore:
 
     def purge_session(self, session_id: str) -> None:
         with self._connect() as conn:
+            row = conn.execute("""
+                SELECT MAX(id) AS id FROM realtime_events
+                WHERE session_id = ? AND (
+                    turn_id IS NULL OR NOT EXISTS (
+                        SELECT 1 FROM active_turns a
+                        WHERE a.turn_id = realtime_events.turn_id
+                    )
+                )
+            """, (session_id,)).fetchone()
+            self._advance_replay_floor(conn, session_id, row['id'])
             conn.execute("""
                 DELETE FROM realtime_events
                 WHERE session_id = ? AND (
@@ -468,6 +595,18 @@ class RealtimeStore:
 
     def purge_all(self) -> None:
         with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT session_id, MAX(id) AS id FROM realtime_events
+                WHERE session_id IS NOT NULL AND (
+                    turn_id IS NULL OR NOT EXISTS (
+                        SELECT 1 FROM active_turns a
+                        WHERE a.turn_id = realtime_events.turn_id
+                    )
+                )
+                GROUP BY session_id
+            """).fetchall()
+            for row in rows:
+                self._advance_replay_floor(conn, row['session_id'], row['id'])
             conn.execute("""
                 DELETE FROM realtime_events
                 WHERE turn_id IS NULL OR NOT EXISTS (
@@ -486,17 +625,23 @@ class RealtimeStore:
             self._maybe_cleanup(_now_ms())
             stale = self.active_turns()
             for turn in stale:
-                payload = {
-                    'agent_id': turn['agent_id'],
-                    'session_id': turn['session_id'],
-                    'response': '',
-                    'interrupted': True,
-                    'is_error': True,
-                    'reason': 'server_restart',
-                }
-                self.publish('chat', 'done', payload,
-                             agent_id=turn['agent_id'], session_id=turn['session_id'],
-                             turn_id=turn['turn_id'])
+                with self._connect() as conn:
+                    terminal = conn.execute("""
+                        SELECT 1 FROM realtime_events
+                        WHERE turn_id = ? AND event_type = 'done' LIMIT 1
+                    """, (turn['turn_id'],)).fetchone()
+                if not terminal:
+                    payload = {
+                        'agent_id': turn['agent_id'],
+                        'session_id': turn['session_id'],
+                        'response': '',
+                        'interrupted': True,
+                        'is_error': True,
+                        'reason': 'server_restart',
+                    }
+                    self.publish('chat', 'done', payload,
+                                 agent_id=turn['agent_id'], session_id=turn['session_id'],
+                                 turn_id=turn['turn_id'])
                 self.finish_turn(turn['turn_id'])
                 remaining = self.busy_agents().get(turn['agent_id'])
                 self.publish('status', 'agent_busy_changed', {
@@ -520,6 +665,14 @@ class RealtimeStore:
             if now_ms - self._last_cleanup_ms < _CLEANUP_INTERVAL_MS:
                 return
             with self._connect() as conn:
+                rows = conn.execute("""
+                    SELECT session_id, MAX(id) AS id FROM realtime_events
+                    WHERE session_id IS NOT NULL AND expires_at_ms IS NOT NULL
+                        AND expires_at_ms <= ?
+                    GROUP BY session_id
+                """, (now_ms,)).fetchall()
+                for row in rows:
+                    self._advance_replay_floor(conn, row['session_id'], row['id'])
                 conn.execute(
                     'DELETE FROM realtime_events WHERE expires_at_ms IS NOT NULL AND expires_at_ms <= ?',
                     (now_ms,),
@@ -536,10 +689,6 @@ def record_internal_event(event_name: str, data: dict) -> list[int]:
     session_id = data.get('session_id') or None
     agent_id = data.get('agent_id') or None
     workplace_id = data.get('workplace_id') or None
-    turn_id = (
-        data.get('turn_id') if 'turn_id' in data
-        else (realtime_store.current_turn_id(session_id) if session_id else None)
-    )
     metadata = _public_metadata(data.get('metadata'))
     specs: list[tuple[str, str, dict]] = []
 
@@ -665,6 +814,12 @@ def record_internal_event(event_name: str, data: dict) -> list[int]:
             'agent_id': agent_id or '', 'session_id': session_id or '',
         }))
 
+    if not specs:
+        return []
+    turn_id = (
+        data.get('turn_id') if 'turn_id' in data
+        else (realtime_store.current_turn_id(session_id) if session_id else None)
+    )
     ids = []
     for channel, public_name, payload in specs:
         ids.append(realtime_store.publish(

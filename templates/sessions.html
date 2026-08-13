@@ -1015,6 +1015,7 @@ function _renderSqliteMessages(messages, container) {
 // ==================== SSE Stream ====================
 
 let _sessionEs = null;
+let _sessionHistoryResyncing = false;
 
 // afterSeq is the history snapshot's durable journal cursor.
 function connectSessionStream(sessionId, afterSeq = 0) {
@@ -1068,6 +1069,14 @@ function connectSessionStream(sessionId, afterSeq = 0) {
         if (currentSessionId !== sessionId) return;
         const data = JSON.parse(e.data);
         handleSeq('message_received', data, d => handleRealtimeMessage(d, sessionId));
+    });
+
+    es.addEventListener('history_resync_required', () => {
+        if (_sessionEs !== es || currentSessionId !== sessionId || _sessionHistoryResyncing) return;
+        _sessionHistoryResyncing = true;
+        es.close();
+        _sessionEs = null;
+        selectSession(sessionId).finally(() => { _sessionHistoryResyncing = false; });
     });
 
     es.addEventListener('auth_expired', () => {
