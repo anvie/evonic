@@ -392,7 +392,20 @@ class DiscordChannel(BaseChannel):
 
         # Respect the per-session bot toggle.
         if not db.is_session_bot_enabled(session_id, agent_id=agent_id):
-            db.add_chat_message(session_id, 'user', text or '[Image]', agent_id=agent_id)
+            stored = text or '[Image]'
+            message_id = db.add_chat_message(session_id, 'user', stored, agent_id=agent_id)
+            message_id = message_id if type(message_id) in (int, str) else None
+            from models.chatlog import chatlog_manager
+            chatlog_manager.get(agent_id, session_id).append({
+                'type': 'user', 'session_id': session_id, 'content': stored,
+                'sender_id': user_id, 'message_id': message_id,
+            })
+            from backend.event_stream import event_stream
+            event_stream.emit('message_received', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': user_id, 'channel_id': channel_id,
+                'message': stored, 'message_id': message_id, 'role': 'user',
+            })
             return
 
         # Include the replied-to bot message as context, when present.

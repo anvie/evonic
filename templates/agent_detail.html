@@ -4573,8 +4573,8 @@ document.addEventListener('DOMContentLoaded', function () {
             window._evRealtime.on('status', 'panel_updated', function (payload) {
                 if (payload && payload.agent_id === AGENT_ID) refreshPluginTab('panel');
             });
-            // Busy state pushed by the unified status stream — replaces the old
-            // 5s /busy poll. _chatBusy (this session's own turn) takes precedence.
+            // Busy state is pushed by the unified stream; this session's own
+            // active turn takes precedence over the agent-wide snapshot.
             window._evRealtime.on('status', 'agent_busy_changed', function (payload) {
                 if (payload && payload.agent_id === AGENT_ID && !_chatBusy) {
                     updateBusyBadge(payload.busy);
@@ -4834,8 +4834,6 @@ async function toggleChannelMode(enabled) {
 }
 
 // ==================== Chat ====================
-let lastChatTs = 0;  // epoch-ms cursor for JSONL-based polling
-let lastTurnEndTs = 0;  // ts of last turn_end rendered from chatlog history
 let _chatSessionId = null;  // cached session_id for this user
 
 async function _getChatSessionId() {
@@ -4850,17 +4848,18 @@ async function _getChatSessionId() {
     return _chatSessionId;
 }
 
-// Pass { persistent: true } when called from incremental idle polling so the thinking
-// bubble persists across multiple poll calls within a single turn.
-function renderEntries(entries, { persistent = false } = {}) {
+function renderEntries(entries) {
     // Render JSONL entries into the chat UI, grouping thinking/tool events into bubbles.
-    let thinkingId = persistent ? _pollThinkingId : null;
+    let thinkingId = null;
     for (const entry of entries) {
-        if (entry.ts > lastChatTs) lastChatTs = entry.ts;
         const type = entry.type;
         if (type === 'user') {
             if (thinkingId) { chatUI.finalizeThinkingBubble(thinkingId); thinkingId = null; }
-            chatUI.appendMessage('user', entry.content, {metadata: entry.metadata});
+            const $el = chatUI.appendMessage('user', entry.content, {metadata: entry.metadata});
+            if (entry.message_id) {
+                $el.attr('data-message-id', entry.message_id);
+                _seenRealtimeMessages.add(`${_chatSessionId}:${entry.message_id}`);
+            }
         } else if (type === 'thinking') {
             if (!thinkingId) thinkingId = chatUI.showThinkingIndicator();
             chatUI.appendTimelineEntry(thinkingId, {type: 'thinking', content: entry.content});
@@ -4886,7 +4885,11 @@ function renderEntries(entries, { persistent = false } = {}) {
             } else if (meta.error) {
                 chatUI.appendMessage('error', entry.content, {metadata: meta});
             } else {
-                chatUI.appendMessage('assistant', entry.content, {metadata: meta});
+                const $el = chatUI.appendMessage('assistant', entry.content, {metadata: meta});
+                if (entry.message_id) {
+                    $el.attr('data-message-id', entry.message_id);
+                    _seenRealtimeMessages.add(`${_chatSessionId}:${entry.message_id}`);
+                }
             }
         } else if (type === 'error') {
             const meta = entry.metadata || {};
@@ -4896,15 +4899,11 @@ function renderEntries(entries, { persistent = false } = {}) {
             chatUI.appendMessage('system', entry.content, {metadata: entry.metadata});
         } else if (type === 'turn_end') {
             if (thinkingId) { chatUI.finalizeThinkingBubble(thinkingId, entry.thinking_duration); thinkingId = null; }
-            if (entry.ts && entry.ts > lastTurnEndTs) lastTurnEndTs = entry.ts;
         }
         // turn_begin, pending: no rendering needed for history
     }
-    if (persistent) {
-        _pollThinkingId = thinkingId;  // save for next incremental poll call
-    } else if (thinkingId) {
-        // In-progress turn detected: remove the incomplete bubble so restoreActiveReasoning
-        // can create a fresh one from the event buffer without duplicating entries.
+    if (thinkingId) {
+        // Active telemetry is rebuilt from the durable stream after history loads.
         chatUI.removeThinkingIndicator(thinkingId);
     }
 }
@@ -4932,141 +4931,173 @@ function _showChatLoadingSkeleton() {
 
 async function loadChatHistory() {
     const epoch = window._agentEpoch;
-    _pollThinkingId = null;
-    lastChatTs = 0;
     _showChatLoadingSkeleton();
     try {
         // Fetch session_id and history in parallel — don't block history on session lookup
         const sidPromise = _getChatSessionId();
         const res = await fetch(`/api/agents/${AGENT_ID}/chat?user_id=web_test&limit=50`);
         await sidPromise; // ensure cache is primed before restoreActiveReasoning runs
+        const realtimeCursor = Number(res.headers.get('X-Evonic-Realtime-Cursor') || 0);
         const data = await res.json();
         if (epoch !== window._agentEpoch) return; // agent switched mid-fetch — discard
         chatUI.clearContainer();
         chatUI.batchRender(() => renderEntries(data.entries || []));
+        window._chatHistoryCursor = realtimeCursor;
     } catch(e) { /* ignore load errors */ }
     if (epoch !== window._agentEpoch) return;
     if (window.finishNavProgress) window.finishNavProgress(); // end soft-switch loading bar (no-op otherwise)
     chatLoaded = true;
     setTimeout(() => chatUI.scrollToBottom(), 50);
-    if (!_chatBusy) startIdlePoll();
     restoreActiveReasoning(); // fire-and-forget — history already rendered
 }
 
-document.addEventListener('evonic:message-received', function (event) {
-    const meta = (event.detail && event.detail.metadata) || {};
-    if (meta.escalated_from_agent_session) loadChatHistory();
-});
+const _seenRealtimeMessages = new Set();
+const _optimisticMessages = new Map();
 
-let _restoringActiveReasoning = false;
-
-async function restoreActiveReasoning() {
-    if (_restoringActiveReasoning) return;
-    _restoringActiveReasoning = true;
-    const epoch = window._agentEpoch;
-    try {
-        // Use cached session_id — already fetched in loadChatHistory()
-        const sessionId = await _getChatSessionId();
-        if (!sessionId || _currentTurn) return; // an in-page turn already owns this session
-
-        // Busy ownership is authoritative after refresh. The event buffer may be
-        // empty for a long synchronous tool call, so do not require a recent
-        // thinking/tool event before restoring the indicator.
-        const [eRes, busyRes] = await Promise.all([
-            fetch(`/api/agents/${encodeURIComponent(AGENT_ID)}/chat/events?session_id=${encodeURIComponent(sessionId)}&after=0`),
-            fetch(`/api/agents/${encodeURIComponent(AGENT_ID)}/busy`),
-        ]);
-        if (_currentTurn) return; // user sent a message while fetching
-        const eData = eRes.ok ? await eRes.json() : {events: []};
-        const busyState = busyRes.ok ? await busyRes.json() : {};
-        if (epoch !== window._agentEpoch || sessionId !== _chatSessionId) return; // agent/session switched mid-fetch
-        if (_currentTurn) return; // bail before touching shared state
-        if (!busyState.busy || busyState.session_id !== sessionId) return;
-        const events = eData.events || [];
-
-        // Only replay events from the current in-progress turn.
-        // Discard everything up to and including the last 'done' OR 'turn_split' so
-        // that pre-split events (already rendered by renderEntries from JSONL) are not
-        // replayed again — which would create a duplicate thinking bubble for turn 1.
-        const lastDoneIdx = events.reduce((idx, ev, i) => ev.event === 'done' ? i : idx, -1);
-        const lastSplitIdx = events.reduce((idx, ev, i) => ev.event === 'turn_split' ? i : idx, -1);
-        const lastClearIdx = events.reduce((idx, ev, i) => ev.event === 'session_clear' ? i : idx, -1);
-        const cutIdx = Math.max(lastDoneIdx, lastSplitIdx, lastClearIdx);
-        const replayEvents = cutIdx >= 0 ? events.slice(cutIdx + 1) : events;
-
-        // The event buffer can retain an incomplete tail after a restart or other
-        // interrupted turn. /busy above remains authoritative; replay only enriches
-        // the indicator and never creates activity by itself.
-        // Guard: if the in-progress turn started before the last turn_end rendered
-        // from chatlog history, that turn was already fully finalized — skip to avoid
-        // creating a duplicate thinking bubble above completed messages.
-        const firstReplayEvt = replayEvents.find(ev => ev.event === 'turn_begin');
-        if (firstReplayEvt && firstReplayEvt.data && firstReplayEvt.data.ts &&
-                firstReplayEvt.data.ts < lastTurnEndTs) {
-            return;
-        }
-
-        // Stop the idle poll before creating the live bubble. The idle poll may
-        // have fired during our async awaits (before _currentTurn was set) and
-        // created a stale _pollThinkingId that would duplicate the live bubble.
-        // pollForResponse → setChatBusy(false) will restart the idle poll when done.
-        stopIdlePoll();
-
-        // Replay trace into a new thinking bubble.
-        // Find the last user message to anchor the bubble below it.
-        const container = document.getElementById('chat-messages');
-        const userWrappers = container ? container.querySelectorAll('[data-msg-role="user"]') : [];
-        const userMsgEl = userWrappers.length ? userWrappers[userWrappers.length - 1] : null;
-        let resumeSeq = 0;
-        const turnBeginEvt = replayEvents.find(ev => ev.event === 'turn_begin');
-        let thinkingId = chatUI.showThinkingIndicator(turnBeginEvt ? turnBeginEvt.data.ts : null, userMsgEl);
-        for (const ev of replayEvents) {
-            if (ev.seq > resumeSeq) resumeSeq = ev.seq;
-            if (ev.event === 'thinking') {
-                chatUI.appendTimelineEntry(thinkingId, {type: 'thinking', content: ev.data.content});
-            } else if (ev.event === 'tool_call_started') {
-                chatUI.appendTimelineEntry(thinkingId, {type: 'tool_call', tool: ev.data.tool, args: ev.data.args, param_types: ev.data.param_types || {}});
-            } else if (ev.event === 'tool_executed') {
-                chatUI.appendTimelineEntry(thinkingId, {type: 'tool_result', tool: ev.data.tool, result: ev.data.result, error: ev.data.error});
-            } else if (ev.event === 'response_chunk' && ev.data.is_final && ev.data.content) {
-                chatUI.appendTimelineEntry(thinkingId, {type: 'response', content: ev.data.content});
-            } else if (ev.event === 'turn_split') {
-                chatUI.finalizeThinkingBubble(thinkingId);
-                thinkingId = chatUI.showThinkingIndicator(null, userMsgEl);
-            }
-        }
-
-        _currentTurn = { abortController: null, thinkingId, stream: null, pollTimer: null, _finalRendered: false };
-
-        chatUI.scrollToBottom();
-
-        // Connect SSE from resumeSeq so the backend only sends the gap
-        _currentTurn.stream = chatUI.connectThinkingStream(
-            `/api/agents/${encodeURIComponent(AGENT_ID)}/chat/stream?session_id=${encodeURIComponent(sessionId)}&after=${resumeSeq}`,
-            thinkingId,
-            { userMsgEl,
-              onSplit: (newId) => { _currentTurn.thinkingId = newId; },
-              onDone: () => { if (_currentTurn) _currentTurn.thinkingId = null; },
-              onFinalResponse: (content) => {
-                  if (_currentTurn) _currentTurn._finalRendered = true;
-                  chatUI.appendMessage('assistant', content, { metadata: {} });
-                  chatUI.scrollToBottom();
-              }
-            }
-        );
-
-        // Poll until the final response lands
-        pollForResponse(thinkingId);
-    } catch(e) { /* silently ignore */ }
-    finally { _restoringActiveReasoning = false; }
+function newClientMessageId() {
+    return (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-let chatPollTimer = null;
-let chatIdleTimer = null;
-let chatPolling = false;
+document.addEventListener('evonic:message-received', function (event) {
+    const data = event.detail || {};
+    if (!data.message_id || (data.session_id && data.session_id !== _chatSessionId)) return;
+    const key = `${_chatSessionId}:${data.message_id}`;
+    if (_seenRealtimeMessages.has(key)) return;
+    _seenRealtimeMessages.add(key);
+    const optimistic = data.client_message_id && _optimisticMessages.get(data.client_message_id);
+    if (optimistic) {
+        optimistic.attr('data-message-id', data.message_id);
+        _optimisticMessages.delete(data.client_message_id);
+        return;
+    }
+    chatUI.appendMessage(data.role || 'user', data.content || data.message || '', {
+        metadata: data.metadata || {},
+        timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : null,
+    }).attr('data-message-id', data.message_id);
+    chatUI.scrollToBottom();
+});
+
+let _agentChatEs = null;
+let _agentChatSessionId = null;
+let _agentChatCursor = 0;
+const _renderedTurnIds = new Set();
+
+function _ensureRealtimeTurn(startTs = null) {
+    if (_currentTurn && _currentTurn.thinkingId &&
+            !_currentTurn.thinkingId._finalized) return _currentTurn.thinkingId;
+    const container = document.getElementById('chat-messages');
+    const users = container ? container.querySelectorAll('[data-msg-role="user"]') : [];
+    const anchor = users.length ? users[users.length - 1] : null;
+    const turn = chatUI.showThinkingIndicator(startTs, anchor);
+    _currentTurn = {
+        abortController: null, thinkingId: turn,
+    };
+    _chatBusy = true;
+    updateBusyBadge(true);
+    return turn;
+}
+
+function _renderTurnResponse(data) {
+    if (!data.response) return;
+    if (data.message_id && _seenRealtimeMessages.has(`${_chatSessionId}:${data.message_id}`)) return;
+    const key = data.turn_id || `response:${data.event_id}`;
+    if (_renderedTurnIds.has(key)) return;
+    _renderedTurnIds.add(key);
+    const opts = data.attachment_info
+        ? {metadata: {attachment_info: data.attachment_info}}
+        : {metadata: {}};
+    const $el = chatUI.appendMessage(data.is_error ? 'error' : 'assistant', data.response, opts);
+    if (data.message_id) {
+        $el.attr('data-message-id', data.message_id);
+        _seenRealtimeMessages.add(`${_chatSessionId}:${data.message_id}`);
+    }
+    chatUI.scrollToBottom();
+}
+
+function _handleAgentRealtime(evtName, data, sessionId) {
+    if (_chatSessionId !== sessionId) return;
+    const seq = Number(data.seq || data.event_id || 0);
+    if (seq && seq <= _agentChatCursor) return;
+    if (seq) _agentChatCursor = seq;
+
+    if (evtName === 'message_received') {
+        document.dispatchEvent(new CustomEvent('evonic:message-received', {detail: data}));
+        return;
+    }
+    if (evtName === 'state_changed') {
+        document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', {detail: data}));
+        return;
+    }
+    if (evtName === 'agent_busy_changed') {
+        if (data.agent_id && data.agent_id !== AGENT_ID) return;
+        const ownsSession = data.session_id === sessionId ||
+            (data.session_ids || []).includes(sessionId);
+        updateBusyBadge(Boolean(data.busy));
+        if (data.busy && ownsSession) _ensureRealtimeTurn();
+        return;
+    }
+    if (evtName === 'turn_queued') {
+        _ensureRealtimeTurn(data.timestamp || null);
+        return;
+    }
+    if (evtName === 'session_clear') {
+        chatUI.clear();
+        _currentTurn = null;
+        return;
+    }
+
+    let turn = _ensureRealtimeTurn(evtName === 'turn_begin' ? data.ts : null);
+    if (evtName === 'turn_split') {
+        turn.ingest({event: evtName, data, seq});
+        turn = chatUI.showThinkingIndicator();
+        _currentTurn.thinkingId = turn;
+        return;
+    }
+    turn.ingest({event: evtName, data, seq});
+    if (evtName === 'done') {
+        _renderTurnResponse(data);
+        _currentTurn = null;
+        _chatBusy = false;
+        updateBusyBadge(false);
+    }
+}
+
+async function restoreActiveReasoning() {
+    const sessionId = await _getChatSessionId();
+    if (!sessionId) return;
+    if (_agentChatEs && _agentChatSessionId === sessionId) return;
+    if (_agentChatEs) _agentChatEs.close();
+    _agentChatSessionId = sessionId;
+    _agentChatCursor = Number(window._chatHistoryCursor || 0);
+    const url = `/api/realtime/stream?chat=1&agent_id=${encodeURIComponent(AGENT_ID)}&session_id=${encodeURIComponent(sessionId)}&after=${_agentChatCursor}`;
+    const es = new EventSource(url);
+    _agentChatEs = es;
+    const events = [
+        'agent_busy_changed', 'turn_queued', 'turn_begin', 'thinking',
+        'tool_call_started', 'tool_executed', 'state:changed', 'state_changed',
+        'tasks:auto_transition', 'tasks:stale', 'response_chunk', 'done',
+        'approval_required', 'approval_resolved', 'retry', 'turn_split',
+        'message_injected', 'message_injection_applied', 'message_received',
+        'whatsapp_restriction_warning', 'session_clear',
+    ];
+    events.forEach(evtName => es.addEventListener(evtName, event => {
+        let data = {};
+        try { data = JSON.parse(event.data); } catch (_) {}
+        _handleAgentRealtime(evtName, data, sessionId);
+    }));
+    es.addEventListener('auth_expired', () => {
+        es.close();
+        window.location.href = '/login';
+    });
+    es.onerror = () => {
+        // Native EventSource reconnects with Last-Event-ID; keep the cursor intact.
+    };
+}
+
 let _chatBusy = false;
-let _currentTurn = null;  // { abortController, thinkingId, stream, pollTimer }
-let _pollThinkingId = null;  // active thinking bubble from idle poll (persists across calls)
+let _currentTurn = null;  // { abortController, thinkingId }
 
 function updateBusyBadge(busy) {
     const dot = document.getElementById('state-busy-dot');
@@ -5085,29 +5116,13 @@ function updateBusyBadge(busy) {
 
 function _destroyCurrentTurn() {
     if (!_currentTurn) return;
-    console.warn('[_destroyCurrentTurn] hasStream=%s hasPollTimer=%s hasThinkingId=%s', !!_currentTurn.stream, !!_currentTurn.pollTimer, !!_currentTurn.thinkingId);
     if (_currentTurn.abortController) _currentTurn.abortController.abort();
-    // Explicitly stop the SSEAdapter — chatUI.closeStream() is a no-op shim.
-    // Without this, old adapters keep reconnecting from a stale _lastSeq,
-    // fetching all historical events on every reconnect → OOM renderer crash.
-    if (_currentTurn.stream && _currentTurn.stream.stop) {
-        console.warn('[_destroyCurrentTurn] stopping stream _lastSeq=', _currentTurn.stream._lastSeq);
-        _currentTurn.stream.stop();
-        _currentTurn.stream = null;
-    }
     if (_currentTurn.thinkingId) {
         chatUI.removeThinkingIndicator(_currentTurn.thinkingId);
     }
-    if (_currentTurn.pollTimer) {
-        clearInterval(_currentTurn.pollTimer);
-    }
     _currentTurn = null;
-    // Safety net: if the SSE gap-fill prevented 'done' delivery, the Turn object
-    // may still be in chatUI._turns with _finalized=false. hasActiveStream() would
-    // then return true permanently, blocking the idle poll from showing the response.
-    // Force-clear any stranded non-finalized turns so the idle poll can resume.
     if (chatUI.hasActiveStream()) {
-        console.warn('[_destroyCurrentTurn] stranded active turn detected — force-clearing so idle poll can resume');
+        console.warn('[_destroyCurrentTurn] clearing stranded active turn');
         chatUI.clearActiveSpinner();
     }
 }
@@ -5120,73 +5135,13 @@ function setChatBusy(busy) {
     if (!busy) {
         input.focus();
         if (!chatUI.hasActiveStream()) _destroyCurrentTurn();
-        startIdlePoll();
-    } else {
-        stopIdlePoll();
     }
 }
 
-// One-shot busy-state resync (external sessions: notifier, other channels).
-// Live updates arrive via the shared status stream (agent_busy_changed); this
-// only fetches the current snapshot on load / after a soft agent switch.
-let _busyPolling = false;
-async function resyncBusyBadge() {
-    if (_chatBusy || _busyPolling) return; // skip if own turn is busy or a fetch is in-flight
-    _busyPolling = true;
-    try {
-        const res = await fetch(`/api/agents/${AGENT_ID}/busy`);
-        const data = await res.json();
-        if (!_chatBusy) updateBusyBadge(data.busy);
-    } catch (e) { /* ignore */ } finally { _busyPolling = false; }
-}
-resyncBusyBadge(); // initial state; the stream covers everything after this
-
-// Stop all polling on page unload to free HTTP connections during navigation
+// Stop the durable stream on navigation; EventSource handles reconnects itself.
 window.addEventListener('beforeunload', () => {
-    stopIdlePoll();
+    if (_agentChatEs) _agentChatEs.close();
 });
-
-function startIdlePoll() {
-    if (chatIdleTimer) return; // already running
-    chatIdleTimer = setInterval(async () => {
-        // Skip during user-initiated busy state, or when there's an SSE stream
-        // that's NOT from the idle poll (tracked via _pollThinkingId).
-        if (_chatBusy) return;
-        if (chatUI.hasActiveStream() && !_pollThinkingId) return;
-        try {
-            const sid = await _getChatSessionId();
-            const qs = sid
-                ? `session_id=${encodeURIComponent(sid)}&after_ts=${lastChatTs}&limit=20`
-                : `user_id=web_test&after_ts=${lastChatTs}&limit=20`;
-            const res = await fetch(`/api/agents/${AGENT_ID}/chat?${qs}`);
-            const data = await res.json();
-            // Re-check: user may have sent a message while fetching.
-            // Don't block if the only active stream is our own idle-poll bubble.
-            if (_chatBusy) return;
-            if (chatUI.hasActiveStream() && !_pollThinkingId) return;
-            const entries = data.entries || [];
-            if (!entries.length) return;
-            const wasAtBottom = chatUI.isNearBottom(80);
-            // Advance cursor over ALL entries (including user echoes) so we don't re-fetch them
-            for (const e of entries) { if (e.ts > lastChatTs) lastChatTs = e.ts; }
-            // Skip user echoes (already shown locally); render assistant/system events
-            const newEntries = entries.filter(e => e.type !== 'user');
-            renderEntries(newEntries, { persistent: true });
-            if (newEntries.length && wasAtBottom) chatUI.scrollToBottom();
-        } catch(e) { /* ignore network errors during idle poll */ }
-    }, 3000);
-}
-
-function stopIdlePoll() {
-    if (chatIdleTimer) {
-        clearInterval(chatIdleTimer);
-        chatIdleTimer = null;
-    }
-    if (_pollThinkingId) {
-        chatUI.removeThinkingIndicator(_pollThinkingId);
-        _pollThinkingId = null;
-    }
-}
 
 // Chat-input keydown handler: Enter submits on desktop, inserts newline on mobile.
 // Mobile = viewport < 1024px (matching enterChatFullscreen breakpoint).
@@ -5716,12 +5671,7 @@ document.addEventListener('keydown', function(e) {
 
 function stopChat() {
     _destroyCurrentTurn();
-    if (chatPollTimer) {
-        clearInterval(chatPollTimer);
-        chatPollTimer = null;
-    }
-    chatPolling = false;
-    setChatBusy(false); // will call startIdlePoll()
+    setChatBusy(false);
 }
 
 async function sendChat() {
@@ -5758,6 +5708,9 @@ async function sendChat() {
         info.is_image ? `[Image #${++imageSlot}]` : `[File: ${info.filename}]`).join(' ');
 
     const $msgEl = chatUI.appendMessage('user', displayText, {metadata: optimisticMeta});
+    const clientMessageId = newClientMessageId();
+    $msgEl.attr('data-client-message-id', clientMessageId);
+    _optimisticMessages.set(clientMessageId, $msgEl);
     if (files.length) chatUI.markMessageUploading($msgEl);
     // Capture the user message wrapper for anchoring the thinking bubble
     const container = document.getElementById('chat-messages');
@@ -5772,6 +5725,7 @@ async function sendChat() {
             const formData = new FormData();
             formData.append('message', msg);
             formData.append('user_id', 'web_test');
+            formData.append('client_message_id', clientMessageId);
             files.forEach(file => formData.append('files', file));
             return new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
@@ -5792,7 +5746,7 @@ async function sendChat() {
         return fetch(url, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({message: msg, user_id: 'web_test'}),
+            body: JSON.stringify({message: msg, user_id: 'web_test', client_message_id: clientMessageId}),
             signal,
         }).then(r => r.json());
     }
@@ -5807,17 +5761,23 @@ async function sendChat() {
                 return;
             }
             if (!data.success) {
+                if ($msgEl.attr('data-message-id')) return;
                 $msgEl.remove();
                 chatUI.appendMessage('error', 'Error: ' + (data.error || 'Unknown error'));
             } else {
-                const $resp = chatUI.appendMessage('assistant', data.response);
+                let $resp = $();
+                if (!data.turn_id || !_renderedTurnIds.has(data.turn_id)) {
+                    if (data.turn_id) _renderedTurnIds.add(data.turn_id);
+                    $resp = chatUI.appendMessage('assistant', data.response);
+                }
                 // Reposition the slash command response immediately after the user
                 // message so it doesn't appear below an active thinking bubble that
                 // turn_split may have inserted in the meantime.
                 if (userMsgEl && $resp && $resp.length) $(userMsgEl).after($resp);
-                await syncLastChatTs();
             }
         } catch(e) {
+            _optimisticMessages.delete(clientMessageId);
+            if ($msgEl.attr('data-message-id')) return;
             $msgEl.remove();
             chatUI.appendMessage('error', 'Network error: ' + e.message);
         }
@@ -5830,13 +5790,6 @@ async function sendChat() {
     // Destroy any previous turn before starting a new one
     _destroyCurrentTurn();
     chatUI.clearActiveSpinner();
-    // Kill any stale poll (e.g. from restoreActiveReasoning running concurrently)
-    if (chatPollTimer) {
-        clearInterval(chatPollTimer);
-        chatPollTimer = null;
-        chatPolling = false;
-    }
-
     // Create thinking bubble eagerly, anchored right below the user message.
     // This guarantees correct DOM ordering — the bubble always sits between
     // the user message and whatever follows, never above a prior finalized bubble.
@@ -5845,42 +5798,18 @@ async function sendChat() {
     const abortController = new AbortController();
     const signal = abortController.signal;
 
-    // Fetch session_id so we can open SSE stream before the LLM starts
-    let sessionId = null;
-    try {
-        const sRes = await fetch(`/api/agents/${AGENT_ID}/chat/session?user_id=web_test`, {signal});
-        const sData = await sRes.json();
-        sessionId = sData.session_id || null;
-    } catch(e) { /* SSE won't work but chat still functions */ }
-
-    _currentTurn = { abortController, thinkingId, stream: null, pollTimer: null, _finalRendered: false };
-
-    if (sessionId) {
-        _currentTurn.stream = chatUI.connectThinkingStream(
-            `/api/agents/${AGENT_ID}/chat/stream?session_id=${encodeURIComponent(sessionId)}`,
-            thinkingId,
-            {
-                userMsgEl: userMsgEl,
-                onSplit: (newId) => { thinkingId = newId; _currentTurn.thinkingId = newId; },
-                onDone: () => { thinkingId = null; if (_currentTurn) _currentTurn.thinkingId = null; },
-                onFinalResponse: (content) => {
-                    if (_currentTurn) _currentTurn._finalRendered = true;
-                    chatUI.appendMessage('assistant', content, { metadata: {} });
-                    chatUI.scrollToBottom();
-                },
-            }
-        );
-    }
+    _currentTurn = { abortController, thinkingId };
+    restoreActiveReasoning();
 
     try {
         const data = await postChat(`/api/agents/${AGENT_ID}/chat`, signal);
         if (data.buffered) {
-            pollForResponse(thinkingId);
             return;
         } else if (data.injected) {
             chatUI.removeThinkingIndicator(thinkingId);
             chatUI.markLastUserBubbleQueued();
         } else if (!data.success) {
+            if ($msgEl.attr('data-message-id')) return;
             chatUI.removeThinkingIndicator(thinkingId);
             $msgEl.remove();
             chatUI.appendMessage('error', 'Error: ' + (data.error || 'Unknown error'));
@@ -5891,16 +5820,22 @@ async function sendChat() {
             chatUI.appendMessage('system', data.response, { metadata: { slash_command: true } });
             thinkingId = null; if (_currentTurn) _currentTurn.thinkingId = null;
             chatUI.closeStream();
-            await syncLastChatTs();
         } else if (data.slash_command) {
             // Slash command response — no LLM involved, remove the eager thinking bubble
             chatUI.removeThinkingIndicator(thinkingId);
             thinkingId = null; if (_currentTurn) _currentTurn.thinkingId = null;
             chatUI.closeStream();
             const cmdMeta = data.bash_exec ? { bash_exec: true } : { slash_command: true };
-            chatUI.appendMessage('assistant', data.response, { metadata: cmdMeta });
+            const responseKey = data.response_message_id
+                ? `${_chatSessionId}:${data.response_message_id}` : null;
+            if (!responseKey || !_seenRealtimeMessages.has(responseKey)) {
+                const $response = chatUI.appendMessage('assistant', data.response, { metadata: cmdMeta });
+                if (data.response_message_id) {
+                    $response.attr('data-message-id', data.response_message_id);
+                    _seenRealtimeMessages.add(responseKey);
+                }
+            }
             chatUI.scrollToBottom();
-            await syncLastChatTs();
         } else {
             // Non-buffered success: agent responded immediately.
             // Thinking bubble was already created eagerly; populate it and close SSE.
@@ -5926,11 +5861,15 @@ async function sendChat() {
             chatUI.finalizeThinkingBubble(thinkingId, (data.metadata || {}).thinking_duration);
             thinkingId = null; if (_currentTurn) _currentTurn.thinkingId = null;
             chatUI.closeStream();
-            chatUI.appendMessage(data.error ? 'error' : 'assistant', data.response);
-            await syncLastChatTs();
+            if (data.turn_id && !_renderedTurnIds.has(data.turn_id)) {
+                _renderedTurnIds.add(data.turn_id);
+                chatUI.appendMessage(data.error ? 'error' : 'assistant', data.response);
+            }
         }
     } catch(e) {
         if (e.name === 'AbortError') return; // stopChat() already cleaned up
+        _optimisticMessages.delete(clientMessageId);
+        if ($msgEl.attr('data-message-id')) return;
         chatUI.closeStream();
         chatUI.removeThinkingIndicator(thinkingId);
         $msgEl.remove();
@@ -5940,121 +5879,6 @@ async function sendChat() {
     // Refresh summary and agent state after response completes
     setTimeout(refreshSessionState, 0);
     setTimeout(refreshAgentState, 1000);
-}
-
-async function syncLastChatTs() {
-    try {
-        const sid = await _getChatSessionId();
-        const qs = sid ? `session_id=${encodeURIComponent(sid)}&limit=1` : `user_id=web_test&limit=1`;
-        const res = await fetch(`/api/agents/${AGENT_ID}/chat?${qs}`);
-        const data = await res.json();
-        for (const e of (data.entries || [])) {
-            if (e.ts > lastChatTs) lastChatTs = e.ts;
-        }
-    } catch(e) { /* ignore */ }
-}
-
-function pollForResponse(existingThinkingId) {
-    // Poll every 1s until a 'final' or 'error' entry arrives in JSONL.
-    // existingThinkingId: thinking bubble already shown (created eagerly in sendChat/restoreActiveReasoning).
-    if (!_currentTurn) return;  // no active turn to poll for
-    if (_currentTurn.pollTimer) clearInterval(_currentTurn.pollTimer);
-    let thinkingId = existingThinkingId || null;
-    // Collect intermediate entries across poll ticks for SSE fallback rendering.
-    // If SSE fails to deliver activity entries (race: agent completed before SSE connected),
-    // these are replayed into the thinking bubble when 'final' arrives.
-    const collectedIntermediates = [];
-    const pollStartTs = lastChatTs; // snapshot cursor at poll start
-    _currentTurn.pollTimer = setInterval(async () => {
-        if (chatPolling) return;
-        chatPolling = true;
-        try {
-            // Sync thinkingId from _currentTurn in case turn_split created a new bubble
-            if (_currentTurn && _currentTurn.thinkingId && _currentTurn.thinkingId !== thinkingId) {
-                thinkingId = _currentTurn.thinkingId;
-            }
-            const sid = await _getChatSessionId();
-            const qs = sid
-                ? `session_id=${encodeURIComponent(sid)}&after_ts=${lastChatTs}&limit=50`
-                : `user_id=web_test&after_ts=${lastChatTs}&limit=50`;
-            const res = await fetch(`/api/agents/${AGENT_ID}/chat?${qs}`);
-            const data = await res.json();
-            const entries = data.entries || [];
-            if (!entries.length) return;  // bubble already exists with spinner, just wait
-            console.warn('[pollForResponse] got %d entries afterTs=%s hasStream=%s _currentTurn=%s _finalRendered=%s',
-                entries.length, lastChatTs, chatUI.hasActiveStream(), !!_currentTurn, _currentTurn ? _currentTurn._finalRendered : 'n/a');
-            const wasAtBottom = chatUI.isNearBottom(80);
-            let gotFinal = false;
-            for (const entry of entries) {
-                if (entry.ts <= lastChatTs) continue;
-                lastChatTs = entry.ts;
-                if (entry.type === 'final' || entry.type === 'error') {
-                    console.warn('[pollForResponse] found %s entry ts=%s contentLen=%d', entry.type, entry.ts, (entry.content||'').length);
-                    chatUI.closeStream();
-                    // SSE fallback: if SSE race-lost (agent finished before stream connected),
-                    // the thinking bubble will be empty. Replay intermediates from JSONL history.
-                    if (collectedIntermediates.length > 0) {
-                        if (chatUI.getTimelineEntryCount(thinkingId) === 0) {
-                            for (const ie of collectedIntermediates) {
-                                if (ie.type === 'thinking') {
-                                    chatUI.appendTimelineEntry(thinkingId, {type: 'thinking', content: ie.content});
-                                } else if (ie.type === 'tool_call') {
-                                    chatUI.appendTimelineEntry(thinkingId, {type: 'tool_call', tool: ie.function, args: ie.params || {}, param_types: {}});
-                                } else if (ie.type === 'tool_output') {
-                                    let result;
-                                    try { result = JSON.parse(ie.content); } catch(e) { result = {data: ie.content}; }
-                                    chatUI.appendTimelineEntry(thinkingId, {type: 'tool_result', tool: ie.function, result, error: !!ie.error});
-                                } else if (ie.type === 'intermediate') {
-                                    chatUI.appendTimelineEntry(thinkingId, {type: 'response', content: ie.content});
-                                }
-                            }
-                        }
-                    }
-                    chatUI.finalizeThinkingBubble(thinkingId, (entry.metadata || {}).thinking_duration);
-                    thinkingId = null; if (_currentTurn) _currentTurn.thinkingId = null;
-                    const fMeta = entry.metadata || {};
-                    // Skip appendMessage if SSE onFinalResponse already rendered the bubble
-                    if (_currentTurn && _currentTurn._finalRendered) {
-                        _currentTurn._finalRendered = false;
-                    } else if (fMeta.concurrency_limited || fMeta.busy_ack) {
-                        chatUI.appendMessage('system', '[SYSTEM/Concurrency]\n' + entry.content, {metadata: fMeta});
-                    } else {
-                        chatUI.appendMessage(entry.type === 'error' ? 'error' : 'assistant',
-                                            entry.content, {metadata: fMeta});
-                    }
-                    gotFinal = true;
-                } else if (['thinking', 'tool_call', 'tool_output', 'intermediate'].includes(entry.type)) {
-                    collectedIntermediates.push(entry);
-                    // Render progressively if SSE isn't connected (SSE handles live rendering otherwise)
-                    if (!chatUI.hasActiveStream()) {
-                        if (entry.type === 'thinking') {
-                            chatUI.appendTimelineEntry(thinkingId, {type: 'thinking', content: entry.content});
-                        } else if (entry.type === 'tool_call') {
-                            chatUI.appendTimelineEntry(thinkingId, {type: 'tool_call', tool: entry.function, args: entry.params || {}, param_types: {}});
-                        } else if (entry.type === 'tool_output') {
-                            let result;
-                            try { result = JSON.parse(entry.content); } catch(e) { result = {data: entry.content}; }
-                            chatUI.appendTimelineEntry(thinkingId, {type: 'tool_result', tool: entry.function, result, error: !!entry.error});
-                        } else if (entry.type === 'intermediate') {
-                            chatUI.appendTimelineEntry(thinkingId, {type: 'response', content: entry.content});
-                        }
-                        if (wasAtBottom) chatUI.scrollToBottom();
-                    }
-                }
-                // Other types are handled by SSE live stream; skip to avoid duplication
-            }
-            if (wasAtBottom) chatUI.scrollToBottom();
-            if (gotFinal) {
-                console.warn('[pollForResponse] gotFinal=true _currentTurn=%s clearing pollTimer', !!_currentTurn);
-                clearInterval(_currentTurn.pollTimer);
-                _currentTurn.pollTimer = null;
-                setChatBusy(false);
-                setTimeout(refreshSessionState, 0);
-                setTimeout(refreshAgentState, 1000);
-            }
-        } catch(e) { console.error('[pollForResponse]', e); }
-        finally { chatPolling = false; }
-    }, 1000);
 }
 
 function escapeHtml(text) {
@@ -6183,7 +6007,6 @@ async function confirmClearHistory() {
 async function clearChat() {
     document.getElementById('chat-messages').innerHTML = '';
     chatLoaded = false;
-    lastChatTs = 0;
     await fetch(`/api/agents/${AGENT_ID}/chat/clear`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({user_id: 'web_test'})});
     // Clear summary panels (desktop + mobile)
     const emptySummary = '<p class="text-sm text-gray-400 italic">No summary yet. Start chatting to generate one.</p>';
@@ -7564,7 +7387,10 @@ window.softSwitchAgent = async function (newId, opts = {}) {
     window._agentEpoch++; // invalidates in-flight chat/session fetches
     if (window._saveChatDraft) window._saveChatDraft(); // persists under the OLD agent's key
     _destroyCurrentTurn();
-    stopIdlePoll();
+    if (_agentChatEs) _agentChatEs.close();
+    _agentChatEs = null;
+    _agentChatSessionId = null;
+    _agentChatCursor = 0;
     updateBusyBadge(false); // cleared now; resynced for the new agent below
     const gearDd = document.getElementById('gear-dropdown');
     if (gearDd) gearDd.classList.add('hidden');
@@ -7577,10 +7403,7 @@ window.softSwitchAgent = async function (newId, opts = {}) {
     chatCommands = [];
     _chatSessionId = null;
     chatLoaded = false;
-    lastChatTs = 0;
-    lastTurnEndTs = 0;
     _chatBusy = false;
-    _pollThinkingId = null;
     _planEditorFetchedFor = null;
     _planEditorOriginal = null;
     window.chatUI = _createChatUI();

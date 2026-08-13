@@ -11,7 +11,6 @@
  *     sessionId: 'abc123',
  *     agentId: 'my-agent',
  *     workplace: 'wp-1',
- *     chatThrottle: 100,
  *   });
  *
  *   rt.on('status', 'agent_busy_changed', (data) => { ... });
@@ -22,20 +21,6 @@
 var RealtimeClient = (function () {
     'use strict';
 
-    // ---- Channel definitions ----
-    var CHANNEL_PRIORITY = {
-        status: 0, update: 0,     // Level 0: system/update
-        approvals: 1,              // Level 1: user-facing
-        chat: 2, workplace: 2,     // Level 2: high throughput
-        heartbeat: 0,
-        auth_expired: 0,
-        channel_disabled: 0,
-    };
-
-    // Per-channel resume sequence trackers
-    var _channelSeqs = {};
-    var _channelIds = {};  // channel -> last SSE id
-
     function RealtimeClient(opts) {
         opts = opts || {};
         this._channels = (opts.channels || 'status,approvals,update').split(',').map(function (s) { return s.trim(); });
@@ -44,13 +29,11 @@ var RealtimeClient = (function () {
         this._agentId = opts.agentId || '';
         this._after = opts.after || 0;
         this._workplace = opts.workplace || '';
-        this._chatThrottle = opts.chatThrottle || 100;
         this._es = null;
         this._handlers = {};      // channel -> [handler]
         this._started = false;
         this._intentionallyStopped = false;
         this._paused = false;
-        this._pauseBuffer = {};   // channel -> [events] buffered during pause
         this._onAuthExpired = opts.onAuthExpired || function () { window.location.href = '/login'; };
         this._visibilityBound = false;
         this._unloadHandlers = [];  // cleanup hooks registered by consumers
@@ -92,27 +75,13 @@ var RealtimeClient = (function () {
     RealtimeClient.prototype.pause = function () {
         if (this._paused) return;
         this._paused = true;
-        if (this._es && this._es.readyState === EventSource.OPEN) {
-            // Send pause signal via a separate fetch
-            this._sendCommand('pause');
-        }
+        this._disconnect();
     };
 
     RealtimeClient.prototype.resume = function () {
         if (!this._paused) return;
         this._paused = false;
-        if (this._es && this._es.readyState === EventSource.OPEN) {
-            this._sendCommand('resume');
-        }
-        // Replay buffered events
-        var self = this;
-        Object.keys(this._pauseBuffer).forEach(function (ch) {
-            var buf = self._pauseBuffer[ch];
-            while (buf && buf.length) {
-                var item = buf.shift();
-                self._dispatch(ch, item.evtName, item.data);
-            }
-        });
+        if (this._started) this._connect();
     };
 
     // ---- Internal: Connection lifecycle ----
@@ -124,15 +93,14 @@ var RealtimeClient = (function () {
             params.push('chat=1');
             if (this._sessionId) params.push('session_id=' + encodeURIComponent(this._sessionId));
             if (this._agentId) params.push('agent_id=' + encodeURIComponent(this._agentId));
-            if (this._after) params.push('after=' + this._after);
         }
+        if (this._after) params.push('after=' + this._after);
         if (this._workplace) params.push('workplace=' + encodeURIComponent(this._workplace));
-        if (this._chatThrottle) params.push('chat_throttle=' + this._chatThrottle);
         return '/api/realtime/stream?' + params.join('&');
     };
 
     RealtimeClient.prototype._connect = function () {
-        if (this._intentionallyStopped) return;
+        if (this._intentionallyStopped || this._paused || this._es) return;
         var self = this;
         var url = this._buildUrl();
 
@@ -167,11 +135,13 @@ var RealtimeClient = (function () {
             'approval_required', 'approval_resolved',
             'update_status', 'update_done',
             'turn_begin', 'thinking', 'tool_call_started', 'tool_executed',
+            'state:changed', 'state_changed', 'tasks:auto_transition', 'tasks:stale',
             'response_chunk', 'done', 'retry', 'message_injected',
-            'message_injection_applied', 'whatsapp_restriction_warning', 'session_clear', 'turn_split',
+            'message_injection_applied', 'message_received', 'turn_queued',
+            'whatsapp_restriction_warning', 'session_clear', 'turn_split',
             'connector_connected', 'connector_disconnected', 'connector_paired',
             'workplace_status_changed',
-            'heartbeat', 'auth_expired', 'channel_disabled',
+            'ready', 'heartbeat', 'auth_expired', 'channel_disabled',
         ];
 
         ALL_EVENTS.forEach(function (evtName) {
@@ -189,7 +159,7 @@ var RealtimeClient = (function () {
             // Auto-reconnect with jitter
             var delay = 2000 + Math.floor(Math.random() * 5000);
             setTimeout(function () {
-                if (self._intentionallyStopped) return;
+                if (self._intentionallyStopped || self._paused) return;
                 self._connect();
             }, delay);
         };
@@ -202,24 +172,12 @@ var RealtimeClient = (function () {
         }
     };
 
-    RealtimeClient.prototype._sendCommand = function (cmd) {
-        try {
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', '/api/realtime/' + cmd, true);
-            xhr.send();
-        } catch (_) {}
-    };
-
     // ---- Internal: Event routing ----
 
     RealtimeClient.prototype._routeEvent = function (evtName, data, lastEventId) {
-        // Track per-channel seq from composite SSE id (e.g. "chat:892")
+        // Durable journal IDs are global and may legitimately skip after scope filtering.
         if (lastEventId) {
-            var parts = lastEventId.split(':');
-            if (parts.length === 2) {
-                _channelIds[parts[0]] = lastEventId;
-                _channelSeqs[parts[0]] = parseInt(parts[1], 10) || 0;
-            }
+            this._after = Math.max(this._after, parseInt(lastEventId, 10) || 0);
         }
 
         // Map event name to channel
@@ -240,15 +198,6 @@ var RealtimeClient = (function () {
         }
 
         if (evtName === 'heartbeat') return; // no-op
-
-        // Pause buffering for chat/workplace events
-        if (this._paused && (channel === 'chat' || channel === 'workplace')) {
-            if (!this._pauseBuffer[channel]) this._pauseBuffer[channel] = [];
-            if (this._pauseBuffer[channel].length < 100) {
-                this._pauseBuffer[channel].push({ evtName: evtName, data: data });
-            }
-            return;
-        }
 
         this._dispatch(channel, evtName, data);
     };
@@ -279,6 +228,7 @@ var RealtimeClient = (function () {
     RealtimeClient.prototype._eventToChannel = function (evtName) {
         // Status channel events
         if (evtName === 'agent_busy_changed' || evtName === 'agent_turn_complete' ||
+            evtName === 'turn_queued' ||
             evtName === 'whatsapp_bridge_status') {
             return 'status';
         }
@@ -293,9 +243,11 @@ var RealtimeClient = (function () {
         // Chat channel events
         if (evtName === 'turn_begin' || evtName === 'thinking' ||
             evtName === 'tool_call_started' || evtName === 'tool_executed' ||
+            evtName === 'state:changed' || evtName === 'state_changed' ||
+            evtName === 'tasks:auto_transition' || evtName === 'tasks:stale' ||
             evtName === 'response_chunk' || evtName === 'done' ||
             evtName === 'retry' || evtName === 'message_injected' ||
-            evtName === 'message_injection_applied' ||
+            evtName === 'message_injection_applied' || evtName === 'message_received' ||
             evtName === 'whatsapp_restriction_warning' || evtName === 'session_clear' ||
             evtName === 'turn_split') {
             return 'chat';
@@ -328,24 +280,6 @@ var RealtimeClient = (function () {
 
     RealtimeClient.prototype.onUnload = function (fn) {
         this._unloadHandlers.push(fn);
-    };
-
-    // ---- SSE comment handler (invoked by caller when EventSource
-    //      comment events are intercepted — see x-sse-dropped below) ----
-
-    RealtimeClient.prototype._handleComment = function (comment) {
-        // :x-sse-dropped N — server lost N events on a channel
-        var match = comment.match(/^x-sse-dropped\s+(\d+)/);
-        if (match) {
-            var dropped = parseInt(match[1], 10);
-            console.warn('[realtime] stream thinned:', dropped, 'events dropped');
-            this._dispatch('stream_thinned', { dropped: dropped });
-        }
-        // :error channel=<name> — producer error
-        var errMatch = comment.match(/^error\s+channel=(\S+)/);
-        if (errMatch) {
-            console.warn('[realtime] producer error on channel:', errMatch[1]);
-        }
     };
 
     return RealtimeClient;

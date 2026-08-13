@@ -16,6 +16,7 @@ import time
 import queue
 import threading
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from contextlib import contextmanager
@@ -101,7 +102,6 @@ CLEANUP_TTL_SECONDS = 3600          # TTL for session state entries before clean
 WORKER_JOIN_TIMEOUT_SECONDS = 5.0   # Max time to wait for worker threads to finish on shutdown
 WORKER_JOIN_MIN_TIMEOUT = 0.1       # Minimum timeout per worker join iteration (seconds)
 DEFAULT_BUFFER_SECONDS = 2          # Default message buffering delay when agent has no config (seconds)
-SESSION_BUFFER_CLEANUP_DELAY = 30.0 # Delay before cleaning up SSE session buffers (seconds)
 
 
 def _llm_log_path(agent_id: str) -> str:
@@ -309,6 +309,7 @@ class SessionContext:
     external_user_id: str
     channel_id: Optional[str] = None
     session_db_agent_id: Optional[str] = None
+    turn_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
 class _QueueTask:
@@ -340,12 +341,11 @@ class _QueueTask:
 #      (b) _session_store._stop_flags_guard
 #      (c) _session_store._inject_queues_guard
 #      (d) _session_store._busy_guard
-#      (e) _agent_tracker._guard
-#      (f) _cleanup_tracker._guard
-#      (g) _llm_serializer._summarize_guard
-#      (h) _llm_serializer._llm_lock
-#      (i) _shutdown_mgr._lock
-#      (j) instance._buffer_lock
+#      (e) _cleanup_tracker._guard
+#      (f) _llm_serializer._summarize_guard
+#      (g) _llm_serializer._llm_lock
+#      (h) _shutdown_mgr._lock
+#      (i) instance._buffer_lock
 #
 # 2. GUARD-LOCK PATTERN:  Each mutable dict has a dedicated "guard" lock.
 #    The guard protects structuring operations (get-or-create, pop, clear).
@@ -362,8 +362,6 @@ class _QueueTask:
 # 5. INVARIANTS:
 #    • Every session_id present in _cleanup_tracker._ttl MUST also have
 #      entries in _session_store (or be in the process of being cleaned up).
-#    • _agent_tracker._busy[agent_id] exists only while an agent is
-#      actively processing a turn; cleared on completion or TTL expiry.
 #    • _shutdown_mgr._event, once set, is never cleared (shutdown is final).
 #
 # ─────────────────────────────────────────────────────────────────────────────
@@ -447,41 +445,6 @@ class _SessionStore:
         #           actively processing a turn for that session.
         self._busy: Dict[str, bool] = {}
         self._busy_guard = threading.Lock()
-
-
-class _AgentTracker:
-    """Track which agents are currently busy processing a session.
-
-    Thread-safety:
-        The _guard lock protects all reads and writes to the _busy dict,
-        which is mutated by worker threads when agents start or finish
-        processing turns.
-
-        Acquired by: _set_agent_busy(), _clear_agent_busy(),
-                     is_agent_busy(), get_busy_agents().
-        Released: immediately after the dict operation (short critical
-                  section — < 1ms).
-
-        Deadlock risk: NONE — _guard is never nested with any other lock.
-        It is acquired independently each time.
-
-        TTL staleness: entries older than the TTL (default 600s) are
-        treated as stale and auto-expired.  This protects against hung
-        threads that never clear their busy flag.
-
-        Invariants:
-            • An agent_id appears in _busy only while it is actively
-              processing an LLM turn.
-            • Each entry has {session_id: str, started_at: float}.
-            • At most one entry per agent_id (set overwrites).
-    """
-
-    def __init__(self) -> None:
-        # agent_id -> {session_id: str, started_at: float}
-        # Guarded by _guard — prevents races between agent_busy set/clear
-        # calls coming from different worker threads.
-        self._busy: Dict[str, dict] = {}
-        self._guard = threading.Lock()
 
 
 class _CleanupTracker:
@@ -639,9 +602,8 @@ class _ShutdownManager:
 
 
 class AgentRuntime:
-    # State containers — reduce class-level attributes from 23 to 6
+    # State containers — reduce class-level attributes from 23 to 5
     _session_store = _SessionStore()
-    _agent_tracker = _AgentTracker()
     _cleanup_tracker = _CleanupTracker()
     _llm_serializer = _LLMSerializer()
     _shutdown_mgr = _ShutdownManager()
@@ -765,6 +727,13 @@ class AgentRuntime:
         self._buffer_timers: Dict[str, threading.Timer] = {}
         self._buffer_lock = threading.Lock()
         self._workers: list[threading.Thread] = []
+        try:
+            from backend.realtime_store import realtime_store
+            interrupted = realtime_store.interrupt_stale_turns()
+            if interrupted:
+                _logger.warning("Marked %d turn(s) interrupted after restart", len(interrupted))
+        except Exception as exc:
+            _logger.error("Failed to recover durable active turns: %s", exc)
         # Read worker count from DB (user-configurable), fall back to config default
         try:
             from models.db import db as _db
@@ -874,6 +843,7 @@ class AgentRuntime:
                         not bool(_resp), _resp == "(No response)", task.ctx.channel_id)
             except Exception as e:
                 _logger.error("Worker error for session %s: %s", task.ctx.session_id, e, exc_info=True)
+                self._fail_queued_task(task, str(e))
                 task.result = {
                     "response": "An unexpected error occurred. Please try again.",
                     "error": True,
@@ -926,50 +896,60 @@ class AgentRuntime:
         with self._session_store._busy_guard:
             return self._session_store._busy.get(session_id, False)
 
-    def _set_agent_busy(self, agent_id: str, session_id: str) -> None:
-        with self._agent_tracker._guard:
-            self._agent_tracker._busy[agent_id] = {'session_id': session_id, 'started_at': time.time()}
+    def _mark_task_queued(self, task: '_QueueTask') -> None:
+        from backend.realtime_store import realtime_store
+        turn_id, _created = realtime_store.queue_turn(
+            task.agent['id'], task.ctx.session_id, task.ctx.turn_id,
+        )
+        task.ctx.turn_id = turn_id
 
-    def _clear_agent_busy(self, agent_id: str) -> None:
-        with self._agent_tracker._guard:
-            self._agent_tracker._busy.pop(agent_id, None)
+    def _put_task(self, task: '_QueueTask', *, already_queued: bool = False) -> None:
+        if not already_queued:
+            self._mark_task_queued(task)
+        try:
+            self._message_queue.put(task)
+        except Exception:
+            self._fail_queued_task(task, 'queue_failed')
+            raise
+
+    def _fail_queued_task(self, task: '_QueueTask', reason: str) -> None:
+        from backend.realtime_store import realtime_store
+        if not any(t['turn_id'] == task.ctx.turn_id for t in realtime_store.active_turns()):
+            return
+        event_stream.emit('turn_complete', {
+            'agent_id': task.agent.get('id', ''),
+            'agent_name': task.agent.get('name', ''),
+            'session_id': task.ctx.session_id,
+            'external_user_id': task.ctx.external_user_id,
+            'channel_id': task.ctx.channel_id,
+            'turn_id': task.ctx.turn_id,
+            'response': '',
+            'tool_trace': [],
+            'is_error': True,
+            'interrupted': True,
+            'reason': reason,
+        })
+        realtime_store.finish_turn(task.ctx.turn_id)
+        remaining = realtime_store.busy_agents().get(task.agent.get('id', ''))
+        event_stream.emit('agent_busy_changed', {
+            'agent_id': task.agent.get('id', ''),
+            'busy': bool(remaining),
+            'session_id': remaining.get('session_id', task.ctx.session_id) if remaining else task.ctx.session_id,
+            'session_ids': remaining.get('session_ids', []) if remaining else [],
+            'active_count': remaining.get('active_count', 0) if remaining else 0,
+            'state': remaining.get('state', 'idle') if remaining else 'idle',
+            'turn_id': None,
+        })
 
     def is_agent_busy(self, agent_id: str, ttl: int = 600) -> bool:
-        """Return True if agent is currently processing an LLM turn.
-
-        A TTL guard treats entries older than `ttl` seconds as stale (e.g. a
-        thread that hung and never cleared its flag).  Default is 10 minutes.
-        """
-        with self._agent_tracker._guard:
-            entry = self._agent_tracker._busy.get(agent_id)
-        if not entry:
-            return False
-        if time.time() - entry['started_at'] > ttl:
-            # Auto-expire stale entry
-            self._clear_agent_busy(agent_id)
-            return False
-        return True
+        """Return durable queued/running state. ``ttl`` is kept for callers."""
+        from backend.realtime_store import realtime_store
+        return bool(realtime_store.active_turns(agent_id=agent_id))
 
     def get_busy_agents(self, ttl: int = 600) -> dict:
-        """Return a snapshot of all currently busy agents (respects TTL)."""
-        now = time.time()
-        with self._agent_tracker._guard:
-            snapshot = dict(self._agent_tracker._busy)
-        result = {}
-        stale = []
-        for agent_id, entry in snapshot.items():
-            elapsed = now - entry['started_at']
-            if elapsed > ttl:
-                stale.append(agent_id)
-            else:
-                result[agent_id] = {
-                    'session_id': entry['session_id'],
-                    'started_at': entry['started_at'],
-                    'elapsed': round(elapsed, 1),
-                }
-        for agent_id in stale:
-            self._clear_agent_busy(agent_id)
-        return result
+        """Return all durable queued/running turns grouped by agent."""
+        from backend.realtime_store import realtime_store
+        return realtime_store.busy_agents()
 
     @contextmanager
     def _buffer_timer(self, session_id: str, buffer_seconds: float,
@@ -1043,7 +1023,8 @@ class AgentRuntime:
 
     def _run_bash_exec(self, agent: Dict[str, Any], session_id: str,
                        db_agent_id: str, external_user_id: str,
-                       message: str) -> str:
+                       message: str, client_message_id: str | None = None
+                       ) -> tuple[str, int | str | None, int | str | None]:
         """Run a web user's "!<command>" directly and persist it for UI display only.
 
         The command and its output are saved with a `bash_exec` metadata flag so
@@ -1054,7 +1035,7 @@ class AgentRuntime:
         """
         cmd = message.lstrip()[1:].strip()
         if not cmd:
-            return "Usage: `!<command>` — run a shell command directly (web only)."
+            return "Usage: `!<command>` — run a shell command directly (web only).", None, None
 
         from backend.tools import bash
         exec_agent = {**agent, 'session_id': session_id, '_skip_safety': True}
@@ -1082,19 +1063,39 @@ class AgentRuntime:
             response += f"\n_(exit code {exit_code})_"
 
         # Persist for UI display only — hidden from LLM via the `bash_exec` flag.
-        _db_retry(db.add_chat_message, session_id, 'user', message,
-                  agent_id=db_agent_id, metadata={'bash_exec': True},
-                  label="save bash command")
-        _db_retry(db.add_chat_message, session_id, 'assistant', response,
-                  agent_id=db_agent_id, metadata={'bash_exec': True},
-                  label="save bash output")
+        command_meta = {'bash_exec': True}
+        if client_message_id:
+            command_meta['client_message_id'] = client_message_id
+        message_id = _db_retry(
+            db.add_chat_message, session_id, 'user', message,
+            agent_id=db_agent_id, metadata=command_meta,
+            label="save bash command",
+        )
+        response_id = _db_retry(
+            db.add_chat_message, session_id, 'assistant', response,
+            agent_id=db_agent_id, metadata={'bash_exec': True},
+            label="save bash output",
+        )
+        message_id = message_id if type(message_id) in (int, str) else None
+        response_id = response_id if type(response_id) in (int, str) else None
         _cl = chatlog_manager.get(db_agent_id, session_id)
         _cl.append({'type': 'user', 'session_id': session_id, 'content': message,
-                    'sender_id': external_user_id, 'metadata': {'bash_exec': True}})
+                    'sender_id': external_user_id, 'metadata': command_meta,
+                    'message_id': message_id})
         _cl.append({'type': 'system', 'session_id': session_id, 'content': response,
-                    'metadata': {'bash_exec': True}})
+                    'metadata': {'bash_exec': True}, 'message_id': response_id})
+        for role, content, saved_id, meta in (
+                ('user', message, message_id, command_meta),
+                ('assistant', response, response_id, {'bash_exec': True})):
+            event_stream.emit('message_received', {
+                'agent_id': agent['id'], 'session_id': session_id,
+                'external_user_id': external_user_id, 'message': content,
+                'message_id': saved_id,
+                'client_message_id': meta.get('client_message_id'),
+                'metadata': meta, 'role': role,
+            })
         self._prefetcher.invalidate(session_id)
-        return response
+        return response, message_id, response_id
 
     def handle_message(self, agent_id: str, external_user_id: str,
                        message: str, channel_id: Optional[str] = None,
@@ -1187,11 +1188,15 @@ class AgentRuntime:
         # On a channel, a "!"-prefixed message falls through as ordinary user text.
         if message.lstrip().startswith('!') and channel_id is None \
                 and agent.get('bash_exec_enabled'):
-            response = self._run_bash_exec(
+            response, message_id, response_id = self._run_bash_exec(
                 agent, session_id, db_agent_id, external_user_id, message,
+                (metadata or {}).get('client_message_id'),
             )
             return {"response": response, "tool_trace": [], "timeline": [],
-                    "slash_command": True, "bash_exec": True}
+                    "slash_command": True, "bash_exec": True,
+                    "message_id": message_id,
+                    "response_message_id": response_id,
+                    "client_message_id": (metadata or {}).get('client_message_id')}
 
         # Slash command interception — execute before saving message or sending to LLM
         parsed = parse_command(message)
@@ -1203,23 +1208,49 @@ class AgentRuntime:
             )
             if response is not None:
                 # Command was recognized — save command echo and response, then return
-                _db_retry(db.add_chat_message, session_id, 'user', message,
-                          agent_id=db_agent_id, metadata={"slash_command": True},
-                          label="save command message")
-                _db_retry(db.add_chat_message, session_id, 'assistant', response,
-                          agent_id=db_agent_id, metadata={"slash_command": True},
-                          label="save command response")
+                command_meta = {"slash_command": True}
+                if metadata and metadata.get('client_message_id'):
+                    command_meta['client_message_id'] = metadata['client_message_id']
+                message_id = _db_retry(
+                    db.add_chat_message, session_id, 'user', message,
+                    agent_id=db_agent_id, metadata=command_meta,
+                    label="save command message",
+                )
+                response_id = _db_retry(
+                    db.add_chat_message, session_id, 'assistant', response,
+                    agent_id=db_agent_id, metadata={"slash_command": True},
+                    label="save command response",
+                )
                 _cl = chatlog_manager.get(db_agent_id, session_id)
                 _cl.append({'type': 'user', 'session_id': session_id, 'content': message,
                              'sender_id': external_user_id,
-                             'metadata': {'slash_command': True}})
+                             'metadata': command_meta, 'message_id': message_id})
                 _cl.append({'type': 'system', 'session_id': session_id, 'content': response,
-                             'metadata': {'slash_command': True}})
+                             'metadata': {'slash_command': True}, 'message_id': response_id})
+                event_stream.emit('message_received', {
+                    'agent_id': agent_id, 'session_id': session_id,
+                    'external_user_id': external_user_id, 'channel_id': channel_id,
+                    'message': message, 'message_id': message_id,
+                    'client_message_id': command_meta.get('client_message_id'),
+                    'metadata': command_meta, 'role': 'user',
+                })
+                event_stream.emit('message_received', {
+                    'agent_id': agent_id, 'session_id': session_id,
+                    'external_user_id': external_user_id, 'channel_id': channel_id,
+                    'message': response, 'message_id': response_id,
+                    'metadata': {'slash_command': True}, 'role': 'assistant',
+                })
                 # Signal the client to clear the chat UI when the clear command was used
                 extra = {"clear_ui": True} if cmd_name == "clear" else {}
                 extra["slash_command"] = True  # flag so frontend skips thinking bubble
                 self._prefetcher.invalidate(session_id)
-                return {"response": response, "tool_trace": [], "timeline": [], **extra}
+                return {
+                    "response": response, "tool_trace": [], "timeline": [],
+                    "message_id": message_id,
+                    "response_message_id": response_id,
+                    "client_message_id": command_meta.get('client_message_id'),
+                    **extra,
+                }
             # Unknown command — fall through to normal LLM processing
 
         # Save user message (store image reference and any extra metadata)
@@ -1274,11 +1305,15 @@ class AgentRuntime:
                 meta['agent_message'] = True
                 meta['from_agent_id'] = sender_id
                 meta['from_agent_name'] = sender_agent.get('name', sender_id) if sender_agent else sender_id
-        _db_retry(db.add_chat_message, session_id, 'user', message or "[Image]",
-                  agent_id=db_agent_id, metadata=meta if meta else None, label="save user message")
+        message_id = _db_retry(
+            db.add_chat_message, session_id, 'user', message or "[Image]",
+            agent_id=db_agent_id, metadata=meta if meta else None,
+            label="save user message",
+        )
         _cl_user = chatlog_manager.get(db_agent_id, session_id)
         _cl_user_entry = {'type': 'user', 'session_id': session_id,
-                           'content': message or '[Image]', 'sender_id': external_user_id}
+                           'content': message or '[Image]', 'sender_id': external_user_id,
+                           'message_id': message_id}
         if meta:
             _cl_user_entry['metadata'] = meta
         _cl_user.append(_cl_user_entry)
@@ -1299,6 +1334,9 @@ class AgentRuntime:
             'audio_url': audio_url,
             'video_url': video_url,
             'metadata': meta,
+            'message_id': message_id,
+            'client_message_id': meta.get('client_message_id'),
+            'role': 'user',
         })
 
         # A plain human reply in the exact originating session resumes the
@@ -1322,6 +1360,8 @@ class AgentRuntime:
                     "tool_trace": [],
                     "timeline": [],
                     "escalation_routed": routed,
+                    "message_id": message_id,
+                    "client_message_id": meta.get('client_message_id'),
                 }
 
         # Busy-ack: if the agent-level concurrency gate is saturated, send an
@@ -1345,14 +1385,24 @@ class AgentRuntime:
             )
             _ack_meta = {"busy_ack": True, "concurrency_limited": True,
                          "concurrency_active": _cap["active"], "concurrency_max": _cap["max"]}
-            _db_retry(db.add_chat_message, session_id, 'assistant', _ack_text,
-                      agent_id=db_agent_id, metadata=_ack_meta,
-                      label="save busy ack")
+            _ack_id = _db_retry(
+                db.add_chat_message, session_id, 'assistant', _ack_text,
+                agent_id=db_agent_id, metadata=_ack_meta,
+                label="save busy ack",
+            )
+            _ack_id = _ack_id if type(_ack_id) in (int, str) else None
             chatlog_manager.get(db_agent_id, session_id).append({
                 'type': 'final',
                 'session_id': session_id,
                 'content': _ack_text,
                 'metadata': _ack_meta,
+                'message_id': _ack_id,
+            })
+            event_stream.emit('message_received', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': external_user_id, 'channel_id': channel_id,
+                'message': _ack_text, 'message_id': _ack_id,
+                'metadata': _ack_meta, 'role': 'assistant',
             })
             event_stream.emit('concurrency_limited', {
                 'agent_id': agent_id,
@@ -1387,9 +1437,11 @@ class AgentRuntime:
         # in a DIFFERENT session, reject this message with a contextual explanation.
         # Check focus first (requires DB read) only when agent-level busy is confirmed.
         if agent.get('enable_agent_state') and self.is_agent_busy(agent_id):
-            with self._agent_tracker._guard:
-                busy_entry = self._agent_tracker._busy.get(agent_id)
-            if busy_entry and busy_entry['session_id'] != session_id:
+            from backend.realtime_store import realtime_store
+            busy_sessions = {
+                turn['session_id'] for turn in realtime_store.active_turns(agent_id=agent_id)
+            }
+            if busy_sessions and session_id not in busy_sessions:
                 ms = self._restore_agent_state(agent_id)
                 if ms and ms.focus:
                     busy_msg = self._handle_busy_rejection(
@@ -1416,7 +1468,11 @@ class AgentRuntime:
                 'channel_id': channel_id,
                 'message': message,
             })
-            return {"response": None, "injected": True, "tool_trace": [], "timeline": []}
+            return {
+                "response": None, "injected": True, "tool_trace": [], "timeline": [],
+                "message_id": message_id,
+                "client_message_id": meta.get('client_message_id'),
+            }
 
         # Message buffering: debounce rapid messages, then queue
         # Skip when skip_buffer=True (e.g. API routes need synchronous response)
@@ -1429,6 +1485,7 @@ class AgentRuntime:
             task = _QueueTask(agent, SessionContext(session_id, external_user_id, channel_id,
                                                     session_db_agent_id=db_agent_id if is_subagent else None),
                               send_via_channel=True)
+            self._mark_task_queued(task)
             timer = threading.Timer(buffer_seconds, self._enqueue_buffered, args=(task,))
             timer.daemon = True
             with self._buffer_lock:
@@ -1441,8 +1498,14 @@ class AgentRuntime:
                 # If start() fails, cancel the timer and remove it from the dict
                 with self._buffer_lock:
                     self._buffer_timers.pop(session_id, None)
+                self._fail_queued_task(task, 'buffer_timer_failed')
                 raise
-            return {"response": None, "buffered": True, "tool_trace": [], "timeline": []}
+            return {
+                "response": None, "buffered": True, "tool_trace": [], "timeline": [],
+                "message_id": message_id,
+                "client_message_id": meta.get('client_message_id'),
+                "turn_id": task.ctx.turn_id,
+            }
 
         # Inter-agent messages: fire-and-forget (don't block the sender's worker thread).
         # The sub-agent/target processes asynchronously and results are delivered via
@@ -1455,16 +1518,27 @@ class AgentRuntime:
             task = _QueueTask(agent, SessionContext(session_id, external_user_id, channel_id,
                                                     session_db_agent_id=db_agent_id if is_subagent else None),
                               send_via_channel=False)
-            self._message_queue.put(task)
-            return {"response": None, "async": True, "tool_trace": [], "timeline": []}
+            self._put_task(task)
+            return {
+                "response": None, "async": True, "tool_trace": [], "timeline": [],
+                "message_id": message_id,
+                "client_message_id": meta.get('client_message_id'),
+                "turn_id": task.ctx.turn_id,
+            }
 
         # No buffering — queue immediately and wait for result
         task = _QueueTask(agent, SessionContext(session_id, external_user_id, channel_id,
                                                 session_db_agent_id=db_agent_id if is_subagent else None),
                           send_via_channel=bool(channel_id))
-        self._message_queue.put(task)
+        self._put_task(task)
         task.event.wait()
-        return task.result
+        result = task.result or {}
+        result.update({
+            'message_id': message_id,
+            'client_message_id': meta.get('client_message_id'),
+            'turn_id': task.ctx.turn_id,
+        })
+        return result
 
     def _enqueue_buffered(self, task: '_QueueTask') -> None:
         """Queue a buffered task, cleaning up its timer even on failure."""
@@ -1474,7 +1548,7 @@ class AgentRuntime:
         except Exception:
             pass  # Timer may already be gone; the context manager handles cleanup
         try:
-            self._message_queue.put(task)
+            self._put_task(task, already_queued=True)
         except Exception:
             _logger.error("Failed to enqueue buffered task for session %s: %s",
                           task.ctx.session_id, traceback.format_exc())
@@ -1503,12 +1577,28 @@ class AgentRuntime:
     def _do_process(self, agent: dict, ctx: SessionContext) -> dict:
         """Internal: build messages and call LLM (must hold session lock)."""
         agent_id = agent['id']
+        from backend.realtime_store import realtime_store
+        if not realtime_store.start_turn(ctx.turn_id):
+            ctx.turn_id, _ = realtime_store.queue_turn(
+                agent_id, ctx.session_id, uuid.uuid4().hex,
+            )
+            realtime_store.start_turn(ctx.turn_id)
         self._set_busy(ctx.session_id, True)
-        self._set_agent_busy(agent_id, ctx.session_id)
+        active = realtime_store.busy_agents().get(agent_id, {})
         event_stream.emit('agent_busy_changed', {
             'agent_id': agent_id,
             'busy': True,
             'session_id': ctx.session_id,
+            'session_ids': active.get('session_ids', [ctx.session_id]),
+            'active_count': active.get('active_count', 1),
+            'state': 'running',
+            'turn_id': ctx.turn_id,
+        })
+        event_stream.emit('turn_begin', {
+            'agent_id': agent_id,
+            'session_id': ctx.session_id,
+            'turn_id': ctx.turn_id,
+            'ts': int(time.time() * 1000),
         })
         _turn_start = time.time()
         _turn_complete_emitted = False
@@ -1542,10 +1632,8 @@ class AgentRuntime:
                     'tool_trace': [],
                     'is_error': True,
                     'thinking_duration': _err_dur,
+                    'turn_id': ctx.turn_id,
                 })
-                self._bg_executor.submit(
-                    lambda sid=ctx.session_id: (time.sleep(SESSION_BUFFER_CLEANUP_DELAY), event_stream.cleanup_session_buffer(sid)),
-                )
             result = {
                 "response": "An unexpected error occurred. Please try again.",
                 "error": True,
@@ -1564,11 +1652,16 @@ class AgentRuntime:
             return result
         finally:
             self._set_busy(ctx.session_id, False)
-            self._clear_agent_busy(agent_id)
+            realtime_store.finish_turn(ctx.turn_id)
+            remaining = realtime_store.busy_agents().get(agent_id)
             event_stream.emit('agent_busy_changed', {
                 'agent_id': agent_id,
-                'busy': False,
-                'session_id': ctx.session_id,
+                'busy': bool(remaining),
+                'session_id': remaining.get('session_id', ctx.session_id) if remaining else ctx.session_id,
+                'session_ids': remaining.get('session_ids', []) if remaining else [],
+                'active_count': remaining.get('active_count', 0) if remaining else 0,
+                'state': remaining.get('state', 'idle') if remaining else 'idle',
+                'turn_id': None,
             })
             # Drain any messages that arrived in the injection queue just as the loop
             # was finishing (race between _is_busy check and loop exit). They are
@@ -1583,8 +1676,12 @@ class AgentRuntime:
             if orphaned:
                 _logger.warning("%d orphaned injected message(s) for %s — re-processing as new turn",
                                  len(orphaned), ctx.session_id)
-                task = _QueueTask(agent, ctx, send_via_channel=bool(ctx.channel_id))
-                self._message_queue.put(task)
+                next_ctx = SessionContext(
+                    ctx.session_id, ctx.external_user_id, ctx.channel_id,
+                    ctx.session_db_agent_id,
+                )
+                task = _QueueTask(agent, next_ctx, send_via_channel=bool(ctx.channel_id))
+                self._put_task(task)
 
     def _check_evonet_offline(self, agent: dict, ctx: SessionContext):
         """Return a completed turn result dict if the agent's Tunnel Workplace is offline,
@@ -1613,13 +1710,17 @@ class AgentRuntime:
         )
 
         db_agent_id = ctx.session_db_agent_id or agent['id']
-        _db_retry(db.add_chat_message, ctx.session_id, 'assistant', reply,
-                  agent_id=db_agent_id, metadata={'evonet_offline': True},
-                  label="save evonet offline reply")
+        message_id = _db_retry(
+            db.add_chat_message, ctx.session_id, 'assistant', reply,
+            agent_id=db_agent_id, metadata={'evonet_offline': True},
+            label="save evonet offline reply",
+        )
+        message_id = message_id if type(message_id) in (int, str) else None
         chatlog_manager.get(db_agent_id, ctx.session_id).append({
             'type': 'final', 'session_id': ctx.session_id,
             'content': reply,
             'metadata': {'evonet_offline': True},
+            'message_id': message_id,
         })
         if ctx.channel_id:
             try:
@@ -1646,6 +1747,7 @@ class AgentRuntime:
             'tool_trace': [],
             'is_error': True,
             'thinking_duration': 0,
+            'message_id': message_id,
         })
         return {'response': reply, 'tool_trace': [], 'error': True}
 
@@ -2440,6 +2542,14 @@ class AgentRuntime:
         if is_error:
             result["error"] = True
 
+        last_assistant = db.get_last_assistant_message(
+            ctx.session_id, agent_id=db_agent_id,
+        )
+        response_message_id = (
+            last_assistant.get('id')
+            if last_assistant and last_assistant.get('content') == response_text
+            else None
+        )
         # Emit turn_complete event
         event_stream.emit('turn_complete', {
             'agent_id': agent_id,
@@ -2451,12 +2561,9 @@ class AgentRuntime:
             'tool_trace': tool_trace,
             'is_error': is_error,
             'thinking_duration': round(time.time() - _inner_turn_start, 1),
+            'turn_id': ctx.turn_id,
+            'message_id': response_message_id,
         })
-        # Clean up per-session buffer after a delay to allow gap-fill requests to complete.
-        # Use executor to avoid timer leak (old timer never cancelled).
-        self._bg_executor.submit(
-            lambda sid=ctx.session_id: (time.sleep(SESSION_BUFFER_CLEANUP_DELAY), event_stream.cleanup_session_buffer(sid)),
-        )
 
         return result
 
@@ -2507,7 +2614,7 @@ class AgentRuntime:
             agent=agent,
             ctx=SessionContext(session_id, external_user_id, channel_id, session_db_agent_id),
         )
-        self._message_queue.put(task)
+        self._put_task(task)
 
     def get_compiled_context(self, agent_id: str, user_id: str = None) -> dict:
         """Return the compiled system prompt and tool definitions for an agent."""
@@ -2628,12 +2735,22 @@ class AgentRuntime:
                 reply = (f"Sorry, I'm busy with {reason}. "
                          f"Want me to let you know when I'm done?")
 
-        _db_retry(db.add_chat_message, session_id, 'assistant', reply,
-                  agent_id=agent_id, metadata={"busy_rejection": True},
-                  label="save busy rejection")
+        message_id = _db_retry(
+            db.add_chat_message, session_id, 'assistant', reply,
+            agent_id=agent_id, metadata={"busy_rejection": True},
+            label="save busy rejection",
+        )
+        message_id = message_id if type(message_id) in (int, str) else None
         chatlog_manager.get(agent_id, session_id).append({'type': 'final', 'session_id': session_id,
                                                           'content': reply,
-                                                          'metadata': {'busy_rejection': True}})
+                                                          'metadata': {'busy_rejection': True},
+                                                          'message_id': message_id})
+        event_stream.emit('message_received', {
+            'agent_id': agent_id, 'session_id': session_id,
+            'external_user_id': external_user_id, 'channel_id': channel_id,
+            'message': reply, 'message_id': message_id,
+            'metadata': {'busy_rejection': True}, 'role': 'assistant',
+        })
         # Record the deferral so the pending user message is auto-resumed once the
         # agent is free and unfocused (drained in _send_free_notification). Queued
         # on the opt-in branch too — the real answer supersedes the notification.
@@ -2703,6 +2820,13 @@ class AgentRuntime:
         """Clear chat history for a user's session."""
         session_id = db.get_or_create_session(agent_id, external_user_id, channel_id)
         db.clear_session(session_id, agent_id=agent_id)
+        from backend.realtime_store import realtime_store
+        realtime_store.purge_session(session_id)
+        event_stream.emit('session_clear', {
+            'agent_id': agent_id,
+            'session_id': session_id,
+            'turn_id': None,
+        })
         self._session_skill_mds.pop(session_id, None)
         self._session_skill_tools.pop(session_id, None)
 
@@ -2723,15 +2847,35 @@ class AgentRuntime:
         return [{"skill_id": sk_id, "tool_count": len(tool_defs)}
                 for sk_id, tool_defs in skills_data.items()]
 
-    def send_as_bot(self, session_id: str, text: str) -> bool:
+    def send_as_bot(self, session_id: str, text: str,
+                    metadata: dict | None = None) -> bool:
         """Admin takeover: save message as assistant and send via channel."""
         session = db.get_session_with_details(session_id)
         if not session:
             return False
-        db.add_chat_message(session_id, 'assistant', text, agent_id=session['agent_id'])
+        meta = {'admin_takeover': True}
+        if metadata:
+            meta.update(metadata)
+        message_id = db.add_chat_message(
+            session_id, 'assistant', text,
+            agent_id=session['agent_id'], metadata=meta,
+        )
+        message_id = message_id if type(message_id) in (int, str) else None
         chatlog_manager.get(session['agent_id'], session_id).append(
             {'type': 'final', 'session_id': session_id, 'content': text,
-             'metadata': {'admin_takeover': True}})
+             'metadata': meta, 'message_id': message_id})
+        event_stream.emit('message_received', {
+            'agent_id': session['agent_id'],
+            'session_id': session_id,
+            'external_user_id': session.get('external_user_id', ''),
+            'channel_id': session.get('channel_id'),
+            'message': text,
+            'message_id': message_id,
+            'client_message_id': meta.get('client_message_id'),
+            'metadata': meta,
+            'role': 'assistant',
+            'sender': 'admin',
+        })
         # Send via channel if available
         if session.get('channel_id'):
             instance = channel_manager._active.get(session['channel_id'])
@@ -2808,18 +2952,27 @@ class AgentRuntime:
         else:
             content = f"[File: {filename}]"
 
+        # Also persist in main chat messages table
+        message_id = db.add_chat_message(
+            session_id, 'assistant', content, agent_id=agent_id,
+            metadata={'attachment_info': attachment_info},
+        )
+        message_id = message_id if type(message_id) in (int, str) else None
         chatlog = chatlog_manager.get(agent_id, session_id)
         chatlog.append({
             'type': 'final',
             'session_id': session_id,
             'content': content,
             'metadata': {'attachment_info': attachment_info, 'channel': channel_type},
+            'message_id': message_id,
         })
-
-        # Also persist in main chat messages table
-        db.add_chat_message(session_id, 'assistant', content,
-                            agent_id=agent_id,
-                            metadata={'attachment_info': attachment_info})
+        event_stream.emit('message_received', {
+            'agent_id': agent_id, 'session_id': session_id,
+            'external_user_id': external_user_id, 'channel_id': channel_id,
+            'message': content, 'message_id': message_id,
+            'metadata': {'attachment_info': attachment_info},
+            'role': 'assistant', 'sender': agent_id,
+        })
 
         return True
 
@@ -2907,16 +3060,30 @@ class AgentRuntime:
             )
             if response is not None:
                 # Command was recognized — save command echo and response, then return
-                db.add_chat_message(session_id, 'user', text,
-                                    agent_id=agent_id, metadata={'slash_command': True})
-                db.add_chat_message(session_id, 'assistant', response,
-                                    agent_id=agent_id, metadata={'slash_command': True})
+                command_meta = {'slash_command': True}
+                if metadata and metadata.get('client_message_id'):
+                    command_meta['client_message_id'] = metadata['client_message_id']
+                message_id = db.add_chat_message(
+                    session_id, 'user', text,
+                    agent_id=agent_id, metadata=command_meta,
+                )
+                response_id = db.add_chat_message(
+                    session_id, 'assistant', response,
+                    agent_id=agent_id, metadata={'slash_command': True},
+                )
                 _cl = chatlog_manager.get(agent_id, session_id)
                 _cl.append({'type': 'user', 'session_id': session_id, 'content': text,
                             'sender_id': external_user_id,
-                            'metadata': {'slash_command': True}})
+                            'metadata': command_meta, 'message_id': message_id})
                 _cl.append({'type': 'system', 'session_id': session_id, 'content': response,
-                            'metadata': {'slash_command': True}})
+                            'metadata': {'slash_command': True}, 'message_id': response_id})
+                event_stream.emit('message_received', {
+                    'agent_id': agent_id, 'session_id': session_id,
+                    'external_user_id': external_user_id, 'channel_id': channel_id,
+                    'message': text, 'message_id': message_id,
+                    'client_message_id': command_meta.get('client_message_id'),
+                    'metadata': command_meta, 'role': 'user',
+                })
                 agent = db.get_agent(agent_id)
                 # Check for any attachments created by the handler (e.g. /dump)
                 attachment_info = None
@@ -2949,13 +3116,8 @@ class AgentRuntime:
                     'thinking_duration': 0.0,
                     'slash_command': True,
                     'attachment_info': attachment_info,
+                    'message_id': response_id,
                 })
-                # Signal the client to clear the chat UI when the clear command was used
-                if cmd_name == 'clear':
-                    event_stream.emit('session_clear', {
-                        'session_id': session_id,
-                        'agent_id': agent_id,
-                    })
                 self._prefetcher.invalidate(session_id)
                 return response  # return response text so caller can include it in API response
             # Unknown command — fall through to normal LLM processing
@@ -2969,10 +3131,12 @@ class AgentRuntime:
             meta['video_url'] = video_url
         if metadata:
             meta.update(metadata)
-        db.add_chat_message(session_id, 'user', text, agent_id=agent_id, metadata=meta)
+        message_id = db.add_chat_message(
+            session_id, 'user', text, agent_id=agent_id, metadata=meta,
+        )
         chatlog_manager.get(agent_id, session_id).append(
             {'type': 'user', 'session_id': session_id, 'content': text,
-             'metadata': meta})
+             'metadata': meta, 'message_id': message_id})
 
         # Invalidate prefetched context — a new message arrived
         self._prefetcher.invalidate(session_id)
@@ -2989,6 +3153,10 @@ class AgentRuntime:
             'image_url': image_url,
             'audio_url': audio_url,
             'video_url': video_url,
+            'message_id': message_id,
+            'client_message_id': meta.get('client_message_id'),
+            'metadata': meta,
+            'role': 'user',
         })
 
         # Mid-loop injection: if session is currently processing, inject message
@@ -3012,7 +3180,7 @@ class AgentRuntime:
         if agent and agent.get('enabled', True):
             task = _QueueTask(agent, SessionContext(session_id, external_user_id, channel_id),
                               send_via_channel=False)
-            self._message_queue.put(task)
+            self._put_task(task)
 
         return True
 
@@ -3030,4 +3198,4 @@ class AgentRuntime:
             return
         task = _QueueTask(agent, SessionContext(session_id, external_user_id, channel_id),
                           send_via_channel=send_via_channel)
-        self._message_queue.put(task)
+        self._put_task(task)

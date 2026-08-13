@@ -1011,8 +1011,22 @@ class WhatsAppChannel(BaseChannel):
         if not db.is_session_bot_enabled(session_id, agent_id=agent_id):
             _logger.info("WhatsApp message stored only — bot disabled for session %s (sender=%s)",
                          session_id, sender)
-            db.add_chat_message(session_id, 'user', final_text or text or '[Attachment]',
-                                agent_id=agent_id)
+            stored = final_text or text or '[Attachment]'
+            message_id = db.add_chat_message(
+                session_id, 'user', stored, agent_id=agent_id,
+            )
+            message_id = message_id if type(message_id) in (int, str) else None
+            from models.chatlog import chatlog_manager
+            chatlog_manager.get(agent_id, session_id).append({
+                'type': 'user', 'session_id': session_id, 'content': stored,
+                'sender_id': session_user_id, 'message_id': message_id,
+            })
+            from backend.event_stream import event_stream
+            event_stream.emit('message_received', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': session_user_id, 'channel_id': self.channel_id,
+                'message': stored, 'message_id': message_id, 'role': 'user',
+            })
             return
 
         _logger.info("WhatsApp message received from %s (channel %s)", sender, self.channel_id)

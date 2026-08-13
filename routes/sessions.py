@@ -182,21 +182,25 @@ def api_list_sessions():
     sessions, total = db.get_all_sessions(search=search, limit=limit, offset=offset,
                                           exclude_test=exclude_test)
     # Tag sessions that are currently being processed by an agent
-    from backend.agent_runtime import agent_runtime
+    from backend.realtime_store import realtime_store
     for s in sessions:
-        s['is_active'] = agent_runtime._is_busy(s['id'])
+        s['is_active'] = bool(realtime_store.active_turns(session_id=s['id']))
     return jsonify({'sessions': sessions, 'total': total})
 
 
 @sessions_bp.route('/api/sessions/<session_id>')
 def api_get_session(session_id):
+    from backend.realtime_store import realtime_store
+    realtime_cursor = realtime_store.high_water()
     session = db.get_session_with_details(session_id)
     if not session:
         return jsonify({'error': 'Session not found'}), 404
     limit = request.args.get('limit', 200, type=int)
     before_id = request.args.get('before_id', None, type=int)
     messages, has_more = db.get_session_messages_full(session_id, limit=limit, before_id=before_id)
-    return jsonify({'session': session, 'messages': messages, 'has_more': has_more})
+    response = jsonify({'session': session, 'messages': messages, 'has_more': has_more})
+    response.headers['X-Evonic-Realtime-Cursor'] = str(realtime_cursor)
+    return response
 
 
 @sessions_bp.route('/api/sessions/<session_id>/poll')
@@ -213,12 +217,17 @@ def api_session_reply(session_id):
     if request.content_type and request.content_type.startswith('multipart/form-data'):
         text = (request.form.get('text') or '').strip()
         perspective = (request.form.get('perspective') or 'A').strip()
+        client_message_id = (request.form.get('client_message_id') or '').strip()
         file = request.files.get('file')
     else:
-        data = request.get_json()
+        data = request.get_json() or {}
         text = (data.get('text') or '').strip()
         perspective = (data.get('perspective') or 'A').strip()
+        client_message_id = (data.get('client_message_id') or '').strip()
         file = None
+
+    if client_message_id and not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', client_message_id):
+        return jsonify({'error': 'Invalid client_message_id'}), 400
 
     if not text and not file:
         return jsonify({'error': 'Text or file is required'}), 400
@@ -285,16 +294,22 @@ def api_session_reply(session_id):
             text = f"{info_line}\n\n{text}" if text else info_line
 
     if perspective == 'A':
+        upload_meta = dict(upload_meta or {})
+        if client_message_id:
+            upload_meta['client_message_id'] = client_message_id
         result = agent_runtime.send_as_user(session_id, text,
                                             image_url=image_url, metadata=upload_meta)
     else:
-        result = agent_runtime.send_as_bot(session_id, text)
+        result = agent_runtime.send_as_bot(
+            session_id, text,
+            metadata={'client_message_id': client_message_id} if client_message_id else None,
+        )
 
     if not result:
         return jsonify({'error': 'Session not found'}), 404
 
     # Build response — for slash commands, include the response text directly
-    resp = {'success': True}
+    resp = {'success': True, 'client_message_id': client_message_id or None}
     if isinstance(result, str):
         # send_as_user returned the slash command response text
         resp['slash_command'] = True
@@ -366,6 +381,8 @@ def api_clear_all_sessions():
     """Delete all chat sessions, messages, summaries, and attachments
     across all agents."""
     db.clear_all_sessions()
+    from backend.realtime_store import realtime_store
+    realtime_store.purge_all()
     audit.log_session(user_id='admin', session_id='*', action='clear_all', ip=request.remote_addr or '')
     return jsonify({'success': True})
 

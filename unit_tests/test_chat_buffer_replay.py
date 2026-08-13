@@ -1,110 +1,186 @@
-"""Tests for unified chat SSE buffer-replay on connect (routes.realtime).
+"""Regression checks for durable chat replay."""
 
-A client connecting at/after the POST that starts a turn must still receive the
-turn's opening events (turn_begin, early thinking, first tool call). The unified
-_producer_chat replays the in-progress session buffer after subscribing — mirror
-of the legacy /chat/stream behavior. Without it the UI shows only a spinner until
-a manual refresh.
-"""
 import os
-import sys
-import threading
-import time
-import unittest
+import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from flask import Flask
 
-from routes.realtime import _producer_chat, BoundedRing, CircuitBreaker
-from backend.event_stream import event_stream
+import backend.realtime_store as realtime_module
+from backend.realtime_store import RealtimeStore
+from routes import realtime as realtime_route
 
 
-def _run_producer(session_id, after_seq=0, settle=0.2):
-    """Run _producer_chat briefly and return the (sse_name, payload) items it
-    pushed into the ring during the replay phase."""
-    ring = BoundedRing('chat', 256, 'drop_oldest')
-    stop = threading.Event()
-    th = threading.Thread(
-        target=_producer_chat,
-        args=(ring, CircuitBreaker('chat'), stop, session_id, after_seq),
-        daemon=True,
-    )
-    th.start()
-    time.sleep(settle)  # allow subscribe + replay
-    stop.set()
-    th.join(timeout=2)
-    return [item for (_seq, item) in ring.get_all()]
+def make_store(tmpdir):
+    return RealtimeStore(os.path.join(tmpdir, "realtime.db"))
 
 
-class TestChatBufferReplay(unittest.TestCase):
+def make_app():
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(realtime_route.realtime_bp)
+    return app
 
-    def test_replays_in_progress_turn(self):
-        sid = 'replaytest-inprogress'
-        event_stream.emit('turn_begin', {'session_id': sid, 'ts': 1})
-        event_stream.emit('llm_thinking', {'session_id': sid, 'thinking': 'hmm'})
-        event_stream.emit('tool_call_started',
-                          {'session_id': sid, 'tool_name': 'bash', 'tool_args': {}})
 
-        items = _run_producer(sid)
-        names = [n for (n, _p) in items]
-        self.assertEqual(names, ['turn_begin', 'thinking', 'tool_call_started'])
+def test_active_turn_replays_in_order_after_refresh():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, created = store.queue_turn("agent-a", "session-a", "turn-a")
+        assert created and turn_id == "turn-a"
+        store.start_turn(turn_id)
+        store.publish("chat", "turn_begin", {}, agent_id="agent-a",
+                      session_id="session-a", turn_id=turn_id)
+        store.publish("chat", "thinking", {"content": "working"},
+                      agent_id="agent-a", session_id="session-a", turn_id=turn_id)
 
-        # Every replayed event carries the contiguous per-session chat seq.
-        seqs = [p.get('seq') for (_n, p) in items]
-        self.assertTrue(all(s is not None for s in seqs))
-        self.assertEqual(seqs, sorted(seqs))
-        self.assertEqual(len(set(seqs)), 3)
+        events = store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+            active_only=True,
+        )
+        assert [event["event"] for event in events] == [
+            "turn_queued", "agent_busy_changed", "turn_begin", "thinking",
+        ]
+        assert [event["id"] for event in events] == sorted(event["id"] for event in events)
 
-    def test_strips_completed_turn_on_fresh_connect(self):
-        sid = 'replaytest-boundary'
-        event_stream.emit('turn_begin', {'session_id': sid, 'ts': 1})
-        event_stream.emit('llm_thinking', {'session_id': sid, 'thinking': 'old'})
-        event_stream.emit('turn_complete', {'session_id': sid, 'thinking_duration': 1.0})
-        # A new in-progress turn after the boundary — only this should replay.
-        event_stream.emit('turn_begin', {'session_id': sid, 'ts': 2})
-        event_stream.emit('llm_thinking', {'session_id': sid, 'thinking': 'new'})
+        store.finish_turn(turn_id)
+        assert store.active_turns(session_id="session-a") == []
+        assert store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+            active_only=True,
+        ) == []
+        # Terminal telemetry remains replayable for the 24-hour retention window.
+        assert len(store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        )) == 4
+        store.close()
 
-        items = _run_producer(sid, after_seq=0)
-        names = [n for (n, _p) in items]
-        self.assertEqual(names, ['turn_begin', 'thinking'])
-        # The replayed thinking is from the NEW turn, not the stripped one.
-        thinking = [p for (n, p) in items if n == 'thinking'][0]
-        self.assertEqual(thinking.get('content'), 'new')
 
-    def test_no_buffer_is_noop(self):
-        items = _run_producer('replaytest-empty')
-        self.assertEqual(items, [])
+def test_debounced_queue_reuses_one_durable_turn():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        first, created = store.queue_turn("agent-a", "session-a", "turn-a")
+        second, created_again = store.queue_turn("agent-a", "session-a", "turn-b")
+        assert created is True
+        assert created_again is False
+        assert second == first
+        assert len(store.active_turns(session_id="session-a")) == 1
+        assert [event["event"] for event in store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        )] == ["turn_queued", "agent_busy_changed"]
+        store.close()
 
-    def test_message_received_forwarded_with_seq(self):
-        sid = 'replaytest-message-received'
-        event_stream.emit('message_received', {
-            'session_id': sid,
-            'message': '[ESCALATION/Agent B] Please choose.',
-            'metadata': {'escalated_from_agent_session': True},
+
+def test_restart_marks_old_turn_interrupted():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE active_turns SET owner_pid = ? WHERE turn_id = ?",
+                (os.getpid() + 100_000, turn_id),
+            )
+
+        assert [turn["turn_id"] for turn in store.interrupt_stale_turns()] == [turn_id]
+        assert store.active_turns() == []
+        events = store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        )
+        assert events[-2]["event"] == "done"
+        assert events[-2]["data"]["interrupted"] is True
+        assert events[-1]["event"] == "agent_busy_changed"
+        store.close()
+
+
+def test_chat_replay_is_exactly_session_scoped():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        store.publish("chat", "thinking", {"content": "A"},
+                      agent_id="agent-a", session_id="session-a")
+        store.publish("chat", "thinking", {"content": "B"},
+                      agent_id="agent-a", session_id="session-b")
+
+        events = store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        )
+        assert len(events) == 1
+        assert events[0]["data"]["content"] == "A"
+        store.close()
+
+
+def test_expired_terminal_event_is_not_replayed():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        store.publish(
+            "chat", "done", {"response": "old"},
+            agent_id="agent-a", session_id="session-a",
+            occurred_at_ms=1,
+        )
+        assert store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        ) == []
+        store.close()
+
+
+def test_message_event_keeps_correlation_without_local_paths(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        monkeypatch.setattr(realtime_module, "realtime_store", store)
+        realtime_module.record_internal_event("message_received", {
+            "agent_id": "agent-a", "session_id": "session-a",
+            "message": "[Attached: report.pdf path=/private/report.pdf] inspect",
+            "message_id": 42, "client_message_id": "browser-1", "role": "user",
+            "metadata": {"attachment_info": {
+                "attachment_id": 7, "filename": "report.pdf",
+                "mime_type": "application/pdf", "file_path": "/private/report.pdf",
+            }},
         })
-
-        items = _run_producer(sid)
-        received = [p for (name, p) in items if name == 'message_received']
-        self.assertEqual(len(received), 1)
-        self.assertEqual(received[0]['message'], '[ESCALATION/Agent B] Please choose.')
-        self.assertTrue(received[0]['metadata']['escalated_from_agent_session'])
-        self.assertIsNotNone(received[0]['seq'])
-
-    def test_state_changed_forwarded_with_seq(self):
-        """'evonic:agent-state-changed' is a chat-forwarded event: it gets a
-        contiguous chat seq (so the client's gap detector can recover one
-        that loses the thread-pool race against turn_complete) and reaches
-        the stream as 'state_changed'."""
-        sid = 'replaytest-statechanged'
-        event_stream.emit('turn_begin', {'session_id': sid, 'ts': 1})
-        event_stream.emit('evonic:agent-state-changed',
-                          {'agent_id': 'a1', 'session_id': sid})
-        items = _run_producer(sid)
-        names = [n for (n, _p) in items]
-        self.assertIn('state_changed', names)
-        payload = [p for (n, p) in items if n == 'state_changed'][0]
-        self.assertIsNotNone(payload.get('seq'))
-        self.assertEqual(payload.get('agent_id'), 'a1')
+        data = store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        )[0]["data"]
+        assert data["message_id"] == 42
+        assert data["client_message_id"] == "browser-1"
+        assert "/private/report.pdf" not in str(data)
+        assert data["metadata"]["attachment_info"]["filename"] == "report.pdf"
+        store.close()
 
 
-if __name__ == '__main__':
-    unittest.main()
+def test_gateway_replays_from_last_event_id(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        first = store.publish("status", "agent_busy_changed", {"busy": True})
+        second = store.publish("status", "agent_busy_changed", {"busy": False})
+        monkeypatch.setattr(realtime_route, "realtime_store", store)
+
+        response = make_app().test_client().get(
+            "/api/realtime/stream?channels=status",
+            headers={"Last-Event-ID": str(first)}, buffered=False,
+        )
+        chunks = [next(response.response).decode() for _ in range(3)]
+        response.close()
+
+        assert f"id: {first}" in chunks[1] and "event: ready" in chunks[1]
+        assert f"id: {second}" in chunks[2]
+        assert '"busy":false' in chunks[2]
+        store.close()
+
+
+def test_fresh_global_gateway_starts_at_current_state(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        old = store.publish("update", "update_done", {"status": "old"})
+        monkeypatch.setattr(realtime_route, "realtime_store", store)
+
+        response = make_app().test_client().get(
+            "/api/realtime/stream?channels=update", buffered=False,
+        )
+        chunks = []
+        while not any("event: ready" in chunk for chunk in chunks):
+            chunks.append(next(response.response).decode())
+        assert all('"status":"old"' not in chunk for chunk in chunks)
+        assert any(f"id: {old}" in chunk and "event: ready" in chunk for chunk in chunks)
+
+        new = store.publish("update", "update_done", {"status": "new"})
+        live = next(response.response).decode()
+        response.close()
+        assert f"id: {new}" in live and '"status":"new"' in live
+        store.close()
