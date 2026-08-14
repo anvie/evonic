@@ -217,7 +217,8 @@ def _uploaded_document(agent: dict, path: str) -> tuple[Optional[dict], str, str
     return (
         None,
         upload_paths[0],
-        "Access denied — attachment path does not belong to this agent and session.",
+        "Access denied — use the exact path listed under Session Attachments "
+        "for this agent and session; do not construct upload paths from filenames.",
     )
 
 

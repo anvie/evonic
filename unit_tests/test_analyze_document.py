@@ -181,7 +181,7 @@ def test_rejects_disabled_cross_session_unsupported_and_bad_signature(tmp_path):
     assert 'document_enabled=0' in ap.execute(
         {'id': owner, 'document_enabled': 0}, {'path': valid_path}
     )
-    assert 'does not belong to this agent and session' in ap.execute(
+    assert 'exact path listed under Session Attachments' in ap.execute(
         {'id': owner, 'session_id': 'other-session', 'document_enabled': 1},
         {'path': valid_path},
     )
@@ -225,7 +225,7 @@ def test_rejects_cross_agent_attachment(tmp_path):
         {'path': path},
     )
 
-    assert 'does not belong to this agent and session' in result
+    assert 'exact path listed under Session Attachments' in result
 
     alias = '/workspace/' + os.path.relpath(path, tmp_path)
     alias_result = ap.execute(
@@ -237,7 +237,7 @@ def test_rejects_cross_agent_attachment(tmp_path):
         },
         {'path': alias},
     )
-    assert 'does not belong to this agent and session' in alias_result
+    assert 'exact path listed under Session Attachments' in alias_result
 
     data, name, mime, error = ap._read_path(
         {'id': owner, 'session_id': 's1', 'workspace': str(tmp_path)},
