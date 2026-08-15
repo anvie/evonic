@@ -40,7 +40,7 @@ def _human_size(size_bytes: int | None) -> str:
 
 # Reuse text/pdf detection from read_attachment
 from backend.tools.read_attachment import (
-    _is_textish, _is_pdf, _read_pdf_text, _TEXTISH_EXTS,
+    _is_textish, _is_anydoc, _read_anydoc_text, _TEXTISH_EXTS,
 )
 
 _ALLOWED_EXTS = (
@@ -141,9 +141,9 @@ def _process_upload(file_storage, agent_id: str, session_id: str,
             image_url = None
         return {'image_url': image_url, 'text_prefix': None, 'attachment_info': attachment_info}
 
-    # --- PDF: extract text ---
-    if _is_pdf(mime_type, target_path):
-        text = _read_pdf_text(target_path, offset=1)
+    # --- Document (PDF/Office): extract text via anydoc ---
+    if _is_anydoc(mime_type, target_path):
+        text = _read_anydoc_text(target_path, offset=1)
         prefix = f"[Attached file: {original_name}]\n```\n{text}\n```"
         if workplace_path:
             prefix = f"[Workplace path: {workplace_path}]\n" + prefix
