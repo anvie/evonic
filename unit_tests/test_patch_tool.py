@@ -1,20 +1,17 @@
-"""
-Unit tests for backend/tools/patch.py
+"""Unit and Git-format compatibility tests for ``backend/tools/patch.py``.
 
-The patch tool has two backends:
-  - apply_patch()  — hybrid: uses system `patch` binary if available, else Python
-  - apply_hunks()  — pure-Python fallback, always used directly to test Python behavior
-
-Tests that require specific Python-fallback behavior (drift tolerance, CRLF
-preservation, insertion-only) call apply_hunks() directly.
-Tests for core functionality (replace, insert, delete, errors) use apply_patch()
-so they run against whichever backend is active on this system.
+The model-facing ``execute()`` contract uses complete single-file ``git diff``
+patches as its canonical format while retaining legacy hunk-only compatibility.
 """
 
-import os
-import tempfile
-import pytest
 import importlib.util
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+import pytest
 
 _patch_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backend', 'tools', 'patch.py')
 _spec = importlib.util.spec_from_file_location('patch_tool', _patch_path)
@@ -26,6 +23,8 @@ apply_hunks = _mod.apply_hunks
 parse_hunks = _mod.parse_hunks
 _find_hunk_pos = _mod._find_hunk_pos
 _find_first_anchor = _mod._find_first_anchor
+execute = _mod.execute
+validate_git_patch_format = _mod.validate_git_patch_format
 
 
 # ---------------------------------------------------------------------------
@@ -400,3 +399,389 @@ class TestFuzzyMatching:
         r = apply_hunks(p, '@@ -1,2 +1,2 @@\n TOTALLY_NONEXISTENT\n-ALSO_NONEXISTENT\n+REPLACED\n')
         assert 'error' in r
         os.unlink(p)
+
+
+# ---------------------------------------------------------------------------
+# 8. Model-facing Git patch format
+# ---------------------------------------------------------------------------
+
+class TestGitPatchFormat:
+    def test_accepts_existing_file_patch(self):
+        patch = (
+            'diff --git a/app.py b/app.py\n'
+            'index 1111111..2222222 100644\n'
+            '--- a/app.py\n'
+            '+++ b/app.py\n'
+            '@@ -1,2 +1,2 @@\n'
+            ' alpha\n'
+            '-beta\n'
+            '+BETA\n'
+        )
+        info = validate_git_patch_format(patch)
+        assert info == {
+            'old_path': 'a/app.py',
+            'new_path': 'b/app.py',
+            'is_new_file': False,
+            'hunk_count': 1,
+        }
+
+    def test_accepts_new_file_patch(self):
+        patch = (
+            'diff --git a/new.py b/new.py\n'
+            'new file mode 100644\n'
+            '--- /dev/null\n'
+            '+++ b/new.py\n'
+            '@@ -0,0 +1,2 @@\n'
+            '+first\n'
+            '+second\n'
+        )
+        info = validate_git_patch_format(patch)
+        assert info['is_new_file'] is True
+        assert info['hunk_count'] == 1
+
+    def test_accepts_git_quoted_paths(self):
+        patch = (
+            'diff --git "a/space name.txt" "b/space name.txt"\n'
+            '--- "a/space name.txt"\n'
+            '+++ "b/space name.txt"\n'
+            '@@ -1 +1 @@\n'
+            '-old\n'
+            '+new\n'
+        )
+        info = validate_git_patch_format(patch)
+        assert info['old_path'] == 'a/space name.txt'
+        assert info['new_path'] == 'b/space name.txt'
+
+    @pytest.mark.parametrize(
+        ('patch', 'message'),
+        [
+            (
+                '@@ -1 +1 @@\n-old\n+new\n',
+                'Missing "diff --git',
+            ),
+            (
+                'diff --git a/a.txt b/a.txt\n'
+                '--- a/a.txt\n'
+                '+++ b/a.txt\n'
+                '@@ -1,2 +1,2 @@\n'
+                '-old\n'
+                '+new\n',
+                'Hunk line counts do not match',
+            ),
+            (
+                'diff --git a/a.txt b/a.txt\n'
+                '--- a/a.txt\n'
+                '+++ b/a.txt\n'
+                '@@ -1 +1 @@\n'
+                '-old\n'
+                '+new\n'
+                '*** End Patch\n',
+                'Invalid hunk line',
+            ),
+            (
+                'diff --git a/a.txt b/a.txt\n'
+                'deleted file mode 100644\n'
+                '--- a/a.txt\n'
+                '+++ /dev/null\n'
+                '@@ -1 +0,0 @@\n'
+                '-old\n',
+                'File-deletion patches are not supported',
+            ),
+            (
+                'diff --git a/a.txt b/a.txt\n'
+                'diff --git a/b.txt b/b.txt\n',
+                'exactly one file per call',
+            ),
+        ],
+    )
+    def test_rejects_nonstandard_or_unsupported_input(self, patch, message):
+        with pytest.raises(ValueError, match=message):
+            validate_git_patch_format(patch)
+
+    def test_execute_accepts_legacy_hunk_only_patch_with_warning(self, tmp_path):
+        target = tmp_path / 'file.txt'
+        target.write_text('old\n')
+        result = execute(
+            {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+            {
+                'file_path': str(target),
+                'patch': '@@ -1 +1 @@\n-old\n+new\n',
+            },
+        )
+        assert result['result'] == 'success'
+        assert 'Legacy hunk-only patch accepted' in result['warning']
+        assert target.read_text() == 'new\n'
+
+    def test_execute_accepts_legacy_hunk_only_new_file(self, tmp_path):
+        target = tmp_path / 'new.txt'
+        result = execute(
+            {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+            {
+                'file_path': str(target),
+                'patch': '@@ -0,0 +1,2 @@\n+first\n+second\n',
+            },
+        )
+        assert result['result'] == 'success'
+        assert 'Legacy hunk-only patch accepted' in result['warning']
+        assert target.read_text() == 'first\nsecond\n'
+
+    def test_legacy_insertion_only_patch_can_target_existing_file(self, tmp_path):
+        target = tmp_path / 'existing.txt'
+        target.write_text('existing\n')
+        result = execute(
+            {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+            {
+                'file_path': str(target),
+                'patch': '@@ -0,0 +1,1 @@\n+inserted\n',
+            },
+        )
+        assert result['result'] == 'success'
+        assert target.read_text() == 'inserted\nexisting\n'
+
+
+# ---------------------------------------------------------------------------
+# 9. Differential compatibility with git apply
+# ---------------------------------------------------------------------------
+
+GIT_AVAILABLE = shutil.which('git') is not None
+
+
+def _write_fixture(root: Path, relative_path: str, content):
+    if content is None:
+        return
+    target = root / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+
+def _git_apply(root: Path, patch_text: str):
+    subprocess.run(
+        ['git', 'init', '-q'],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return subprocess.run(
+        ['git', 'apply', '--whitespace=nowarn', '-'],
+        cwd=root,
+        input=patch_text,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason='git is required for differential tests')
+@pytest.mark.parametrize(
+    ('case_name', 'relative_path', 'initial', 'patch_text'),
+    [
+        (
+            'existing-untracked-replacement',
+            'sample.txt',
+            b'alpha\nbeta\ngamma\n',
+            'diff --git a/sample.txt b/sample.txt\n'
+            'index 1111111..2222222 100644\n'
+            '--- a/sample.txt\n'
+            '+++ b/sample.txt\n'
+            '@@ -1,3 +1,3 @@\n'
+            ' alpha\n'
+            '-beta\n'
+            '+BETA\n'
+            ' gamma\n',
+        ),
+        (
+            'existing-untracked-multiple-hunks',
+            'sample.txt',
+            b'a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\n',
+            'diff --git a/sample.txt b/sample.txt\n'
+            'index 1111111..2222222 100644\n'
+            '--- a/sample.txt\n'
+            '+++ b/sample.txt\n'
+            '@@ -1,3 +1,3 @@\n'
+            ' a\n'
+            '-b\n'
+            '+B\n'
+            ' c\n'
+            '@@ -10,3 +10,3 @@\n'
+            ' j\n'
+            '-k\n'
+            '+K\n'
+            ' l\n',
+        ),
+        (
+            'existing-untracked-quoted-path',
+            'space name.txt',
+            b'old\n',
+            'diff --git "a/space name.txt" "b/space name.txt"\n'
+            'index 1111111..2222222 100644\n'
+            '--- "a/space name.txt"\n'
+            '+++ "b/space name.txt"\n'
+            '@@ -1 +1 @@\n'
+            '-old\n'
+            '+new\n',
+        ),
+        (
+            'hunk-content-resembles-file-headers',
+            'sample.txt',
+            b'-- old\n',
+            'diff --git a/sample.txt b/sample.txt\n'
+            'index 1111111..2222222 100644\n'
+            '--- a/sample.txt\n'
+            '+++ b/sample.txt\n'
+            '@@ -1 +1 @@\n'
+            '--- old\n'
+            '+++ new\n',
+        ),
+        (
+            'new-file',
+            'nested/new.txt',
+            None,
+            'diff --git a/nested/new.txt b/nested/new.txt\n'
+            'new file mode 100644\n'
+            'index 0000000..1111111\n'
+            '--- /dev/null\n'
+            '+++ b/nested/new.txt\n'
+            '@@ -0,0 +1,2 @@\n'
+            '+first\n'
+            '+second\n',
+        ),
+        (
+            'new-file-without-trailing-newline',
+            'new.txt',
+            None,
+            'diff --git a/new.txt b/new.txt\n'
+            'new file mode 100644\n'
+            'index 0000000..1111111\n'
+            '--- /dev/null\n'
+            '+++ b/new.txt\n'
+            '@@ -0,0 +1 @@\n'
+            '+only line\n'
+            '\\ No newline at end of file\n',
+        ),
+        (
+            'replace-file-without-trailing-newline',
+            'sample.txt',
+            b'old',
+            'diff --git a/sample.txt b/sample.txt\n'
+            'index 1111111..2222222 100644\n'
+            '--- a/sample.txt\n'
+            '+++ b/sample.txt\n'
+            '@@ -1 +1 @@\n'
+            '-old\n'
+            '\\ No newline at end of file\n'
+            '+new\n'
+            '\\ No newline at end of file\n',
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) and '\n' not in value else None,
+)
+def test_evonic_matches_git_apply_for_supported_text_patches(
+        tmp_path, case_name, relative_path, initial, patch_text):
+    evonic_root = tmp_path / 'evonic'
+    git_root = tmp_path / 'git'
+    evonic_root.mkdir()
+    git_root.mkdir()
+    _write_fixture(evonic_root, relative_path, initial)
+    _write_fixture(git_root, relative_path, initial)
+
+    evonic_target = evonic_root / relative_path
+    evonic_result = execute(
+        {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+        {'file_path': str(evonic_target), 'patch': patch_text},
+    )
+    git_result = _git_apply(git_root, patch_text)
+
+    assert git_result.returncode == 0, (
+        f'{case_name}: git apply rejected fixture: {git_result.stderr}'
+    )
+    assert evonic_result.get('result') == 'success', (
+        f'{case_name}: Evonic rejected fixture: {evonic_result}'
+    )
+    assert 'warning' not in evonic_result
+    assert evonic_target.read_bytes() == (git_root / relative_path).read_bytes()
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason='git is required for differential tests')
+@pytest.mark.parametrize(
+    ('case_name', 'target_exists', 'patch_text'),
+    [
+        (
+            'bad-hunk-count',
+            True,
+            'diff --git a/sample.txt b/sample.txt\n'
+            '--- a/sample.txt\n'
+            '+++ b/sample.txt\n'
+            '@@ -1,2 +1,2 @@\n'
+            '-old\n'
+            '+new\n',
+        ),
+        (
+            'regular-patch-for-missing-file',
+            False,
+            'diff --git a/sample.txt b/sample.txt\n'
+            '--- a/sample.txt\n'
+            '+++ b/sample.txt\n'
+            '@@ -1 +1 @@\n'
+            '-old\n'
+            '+new\n',
+        ),
+        (
+            'new-file-patch-for-existing-file',
+            True,
+            'diff --git a/sample.txt b/sample.txt\n'
+            'new file mode 100644\n'
+            '--- /dev/null\n'
+            '+++ b/sample.txt\n'
+            '@@ -0,0 +1 @@\n'
+            '+new\n',
+        ),
+    ],
+)
+def test_evonic_and_git_apply_both_reject_invalid_or_inapplicable_patches(
+        tmp_path, case_name, target_exists, patch_text):
+    evonic_root = tmp_path / 'evonic'
+    git_root = tmp_path / 'git'
+    evonic_root.mkdir()
+    git_root.mkdir()
+    initial = b'old\n' if target_exists else None
+    _write_fixture(evonic_root, 'sample.txt', initial)
+    _write_fixture(git_root, 'sample.txt', initial)
+
+    evonic_target = evonic_root / 'sample.txt'
+    before = evonic_target.read_bytes() if evonic_target.exists() else None
+    evonic_result = execute(
+        {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+        {'file_path': str(evonic_target), 'patch': patch_text},
+    )
+    git_result = _git_apply(git_root, patch_text)
+
+    assert git_result.returncode != 0, f'{case_name}: git apply unexpectedly succeeded'
+    assert 'error' in evonic_result, (
+        f'{case_name}: Evonic unexpectedly succeeded: {evonic_result}'
+    )
+    after = evonic_target.read_bytes() if evonic_target.exists() else None
+    assert after == before
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason='git is required for differential tests')
+def test_legacy_hunk_only_is_an_intentional_git_apply_compatibility_exception(
+        tmp_path):
+    evonic_root = tmp_path / 'evonic'
+    git_root = tmp_path / 'git'
+    evonic_root.mkdir()
+    git_root.mkdir()
+    _write_fixture(evonic_root, 'sample.txt', b'old\n')
+    _write_fixture(git_root, 'sample.txt', b'old\n')
+    patch_text = '@@ -1 +1 @@\n-old\n+new\n'
+
+    evonic_target = evonic_root / 'sample.txt'
+    evonic_result = execute(
+        {'sandbox_enabled': 0, 'safety_checker_enabled': 0},
+        {'file_path': str(evonic_target), 'patch': patch_text},
+    )
+    git_result = _git_apply(git_root, patch_text)
+
+    assert git_result.returncode != 0
+    assert evonic_result['result'] == 'success'
+    assert 'Legacy hunk-only patch accepted' in evonic_result['warning']
+    assert evonic_target.read_text() == 'new\n'
