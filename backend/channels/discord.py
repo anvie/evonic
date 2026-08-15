@@ -14,6 +14,7 @@ its own event loop on a daemon thread). Notable Discord-specific differences:
 
 import base64
 import logging
+import mimetypes
 import os
 import re
 import time
@@ -21,6 +22,7 @@ import threading
 from typing import Dict, Any, Optional, List, Tuple
 
 from backend.channels.base import BaseChannel, strip_system_tags
+from backend.tools._document import analysis_guidance, document_category
 
 _logger = logging.getLogger(__name__)
 
@@ -463,12 +465,25 @@ class DiscordChannel(BaseChannel):
         max_bytes = cfg['max_size_mb'] * 1024 * 1024
 
         for att in attachments:
-            content_type = (getattr(att, 'content_type', None) or '').split(';')[0].strip()
             original_filename = getattr(att, 'filename', None) or 'file'
+            content_type = (
+                getattr(att, 'content_type', None)
+                or mimetypes.guess_type(original_filename)[0]
+                or ''
+            ).split(';')[0].strip()
             size_bytes = getattr(att, 'size', None)
             is_image = content_type.startswith('image/')
             is_audio = content_type.startswith('audio/')
             is_video = content_type.startswith('video/')
+            category = None if (is_image or is_audio or is_video) else document_category(
+                original_filename, content_type
+            )
+            if not (is_image or is_audio or is_video) and not category:
+                await message.channel.send(
+                    "Unsupported document format. Send PDF, text/code, Word/RTF, "
+                    "PowerPoint, CSV/TSV, or Excel instead."
+                )
+                continue
 
             # Multimodal conversion (first matching attachment of each kind wins).
             try:
@@ -529,6 +544,15 @@ class DiscordChannel(BaseChannel):
                 )
                 if is_audio and agent and agent.get('audio_enabled'):
                     info_line += "\nUse the `transcribe_audio` tool to listen to this audio."
+                guidance = analysis_guidance(
+                    original_filename,
+                    content_type,
+                    target_path,
+                    enabled=bool(agent and agent.get('document_enabled', 1)),
+                    attachment_id=attachment_id,
+                )
+                if guidance:
+                    info_line += f"\n{guidance}"
                 info_lines.append(info_line)
             except Exception as e:
                 _logger.error(

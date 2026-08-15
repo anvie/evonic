@@ -41,6 +41,24 @@ def test_read_text_attachment_by_id(tmp_path, monkeypatch):
     assert '3: line3' in content
 
 
+@pytest.mark.parametrize(('name', 'mime'), [
+    ('table.csv', 'text/csv'),
+    ('table.tsv', 'text/tab-separated-values'),
+    ('ledger.iif', 'application/vnd.shana.informed.interchange'),
+])
+def test_read_plain_text_spreadsheet_by_id(tmp_path, monkeypatch, name, mime):
+    monkeypatch.chdir(tmp_path)
+    _make_agent('agent_table')
+    aid, _ = _store(
+        'agent_table', b'column1,column2\nvalue1,value2\n',
+        name=name, mime=mime, tmp_path=tmp_path,
+    )
+
+    result = ra.execute({'id': 'agent_table'}, {'attachment_id': aid})
+
+    assert '1: column1,column2' in result['result']
+
+
 def test_cross_agent_denial(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _make_agent('alpha')
@@ -135,18 +153,17 @@ def test_binary_attachment_returns_metadata(tmp_path, monkeypatch):
     assert parsed['filename'] == 'photo.jpg'
 
 
-def test_pdf_no_pypdf_returns_unavailable(tmp_path, monkeypatch):
+def test_binary_document_points_to_native_analysis_tool(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _make_agent('agent_pdf')
     aid, _ = _store('agent_pdf', b'%PDF-1.4 fake', name='doc.pdf',
                     mime='application/pdf', tmp_path=tmp_path)
-    # Force ImportError for pypdf
-    import sys
-    monkeypatch.setitem(sys.modules, 'pypdf', None)
     result = ra.execute({'id': 'agent_pdf'}, {'attachment_id': aid})
     assert 'result' in result
     out = result['result']
-    assert 'PDF text extraction unavailable' in out or 'install' in out
+    assert 'not parsed locally' in out
+    assert 'with path `' in out
+    assert 'analyze_document' in out
 
 
 def test_mock_shape_matches_execute(tmp_path, monkeypatch):

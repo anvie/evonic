@@ -21,6 +21,7 @@ sessions_bp = Blueprint('sessions', __name__)
 # ---------------------------------------------------------------------------
 
 _IMAGE_MIMES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 
 
 def _human_size(size_bytes: int | None) -> str:
@@ -38,15 +39,14 @@ def _human_size(size_bytes: int | None) -> str:
     return f"{int(size_bytes)}B"
 
 
-# Reuse text/pdf detection from read_attachment
-from backend.tools.read_attachment import (
-    _is_textish, _is_pdf, _read_pdf_text, _TEXTISH_EXTS,
+from backend.tools._document import (
+    SUPPORTED_DOCUMENT_EXTENSIONS,
+    document_category,
 )
 
 _ALLOWED_EXTS = (
-    {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.zip',
-     '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.rtf', '.epub'}
-    | _TEXTISH_EXTS
+    _IMAGE_EXTS
+    | set(SUPPORTED_DOCUMENT_EXTENSIONS)
 )
 
 
@@ -68,6 +68,16 @@ def _process_upload(file_storage, agent_id: str, session_id: str,
     original_name = file_storage.filename or 'upload'
     mime_type = file_storage.content_type or mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
     ext = os.path.splitext(original_name)[1].lower()
+    normalized_mime = mime_type.split(';', 1)[0].lower()
+    generic_mime = normalized_mime in ('application/octet-stream', 'binary/octet-stream')
+    is_image = ext in _IMAGE_EXTS and (normalized_mime in _IMAGE_MIMES or generic_mime)
+    if (ext in _IMAGE_EXTS or normalized_mime.startswith('image/')) and not is_image:
+        raise ValueError("Unsupported image format or MIME type does not match filename")
+    category = None if is_image else document_category(original_name, mime_type)
+    if not is_image and not category:
+        raise ValueError(
+            "Unsupported document format or MIME type does not match filename"
+        )
 
     # Read file bytes
     file_bytes = file_storage.read()
@@ -82,7 +92,6 @@ def _process_upload(file_storage, agent_id: str, session_id: str,
         f.write(file_bytes)
 
     # Persist attachment record
-    is_image = mime_type.startswith('image/')
     file_type = 'photo' if is_image else 'document'
     attachment_id = db.save_attachment(
         agent_id=agent_id,
@@ -141,30 +150,9 @@ def _process_upload(file_storage, agent_id: str, session_id: str,
             image_url = None
         return {'image_url': image_url, 'text_prefix': None, 'attachment_info': attachment_info}
 
-    # --- PDF: extract text ---
-    if _is_pdf(mime_type, target_path):
-        text = _read_pdf_text(target_path, offset=1)
-        prefix = f"[Attached file: {original_name}]\n```\n{text}\n```"
-        if workplace_path:
-            prefix = f"[Workplace path: {workplace_path}]\n" + prefix
-        return {'image_url': None, 'text_prefix': prefix, 'attachment_info': attachment_info}
-
-    # --- Text/code file: read content ---
-    if _is_textish(mime_type, target_path):
-        try:
-            content = file_bytes.decode('utf-8', errors='replace')[:100_000]
-        except Exception:
-            content = '[Could not decode file content]'
-        prefix = f"[Attached file: {original_name}]\n```\n{content}\n```"
-        if workplace_path:
-            prefix = f"[Workplace path: {workplace_path}]\n" + prefix
-        return {'image_url': None, 'text_prefix': prefix, 'attachment_info': attachment_info}
-
-    # --- Other binary ---
-    prefix = f"[Attached file: {original_name} ({mime_type}, {size_bytes} bytes) — binary file, content not readable]"
-    if workplace_path:
-        prefix += f"\n[Workplace path: {workplace_path}]"
-    return {'image_url': None, 'text_prefix': prefix, 'attachment_info': attachment_info}
+    # Documents stay metadata-only. Non-text formats use native analysis;
+    # read_attachment remains the exact reader for text-based uploads.
+    return {'image_url': None, 'text_prefix': None, 'attachment_info': attachment_info}
 
 
 @sessions_bp.route('/sessions')
@@ -262,6 +250,8 @@ def api_session_reply(session_id):
                 session.get('external_user_id', ''),
                 session.get('channel_id'),
             )
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
         except Exception as e:
             _logger.error("Upload processing failed: %s", e, exc_info=True)
             return jsonify({'error': 'Failed to process uploaded file'}), 500

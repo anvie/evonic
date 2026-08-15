@@ -1,4 +1,5 @@
 import os
+import queue
 from io import BytesIO
 
 from app import app
@@ -9,6 +10,7 @@ from backend.agent_runtime.context import (
 )
 from backend.agent_runtime.runtime import _append_attachment_context
 from models.chatlog import _reconstruct_llm_messages
+from models.db import db
 from routes import agents as agents_route
 from routes import sessions as sessions_route
 
@@ -104,6 +106,51 @@ def test_invalid_plural_attachment_metadata_falls_back_to_legacy_attachment():
         assert '[Attachment: legacy.png (image/png, 42 B)]' in content
         assert '[Attachment #' not in content
         assert content.count('Use the `describe_image` tool') == 1
+
+
+def test_busy_injection_keeps_plural_attachment_context(monkeypatch):
+    agent_id = 'busy_attachment_agent'
+    user_id = 'busy_attachment_user'
+    db.create_agent({
+        'id': agent_id,
+        'name': agent_id,
+        'system_prompt': '',
+        'message_buffer_seconds': 0,
+    })
+    infos = [
+        {
+            'attachment_id': 31,
+            'filename': 'template.docx',
+            'mime_type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'size_bytes': 1024,
+            'file_path': '/tmp/session/template.docx',
+        },
+        {
+            'attachment_id': 32,
+            'filename': 'rulebook.pdf',
+            'mime_type': 'application/pdf',
+            'size_bytes': 2048,
+            'file_path': '/tmp/session/rulebook.pdf',
+        },
+    ]
+    injected = queue.Queue()
+    monkeypatch.setattr(agent_runtime, '_is_busy', lambda session_id: True)
+    monkeypatch.setattr(agent_runtime, '_get_inject_queue', lambda session_id: injected)
+
+    result = agent_runtime.handle_message(
+        agent_id,
+        user_id,
+        'Bandingkan kedua dokumen.',
+        metadata={'attachment_infos': infos},
+    )
+    content = injected.get_nowait()['content']
+
+    assert result['injected'] is True
+    assert '[Attachment #1: template.docx' in content
+    assert '[Attachment #2: rulebook.pdf' in content
+    assert 'Attachment ID: 31' in content and 'Attachment ID: 32' in content
+    assert 'File path: /tmp/session/template.docx' in content
+    assert 'File path: /tmp/session/rulebook.pdf' in content
 
 
 def test_session_attachment_manifest_is_metadata_only_and_skips_missing_files(monkeypatch, tmp_path):

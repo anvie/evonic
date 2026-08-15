@@ -100,3 +100,50 @@ def test_attachment_note_keeps_media_tool_guidance(tmp_path):
 
     assert 'Attachment ID: 186' in note
     assert 'transcribe_audio' in note
+
+
+def test_document_uploads_stay_metadata_only_and_get_native_tool_hint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    agent_id = 'pdf_upload_agent'
+    db.create_agent({'id': agent_id, 'name': agent_id, 'system_prompt': ''})
+    upload = FileStorage(
+        stream=io.BytesIO(b'%PDF-1.7\nTOP SECRET BODY MUST NOT ENTER PROMPT'),
+        filename='report.pdf',
+        content_type='application/pdf',
+    )
+
+    result = _process_upload(upload, agent_id, 'pdf-session', 'user-1', 'channel-1')
+
+    assert result['text_prefix'] is None
+    note = context.build_attachment_note(result['attachment_info'], document_enabled=True)
+    assert 'TOP SECRET BODY' not in note
+    assert 'analyze_document' in note
+    assert f"Attachment ID: {result['attachment_info']['attachment_id']}" in note
+    assert 'with path `' in note
+    assert 'analyze_document' not in context.build_attachment_note(
+        result['attachment_info'], document_enabled=False
+    )
+    without_id = dict(result['attachment_info'])
+    without_id.pop('attachment_id')
+    assert 'analyze_document' in context.build_attachment_note(without_id)
+    without_path = dict(result['attachment_info'])
+    without_path.pop('file_path')
+    assert 'analyze_document' not in context.build_attachment_note(without_path)
+
+    text_upload = FileStorage(
+        stream=io.BytesIO(b'TEXT BODY MUST NOT ENTER PROMPT'),
+        filename='notes.txt',
+        content_type='text/plain',
+    )
+    text_result = _process_upload(
+        text_upload, agent_id, 'text-session', 'user-1', 'channel-1'
+    )
+    assert text_result['text_prefix'] is None
+    text_note = context.build_attachment_note(text_result['attachment_info'])
+    assert 'TEXT BODY' not in text_note
+    assert 'read_attachment' in text_note
+    assert 'attachment_id=' in text_note
+    assert 'analyze_document' not in text_note
+    assert 'read_attachment' in context.build_attachment_note(
+        text_result['attachment_info'], document_enabled=False
+    )

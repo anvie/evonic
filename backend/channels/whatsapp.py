@@ -13,6 +13,7 @@ import requests
 from typing import Dict, Any, Optional
 from backend.channels.base import BaseChannel, strip_system_tags
 from backend.channels.whatsapp_dispatcher import WhatsAppOutboundDispatcher
+from backend.tools._document import document_category
 
 _logger = logging.getLogger(__name__)
 # Bridge (Node/Baileys) stdout is routed to logs/baileys.log via EVONIC_LOG_ROUTES
@@ -903,6 +904,11 @@ class WhatsAppChannel(BaseChannel):
         audio_bytes = None  # decoded original bytes, persisted as attachment below
         audio_mime = None
         document = _decode_document_payload(document_data)
+        unsupported_document = bool(
+            document and not document_category(
+                document['filename'], document['mime_type']
+            )
+        )
 
         if image_data:
             try:
@@ -986,6 +992,15 @@ class WhatsAppChannel(BaseChannel):
             session_user_id = sender
 
         session_id = db.get_or_create_session(agent_id, session_user_id, self.channel_id)
+
+        if unsupported_document:
+            self.send_message(
+                session_user_id,
+                "Unsupported document format. Send PDF, text/code, Word/RTF, "
+                "PowerPoint, CSV/TSV, or Excel instead.",
+                session_id=session_id,
+            )
+            return
 
         # Persist media to disk so attachment tools can access the original bytes.
         attachment_info = None
@@ -1177,6 +1192,12 @@ class WhatsAppChannel(BaseChannel):
         from models.db import db
         agent_id = agent_id or self.agent_id
         try:
+            if not document_category(original_filename, mime_type):
+                _logger.info(
+                    "Skipping unsupported WhatsApp document %s (%s)",
+                    original_filename, mime_type,
+                )
+                return None
             cfg = db.get_agent_attachment_config(agent_id)
             if not cfg.get('enabled'):
                 _logger.info("Skipping WhatsApp document for agent %s: attachments disabled",

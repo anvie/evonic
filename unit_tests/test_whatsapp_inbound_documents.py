@@ -59,6 +59,11 @@ def _capture_document_callback(monkeypatch, tmp_path, *, text='', document=None,
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(channel, '_resolve_agent', lambda *args, **kwargs: 'agent-doc')
     monkeypatch.setattr(channel, '_gate_sender', lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        channel,
+        'send_message',
+        lambda *args, **kwargs: captured.setdefault('sent', []).append((args, kwargs)),
+    )
     monkeypatch.setattr(agent_runtime, 'handle_message',
                         lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs) or {'buffered': True})
 
@@ -136,3 +141,30 @@ def test_malformed_document_without_caption_remains_dropped(monkeypatch, tmp_pat
 
     assert 'args' not in captured
     assert captured['attachments'] == []
+
+
+def test_unsupported_document_is_rejected_without_persistence(monkeypatch, tmp_path):
+    captured = _capture_document_callback(
+        monkeypatch,
+        tmp_path,
+        document=_document_payload(
+            filename='archive.zip',
+            mimetype='application/zip',
+        ),
+    )
+
+    assert 'args' not in captured
+    assert captured['attachments'] == []
+    assert 'Unsupported document format' in captured['sent'][0][0][1]
+
+
+def test_image_persistence_is_independent_from_document_validation(monkeypatch, tmp_path):
+    channel = _channel(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    attachment = channel._save_image_attachment(
+        'image-session', 'user', b'image-bytes', 'image/jpeg', agent_id='agent-doc'
+    )
+
+    assert attachment and attachment['is_image'] is True
+    assert Path(attachment['file_path']).read_bytes() == b'image-bytes'

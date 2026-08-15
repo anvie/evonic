@@ -68,31 +68,14 @@ def _append_attachment_context(content: str, attachment_infos, attachment_info,
     attachment_infos = [info for info in attachment_infos if isinstance(info, dict)]
     if not attachment_infos and isinstance(attachment_info, dict):
         attachment_infos = [attachment_info]
-
-    notes = []
-    for index, info in enumerate(attachment_infos, 1):
-        fp = info.get('file_path', '')
-        if fp and not os.path.isabs(fp):
-            fp = os.path.abspath(os.path.join(_BASE_DIR, fp))
-        fn = info.get('filename', '')
-        mt = info.get('mime_type', '')
-        sb = int(info.get('size_bytes', 0) or 0)
-        is_img = bool(mt and mt.startswith('image/'))
-        is_audio = bool(mt and mt.startswith('audio/'))
-        if sb >= 1048576:
-            sz = f"{sb / 1048576:.1f} MB"
-        elif sb >= 1024:
-            sz = f"{sb / 1024:.1f} KB"
-        else:
-            sz = f"{sb} B"
-        label = f"Attachment #{index}" if len(attachment_infos) > 1 else "Attachment"
-        note = f"\n\n[{label}: {fn} ({mt}, {sz})]\nFile path: {fp}"
-        if is_img and has_describe_image:
-            note += "\nUse the `describe_image` tool to view and analyze this image."
-        if is_audio and agent.get('audio_enabled'):
-            note += "\nUse the `transcribe_audio` tool to listen to this audio."
-        notes.append(note)
-    return content.rstrip() + ''.join(notes) if notes else content
+    if not attachment_infos:
+        return content
+    return content.rstrip() + _ctx.build_attachment_notes(
+        attachment_infos,
+        has_describe_image=has_describe_image,
+        audio_enabled=bool(agent.get('audio_enabled')),
+        document_enabled=bool(agent.get('document_enabled', 1)),
+    )
 
 
 # --- Configuration constants ---
@@ -1404,9 +1387,17 @@ class AgentRuntime:
                 "[handle_message] agent=%s session=%s — session busy, injecting into active loop.",
                 agent_id, session_id,
             )
+            injected_content = _append_attachment_context(
+                message or '[Image]',
+                meta.get('attachment_infos'),
+                meta.get('attachment_info'),
+                agent,
+                ('describe_image' in db.get_agent_tools(db_agent_id)
+                 or bool(agent.get('vision_enabled', 1))),
+            )
             self._get_inject_queue(session_id).put({
                 'role': 'user',
-                'content': message or '[Image]',
+                'content': injected_content,
             })
             event_stream.emit('message_injected', {
                 'agent_id': agent_id,
@@ -1740,7 +1731,7 @@ class AgentRuntime:
             system_prompt = _prefetch.system_prompt
             tools = _prefetch.tools
             # Use prefetched messages as the base, then append fresh user message below
-            messages = _prefetch.messages
+            messages = list(_prefetch.messages)
             # Skip the heavy build phase — tools and system_prompt are already ready
             _tools_prebuilt = tools
             _agent_ctx_prebuilt = _prefetch.agent_context
@@ -1795,14 +1786,13 @@ class AgentRuntime:
             # Append authoritative structured metadata, including the numeric ID
             # required by read_attachment. This also repairs legacy message text
             # that omitted the ID when restored from JSONL.
-            _att = msg.pop('attachment_info', None) or msg.get('attachment_info')
-            if _att and isinstance(_att, dict):
-                _ctx.append_attachment_note(
-                    msg,
-                    _att,
-                    has_describe_image=_has_describe_image,
-                    audio_enabled=bool(agent.get('audio_enabled')),
-                )
+            msg['content'] = _append_attachment_context(
+                msg.get('content', '') or '',
+                msg.pop('attachment_infos', None),
+                msg.pop('attachment_info', None),
+                agent,
+                _has_describe_image,
+            )
             video = msg.pop('_video_url', None) if agent.get('video_enabled') else msg.pop('_video_url', None) and None
             if not video:
                 return msg
@@ -1933,6 +1923,10 @@ class AgentRuntime:
                         if not _is_legacy_agent_state_msg(msg) and not _is_ui_only_msg(msg) and not _is_slash_command_msg(msg):
                             messages.append(_ctx.build_message_entry(msg, agent, _has_describe_image))
 
+        # Refresh the current session's exact attachment paths after summary/CMP
+        # pruning and regardless of whether prefetch was used.
+        _ctx.sync_session_attachment_manifest(messages, ctx.session_id, db_agent_id)
+
         # Ensure messages don't end with assistant role (causes prefill error with some APIs)
         while len(messages) > 1 and messages[-1].get('role') == 'assistant':
             messages.pop()
@@ -2059,6 +2053,10 @@ class AgentRuntime:
             if agent.get('vision_enabled', 1) and 'describe_image' not in assigned_tool_ids:
                 assigned_tool_ids.append('describe_image')
 
+            # Agents with document analysis enabled automatically get analyze_document.
+            if agent.get('document_enabled', 1) and 'analyze_document' not in assigned_tool_ids:
+                assigned_tool_ids.append('analyze_document')
+
             # Agents with audio_enabled automatically get transcribe_audio.
             if agent.get('audio_enabled') and 'transcribe_audio' not in assigned_tool_ids:
                 assigned_tool_ids.append('transcribe_audio')
@@ -2123,6 +2121,7 @@ class AgentRuntime:
                 'run_as_user': agent.get('run_as_user'),
                 'vision_model_id': agent.get('vision_model_id'),
                 'vision_enabled': agent.get('vision_enabled', 1),
+                'document_enabled': agent.get('document_enabled', 1),
                 'audio_enabled': agent.get('audio_enabled', 0),
                 'messaging_acl': agent.get('messaging_acl'),
                 'messaging_acl_mode': agent.get('messaging_acl_mode', 'whitelist'),
@@ -2142,9 +2141,8 @@ class AgentRuntime:
         if isinstance(_trusted_meta, dict):
             if _trusted_meta.get('channel_message_id'):
                 agent_context['trusted_message_id'] = str(_trusted_meta['channel_message_id'])
-            if _trusted_meta.get('attachment_info'):
-                _a_info = _trusted_meta['attachment_info']
-                _att_infos = _a_info if isinstance(_a_info, list) else [_a_info]
+            _att_infos = _ctx.attachment_infos_from_metadata(_trusted_meta)
+            if _att_infos:
                 _att_ids = []
                 _att_mime_types = []
                 _att_paths = []
@@ -2994,9 +2992,17 @@ class AgentRuntime:
         # Mid-loop injection: if session is currently processing, inject message
         # into the active loop instead of queuing a new task.
         if agent and self._is_busy(session_id):
+            injected_content = _append_attachment_context(
+                text,
+                meta.get('attachment_infos'),
+                meta.get('attachment_info'),
+                agent,
+                ('describe_image' in db.get_agent_tools(agent_id)
+                 or bool(agent.get('vision_enabled', 1))),
+            )
             self._get_inject_queue(session_id).put({
                 'role': 'user',
-                'content': text,
+                'content': injected_content,
             })
             event_stream.emit('message_injected', {
                 'agent_id': agent_id,

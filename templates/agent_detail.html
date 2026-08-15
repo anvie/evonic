@@ -448,6 +448,15 @@ html.dark .agent-tab.active {
             </div>
             <div class="mb-4">
                 <label class="flex items-center gap-3 cursor-pointer select-none">
+                    {{ toggle_widget(id='agent-document', checked=agent.document_enabled) }}
+                    <div>
+                        <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Document Analysis</span>
+                        <p class="text-xs text-gray-400 mt-0.5">Allow agent to analyze PDFs, Office files, and non-text spreadsheets using configured native document models</p>
+                    </div>
+                </label>
+            </div>
+            <div class="mb-4">
+                <label class="flex items-center gap-3 cursor-pointer select-none">
                     {{ toggle_widget(id='agent-audio', checked=agent.audio_enabled) }}
                     <div>
                         <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Audio Input</span>
@@ -1108,7 +1117,7 @@ html.dark .agent-tab.active {
                     </div>
                     <div class="flex gap-2">
                         <input type="file" id="chat-file-input" class="hidden" multiple
-                               accept="image/*,.pdf,.txt,.md,.log,.json,.yaml,.yml,.xml,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.rb,.php,.html,.css,.sql,.sh,.toml,.ini,.zip,.docx,.xlsx,.pptx,.odt,.ods,.odp,.rtf,.epub"
+                               accept="image/*,.pdf,.txt,.md,.markdown,.log,.json,.yaml,.yml,.xml,.html,.css,.csv,.tsv,.iif,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cc,.cpp,.h,.hpp,.rb,.php,.kt,.swift,.sql,.sh,.toml,.ini,.cfg,.conf,.env,.rst,.tex,.doc,.docx,.dot,.odt,.rtf,.ppt,.pptx,.pps,.pot,.ppa,.pwz,.wiz,.pages,.xla,.xlb,.xlc,.xlm,.xls,.xlsx,.xlt,.xlw"
                                onchange="onChatFileSelected(this)">
                         {% if agent.attachments_enabled %}
                         <button type="button" id="chat-attach-btn" onclick="document.getElementById('chat-file-input').click()"
@@ -1734,6 +1743,8 @@ const BUILTIN_TOOLS_ENABLED = {{ 'true' if agent.builtin_tools_enabled else 'fal
 const ARTIFACT_TOOL_IDS = ['save_artifact', 'list_artifacts', 'read_attachment', 'cleanup_attachments', 'portal_copy', 'copy_status'];
 const VISION_ENABLED = {{ 'true' if agent.vision_enabled else 'false' }};
 const VISION_TOOL_IDS = ['describe_image'];
+const DOCUMENT_ENABLED = {{ 'true' if agent.document_enabled else 'false' }};
+const DOCUMENT_TOOL_IDS = ['analyze_document'];
 let currentEditFile = null;
 let agentTools = [];
 let chatLoaded = false;
@@ -2302,6 +2313,7 @@ const AgentAutoSave = {
         { id: 'agent-desc', key: 'description', type: 'str' },
         { id: 'agent-system-prompt', key: 'system_prompt', type: 'str' },
         { id: 'agent-vision', key: 'vision_enabled', type: 'bool' },
+        { id: 'agent-document', key: 'document_enabled', type: 'bool' },
         { id: 'agent-audio', key: 'audio_enabled', type: 'bool' },
         { id: 'agent-video', key: 'video_enabled', type: 'bool' },
         { id: 'agent-attachments', key: 'attachments_enabled', type: 'bool' },
@@ -3572,12 +3584,14 @@ function renderToolsList() {
     const sortByName = (a, b) => (a.name || a.id).localeCompare(b.name || b.id);
     const isArtifactTool = (t) => ARTIFACT_TOOL_IDS.includes(t.id);
     const isVisionTool = (t) => VISION_TOOL_IDS.includes(t.id);
-    const isLockedTool = (t) => isArtifactTool(t) || isVisionTool(t);
+    const isDocumentTool = (t) => DOCUMENT_TOOL_IDS.includes(t.id);
+    const isLockedTool = (t) => isArtifactTool(t) || isVisionTool(t) || isDocumentTool(t);
     const builtins  = BUILTIN_TOOLS_ENABLED ? allToolsDefs.filter(t => t._builtin).sort(sortByName) : [];
     const assigned  = allToolsDefs.filter(t => !t._builtin && !isLockedTool(t) && isToolAssigned(t.id)).sort(sortByName);
     const available = allToolsDefs.filter(t => !t._builtin && !isLockedTool(t) && !isToolAssigned(t.id)).sort(sortByName);
     const artifactTools = allToolsDefs.filter(t => isArtifactTool(t)).sort(sortByName);
     const visionTools = allToolsDefs.filter(t => isVisionTool(t)).sort(sortByName);
+    const documentTools = allToolsDefs.filter(t => isDocumentTool(t)).sort(sortByName);
 
     let html = '';
 
@@ -3728,6 +3742,40 @@ function renderToolsList() {
         </div>`;
         }).join('');
     }
+
+    // Document tools — locked, managed by the Document Analysis toggle in agent settings
+    if (documentTools.length > 0) {
+        const lockLabel = DOCUMENT_ENABLED ? 'Document Analysis is ON — managed by Settings' : 'Document Analysis is OFF — managed by Settings';
+        html += documentTools.map(t => {
+            const safeId = escapeHtml(t.id);
+            const isChecked = DOCUMENT_ENABLED;
+            return `
+        <div class="tool-row flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded-md cursor-pointer dark:bg-gray-800 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700"
+             data-assigned="false"
+             data-builtin="false"
+             data-locked="true"
+             data-tool-id="${safeId}"
+             onclick="showToolDetail('${safeId}')">
+            <div class="min-w-0 flex-1 overflow-hidden">
+                <div class="flex flex-wrap items-center gap-1.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4 text-gray-400 flex-shrink-0">
+                        <path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd"/>
+                    </svg>
+                    <span class="text-sm font-medium text-gray-800 dark:text-gray-200">${escapeHtml(t.name || t.id)}</span>
+                </div>
+                <p class="text-xs text-gray-400 font-mono mt-0.5">${safeId}</p>
+                <p class="text-xs text-gray-500 mt-0.5">${escapeHtml(t.description || '')}</p>
+            </div>
+            <label class="relative flex-shrink-0 ml-3 cursor-not-allowed"
+                   onclick="event.stopPropagation()"
+                   title="${lockLabel}">
+                <input type="checkbox" ${isChecked ? 'checked' : ''} disabled
+                       class="sr-only peer">
+                <span class="dyn-toggle opacity-60"></span>
+            </label>
+        </div>`;
+        }).join('');
+    }
     list.innerHTML = html;
     filterToolsList();
     updateToolsBadge(assigned.length);
@@ -3807,6 +3855,11 @@ async function toggleTool(toolId) {
     // Vision tools are managed exclusively by the Vision toggle in agent settings
     if (VISION_TOOL_IDS.includes(toolId)) {
         showToast('Vision tools are managed by the Vision (Image Recognition) toggle in Settings tab.', 'info');
+        return;
+    }
+    // Document tools are managed exclusively by the Document Analysis toggle in agent settings
+    if (DOCUMENT_TOOL_IDS.includes(toolId)) {
+        showToast('Document tools are managed by the Document Analysis toggle in Settings tab.', 'info');
         return;
     }
     const tool = allToolsDefs.find(t => t.id === toolId);
