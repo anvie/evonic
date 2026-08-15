@@ -3702,6 +3702,9 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
     _EXPECTED_SETTINGS = {
         "theme": "system",
         "vision_model_id": "",
+        "document_model_id": "",
+        "document_fallback_model_id": "",
+        "document_fallback_model_2_id": "",
         "kb_organizer_model_id": "",
         "task_classifier_enabled": "0",
         "agent_timeout_retries": str(getattr(_cfg, "AGENT_TIMEOUT_RETRIES", 2)),

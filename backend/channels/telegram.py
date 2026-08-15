@@ -8,6 +8,7 @@ import time
 import threading
 from typing import Dict, Any, Optional, Tuple
 from backend.channels.base import BaseChannel, strip_system_tags
+from backend.tools._document import analysis_guidance, document_category
 
 _logger = logging.getLogger(__name__)
 
@@ -119,6 +120,12 @@ async def _ingest_non_photo_attachment(message, context, agent_id, session_id,
         return None, False
 
     file_id, original_filename, mime_type, size_bytes, file_type = non_photo
+    if file_type == 'document' and not document_category(original_filename, mime_type):
+        await message.reply_text(
+            "Unsupported document format. Send PDF, text/code, Word/RTF, "
+            "PowerPoint, CSV/TSV, or Excel instead."
+        )
+        return None, True
     cfg = db.get_agent_attachment_config(agent_id)
     if not cfg['enabled']:
         await message.reply_text(
@@ -173,10 +180,18 @@ async def _ingest_non_photo_attachment(message, context, agent_id, session_id,
         f"{_human_size(real_size)}) "
         f"id={attachment_id} path={target_path}]"
     )
-    if file_type in ('voice', 'audio'):
-        agent = db.get_agent(agent_id)
-        if agent and agent.get('audio_enabled'):
-            info_line += "\nUse the `transcribe_audio` tool to listen to this audio."
+    agent = db.get_agent(agent_id)
+    if file_type in ('voice', 'audio') and agent and agent.get('audio_enabled'):
+        info_line += "\nUse the `transcribe_audio` tool to listen to this audio."
+    guidance = analysis_guidance(
+        original_filename,
+        mime_type,
+        target_path,
+        enabled=bool(agent and agent.get('document_enabled', 1)),
+        attachment_id=attachment_id,
+    )
+    if guidance:
+        info_line += f"\n{guidance}"
     return info_line, False
 
 

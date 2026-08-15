@@ -31,6 +31,7 @@ def _token_count(text: str) -> int:
 from models.db import db
 from models.boolean import message_wrapper_enabled
 from backend.tools import tool_registry
+from backend.tools._document import analysis_guidance
 from backend.tools.registry import BUILTIN_TOOL_IDS
 from backend.skills_manager import SkillsManager, skills_manager
 from backend.agent_runtime.evomem_client import (
@@ -952,6 +953,10 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     if agent.get('vision_enabled', 1):
         assigned_ids.add('describe_image')
 
+    # Auto-assign analyze_document for document-enabled agents.
+    if agent.get('document_enabled', 1):
+        assigned_ids.add('analyze_document')
+
     # Auto-assign transcribe_audio for audio-enabled agents.
     if agent.get('audio_enabled'):
         assigned_ids.add('transcribe_audio')
@@ -1139,7 +1144,8 @@ def command_hint_from_content(content: str) -> str:
 
 def build_attachment_note(attachment_info: dict,
                           has_describe_image: bool = True,
-                          audio_enabled: bool = False) -> str:
+                          audio_enabled: bool = False,
+                          document_enabled: bool = True) -> str:
     """Render authoritative attachment metadata for model-visible context.
 
     The database attachment ID is intentionally explicit so the model can call
@@ -1150,7 +1156,7 @@ def build_attachment_note(attachment_info: dict,
     if file_path and not os.path.isabs(file_path):
         file_path = os.path.abspath(os.path.join(_BASE_DIR, file_path))
 
-    filename = attachment_info.get('filename', '')
+    filename = attachment_info.get('original_filename') or attachment_info.get('filename', '')
     mime_type = attachment_info.get('mime_type') or 'application/octet-stream'
     size_bytes = int(attachment_info.get('size_bytes', 0) or 0)
     attachment_id = attachment_info.get('attachment_id')
@@ -1170,12 +1176,22 @@ def build_attachment_note(attachment_info: dict,
         note += "\nUse the `describe_image` tool to view and analyze this image."
     if mime_type.startswith('audio/') and audio_enabled:
         note += "\nUse the `transcribe_audio` tool to listen to this audio."
+    guidance = analysis_guidance(
+        attachment_info.get('original_filename') or filename,
+        mime_type,
+        file_path,
+        enabled=document_enabled,
+        attachment_id=attachment_id,
+    )
+    if guidance:
+        note += f"\n{guidance}"
     return note
 
 
 def build_attachment_notes(attachment_infos: list,
                            has_describe_image: bool = True,
-                           audio_enabled: bool = False) -> str:
+                           audio_enabled: bool = False,
+                           document_enabled: bool = True) -> str:
     """Render notes for multiple attachments, numbered when more than one."""
     notes = []
     count = len(attachment_infos)
@@ -1184,6 +1200,7 @@ def build_attachment_notes(attachment_infos: list,
             info,
             has_describe_image=has_describe_image,
             audio_enabled=audio_enabled,
+            document_enabled=document_enabled,
         )
         if count > 1:
             note = note.replace('[Attachment:', f'[Attachment #{index}:', 1)
@@ -1269,12 +1286,14 @@ def sync_session_attachment_manifest(messages: list, session_id: str,
 def append_attachment_note(msg: dict,
                            attachment_info: dict,
                            has_describe_image: bool = True,
-                           audio_enabled: bool = False) -> dict:
+                           audio_enabled: bool = False,
+                           document_enabled: bool = True) -> dict:
     """Append structured attachment metadata to a model message in-place."""
     note = build_attachment_note(
         attachment_info,
         has_describe_image=has_describe_image,
         audio_enabled=audio_enabled,
+        document_enabled=document_enabled,
     )
     content = msg.get('content', '') or ''
     msg['content'] = content.rstrip() + note
@@ -1305,12 +1324,14 @@ def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True)
             attachment_infos,
             has_describe_image=has_describe_image,
             audio_enabled=bool(agent.get('audio_enabled')),
+            document_enabled=bool(agent.get('document_enabled', 1)),
         )
     elif attachment_info and isinstance(attachment_info, dict):
         attachment_note = build_attachment_note(
             attachment_info,
             has_describe_image=has_describe_image,
             audio_enabled=bool(agent.get('audio_enabled')),
+            document_enabled=bool(agent.get('document_enabled', 1)),
         )
 
     if has_video:

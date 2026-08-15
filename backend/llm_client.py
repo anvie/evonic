@@ -167,7 +167,7 @@ def strip_thinking_tags(content: str) -> Tuple[str, Optional[str]]:
 def _convert_multimodal_to_claude(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Convert OpenAI-style multimodal content blocks to Anthropic format.
 
-    Handles image_url, input_audio, and video_url content types.
+    Handles image_url, file, input_audio, and video_url content types.
     """
     result = []
     for msg in messages:
@@ -198,6 +198,25 @@ def _convert_multimodal_to_claude(messages: List[Dict[str, Any]]) -> List[Dict[s
                         "type": "image",
                         "source": {"type": "url", "url": url},
                     })
+            elif ptype == "file":
+                file_info = part.get("file") or {}
+                file_data = file_info.get("file_data", "")
+                if file_data.startswith("data:"):
+                    try:
+                        header, b64data = file_data.split(",", 1)
+                        media_type = header.split(":", 1)[1].split(";", 1)[0]
+                    except (ValueError, IndexError):
+                        media_type, b64data = "application/pdf", file_data
+                    new_parts.append({
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": b64data,
+                        },
+                    })
+                else:
+                    new_parts.append(part)
             elif ptype == "input_audio":
                 # Convert to Claude audio format if supported; otherwise pass through
                 audio_info = part.get("input_audio") or {}
@@ -671,7 +690,7 @@ class LLMClient:
                 _msg.pop("reasoning_content", None)
 
         # Claude API uses {"type":"image","source":{...}} instead of OpenAI's image_url format.
-        if is_claude:
+        if is_claude or is_anthropic:
             processed_messages = _convert_multimodal_to_claude(processed_messages)
 
         if is_ollama_fmt:

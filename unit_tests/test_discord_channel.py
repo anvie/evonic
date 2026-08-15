@@ -7,6 +7,7 @@ most of its logic are testable without the dependency installed or a network.
 
 import asyncio
 import builtins
+from pathlib import Path
 
 import pytest
 
@@ -114,6 +115,20 @@ class _FakeMessage:
         self.reference = None
 
 
+class _FakeAttachment:
+    def __init__(self, filename, content_type, data=b'document'):
+        self.filename = filename
+        self.content_type = content_type
+        self._data = data
+        self.size = len(data)
+
+    async def read(self):
+        return self._data
+
+    async def save(self, path):
+        Path(path).write_bytes(self._data)
+
+
 def _make_discord_channel(db):
     agent_id = 'disc_agent'
     db.create_agent({
@@ -186,3 +201,41 @@ def test_bot_authored_messages_ignored():
     pendings = [p for p in db.get_pending_approvals(chan.channel_id)
                 if p.get('external_user_id') == '101010']
     assert len(pendings) == 1
+
+
+def test_text_attachment_gets_exact_read_hint(tmp_path, monkeypatch):
+    from models.db import db
+    chan = _make_discord_channel(db)
+    db.update_agent('disc_agent', {'attachments_enabled': 1})
+    fake_channel = _FakeChannel()
+    message = _FakeMessage(_FakeAuthor(123), '', fake_channel)
+    message.attachments = [_FakeAttachment('notes.txt', 'text/plain', b'hello')]
+    monkeypatch.chdir(tmp_path)
+
+    _, _, info_lines = asyncio.run(chan._ingest_attachments(
+        message, 'disc_agent', 'session', '123', chan.channel_id, db,
+    ))
+
+    assert len(info_lines) == 1
+    assert 'read_attachment' in info_lines[0]
+    assert 'attachment_id=1' in info_lines[0]
+    assert 'analyze_document' not in info_lines[0]
+    assert fake_channel.sent == []
+
+
+def test_zip_attachment_is_rejected_without_persistence(tmp_path, monkeypatch):
+    from models.db import db
+    chan = _make_discord_channel(db)
+    db.update_agent('disc_agent', {'attachments_enabled': 1})
+    fake_channel = _FakeChannel()
+    message = _FakeMessage(_FakeAuthor(123), '', fake_channel)
+    message.attachments = [_FakeAttachment('archive.zip', 'application/zip', b'PK')]
+    monkeypatch.chdir(tmp_path)
+
+    _, _, info_lines = asyncio.run(chan._ingest_attachments(
+        message, 'disc_agent', 'session', '123', chan.channel_id, db,
+    ))
+
+    assert info_lines == []
+    assert 'Unsupported document format' in fake_channel.sent[0]
+    assert db.list_session_attachments('session', 'disc_agent') == []
