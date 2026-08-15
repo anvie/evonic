@@ -16,12 +16,15 @@ Admin endpoints (/api/ prefix → session auth required):
 
 import hashlib
 import json
+import logging
 import os
 import queue
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
+
+_logger = logging.getLogger(__name__)
 
 from flask import (
     Blueprint, Response, jsonify, render_template, request,
@@ -309,6 +312,33 @@ def create_blueprint():
         if result.get('error'):
             return jsonify({'error': result['error']}), 500
 
+        # handle_message returns response=None for buffered/async paths
+        # (message_buffer_seconds > 0). Poll the session's chatlog for the
+        # assistant reply instead of returning an empty completion.
+        if not response_text and not result.get('async'):
+            try:
+                from models.db import db
+                session_id = db.get_or_create_session(agent_id, external_user_id, None)
+                # Anchor: this message was saved before the buffered return,
+                # so the reply is any assistant message with id > this user msg.
+                user_msgs = [m for m in db.get_session_messages(session_id) if m.get('role') == 'user']
+                anchor_id = user_msgs[-1]['id'] if user_msgs else 0
+                import time as _time
+                deadline = _time.time() + 120
+                while _time.time() < deadline:
+                    for m in db.get_messages_after(session_id, anchor_id):
+                        if m.get('role') == 'assistant' and m.get('content'):
+                            response_text = m['content']
+                            break
+                    if response_text:
+                        break
+                    _time.sleep(0.3)
+            except Exception as e:
+                _logger.warning("agentapi poll reply failed for %s: %s", agent_id, e)
+
+        if not response_text:
+            return jsonify({'error': 'Agent returned no response'}), 504
+
         # --- Increment quota + log ---
         token_db.increment_quota(token_row)
         token_db.log_usage(
@@ -361,16 +391,54 @@ def create_blueprint():
                 return
             q.put_nowait((_SENTINEL, None))
 
+        # Tool-call notifications: coalesce tool_executed events within a short
+        # window into one SSE event (mirrors the Telegram channel's coalescing).
+        # A 100-tool loop collapses to a handful of lines, not one per call.
+        _tool_pending: dict = {}  # session_id -> {last, counts: {name: n}, any_error}
+        _TOOL_WINDOW = 5.0
+
+        def _flush_tool_notify(sid: str):
+            entry = _tool_pending.pop(sid, None)
+            if not entry:
+                return
+            parts = [f"{name} ({n}x)" for name, n in sorted(entry['counts'].items())]
+            q.put_nowait(('tool', {
+                'tool_name': ', '.join(parts),
+                'has_error': entry['any_error'],
+            }))
+
+        def on_tool_executed(data):
+            if data.get('session_id') != session_id:
+                return
+            now = time.time()
+            entry = _tool_pending.get(session_id)
+            if entry and now - entry['last'] < _TOOL_WINDOW:
+                name = data.get('tool_name', '')
+                entry['counts'][name] = entry['counts'].get(name, 0) + 1
+                entry['any_error'] = entry['any_error'] or data.get('has_error', False)
+                entry['last'] = now
+                return
+            if entry:
+                _flush_tool_notify(session_id)
+            _tool_pending[session_id] = {
+                'last': now,
+                'counts': {data.get('tool_name', ''): 1},
+                'any_error': data.get('has_error', False),
+            }
+            threading.Timer(_TOOL_WINDOW, _flush_tool_notify, args=[session_id]).start()
+
         # Thread to run the agent and forward chunks via event_stream
         events_registered = []
 
         def run_agent():
             event_stream.on('llm_response_chunk', on_chunk)
             event_stream.on('turn_complete', on_turn_complete)
-            events_registered.extend(['llm_response_chunk', 'turn_complete'])
+            event_stream.on('tool_executed', on_tool_executed)
+            events_registered.extend(['llm_response_chunk', 'turn_complete', 'tool_executed'])
 
+            result = None
             try:
-                agent_runtime.handle_message(
+                result = agent_runtime.handle_message(
                     agent_id=agent_id,
                     external_user_id=external_user_id,
                     message=user_message,
@@ -378,9 +446,17 @@ def create_blueprint():
                     skip_buffer=True,
                 )
             except Exception:
-                pass
+                result = None
             finally:
-                q.put_nowait((_SENTINEL, None))
+                # Only end the stream early when handle_message returned a real
+                # reply (non-buffered path). Buffered/async agents return
+                # response=None immediately — the real reply arrives later via
+                # event_stream (llm_response_chunk/turn_complete), so we must
+                # stay subscribed. If we put the sentinel here, generate()
+                # exits, the finally below unsubscribes, and the reply events
+                # are lost (SSE shows only stop + [DONE]).
+                if not result or result.get('response'):
+                    q.put_nowait((_SENTINEL, None))
 
         agent_thread = threading.Thread(target=run_agent, daemon=True)
         agent_thread.start()
@@ -396,6 +472,19 @@ def create_blueprint():
                         break
 
                     if item[0] is _SENTINEL:
+                        # Turn complete: flush any pending coalesced tool events
+                        # (the 5s window may not have elapsed yet). Yield them
+                        # directly — the queue loop is about to exit, so a
+                        # put_nowait'd item would never be consumed.
+                        entry = _tool_pending.pop(session_id, None)
+                        if entry:
+                            parts = [f"{name} ({n}x)" for name, n in sorted(entry['counts'].items())]
+                            tool_event = {
+                                'type': 'tool',
+                                'tool_name': ', '.join(parts),
+                                'has_error': entry['any_error'],
+                            }
+                            yield f"data: {json.dumps(tool_event)}\n\n"
                         break
 
                     event_type, payload = item
@@ -413,6 +502,17 @@ def create_blueprint():
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
                         content_sent = True
+                    elif event_type == 'tool':
+                        # Tool-call notification: a compact line like
+                        #   {"type":"tool","tool_name":"bash (2x), python (1x)","has_error":false}
+                        # Streamed inline so the client can show it in the chat
+                        # while the agent keeps working.
+                        tool_event = {
+                            'type': 'tool',
+                            'tool_name': payload.get('tool_name', ''),
+                            'has_error': payload.get('has_error', False),
+                        }
+                        yield f"data: {json.dumps(tool_event)}\n\n"
 
                 # Send final [DONE] chunk
                 final_chunk = {
@@ -441,9 +541,12 @@ def create_blueprint():
                 # Clean up event subscriptions
                 for ev_name in events_registered:
                     try:
-                        event_stream.off(ev_name, on_chunk
-                                         if ev_name == 'llm_response_chunk'
-                                         else on_turn_complete)
+                        if ev_name == 'llm_response_chunk':
+                            event_stream.off(ev_name, on_chunk)
+                        elif ev_name == 'turn_complete':
+                            event_stream.off(ev_name, on_turn_complete)
+                        elif ev_name == 'tool_executed':
+                            event_stream.off(ev_name, on_tool_executed)
                     except Exception:
                         pass
 
