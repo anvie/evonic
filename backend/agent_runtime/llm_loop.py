@@ -78,6 +78,17 @@ class EffectiveRequest:
 # The total wait remains bounded by AGENT_PARALLEL_TOOL_WAIT_TIMEOUT.
 _PARALLEL_TOOL_POLL_INTERVAL_SECONDS = 0.1
 
+# Injected once per turn when implementation work happened but the agent never
+# called update_tasks — the final answer is held back until the model reconciles.
+_TASK_BOOKKEEPING_REMINDER = (
+    "[SYSTEM REMINDER] You did implementation work this turn but did not "
+    "update your internal task list. Reconcile it now with update_tasks: "
+    "mark each task you finished as done (update_tasks(action='done', "
+    "task_id=N)) and keep only work you are actively continuing as "
+    "in_progress. Then repeat your final answer. If the list is already "
+    "accurate, repeat your final answer unchanged."
+)
+
 # ── Import from split modules ───────────────────────────────────────────────
 
 from backend.agent_runtime.llm_call import (
@@ -449,6 +460,8 @@ def run_tool_loop(agent: Dict[str, Any],
     # disable later automatic transitions for unrelated implementation tools.
     _successful_mutation = False
     _tool_errors = False
+    _explicit_task_update_turn = False  # any update_tasks call this turn (turn-scoped)
+    _task_reminder_fired = False        # bookkeeping reminder fires at most once per turn
 
     def _is_mutating_tool(tool_name: str) -> bool:
         """Return whether a tool represents implementation work."""
@@ -1025,7 +1038,8 @@ def run_tool_loop(agent: Dict[str, Any],
                                               atg_enabled=bool(agent_context.get('enable_atg')),
                                               cmp_enabled=bool(agent_context.get('enable_cmp')),
                                               agent_name=agent_context.get('agent_name')
-                                                         or agent_context.get('name'))}
+                                                         or agent_context.get('name'),
+                                              update_tasks_available='update_tasks' in _available_tool_names)}
             state_idx = next(
                 (i for i, m in enumerate(messages)
                  if m.get('role') == 'system' and '## Agent State' in m.get('content', '')),
@@ -1931,6 +1945,24 @@ def run_tool_loop(agent: Dict[str, Any],
                     "content": build_corrective_injection(local_links),
                 })
 
+            # Core guard: internal task bookkeeping. When implementation work
+            # happened this turn but the agent never called update_tasks,
+            # remind once and re-enter the loop so it can reconcile before
+            # the final answer is accepted.
+            _ms_reminder = agent_context.get('agent_state')
+            if (_ms_reminder is not None
+                    and not _task_reminder_fired
+                    and not _explicit_task_update_turn
+                    and _successful_mutation
+                    and _ms_reminder.mode == 'execute'
+                    and 'update_tasks' in _available_tool_names
+                    and any(t.get('status') in ('pending', 'in_progress')
+                            for t in _ms_reminder.tasks)
+                    and not stop_event.is_set()):
+                _task_reminder_fired = True
+                pre_final_injections.append(
+                    {"role": "user", "content": _TASK_BOOKKEEPING_REMINDER})
+
             if pre_final_injections:
                 # Save this response as an intermediate assistant message so the
                 # LLM sees it as context, then append the injected instructions.
@@ -1947,8 +1979,12 @@ def run_tool_loop(agent: Dict[str, Any],
 
             # Final response — save with timeline metadata
             ms = agent_context.get('agent_state')
+            # Skip the auto-complete guess when the agent reconciled its task
+            # list in response to the bookkeeping reminder — those statuses
+            # are authoritative.
             if (ms is not None and ms.mode == 'execute' and _successful_mutation
-                    and not stop_event.is_set()):
+                    and not stop_event.is_set()
+                    and not (_task_reminder_fired and _explicit_task_update_turn)):
                 completion = ms.completion_eligible(
                     tool_errors=_tool_errors, final_text=content, mutated=True)
                 if completion['eligible']:
@@ -2116,7 +2152,7 @@ def run_tool_loop(agent: Dict[str, Any],
         for tc_idx, tc in enumerate(tool_calls):
             fn_name = tc['function']['name']
             if fn_name == 'update_tasks':
-                _explicit_task_update = True
+                _explicit_task_update_turn = True
 
             # --- Quality Monitor: hallucinated tool check ---
             _qm_hallucinated = _qm_check_hallucinated(
