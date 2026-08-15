@@ -37,6 +37,51 @@ _LLM_ERROR_MESSAGES = {
 }
 
 
+def _normalize_system_messages(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return a provider-safe message snapshot with system instructions first.
+
+    Strict chat templates, including Qwen templates used by llama.cpp, reject
+    any system-role message after the conversation begins. Consolidate every
+    system message at index 0 while preserving the exact order and fields of
+    all non-system messages. Caller-owned dictionaries and the input list are
+    never mutated.
+    """
+    copied_messages = [message.copy() for message in messages]
+    system_messages = [
+        message for message in copied_messages
+        if message.get("role") == "system"
+    ]
+    if not system_messages:
+        return copied_messages
+
+    non_system_messages = [
+        message for message in copied_messages
+        if message.get("role") != "system"
+    ]
+    merged_system = system_messages[0].copy()
+    if len(system_messages) > 1:
+        def _content_text(content: Any) -> str:
+            if isinstance(content, str):
+                return content
+            if content is None:
+                return ""
+            return json.dumps(
+                content,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+
+        merged_system["content"] = "\n\n".join(
+            _content_text(message.get("content", ""))
+            for message in system_messages
+        )
+
+    return [merged_system, *non_system_messages]
+
+
 def _format_llm_error(error_type: str, context: Optional[Dict[str, Any]] = None) -> str:
     """Format an LLM error type into a user-friendly message.
 
@@ -563,9 +608,11 @@ class LLMClient:
             exponential backoff (max 60s between retries). Configurable
             retry count via llm_max_retries setting (DB default: 5).
         """
+        provider_messages = _normalize_system_messages(messages)
         if self.api_format == "codex":
             return self._codex_chat_completion(
-                messages, tools, temperature, max_tokens, log_file, tool_choice)
+                provider_messages, tools, temperature, max_tokens, log_file,
+                tool_choice)
 
         is_ollama_fmt = self.api_format == "ollama" or (
             self.base_url and "ollama.com" in self.base_url
@@ -632,7 +679,7 @@ class LLMClient:
             or "gemma-4-base" in model_lower
         )
 
-        for msg in messages:
+        for msg in provider_messages:
             new_msg = msg.copy()
             if isinstance(new_msg.get("content"), str):
                 new_msg["content"] = normalize_llm_text(new_msg["content"])
@@ -643,22 +690,6 @@ class LLMClient:
                     new_msg["content"] = "<|think|>\n" + new_msg["content"]
                     thinking_injected = True
             processed_messages.append(new_msg)
-
-        # Merge multiple leading system messages into one to satisfy strict chat
-        # templates (e.g. Llama 3.x) that only allow a single system message.
-        n_sys = 0
-        for m in processed_messages:
-            if m.get("role") == "system":
-                n_sys += 1
-            else:
-                break
-        if n_sys > 1:
-            combined_content = "\n\n".join(
-                m.get("content", "") for m in processed_messages[:n_sys]
-            )
-            merged = processed_messages[0].copy()
-            merged["content"] = combined_content
-            processed_messages = [merged] + processed_messages[n_sys:]
 
         # Handle reasoning_content field based on thinking mode.
         # Some models (e.g. DeepSeek-v4) produce reasoning_content automatically
