@@ -589,7 +589,8 @@ class AgentState:
     # ── Rendering ────────────────────────────────────────────────────────────
 
     def render(self, agent_id: str = None, atg_enabled: bool = False,
-               cmp_enabled: bool = False, agent_name: str = None) -> str:
+               cmp_enabled: bool = False, agent_name: str = None,
+               update_tasks_available: bool = True) -> str:
         """Render state as a markdown system message for LLM injection.
 
         Args:
@@ -600,6 +601,10 @@ class AgentState:
                       compile_task_graph() instead of a free-form save_plan().
             cmp_enabled: When True and cmp state exists, render the session
                       path map + cards section.
+            update_tasks_available: When False (e.g. the kanban skill
+                      suppresses builtin:update_tasks), omit any instruction
+                      to call update_tasks — never tell the model to use a
+                      tool it does not have.
         """
         if self.always_execute:
             mode_note = "execute — write tools are **allowed** (always_execute is on)"
@@ -668,6 +673,12 @@ class AgentState:
         if self.tasks:
             lines.append("")
             lines.append("### Task List")
+            if update_tasks_available:
+                lines.append(
+                    "_Keep this list current: mark tasks done with "
+                    "update_tasks before finishing any turn where you "
+                    "completed work._"
+                )
             for t in self.tasks:
                 icon = STATUS_ICON.get(t.get("status"), "[ ]")
                 text = t.get("text") or "(no description)"
@@ -694,7 +705,7 @@ class AgentState:
                     "3 minutes.** Consider whether stuck. If blocked, switch to another "
                     "task or mark this one done."
                 )
-        else:
+        elif update_tasks_available:
             lines.append("")
             lines.append("_No tasks defined yet. Use update_tasks(action='set', tasks=[...]) to define your plan._")
 

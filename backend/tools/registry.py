@@ -583,7 +583,13 @@ def _builtin_update_tasks_factory(agent_context: dict):
             "name": "update_tasks",
             "description": (
                 "Manage your implementation task list "
-                "(set, add, update status, remove). CRITICAL: Each entry must be "
+                "(set, add, update status, remove).\n"
+                "WHEN TO CALL (mandatory bookkeeping): 'set' the list before "
+                "starting multi-step work; 'in_progress' when you begin a task; "
+                "'done' the moment a task's work is finished — always BEFORE "
+                "giving your final answer. Never end a turn that did "
+                "implementation work without reconciling task statuses.\n"
+                "CRITICAL: Each entry must be "
                 "ATOMIC — exactly one concrete action or outcome that can be "
                 "completed independently. Split multi-action work into separate "
                 "entries; never batch several actions into one task.\n"
