@@ -1588,6 +1588,11 @@ def agent_remove(agent_id):
         )
         if os.path.isdir(agent_dir):
             shutil.rmtree(agent_dir)
+        try:
+            from models.chat import agent_chat_manager
+            agent_chat_manager.drop(agent_id)
+        except Exception:
+            pass
         print(f"Agent removed: {agent_id}")
     except Exception as e:
         print(f"Error: {e}")
