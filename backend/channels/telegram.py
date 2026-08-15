@@ -821,6 +821,51 @@ class TelegramChannel(BaseChannel):
         self._llm_thinking_handler = _on_llm_thinking
         event_stream.on('llm_thinking', _on_llm_thinking)
 
+        # Tool-call notification: coalesce tool calls within a short window into
+        # one compact message. A 100-tool loop collapses to a handful of lines
+        # instead of one message per call.
+        _tool_pending: dict = {}  # external_user_id -> {last, counts: {name: n}, any_error}
+        _TOOL_WINDOW = 5.0
+
+        def _flush_tool_notify(user_id: str):
+            entry = _tool_pending.pop(user_id, None)
+            if not entry:
+                return
+            parts = [f"{name} ({n}x)" for name, n in sorted(entry['counts'].items())]
+            icon = '\u26a0\ufe0f' if entry['any_error'] else '\U0001f6e0\ufe0f'
+            text = f"{icon} Tool: {', '.join(parts)}"
+            try:
+                self.send_message(user_id, text)
+            except Exception as e:
+                _logger.error("Failed to send tool notification: %s", e)
+
+        def _on_tool_executed(data):
+            if data.get('channel_id') != channel_id:
+                return
+            user_id = data.get('external_user_id')
+            if not user_id:
+                return
+            now = time.time()
+            entry = _tool_pending.get(user_id)
+            if entry and now - entry['last'] < _TOOL_WINDOW:
+                name = data.get('tool_name', '')
+                entry['counts'][name] = entry['counts'].get(name, 0) + 1
+                entry['any_error'] = entry['any_error'] or data.get('has_error', False)
+                entry['last'] = now
+                return
+            # flush previous window (if any) and start a new one
+            if entry:
+                _flush_tool_notify(user_id)
+            _tool_pending[user_id] = {
+                'last': now,
+                'counts': {data.get('tool_name', ''): 1},
+                'any_error': data.get('has_error', False),
+            }
+            threading.Timer(_TOOL_WINDOW, _flush_tool_notify, args=[user_id]).start()
+
+        self._tool_executed_handler = _on_tool_executed
+        event_stream.on('tool_executed', _on_tool_executed)
+
         def run_polling():
             import asyncio
             loop = asyncio.new_event_loop()
@@ -866,6 +911,8 @@ class TelegramChannel(BaseChannel):
             event_stream.off('approval_resolved', self._approval_resolved_handler)
         if self._llm_thinking_handler:
             event_stream.off('llm_thinking', self._llm_thinking_handler)
+        if self._tool_executed_handler:
+            event_stream.off('tool_executed', self._tool_executed_handler)
         import asyncio
         loop = self._loop
         if loop and loop.is_running():
