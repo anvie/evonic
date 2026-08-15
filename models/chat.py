@@ -1060,5 +1060,19 @@ class AgentChatManager:
                     self._dbs[agent_id] = AgentChatDB(agent_id)
         return self._dbs[agent_id]
 
+    def drop(self, agent_id: str) -> None:
+        """Drop a cached AgentChatDB (e.g. when the agent is deleted).
+
+        Closes the persistent connection first so it cannot keep reading a
+        chat.db inode that is about to be unlinked from disk. Without this,
+        recreating an agent with the same id returns the stale cached
+        instance whose connection points at the deleted file → queries
+        fail with 'no such table: chat_sessions'.
+        """
+        with self._lock:
+            db = self._dbs.pop(agent_id, None)
+        if db is not None:
+            db.close()
+
 
 agent_chat_manager = AgentChatManager()
