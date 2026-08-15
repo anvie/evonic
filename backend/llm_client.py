@@ -248,11 +248,15 @@ class LLMClient:
 
         Args:
             model_config: Dict with keys: base_url, api_key, model_name, timeout,
-                         thinking (bool), thinking_budget (int), max_tokens, temperature.
+                         thinking (bool), thinking_budget (int), max_tokens, temperature,
+                         and optional service_tier.
                          If None, uses the default model from DB or config.py defaults.
         """
         self.provider = None
+        self.service_tier = model_config.get("service_tier") if model_config else None
+        self._model_api_key_override = False
         if model_config:
+            self._model_api_key_override = bool(model_config.get("api_key"))
             try:
                 from models.db import db
                 model_config = db.resolve_model_config(model_config)
@@ -274,6 +278,7 @@ class LLMClient:
 
                 dm = db.get_default_model()
                 if dm:
+                    self._model_api_key_override = bool(dm.get("api_key"))
                     dm = db.resolve_model_config(dm)
                     self.provider = dm.get("provider")
                     self.base_url = dm.get("base_url")
@@ -436,6 +441,7 @@ class LLMClient:
             reasoning=bool(self.thinking),
             timeout=self.timeout or 120,
             tool_choice=tool_choice,
+            service_tier=getattr(self, "service_tier", None),
         )
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -568,6 +574,17 @@ class LLMClient:
             self.base_url and "anthropic.com" in self.base_url
         )
         is_anthropic = self.api_format == "anthropic"
+        anthropic_token = self.api_key
+        anthropic_oauth = False
+        if is_anthropic:
+            from backend.provider.claude_code import is_oauth_token, resolve_credential
+            if getattr(self, "_model_api_key_override", False):
+                anthropic_oauth = is_oauth_token(anthropic_token or "")
+            else:
+                from models.db import db as _provider_db
+                anthropic_token, anthropic_oauth = resolve_credential(
+                    _provider_db, self.provider or "anthropic"
+                )
         # Cerebras is a strict OpenAI-compatible validator: it rejects the
         # non-standard reasoning_content field on input messages (unlike
         # OpenCode Go / MiniMax / DeepSeek, which require it round-tripped).
@@ -702,6 +719,11 @@ class LLMClient:
             }
             if system_msgs:
                 payload["system"] = "\n\n".join(system_msgs) if len(system_msgs) > 1 else system_msgs[0]
+            if anthropic_oauth:
+                from backend.provider.claude_code import SYSTEM_PREFIX
+                payload["system"] = SYSTEM_PREFIX + (
+                    "\n\n" + payload["system"] if payload.get("system") else ""
+                )
             if effective_temperature is not None:
                 payload["temperature"] = effective_temperature
             # Transform OpenAI tools -> Anthropic tools format
@@ -734,12 +756,8 @@ class LLMClient:
                         "type": "function", "function": {"name": tool_choice}}
 
         if is_anthropic:
-            headers = {
-                "Content-Type": "application/json",
-                "anthropic-version": "2023-06-01",
-            }
-            if self.api_key:
-                headers["x-api-key"] = self.api_key
+            from backend.provider.claude_code import auth_headers
+            headers = auth_headers(anthropic_token or "", anthropic_oauth)
         else:
             headers = {"Content-Type": "application/json"}
             if self.api_key:

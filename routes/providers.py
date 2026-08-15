@@ -11,6 +11,9 @@ _SENSITIVE_KEYS = frozenset({"api_key", "refresh_token"})
 
 
 def _sanitize(provider: Dict[str, Any]) -> Dict[str, Any]:
+    provider["credential_configured"] = bool(provider.get("api_key")) or (
+        provider.get("credential_source") == "claude_code"
+    )
     for key in _SENSITIVE_KEYS:
         provider.pop(key, None)
     return provider
@@ -113,6 +116,12 @@ def api_fetch_provider_models(provider_id):
         if not token:
             return jsonify({"success": False, "error": "Not connected. Click Connect first."}), 401
         headers["Authorization"] = f"Bearer {token}"
+    elif api_format == "anthropic":
+        from backend.provider.claude_code import auth_headers, resolve_credential
+        token, oauth = resolve_credential(db, provider_id)
+        if not token:
+            return jsonify({"success": False, "error": "Not connected. Set up credentials first."}), 401
+        headers = auth_headers(token, oauth)
     else:
         api_key = provider.get("api_key")
         if api_key:
@@ -209,6 +218,12 @@ def api_test_provider(provider_id):
         if not token:
             return jsonify({"success": False, "error": "Not connected. Click Connect first."}), 401
         headers["Authorization"] = f"Bearer {token}"
+    elif api_format == "anthropic":
+        from backend.provider.claude_code import auth_headers, resolve_credential
+        token, oauth = resolve_credential(db, provider_id)
+        if not token:
+            return jsonify({"success": False, "error": "Not connected. Set up credentials first."}), 401
+        headers = auth_headers(token, oauth)
     else:
         api_key = provider.get("api_key")
         if api_key:

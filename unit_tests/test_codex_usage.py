@@ -60,6 +60,7 @@ def test_codex_chat_completion_propagates_usage():
     client.max_tokens = 4096
     client.temperature = None
     client.thinking = False
+    client.service_tier = 'priority'
     client.timeout = 120
     client.provider = 'codex'
     client._codex_provider_id = 'codex'
@@ -92,6 +93,7 @@ def test_codex_chat_completion_propagates_usage():
     # traces/archive get a request payload now (was None)
     assert result['request_payload']['model'] == 'gpt-5.6-terra'
     assert result['request_payload']['messages'][0]['content'] == 'halo'
+    assert codex.send_request.call_args.kwargs['service_tier'] == 'priority'
     record_usage.assert_called_once_with(
         model='gpt-5.6-terra',
         provider='codex',
