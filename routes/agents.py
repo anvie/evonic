@@ -2021,6 +2021,15 @@ def api_chat_agent_state(agent_id):
     else:
         payload = {'mode': None, 'active_model': None, 'loaded_skills': loaded_skills}
 
+    # Display-only plugin summaries share the existing Agent State renderer but
+    # are never persisted into workflow state or injected into the model prompt.
+    try:
+        from backend.plugin_manager import get_agent_state_summaries
+        for namespace, summary in get_agent_state_summaries(agent_id, session_id).items():
+            payload.setdefault('states', {}).setdefault(namespace, summary)
+    except Exception:
+        pass
+
     # Background processes tracked for this session (Session State panel).
     if session_id:
         background_processes = []

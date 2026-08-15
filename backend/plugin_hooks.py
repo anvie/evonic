@@ -1,5 +1,5 @@
 """
-Plugin Hooks — six hook registries for extending agent behavior.
+Plugin Hooks — registries for extending agent behavior.
 
 Tool Guards, Message Interceptors, Turn Context Providers, Busy Message
 Providers, Builtin Suppressors, and State Handlers — all live here as
@@ -179,6 +179,139 @@ def run_message_interceptors(agent_id: str, content: str, messages: list) -> lis
     return injections
 
 
+# Final-response handlers run before a no-tool response becomes visible or is
+# persisted. A handler may accept the response, replace its content, or request
+# one ephemeral provider retry with a revised message list.
+_final_response_handlers: Dict[str, Callable] = {}
+
+
+def register_final_response_handler(namespace: str, fn: Callable) -> None:
+    _final_response_handlers[namespace] = fn
+
+
+def unregister_final_response_handler(namespace: str) -> None:
+    _final_response_handlers.pop(namespace, None)
+
+
+def run_final_response_handlers(context: dict) -> Optional[dict]:
+    for namespace, handler in list(_final_response_handlers.items()):
+        try:
+            result = handler(context)
+            if isinstance(result, dict) and (
+                    result.get("retry") or isinstance(result.get("content"), str)):
+                return {**result, "namespace": namespace}
+        except Exception:
+            _logger.exception("Plugin final-response handler failed: %s", namespace)
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# User Message Transformer Registry
+# ═══════════════════════════════════════════════════════════════════
+
+_user_message_transformers: Dict[str, Callable] = {}
+_tool_request_transformers: Dict[str, Callable] = {}
+_tool_result_transformers: Dict[str, Callable] = {}
+
+
+def register_user_message_transformer(namespace: str, fn: Callable) -> None:
+    """Register a named transformer for the newest user message."""
+    _user_message_transformers[namespace] = fn
+
+
+def unregister_user_message_transformer(namespace: str) -> None:
+    _user_message_transformers.pop(namespace, None)
+
+
+def apply_user_message_transformers(agent_id: str, session_id: str,
+                                    messages: list) -> bool:
+    """Transform only the newest user message, preserving non-text media parts."""
+    target = next(
+        (message for message in reversed(messages)
+         if isinstance(message, dict) and message.get("role") == "user"),
+        None,
+    )
+    if target is None:
+        return False
+
+    changed = False
+
+    def transform(text: str) -> str:
+        nonlocal changed
+        current = text
+        for namespace, fn in list(_user_message_transformers.items()):
+            try:
+                result = fn(agent_id, session_id, current)
+                if isinstance(result, str):
+                    changed = changed or result != current
+                    current = result
+            except Exception:
+                _logger.exception("Plugin user-message transformer failed: %s", namespace)
+        return current
+
+    content = target.get("content")
+    if isinstance(content, str):
+        target["content"] = transform(content)
+    elif isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" \
+                    and isinstance(part.get("text"), str):
+                part = {**part, "text": transform(part["text"])}
+            parts.append(part)
+        target["content"] = parts
+    return changed
+
+
+# Tool transformers operate on parsed request arguments and completed results.
+# Each callback receives (agent_id, session_id, tool_name, payload) and may return
+# a replacement payload of the same logical type. Exceptions are fail-open.
+def register_tool_request_transformer(namespace: str, fn: Callable) -> None:
+    """Register a named transformer for parsed tool-call arguments."""
+    _tool_request_transformers[namespace] = fn
+
+
+def unregister_tool_request_transformer(namespace: str) -> None:
+    _tool_request_transformers.pop(namespace, None)
+
+
+def apply_tool_request_transformers(agent_id: str, session_id: str,
+                                    tool_name: str, args):
+    """Apply registered request transformers in registration order."""
+    current = args
+    for namespace, fn in list(_tool_request_transformers.items()):
+        try:
+            result = fn(agent_id, session_id, tool_name, current)
+            if result is not None:
+                current = result
+        except Exception:
+            _logger.exception("Plugin tool-request transformer failed: %s", namespace)
+    return current
+
+
+def register_tool_result_transformer(namespace: str, fn: Callable) -> None:
+    """Register a named transformer for completed tool results."""
+    _tool_result_transformers[namespace] = fn
+
+
+def unregister_tool_result_transformer(namespace: str) -> None:
+    _tool_result_transformers.pop(namespace, None)
+
+
+def apply_tool_result_transformers(agent_id: str, session_id: str,
+                                   tool_name: str, result):
+    """Apply registered result transformers in registration order."""
+    current = result
+    for namespace, fn in list(_tool_result_transformers.items()):
+        try:
+            transformed = fn(agent_id, session_id, tool_name, current)
+            if transformed is not None:
+                current = transformed
+        except Exception:
+            _logger.exception("Plugin tool-result transformer failed: %s", namespace)
+    return current
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Turn Context Provider Registry
 # ═══════════════════════════════════════════════════════════════════
@@ -186,7 +319,9 @@ def run_message_interceptors(agent_id: str, content: str, messages: list) -> lis
 # each agent turn. Providers are called once per _run_tool_loop call.
 #   provider(agent_id: str, session_id: str) -> Optional[dict]
 # Return None to skip, or:
-#   {"id": "x", "tools": [...tool_defs...], "system_md": "..."}
+#   {"id": "x", "tools": [...tool_defs...], "system_md": "...",
+#    "system_mode": "preserve|append|replace",
+#    "prefill_messages": [{"role": "user|assistant", "content": "..."}]}
 
 _turn_context_providers: list = []
 
@@ -212,8 +347,70 @@ def get_turn_context(agent_id: str, session_id: str) -> list:
             if ctx:
                 results.append(ctx)
         except Exception:
-            pass
+            _logger.exception("Plugin turn-context provider failed")
     return results
+
+
+def apply_turn_context(messages: list, tools: list, contexts: list) -> None:
+    """Apply validated, ephemeral plugin context before conversation history."""
+    additions = []
+    replacement = None
+    known_tools = {t.get("function", {}).get("name") for t in tools}
+    for ctx in contexts:
+        if not isinstance(ctx, dict):
+            continue
+        system_md = ctx.get("system_md")
+        if isinstance(system_md, str) and system_md.strip():
+            mode = ctx.get("system_mode", "append")
+            if mode == "replace":
+                replacement = system_md[:32000]
+            elif mode != "preserve":
+                additions.append({"role": "system", "content": system_md[:32000]})
+        prefill = ctx.get("prefill_messages")
+        if isinstance(prefill, list):
+            for msg in prefill[:8]:
+                if not isinstance(msg, dict) or msg.get("role") not in {"user", "assistant"}:
+                    continue
+                content = msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    additions.append({"role": msg["role"], "content": content[:16000]})
+        for tool in ctx.get("tools") or []:
+            name = tool.get("function", {}).get("name") if isinstance(tool, dict) else None
+            if name and name not in known_tools:
+                tools.append(tool)
+                known_tools.add(name)
+    if replacement is not None:
+        system = next((message for message in messages
+                       if isinstance(message, dict) and message.get("role") == "system"), None)
+        if system is None:
+            messages.insert(0, {"role": "system", "content": replacement})
+        else:
+            system["content"] = replacement
+    messages[1:1] = additions
+
+
+# Read-only plugin status shown in the chat Agent State panel.
+_agent_state_summary_providers: Dict[str, Callable] = {}
+
+
+def register_agent_state_summary_provider(namespace: str, fn: Callable) -> None:
+    _agent_state_summary_providers[namespace] = fn
+
+
+def unregister_agent_state_summary_provider(namespace: str) -> None:
+    _agent_state_summary_providers.pop(namespace, None)
+
+
+def get_agent_state_summaries(agent_id: str, session_id: str) -> dict:
+    summaries = {}
+    for namespace, provider in list(_agent_state_summary_providers.items()):
+        try:
+            summary = provider(agent_id, session_id)
+            if isinstance(summary, dict) and summary.get("state"):
+                summaries[namespace] = summary
+        except Exception:
+            _logger.exception("Plugin agent-state summary failed: %s", namespace)
+    return summaries
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -361,4 +558,6 @@ def get_state_summary(agent_state) -> dict:
 def _get_all_registries():
     return (_tool_guards, _message_interceptors, _builtin_suppressors,
             _turn_context_providers, _busy_message_providers, _turn_gates,
-            _tool_result_gates, _attachment_policies)
+            _tool_result_gates, _attachment_policies,
+            _agent_state_summary_providers, _user_message_transformers,
+            _final_response_handlers)

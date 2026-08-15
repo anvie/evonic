@@ -36,7 +36,12 @@ from backend.agent_state import AgentState
 from backend.channels.registry import channel_manager
 from backend.channels.base import BaseChannel
 from backend.event_stream import event_stream
-from backend.plugin_manager import get_busy_message
+from backend.plugin_manager import (
+    apply_turn_context,
+    apply_user_message_transformers,
+    get_busy_message,
+    get_turn_context,
+)
 from backend.slash_commands import parse_command, execute_command
 from backend.agent_runtime.prefetch import TurnPrefetcher
 import atexit
@@ -1740,7 +1745,7 @@ class AgentRuntime:
             system_prompt = _prefetch.system_prompt
             tools = _prefetch.tools
             # Use prefetched messages as the base, then append fresh user message below
-            messages = _prefetch.messages
+            messages = list(_prefetch.messages)
             # Skip the heavy build phase — tools and system_prompt are already ready
             _tools_prebuilt = tools
             _agent_ctx_prebuilt = _prefetch.agent_context
@@ -2129,6 +2134,10 @@ class AgentRuntime:
                 'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
                 'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
             }
+
+        apply_turn_context(
+            messages, tools, get_turn_context(agent_id, ctx.session_id),
+        )
         _last_user = chatlog.get_last_entry(types=frozenset({'user'}))
         assigned_tool_ids, tools = _apply_restart_origin_guard(
             agent_context, assigned_tool_ids, tools,
@@ -2330,6 +2339,10 @@ class AgentRuntime:
                 )
                 if not _already_injected:
                     messages.insert(1, {"role": "system", "content": _long_gap_ctx})
+
+        # Plugin transforms are ephemeral: state/CMP saw the original text, while
+        # only the provider-bound message copy is changed.
+        apply_user_message_transformers(agent_id, ctx.session_id, messages)
 
         # Apply preference wrapper prefix to user messages if enabled
         _apply_wrapper_prefix(messages, _should_wrap_user_message(agent),
