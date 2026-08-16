@@ -138,7 +138,10 @@ def test_artifact_instructions_keep_capabilities_with_lower_token_cost(monkeypat
     assert "/api/agents/token-test-agent/artifacts/<filename>" in artifact_section
     assert "<img src=" in artifact_section
     assert "`bash`/`runpy`" in artifact_section
-    assert estimate_tokens(artifact_section) < 150
+    # Ceiling raised from 150: commit 000fbcd deliberately added the send_file
+    # delivery rule and the no-local-filesystem-paths rule to this section after
+    # the original budget was set. The guard still bounds unintended growth.
+    assert estimate_tokens(artifact_section) < 185
 
 
 def test_offline_benchmark_is_deterministic_and_covers_required_shapes():

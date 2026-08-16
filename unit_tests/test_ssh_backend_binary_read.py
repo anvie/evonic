@@ -9,7 +9,9 @@ from backend.tools.lib.backends.ssh_backend import SSHBackend
 def _backend():
     """Create an unconnected backend suitable for unit testing I/O methods."""
     backend = SSHBackend.__new__(SSHBackend)
-    backend._client = Mock()
+    # MagicMock, not Mock: cat_file_bytes opens the remote file as a context
+    # manager, and plain Mock does not autocreate __enter__/__exit__.
+    backend._client = MagicMock()
     backend._connect = Mock()
     return backend
 
