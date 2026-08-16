@@ -5034,6 +5034,15 @@ function _handleAgentRealtime(evtName, data, sessionId) {
         document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', {detail: data}));
         return;
     }
+    if (evtName === 'state:changed') {
+        // Not turn-scoped — routing this through turn.ingest() drops it when the
+        // turn is already finalized (e.g. the snapshot emitted by end-of-turn task
+        // reconciliation, which lands right before 'done'), leaving the Session
+        // State panel stale. Bridge straight to the document like 'state_changed'.
+        document.dispatchEvent(new CustomEvent('evonic:state-changed', {detail: data}));
+        document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', {detail: data}));
+        return;
+    }
     if (evtName === 'agent_busy_changed') {
         if (data.agent_id && data.agent_id !== AGENT_ID) return;
         const ownsSession = data.session_id === sessionId ||
@@ -6226,7 +6235,9 @@ function buildContextUsageHtml(cu) {
 }
 
 let _refreshSessionStateTimer = null;
+let _refreshSessionStateReq = 0;
 const _refreshSessionStateImpl = async function() {
+    const myReq = ++_refreshSessionStateReq;
     try {
         // One round trip: /chat/state?include=summary returns agent state
         // with the session summary attached.
@@ -6234,6 +6245,9 @@ const _refreshSessionStateImpl = async function() {
         const res = await fetch(`/api/agents/${AGENT_ID}/chat/state?user_id=web_test${sid}&include=summary`);
         if (!res.ok) return;
         const stateData = await res.json();
+        // A newer refresh started while this response was in flight — rendering
+        // now would overwrite fresher panel state with stale data.
+        if (myReq !== _refreshSessionStateReq) return;
         const data = stateData.summary || { summary: null };
         delete stateData.summary;
 
