@@ -1976,14 +1976,21 @@ function clearSummaryPanel() {
 
 // ==================== Agent State ====================
 
+let _agentStateReq = 0;
+
 async function loadAgentState() {
     if (!currentAgentId) return;
     const userId = document.getElementById('hdr-user')?.textContent || 'web_test';
+    const myReq = ++_agentStateReq;
     try {
         const url = `/api/agents/${currentAgentId}/chat/state?user_id=${encodeURIComponent(userId)}&session_id=${encodeURIComponent(currentSessionId || '')}`;
         const response = await fetch(url);
         if (!response.ok) return;
-        _sessionStateData = await response.json();
+        const data = await response.json();
+        // A fresher state:changed snapshot or newer fetch landed while this
+        // response was in flight — don't overwrite it with stale data.
+        if (myReq !== _agentStateReq) return;
+        _sessionStateData = data;
         _renderSessionStateSnapshot(_sessionStateData);
         renderAgentState(
             currentAgentId,
@@ -2024,6 +2031,9 @@ document.addEventListener('evonic:agent-state-changed', function(event) {
     const hasStateSnapshot = stateKeys.some(key => Object.prototype.hasOwnProperty.call(detail, key));
 
     if (hasStateSnapshot) {
+        // Invalidate any in-flight loadAgentState() fetch: its response is now
+        // older than this snapshot and must not overwrite it.
+        _agentStateReq++;
         for (const key of stateKeys) {
             if (Object.prototype.hasOwnProperty.call(detail, key)) _sessionStateData[key] = detail[key];
         }
