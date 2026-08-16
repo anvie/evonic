@@ -2301,8 +2301,7 @@ const SSE_EVENTS = [
     'turn_begin', 'turn_split', 'thinking', 'tool_call_started', 'tool_executed',
     'state:changed', 'tasks:auto_transition', 'tasks:stale', 'response_chunk', 'done', 'approval_required', 'approval_resolved', 'retry',
     'message_injected', 'message_injection_applied', 'message_received', 'whatsapp_restriction_warning', 'session_clear',
-    'state_changed',
-    'heartbeat',
+    'state_changed', 'turn_queued', 'ready', 'heartbeat', 'auth_expired',
 ];
 
 // If no event (including heartbeats) arrives within this window, the connection
@@ -2318,12 +2317,10 @@ class SSEAdapter {
         this._lastSeq = opts.afterSeq || 0;
         this._handler = null;
         this._es = null;
-        this._fillingGap = false;
-        this._pendingQueue = [];
         this._log = log('sse');
         this._lastEventAt = 0;
         this._livenessInterval = null;
-        this._usingUnified = false; // true when using unified /api/realtime/stream
+        this._usingUnified = url.indexOf('/api/realtime/stream') !== -1;
         this._reconnectAttempts = 0; // consecutive immediate failures (for backoff)
         this._connectStartTime = 0;  // when the current EventSource was opened
     }
@@ -2353,7 +2350,7 @@ class SSEAdapter {
             const agentId = this._agentId || (url.match(/\/agents\/([^/?]+)\//) || [])[1] || '';
             const sessionId = this._sessionId || u.searchParams.get('session_id') || '';
             const after = this._lastSeq;
-            let newUrl = '/api/realtime/stream?chat=1';
+            let newUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=1';
             if (agentId) newUrl += '&agent_id=' + encodeURIComponent(agentId);
             if (sessionId) newUrl += '&session_id=' + encodeURIComponent(sessionId);
             if (after > 0) newUrl += '&after=' + after;
@@ -2380,7 +2377,8 @@ class SSEAdapter {
                 if (this._usingUnified) {
                     const agentId = this._agentId || '';
                     const sessionId = this._sessionId || '';
-                    resumeUrl = '/api/realtime/stream?chat=1';
+                    resumeUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=' +
+                        (this._lastSeq > 0 ? '0' : '1');
                     if (agentId) resumeUrl += '&agent_id=' + encodeURIComponent(agentId);
                     if (sessionId) resumeUrl += '&session_id=' + encodeURIComponent(sessionId);
                     if (this._lastSeq > 0) resumeUrl += '&after=' + this._lastSeq;
@@ -2407,10 +2405,10 @@ class SSEAdapter {
 
         es.onerror = () => {
             this._log.warn('SSE error/closed', url);
-            console.warn('[sse] error/closed _lastSeq=', this._lastSeq, '_fillingGap=', this._fillingGap, '_pendingQueue=', this._pendingQueue.length);
+            console.warn('[sse] error/closed _lastSeq=', this._lastSeq);
             es.close();
             if (this._es === es) this._es = null;
-            // Only reconnect if this was NOT an intentional stop (e.g. after 'done')
+            // Only reconnect if this adapter was not explicitly stopped.
             if (this._intentionallyStopped) {
                 this._log.info('intentionally stopped — no reconnect');
                 return;
@@ -2441,7 +2439,8 @@ class SSEAdapter {
                 if (this._usingUnified) {
                     const agentId = this._agentId || '';
                     const sessionId = this._sessionId || '';
-                    resumeUrl = '/api/realtime/stream?chat=1';
+                    resumeUrl = '/api/realtime/stream?chat=1&cursor_version=2&snapshot=' +
+                        (this._lastSeq > 0 ? '0' : '1');
                     if (agentId) resumeUrl += '&agent_id=' + encodeURIComponent(agentId);
                     if (sessionId) resumeUrl += '&session_id=' + encodeURIComponent(sessionId);
                     if (this._lastSeq > 0) resumeUrl += '&after=' + this._lastSeq;
@@ -2451,7 +2450,7 @@ class SSEAdapter {
                     resumeUrl = u.pathname + u.search;
                 }
                 this._log.info('reconnecting from seq', this._lastSeq, resumeUrl);
-                console.warn('[sse] reconnecting _lastSeq=', this._lastSeq, '_fillingGap=', this._fillingGap, '_pendingQueue=', this._pendingQueue.length, 'url=', resumeUrl);
+                console.warn('[sse] reconnecting _lastSeq=', this._lastSeq, 'url=', resumeUrl);
                 this._connect(resumeUrl);
             }, delay);
         };
@@ -2459,80 +2458,21 @@ class SSEAdapter {
 
     _handleRaw(evtName, data) {
         const seq = data.seq || 0;
-
-        if (this._fillingGap) {
-            this._log.debug('queued while filling gap', evtName, 'seq', seq, 'queueLen', this._pendingQueue.length);
-            if (this._pendingQueue.length >= 1 && this._pendingQueue.length % 10 === 0) {
-                console.warn('[sse] pendingQueue grew to', this._pendingQueue.length, 'while filling gap — possible reconnect storm');
-            }
-            this._pendingQueue.push({ evtName, data });
-            return;
-        }
-
         if (seq && seq <= this._lastSeq) {
             this._log.debug('dedup skip', evtName, 'seq', seq, '≤ lastSeq', this._lastSeq);
-            console.log('[sse] dedup skip', evtName, 'seq=', seq, '_lastSeq=', this._lastSeq);
             return;
         }
-
-        if (seq && this._lastSeq > 0 && seq > this._lastSeq + 1) {
-            this._log.warn('seq gap detected', this._lastSeq, '→', seq, '— filling');
-            this._fillingGap = true;
-            this._pendingQueue.push({ evtName, data });
-            this._fillGap(this._lastSeq, seq).then(() => {
-                this._fillingGap = false;
-                console.warn('[sse] draining pendingQueue len=', this._pendingQueue.length, '_lastSeq=', this._lastSeq);
-                this._drainQueue();
-            });
-            return;
-        }
-
         if (seq) this._lastSeq = seq;
+        if (evtName === 'ready') return;
         this._dispatch(evtName, data);
     }
 
-    async _fillGap(afterSeq, upToSeq) {
-        try {
-            const agentId = this._agentId || this._url.match(/\/agents\/([^/?]+)\//)?.[1] || '';
-            const res = await $.getJSON(
-                `/api/agents/${encodeURIComponent(agentId)}/chat/events?session_id=${encodeURIComponent(this._sessionId)}&after=${afterSeq}&up_to=${upToSeq}`
-            );
-            const evts = res.events || [];
-            this._log.warn('gap-fill response: afterSeq=' + afterSeq + ' upToSeq=' + upToSeq + ' returned=' + evts.length + ' seqs=' + evts.map(e=>e.seq).join(','));
-            console.warn('[gap-fill] returned', evts.length, 'events for after=', afterSeq, 'up_to=', upToSeq, 'seqs:', evts.map(e=>e.seq).join(','));
-            for (const ev of evts) {
-                if (ev.seq <= this._lastSeq) continue;
-                this._lastSeq = ev.seq;
-                this._dispatch(ev.event, ev.data);
-            }
-        } catch (err) {
-            this._log.warn('gap-fill failed', err, '— skipping gap');
-            this._lastSeq = upToSeq - 1;
-        }
-    }
-
-    // Drain _pendingQueue asynchronously — one event per animation frame so we
-    // never block the main thread with a large synchronous burst.
-    _drainQueue() {
-        if (this._pendingQueue.length === 0) {
-            console.warn('[sse] queue drain done _lastSeq=', this._lastSeq);
-            return;
-        }
-        const item = this._pendingQueue.shift();
-        const itemSeq = item.data.seq || 0;
-        if (itemSeq && itemSeq <= this._lastSeq) {
-            console.log('[sse] queue dedup skip', item.evtName, 'seq=', itemSeq);
-            // Skip but continue draining without waiting — dedup is cheap
-            this._drainQueue();
-            return;
-        }
-        if (itemSeq) this._lastSeq = itemSeq;
-        this._dispatch(item.evtName, item.data);
-        // Yield to the browser between each real event
-        requestAnimationFrame(() => this._drainQueue());
-    }
-
     _dispatch(evtName, data) {
+        if (evtName === 'auth_expired') {
+            this.stop();
+            window.location.href = '/login';
+            return;
+        }
         if (evtName === 'state_changed') {
             // Not turn-scoped — bridge straight to the document-level event that
             // agent_detail.html / sessions.html already listen for (debounced refresh).
@@ -2547,11 +2487,8 @@ class SSEAdapter {
             this._handler({ event: 'session_clear', data, seq: data.seq || 0 });
             return;
         }
-        // done: stop reconnecting after this
         if (evtName === 'done') {
-            console.warn('[sse] _dispatch done _lastSeq=', this._lastSeq, 'data.seq=', data.seq);
             this._handler({ event: 'done', data, seq: data.seq || 0 });
-            this.stop();
             return;
         }
         this._handler({ event: evtName, data, seq: data.seq || 0 });
@@ -2678,8 +2615,6 @@ class ReplayAdapter {
 
 // ── turn.js ─────────────────────────────────────────────────────
 
-const STALE_TIMEOUT_MS = 300_000; // 5 minutes — safety net for truly abandoned turns
-
 const TERMINAL_PHASES = new Set(['final', 'done', 'aborted']);
 
 function reduceTurn(phase, eventKind, isFinal = false) {
@@ -2755,7 +2690,6 @@ class Turn {
         this._lastSeq = 0;
         this._transports = [];
         this._timerInterval = null;
-        this._staleTimeout = null;
         this._scrollRAF = null;
         this._startTime = Date.now();
         this._finalized = false;
@@ -2769,7 +2703,6 @@ class Turn {
 
         this._buildDOM();
         this._startTimer();
-        this._armStaleTimeout();
     }
 
     // ── DOM ──────────────────────────────────────────────────────────────────
@@ -2831,16 +2764,8 @@ class Turn {
         }, 100);
     }
 
-    _armStaleTimeout() {
-        this._staleTimeout = setTimeout(() => {
-            this._log.warn('stale timeout reached, auto-finalizing', this.id);
-            this._finalizeBubble(null);
-        }, STALE_TIMEOUT_MS);
-    }
-
     _clearTimers() {
         if (this._timerInterval) { clearInterval(this._timerInterval); this._timerInterval = null; }
-        if (this._staleTimeout)  { clearTimeout(this._staleTimeout);   this._staleTimeout = null; }
         if (this._scrollRAF)     { cancelAnimationFrame(this._scrollRAF); this._scrollRAF = null; }
     }
 
@@ -2864,15 +2789,6 @@ class Turn {
             return;
         }
         if (seq) this._lastSeq = seq;
-
-        // Reset stale timeout on every live event — turn is clearly still active
-        if (this._staleTimeout) {
-            clearTimeout(this._staleTimeout);
-            this._staleTimeout = setTimeout(() => {
-                this._log.warn('stale timeout reached, auto-finalizing', this.id);
-                this._finalizeBubble(null);
-            }, STALE_TIMEOUT_MS);
-        }
 
         this._log.debug('ingest', evtName, seq, '→ phase was', this.phase, this.id);
 
@@ -2990,7 +2906,7 @@ class Turn {
             console.warn('[turn] done event turn=%s _finalized=%s _finalContent=%s', this.id, this._finalized, !!this._finalContent);
             this._finalizeBubble(data.thinking_duration);
             // Fire final:response so page-level code can render the response bubble
-            // synchronously — no dependency on pollForResponse JSONL poll.
+            // synchronously from the durable stream.
             if (this._finalContent) {
                 console.warn('[turn] firing final:response turn=%s contentLen=%d', this.id, this._finalContent.length);
                 this._onTrigger('final:response', {
@@ -3003,9 +2919,12 @@ class Turn {
         }
 
         if (evtName === 'turn_split') {
-            this._finalizeBubble(null);
+            const splitDuration = data.timestamp && this._startTime
+                ? Math.max(0, (data.timestamp - this._startTime) / 1000)
+                : null;
+            this._finalizeBubble(splitDuration);
             // ChatUI will create a new Turn for the continuation
-            this._onTrigger('turn:split', { turnId: this.id });
+            this._onTrigger('turn:split', { turnId: this.id, timestamp: data.timestamp });
             return;
         }
 
@@ -3787,6 +3706,7 @@ class ChatUI {
                     const $lastUser = this.$container.find('[data-msg-role="user"]').last();
                     const $anchor = $lastUser.length ? $lastUser : (opts.userMsgEl ? $(opts.userMsgEl) : turn.$anchor);
                     const newTurn = this.beginTurn($anchor);
+                    if (data.timestamp) newTurn._startTime = data.timestamp;
                     this._lastLiveTurnId = newTurn.id;
                     this.markQueuedAsDelivered();
                     // Re-route the SSE adapter to the new turn so subsequent events

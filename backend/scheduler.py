@@ -759,8 +759,21 @@ class Scheduler:
         if external_user_id != '__scheduler__' and channel_id:
             session_id = main_db.get_or_create_session(
                 agent_id, external_user_id, channel_id)
-            main_db.add_chat_message(
+            message_id = main_db.add_chat_message(
                 session_id, 'assistant', message, agent_id=agent_id)
+            message_id = message_id if type(message_id) in (int, str) else None
+            from models.chatlog import chatlog_manager
+            chatlog_manager.get(agent_id, session_id).append({
+                'type': 'final', 'session_id': session_id,
+                'content': message, 'message_id': message_id,
+            })
+            from backend.event_stream import event_stream
+            event_stream.emit('message_received', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': external_user_id, 'channel_id': channel_id,
+                'message': message, 'message_id': message_id,
+                'role': 'assistant', 'sender': 'scheduler',
+            })
 
             # Push via channel (Telegram, etc.) so the user sees it immediately.
             # Only return on successful delivery — if the channel is down or
