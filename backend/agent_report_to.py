@@ -19,6 +19,15 @@ def resolve_report_to_from_context(
     if not report_to_id.startswith(_AGENT_MSG_PREFIX):
         return report_to_id, report_to_channel_id, session_id
 
+    # Inter-agent turns retain their originating human route in the runtime
+    # context. Prefer its explicit session ID so a newer web session cannot
+    # replace the originating channel session during chained delegation.
+    origin_report_to_id = agent_context.get("origin_report_to_id", "") or ""
+    origin_report_to_channel_id = agent_context.get("origin_report_to_channel_id", "") or ""
+    origin_session_id = agent_context.get("origin_session_id", "") or ""
+    if origin_report_to_id and origin_session_id:
+        return origin_report_to_id, origin_report_to_channel_id, origin_session_id
+
     lookup_id = sender_id
     if agent_context.get("is_subagent"):
         parent_id = agent_context.get("parent_id", "") or ""
