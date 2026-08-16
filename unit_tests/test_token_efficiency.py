@@ -73,7 +73,8 @@ def test_compact_receipts_preserve_attribution_and_protocol_without_raw_data():
                   if "Active Turn Ledger" in (message.get("content") or ""))
 
     assert messages == canonical
-    assert "#1 read_file: success/informational; ref:" in ledger
+    # "secret" is not an allowlisted identity key, so the receipt names the tool only.
+    assert "#1 read_file: info" in ledger
     assert "argument" not in ledger
     assert "private output" not in ledger
     validate_tool_pairs(result.messages)

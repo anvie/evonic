@@ -8,7 +8,6 @@ Shadow mode measures the projection; enforced mode sends the validated projectio
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -41,6 +40,24 @@ _CONTEXT_CONTROL_TOOLS = frozenset({
 # compacting them into receipts causes confusion (regression edaa229 + 2e09fc9).
 _PRESERVE_VERBATIM_TOOLS = frozenset({"use_skill", "unload_skill"})
 _ELIGIBLE_TOOLS = _INFORMATIONAL_TOOLS | _MUTATION_RECEIPT_TOOLS | _CONTEXT_CONTROL_TOOLS
+# The only argument keys a receipt may name, per tool. Without an identity the model
+# cannot tell which file a compacted read_file touched, so it calls the tool again;
+# with one it can skip the repeat. Every key here is checked against the tool's real
+# signature — an unlisted tool (including every plugin tool) emits no arguments at
+# all, which keeps the no-arbitrary-arguments rule these receipts were written for.
+_RECEIPT_IDENTITY_ARGS = {
+    "read_file": ("file_path",),
+    "write_file": ("file_path",),
+    "str_replace": ("file_path",),
+    "patch": ("file_path",),
+    "find": ("glob_pattern",),
+    "stats": ("path",),
+    "tree": ("path",),
+}
+# Sized so a receipt never grows past the format it replaced (~56 chars), even for the
+# longest tool name here. Paths are truncated from the left because the tail — the
+# filename — is what identifies them; the leading directories are shared boilerplate.
+_RECEIPT_ARG_MAX_CHARS = 28
 
 
 @dataclass(frozen=True)
@@ -176,22 +193,52 @@ def _eligible(group: _ToolGroup) -> bool:
     )
 
 
+def _identity_args(name: str, call: Dict[str, Any]) -> str:
+    """Return the allowlisted identity arguments for one call, or "" when none apply."""
+    allowed = _RECEIPT_IDENTITY_ARGS.get(name)
+    if not allowed:
+        return ""
+    raw = (call.get("function") or {}).get("arguments")
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    values = []
+    for key in allowed:
+        value = parsed.get(key)
+        # bool is an int subclass, and a boolean flag is never an identity.
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            continue
+        text = " ".join(str(value).split())
+        if len(text) > _RECEIPT_ARG_MAX_CHARS:
+            text = "…" + text[-(_RECEIPT_ARG_MAX_CHARS - 1):]
+        if text:
+            values.append(text)
+    return ", ".join(values)
+
+
 def _receipt_line(sequence: int, group: _ToolGroup) -> str:
-    """Build a sanitized receipt containing no arguments or raw tool output."""
-    labels = ", ".join(group.names)
-    kind = "informational"
+    """Build a sanitized receipt: tool names plus allowlisted identity arguments only.
+
+    Raw tool output and non-allowlisted arguments never reach this line.
+    """
+    calls = group.assistant.get("tool_calls") or ()
+    labels = []
+    for index, name in enumerate(group.names):
+        args = _identity_args(name, calls[index] if index < len(calls) else {})
+        labels.append(f"{name}({args})" if args else name)
+    kind = "info"
     if any(name in _CONTEXT_CONTROL_TOOLS for name in group.names):
-        kind = "context-control"
+        kind = "ctl"
     elif any(name in _MUTATION_RECEIPT_TOOLS for name in group.names):
-        kind = "mutation"
-    digest_input = "|".join(
-        str(result.get("tool_call_id") or "") + ":" + str(result.get("content") or "")
-        for result in group.results
-    )
-    digest = hashlib.sha256(digest_input.encode("utf-8", errors="replace")).hexdigest()[:12]
-    # Keep the same model-visible facts in a denser receipt. These lines recur once
-    # per compacted group, so even small reductions materially bound long loops.
-    return f"- #{sequence} {labels}: success/{kind}; ref:{digest}"
+        kind = "mut"
+    # These lines recur once per compacted group, so every character is paid again on
+    # each iteration of a long loop. The identity argument takes the place of the old
+    # result digest, which nothing read back — bounded by _RECEIPT_ARG_MAX_CHARS so the
+    # line never outgrows the format it replaced, and more groups fit the same budget.
+    return f"- #{sequence} {', '.join(labels)}: {kind}"
 
 
 def _bounded_ledger(entries: Sequence[str], max_chars: int) -> str:
