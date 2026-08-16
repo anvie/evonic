@@ -193,6 +193,25 @@ class TestAgentRequestMetadata:
             sid, agent_id=agent_id, sender_agent_id='sender',
         ) == expected
 
+    def test_newer_waitable_request_is_returned_without_human_route(self, agent_id, chat_db):
+        sid = db.get_or_create_session(agent_id, '__agent__sender')
+        db.add_chat_message(sid, 'user', 'old delegation', metadata={
+            'agent_message': True,
+            'from_agent_id': 'sender',
+            'report_to_id': 'user-1',
+        }, agent_id=agent_id)
+        expected = {
+            'agent_message': True,
+            'from_agent_id': 'sender',
+            'reply_to_id': 'reply-1',
+        }
+        db.add_chat_message(sid, 'user', 'sync delegation', metadata=expected,
+                            agent_id=agent_id)
+
+        assert db.get_latest_agent_request_metadata(
+            sid, agent_id=agent_id, sender_agent_id='sender',
+        ) == expected
+
     def test_sender_isolation_and_compact_json(self, agent_id, chat_db):
         sid = db.get_or_create_session(agent_id, '__agent__sender')
         expected = {

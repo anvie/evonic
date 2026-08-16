@@ -430,6 +430,9 @@ def run_tool_loop(agent: Dict[str, Any],
     from backend.event_stream import event_stream
     from models.chatlog import chatlog_manager
 
+    def _message_id(value):
+        return value if type(value) in (int, str) else None
+
     agent_id = agent['id']
     db_agent_id = session_db_agent_id or agent_id  # which per-agent DB owns this session
     external_user_id = agent_context.get('user_id')
@@ -451,7 +454,6 @@ def run_tool_loop(agent: Dict[str, Any],
         _parent_agent_id = None
     _loop_ts = int(time.time() * 1000)
     chatlog.append({'type': 'turn_begin', 'session_id': session_id, 'ts': _loop_ts})
-    event_stream.emit('turn_begin', {'session_id': session_id, 'ts': _loop_ts})
 
     tool_trace = []
     timeline = []
@@ -523,10 +525,13 @@ def run_tool_loop(agent: Dict[str, Any],
     def _finalize_gate_response(response: str, source: str):
         duration = round(time.time() - _loop_start_time, 1)
         metadata = {'plugin_gate': source, 'thinking_duration': duration}
-        db.add_chat_message(session_id, 'assistant', response,
-                            agent_id=db_agent_id, metadata=metadata)
+        message_id = _message_id(db.add_chat_message(
+            session_id, 'assistant', response,
+            agent_id=db_agent_id, metadata=metadata,
+        ))
         chatlog.append({'type': 'final', 'session_id': session_id,
-                        'content': response, 'metadata': metadata})
+                        'content': response, 'metadata': metadata,
+                        'message_id': message_id})
         chatlog.append({'type': 'turn_end', 'session_id': session_id,
                         'thinking_duration': duration})
         event_stream.emit('final_answer', {
@@ -974,11 +979,14 @@ def run_tool_loop(agent: Dict[str, Any],
                 _logger.info("Stop signal received during ATG execution for session %s", session_id)
                 stop_msg = "Agent stopped by user request."
                 _atg_stop_dur = round(time.time() - _loop_start_time, 1)
-                db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                    metadata={"timeline": timeline, "stopped": True,
-                                              "thinking_duration": _atg_stop_dur})
+                message_id = _message_id(db.add_chat_message(
+                    session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                    metadata={"timeline": timeline, "stopped": True,
+                              "thinking_duration": _atg_stop_dur},
+                ))
                 chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                                'metadata': {'stopped': True, 'thinking_duration': _atg_stop_dur}})
+                                'metadata': {'stopped': True, 'thinking_duration': _atg_stop_dur},
+                                'message_id': message_id})
                 chatlog.append({'type': 'turn_end', 'session_id': session_id,
                                 'thinking_duration': _atg_stop_dur})
                 event_stream.emit('final_answer', {
@@ -1209,10 +1217,14 @@ def run_tool_loop(agent: Dict[str, Any],
             _logger.info("Stop signal received for session %s — aborting loop", session_id)
             stop_msg = "Agent stopped by user request."
             _stop_dur = round(time.time() - _loop_start_time, 1)
-            db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                metadata={"timeline": timeline, "stopped": True, "thinking_duration": _stop_dur})
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                metadata={"timeline": timeline, "stopped": True,
+                          "thinking_duration": _stop_dur},
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                            'metadata': {'stopped': True, 'thinking_duration': _stop_dur}})
+                            'metadata': {'stopped': True, 'thinking_duration': _stop_dur},
+                            'message_id': message_id})
             _stop_inj = ("[SYSTEM] Your previous reasoning and response were forcefully "
                          "interrupted by the user via /stop before completion. "
                          "Await the user's next instruction.")
@@ -2031,9 +2043,12 @@ def run_tool_loop(agent: Dict[str, Any],
                     'content': _display_content, 'is_final': True,
                     'send_as_message': True,
                 })
-            db.add_chat_message(session_id, 'assistant', _display_content, agent_id=db_agent_id, metadata=meta)
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', _display_content,
+                agent_id=db_agent_id, metadata=meta,
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': _display_content,
-                            'metadata': _cl_meta})
+                            'metadata': _cl_meta, 'message_id': message_id})
             chatlog.append({'type': 'turn_end', 'session_id': session_id, 'thinking_duration': _final_dur})
             # Archive sub-agent session at turn-end — single-turn only. Explorer &
             # kb-organizer are single-shot, so they archive on completion (no need to
@@ -2392,13 +2407,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 })
 
                 # Escalation: ensure a human can see the approval.
-                # We always fan-out to BOTH web SSE AND messaging channels,
-                # because has_web_listener() is unreliable — it only checks
-                # listener registration, not actual SSE delivery. If SSE
-                # disconnects and reconnects, the approval event may already
-                # be gone from the ring buffer. Web SSE delivers the approval
-                # modal in the browser; messaging channels deliver a fallback
-                # notification via Telegram/WhatsApp.
+                # Always fan out to BOTH durable web SSE and messaging channels.
+                # Messaging remains the out-of-browser fallback.
                 # List of (session_id, external_user_id, channel_id) that received
                 # approval_required — used to fan-out approval_resolved to all of them.
                 _escalation_targets: list = []
@@ -2433,31 +2443,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         })
                         _escalation_targets.append((_human_session_id, _web_uid, _web_cid))
 
-                    # Channel (Telegram/WhatsApp): always notify via the super
-                    # agent's messaging channel as a fallback. We no longer gate
-                    # this behind has_web_listener() because the registration
-                    # may exist while the SSE connection is not delivering.
-
-                    # Verify web SSE delivery with heartbeat-aware check.
-                    # has_web_listener() only confirms a callback is registered;
-                    # this confirms the SSE connection is actually sending heartbeats.
-                    _web_sse_active = False
-                    try:
-                        from routes.realtime import has_active_web_sse
-                        _web_sse_active = (
-                            has_active_web_sse(session_id) or
-                            (_human_session_id and has_active_web_sse(_human_session_id))
-                        )
-                    except Exception:
-                        pass  # routes.realtime may not be importable in all contexts
-
-                    if not _web_sse_active:
-                        _logger.info(
-                            "approval %s: web SSE appears inactive for session %s "
-                            "(heartbeat not received within window) — relying on "
-                            "messaging channel fallback",
-                            pending.approval_id, session_id,
-                        )
+                    # Channel (Telegram/WhatsApp) remains an unconditional
+                    # fallback; browser connection liveness is not authoritative.
                     _super = db.get_super_agent()
                     if _super and _super['id'] != agent_id:
                         _su_uid, _su_cid = _resolve_agent_target(_super['id'])
@@ -2860,10 +2847,14 @@ def run_tool_loop(agent: Dict[str, Any],
             _logger.info("Stop signal received for session %s — aborting after tools", session_id)
             stop_msg = "Agent stopped by user request."
             _stopb_dur = round(time.time() - _loop_start_time, 1)
-            db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                metadata={"timeline": timeline, "stopped": True, "thinking_duration": _stopb_dur})
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                metadata={"timeline": timeline, "stopped": True,
+                          "thinking_duration": _stopb_dur},
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                            'metadata': {'stopped': True, 'thinking_duration': _stopb_dur}})
+                            'metadata': {'stopped': True, 'thinking_duration': _stopb_dur},
+                            'message_id': message_id})
             _stopb_inj = ("[SYSTEM] Your previous reasoning and response were forcefully "
                           "interrupted by the user via /stop before completion. "
                           "Await the user's next instruction.")

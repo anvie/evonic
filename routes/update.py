@@ -1,9 +1,6 @@
 """Routes for the system update UI and API."""
 
-import json
-import queue
-
-from flask import Blueprint, Response, jsonify, render_template, request, stream_with_context
+from flask import Blueprint, jsonify, render_template, request, redirect
 
 from backend import update_manager
 
@@ -67,60 +64,7 @@ def api_update_restart():
 def api_update_stream():
     """SSE endpoint for real-time update progress.
     DEPRECATED: Use unified GET /api/realtime/stream?channels=update instead."""
-    import logging as _log_depr
-    _log_depr.getLogger(__name__).warning(
-        "DEPRECATED endpoint /api/system/update/stream used — "
-        "migrate to /api/realtime/stream?channels=update")
-    # Release the thread-local DB connection — this SSE thread is long-lived.
-    from models.db import db
-    db.close()
-
-    # SSE connection limiting (max 5 concurrent per user/IP, FINDING-004)
-    from flask import session as _flsk_sess
-    from models.api_rate_limit import sse_register, sse_unregister, SSE_MAX_CONCURRENT
-    _sse_ident = (
-        'user:' + (_flsk_sess.get('_user_id', 'admin') if _flsk_sess.get('authenticated') else '')
-        if _flsk_sess.get('authenticated')
-        else 'ip:' + (request.remote_addr or '0.0.0.0')
-    )
-    _ok, _cnt = sse_register(_sse_ident)
-    if not _ok:
-        return jsonify({
-            'error': 'too_many_sse_connections',
-            'message': 'Maximum ' + str(SSE_MAX_CONCURRENT) + ' concurrent SSE connections allowed.',
-            'retry_after': 30,
-        }), 429, {'Retry-After': '30'}
-
-    q = update_manager.register_listener()
-
-    def generate():
-        try:
-            # Send initial status immediately
-            status = update_manager.get_status()
-            yield f"event: status\ndata: {json.dumps(status)}\n\n"
-
-            while True:
-                try:
-                    snapshot = q.get(timeout=30)
-                except queue.Empty:
-                    yield ": heartbeat\n\n"
-                    continue
-
-                yield f"event: status\ndata: {json.dumps(snapshot)}\n\n"
-
-                # If terminal state, send done event and close
-                if snapshot.get('status') in ('success', 'failed'):
-                    yield f"event: done\ndata: {json.dumps({'status': snapshot['status']})}\n\n"
-        finally:
-            update_manager.unregister_listener(q)
-            sse_unregister(_sse_ident)
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
-            'Connection': 'keep-alive',
-        },
+    return redirect(
+        '/api/realtime/stream?channels=update&legacy=update&snapshot=1',
+        code=307,
     )

@@ -235,7 +235,6 @@ def _register_builtins():
         no_archive = not archive_requested
 
         db.clear_session(session_id, agent_id, no_archive=no_archive)
-
         # Clear in-memory loaded skill state so skill badges disappear from session state UI
         from backend.agent_runtime import agent_runtime
         agent_runtime._session_skill_mds.pop(session_id, None)
@@ -277,7 +276,9 @@ def _register_builtins():
         # Emit session_clear event
         try:
             from backend.event_stream import event_stream
-            event_stream.emit('session_clear', {'session_id': session_id, 'agent_id': agent_id})
+            event_stream.emit('session_clear', {
+                'session_id': session_id, 'agent_id': agent_id, 'turn_id': None,
+            })
         except Exception:
             pass
 

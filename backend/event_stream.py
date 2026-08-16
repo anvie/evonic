@@ -17,7 +17,6 @@ Handlers are called asynchronously in a thread pool and must not block.
 Events are logged to logs/events.log (configurable via EVENT_LOG_FILE in .env).
 """
 
-import collections
 import itertools
 import logging
 import os
@@ -28,55 +27,19 @@ from typing import Callable, Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
 
-# Event types that the per-session chat SSE stream forwards to the browser.
-# A per-session "chat seq" is assigned ONLY to these (see EventStream.emit), so the
-# sequence the browser sees is contiguous and gap-detection never misfires on
-# unrelated/global events. Keep in sync with the live stream + gap-fill transforms
-# in routes/agents.py.
-CHAT_FORWARDED_EVENTS = frozenset({
-    'turn_begin',
-    'llm_thinking',
-    'tool_call_started',
-    'tool_executed',
-    'state:changed',
-    'tasks:auto_transition',
-    'tasks:stale',
-    'llm_response_chunk',
-    'turn_complete',
-    'required_tool_enforced',
-    'approval_required',
-    'approval_resolved',
-    'llm_retry',
-    'message_injected',
-    'message_injection_applied',
-    'message_received',
-    'whatsapp_restriction_warning',
-    'session_clear',
-    'turn_split',
-    'evonic:agent-state-changed',
-})
-
-
 class EventStream:
     def __init__(self):
         self._listeners: Dict[str, List[Callable]] = {}
         self._lock = threading.Lock()
         self._log_lock = threading.Lock()
-        self._log_buffer: collections.deque = collections.deque(maxlen=1000)
+        self._log_buffer: List[str] = []
         self._log_timer: Optional[threading.Timer] = None
         self._LOG_FLUSH_INTERVAL = 2.0
-        self._LOG_BUFFER_LIMIT = 50  # soft flush trigger; deque maxlen=1000 is hard cap
+        self._LOG_BUFFER_LIMIT = 50
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='event')
         self._log_file: str = None  # resolved lazily to avoid import-time circular deps
-        # Sequence numbering and ring buffers for gap-fill recovery
+        # Raw in-process sequence is retained for plugin compatibility only.
         self._seq_counter = itertools.count(1)
-        self._buffer_lock = threading.Lock()
-        self._global_buffer: collections.deque = collections.deque(maxlen=1000)
-        self._session_buffers: Dict[str, collections.deque] = {}
-        # Per-session monotonic counter over CHAT_FORWARDED_EVENTS only, so the
-        # browser's chat stream sees a contiguous (gap-free) sequence.
-        self._session_chat_seq: Dict[str, int] = {}
-        self._web_listeners: Dict[str, int] = {}
 
     def _get_log_file(self) -> str:
         if self._log_file is None:
@@ -147,66 +110,20 @@ class EventStream:
         seq = next(self._seq_counter)
         data['_seq'] = seq
         data['_event'] = event_name
-        # Store in ring buffers for gap-fill queries
-        session_id = data.get('session_id')
-        chat_seq = None
-        entry = {'seq': seq, 'event': event_name, 'data': data}
-        with self._buffer_lock:
-            # Assign a contiguous per-session chat seq for forwarded events only.
-            if session_id and event_name in CHAT_FORWARDED_EVENTS:
-                chat_seq = self._session_chat_seq.get(session_id, 0) + 1
-                self._session_chat_seq[session_id] = chat_seq
-                data['_chat_seq'] = chat_seq
-                entry['chat_seq'] = chat_seq
-            self._global_buffer.append(entry)
-            if session_id:
-                if session_id not in self._session_buffers:
-                    self._session_buffers[session_id] = collections.deque(maxlen=500)
-                self._session_buffers[session_id].append(entry)
+        # Journal synchronously before asynchronous plugin listeners.  This is
+        # what gives browser replay a stable total order even though raw plugin
+        # callbacks still run concurrently.
+        try:
+            from backend.realtime_store import record_internal_event
+            record_internal_event(event_name, data)
+        except Exception as exc:
+            _logger.error("Failed to journal realtime event '%s': %s", event_name, exc)
         preview = ', '.join(f'{k}={str(v)[:120]}' for k, v in data.items() if not k.startswith('_'))
         self._write_log(f"[seq={seq}] {event_name} | {preview}")
         with self._lock:
             listeners = list(self._listeners.get(event_name, []))
         for cb in listeners:
             self._executor.submit(self._safe_call, event_name, cb, data)
-
-    def get_events_in_range(self, session_id: str, after_seq: int, up_to_seq: int) -> list:
-        """Return chat-forwarded events for session_id where
-        after_seq < chat_seq <= up_to_seq (chat_seq is the per-session chat seq)."""
-        with self._buffer_lock:
-            buf = self._session_buffers.get(session_id, collections.deque())
-            if not buf:
-                return []
-            return [e for e in buf
-                    if 'chat_seq' in e and after_seq < e['chat_seq'] <= up_to_seq]
-
-    def get_session_events(self, session_id: str, after_seq: int = 0) -> list:
-        """Return chat-forwarded events for session_id with chat_seq > after_seq."""
-        with self._buffer_lock:
-            buf = self._session_buffers.get(session_id, collections.deque())
-            return [e for e in buf if 'chat_seq' in e and e['chat_seq'] > after_seq]
-
-    def cleanup_session_buffer(self, session_id: str):
-        """Remove per-session buffer (called after turn completes)."""
-        with self._buffer_lock:
-            self._session_buffers.pop(session_id, None)
-            self._session_chat_seq.pop(session_id, None)
-
-    def register_web_listener(self, session_id: str):
-        with self._lock:
-            self._web_listeners[session_id] = self._web_listeners.get(session_id, 0) + 1
-
-    def unregister_web_listener(self, session_id: str):
-        with self._lock:
-            count = self._web_listeners.get(session_id, 0) - 1
-            if count <= 0:
-                self._web_listeners.pop(session_id, None)
-            else:
-                self._web_listeners[session_id] = count
-
-    def has_web_listener(self, session_id: str) -> bool:
-        with self._lock:
-            return self._web_listeners.get(session_id, 0) > 0
 
     def _safe_call(self, event_name: str, cb: Callable, data: dict):
         try:

@@ -2,7 +2,7 @@
 Server-side update state manager.
 
 Provides daily-cached update checks, background update execution with log
-capture, and SSE listener management for real-time web UI notifications.
+capture, and durable realtime notifications for the web UI.
 
 Progress state is persisted to disk to survive crashes and restarts.
 
@@ -13,7 +13,6 @@ supervisor-based versioned-release mechanism has been removed.
 import json
 import logging
 import os
-import queue
 import re
 import subprocess
 import sys
@@ -195,7 +194,6 @@ def _persist_state(state: dict) -> None:
 # ---------------------------------------------------------------------------
 
 _lock = threading.Lock()
-_listeners: list = []  # list of queue.Queue, one per SSE client
 
 # Total pipeline steps: fetch + reset + reinstall deps + doctor --fix + smoke test
 TOTAL_STEPS = 5
@@ -250,10 +248,10 @@ if _state['status'] == 'success':
 
 
 # ---------------------------------------------------------------------------
-# SSE listener helpers
+# Realtime publishing
 # ---------------------------------------------------------------------------
 
-def _append_log(level: str, message: str):
+def _append_log(level: str, message: str, *, terminal: bool = False):
     entry = {
         'ts': datetime.now().strftime('%H:%M:%S'),
         'level': level,
@@ -263,56 +261,18 @@ def _append_log(level: str, message: str):
         _state['logs'].append(entry)
         # Persist state after log update
         _persist_state(_state)
-    _notify_listeners()
+    _publish_status(terminal=terminal)
 
 
-def _notify_listeners():
+def _publish_status(*, terminal: bool = False):
     snapshot = get_status()
-    dead = []
-    for q in _listeners:
-        try:
-            q.put_nowait(snapshot)
-        except queue.Full:
-            dead.append(q)
-    for q in dead:
-        try:
-            _listeners.remove(q)
-        except ValueError:
-            pass
-
-
-def register_listener() -> queue.Queue:
-    q = queue.Queue(maxsize=200)
-    _listeners.append(q)
-    return q
-
-
-def unregister_listener(q: queue.Queue):
     try:
-        _listeners.remove(q)
-    except ValueError:
-        pass
-
-_cleanup_started = False
-
-
-def _start_listener_cleanup(interval: int = 600):
-    """Periodically prune dead listener queues to prevent unbounded list growth.
-
-    SSE clients that disconnect without calling unregister_listener() leave
-    stale queue objects behind. This daemon thread calls _notify_listeners()
-    every ``interval`` seconds — the existing dead-queue detection in
-    _notify_listeners() handles removal.
-    """
-    global _cleanup_started
-    if _cleanup_started:
-        return
-    _cleanup_started = True
-    def _cleanup_loop():
-        while True:
-            time.sleep(interval)
-            _notify_listeners()
-    threading.Thread(target=_cleanup_loop, daemon=True, name='listener-cleanup').start()
+        from backend.event_stream import event_stream
+        event_stream.emit('update_status', snapshot)
+        if terminal and snapshot.get('status') in ('success', 'failed'):
+            event_stream.emit('update_done', {'status': snapshot['status']})
+    except Exception as exc:
+        log.warning('Failed to publish update status: %s', exc)
 
 
 # ---------------------------------------------------------------------------
@@ -339,13 +299,13 @@ class WebNotifier:
         with _lock:
             _state['status'] = 'failed'
             _state['error'] = str(error)
-        _append_log('error', f'FAILED at step {step}/{total}: {error}')
+        _append_log('error', f'FAILED at step {step}/{total}: {error}', terminal=True)
 
     def send_success(self, tag):
         with _lock:
             _state['status'] = 'success'
             _state['progress'] = 100
-        _append_log('info', f'Update to {tag} successful')
+        _append_log('info', f'Update to {tag} successful', terminal=True)
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +746,6 @@ def start_update(tag=None) -> dict:
         _persist_state(_state)
 
     _append_log('info', f'Starting update to {target}...')
-    _notify_listeners()
 
     t = threading.Thread(target=_run_update_thread, args=(target,), daemon=True)
     t.start()
@@ -798,7 +757,7 @@ def _run_update_thread(target):
 
     Applies the update via the shared apply_update pipeline (git → reinstall →
     doctor --fix → smoke test → auto-rollback on failure). Progress is broadcast
-    to SSE listeners via WebNotifier at each pipeline phase so operators can see
+    through durable realtime events at each pipeline phase so operators can see
     which step is running during a long update. On success the user restarts via
     the existing "Restart" action (unchanged two-step flow).
     """
@@ -818,9 +777,7 @@ def _run_update_thread(target):
         with _lock:
             _state['status'] = 'failed'
             _state['error'] = str(e)
-        _append_log('error', f'Unexpected error: {e}')
-    finally:
-        _notify_listeners()
+        _append_log('error', f'Unexpected error: {e}', terminal=True)
 
 
 def trigger_rollback() -> dict:
@@ -833,7 +790,6 @@ def trigger_rollback() -> dict:
         _persist_state(_state)
 
     _append_log('info', 'Starting rollback...')
-    _notify_listeners()
 
     def _do_rollback():
         try:
@@ -842,19 +798,18 @@ def trigger_rollback() -> dict:
                 with _lock:
                     _state['status'] = 'failed'
                     _state['error'] = result['error']
-                _append_log('error', f"Rollback failed: {result['error']}")
+                _append_log('error', f"Rollback failed: {result['error']}", terminal=True)
             else:
                 with _lock:
                     _state['status'] = 'success'
                     _state['step_label'] = 'Rollback complete'
                     _state['current_version'] = _get_current_version()
-                _append_log('info', f"Rollback successful to {result['target'][:8]}")
+                _append_log('info', f"Rollback successful to {result['target'][:8]}", terminal=True)
         except Exception as e:
             with _lock:
                 _state['status'] = 'failed'
                 _state['error'] = str(e)
-            _append_log('error', f'Rollback error: {e}')
-        _notify_listeners()
+            _append_log('error', f'Rollback error: {e}', terminal=True)
 
     threading.Thread(target=_do_rollback, daemon=True).start()
     return {'success': True}
@@ -868,7 +823,6 @@ def trigger_restart() -> dict:
     restarts, which was causing the 'Update complete!' banner to reappear.
     """
     _append_log('info', 'Restart scheduled...')
-    _notify_listeners()
 
     # Reset state to idle BEFORE restart so the persisted state does not
     # carry over 'success' status after the server restarts. Must happen
@@ -887,7 +841,3 @@ def trigger_restart() -> dict:
     from backend.restart import restart_service
     restart_service()
     return {'success': True, 'restarting': True}
-
-
-# Start periodic listener cleanup on module import
-_start_listener_cleanup()
