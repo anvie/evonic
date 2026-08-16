@@ -1231,6 +1231,9 @@ class WhatsAppChannel(BaseChannel):
                 'original_filename': safe_name,
                 'mime_type': mime_type,
                 'size_bytes': len(document_bytes),
+                # A document sent as a file may still be an image; the web chat
+                # keys its preview off this flag.
+                'is_image': mime_type.startswith('image/'),
                 'file_path': file_path,
             }
         except Exception as exc:
