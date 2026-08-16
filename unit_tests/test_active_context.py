@@ -4,6 +4,7 @@ import copy
 import json
 
 from backend.agent_runtime.active_context import (
+    _bounded_ledger,
     normalize_mode,
     project_active_context,
     validate_tool_pairs,
@@ -151,3 +152,83 @@ def test_synthetic_long_loop_materially_reduces_projected_growth():
     assert result.compacted_groups == 48
     assert result.projected_tokens < result.canonical_tokens * 0.25
     validate_tool_pairs(result.messages)
+
+
+def _group_with_args(call_id, name, arguments, payload="output"):
+    calls = [{
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }]
+    return [
+        {"role": "assistant", "content": "", "tool_calls": calls},
+        {"role": "tool", "tool_call_id": call_id, "content": payload},
+    ]
+
+
+def _ledger_of(messages, **kwargs):
+    result = project_active_context(messages, recent_completed_groups=1,
+                                    soft_token_threshold=0, **kwargs)
+    return next(message["content"] for message in result.messages
+                if "Active Turn Ledger" in (message.get("content") or ""))
+
+
+def test_receipt_carries_identity_args_but_not_other_keys():
+    messages = _base_messages()
+    messages += _group_with_args("old", "read_file",
+                                 {"file_path": "backend/x.py", "secret": "nope"})
+    messages += _group(["frontier"], ["read_file"], "recent")
+
+    ledger = _ledger_of(messages, receipt_max_chars=1000)
+
+    assert "read_file(backend/x.py): info" in ledger
+    assert "nope" not in ledger
+
+
+def test_unlisted_tool_receipt_carries_no_arguments():
+    messages = _base_messages()
+    messages += _group_with_args("old", "calculator",
+                                 {"expression": "2+2", "file_path": "leak.py"})
+    messages += _group(["frontier"], ["read_file"], "recent")
+
+    ledger = _ledger_of(messages, receipt_max_chars=1000)
+
+    # calculator is absent from _RECEIPT_IDENTITY_ARGS, so no argument may surface —
+    # not even a key that is allowlisted for some other tool.
+    assert "calculator: info" in ledger
+    assert "leak.py" not in ledger
+    assert "2+2" not in ledger
+
+
+def test_mutation_and_malformed_arguments_degrade_safely():
+    messages = _base_messages()
+    messages += _group_with_args("mut", "write_file", {"file_path": "out.txt"})
+    messages += _group_with_args("bad", "read_file", "not-json-at-all")
+    messages += _group(["frontier"], ["read_file"], "recent")
+
+    ledger = _ledger_of(messages, receipt_max_chars=1000)
+
+    assert "write_file(out.txt): mut" in ledger
+    assert "read_file: info" in ledger  # unparseable arguments fall back to bare label
+
+
+def test_receipt_density_does_not_regress_against_the_previous_format():
+    """Identity arguments must not cost coverage (regression: task 748 / variant B).
+
+    An earlier attempt appended `(file_path=...)` while keeping the unused `ref:` digest,
+    which pushed the line to 95 chars and dropped 26 groups out of a 120-group ledger.
+    """
+    messages = _base_messages()
+    for index in range(120):
+        messages += _group_with_args(f"c{index}", "read_file",
+                                     {"file_path": f"backend/agent_runtime/module_{index}.py"})
+    messages += _group(["frontier"], ["read_file"], "recent")
+
+    ledger = _ledger_of(messages, receipt_max_chars=4000)
+    previous_format = _bounded_ledger(
+        [f"- #{i + 1} read_file: success/informational; ref:{'a' * 12}" for i in range(120)],
+        4000,
+    )
+
+    assert ledger.count("\n- #") >= previous_format.count("\n- #")
+    assert "module_0.py" in ledger
