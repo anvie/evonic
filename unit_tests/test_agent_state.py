@@ -633,3 +633,16 @@ class TestStates:
         ms.set_state('kanban', 'active', blocked_tools=['drop_db'])
         rendered = ms.render()
         assert 'drop_db' in rendered
+
+    def test_render_omits_update_tasks_hint_when_tool_unavailable(self):
+        ms = AgentState(mode='execute')
+        rendered = ms.render(update_tasks_available=False)
+        assert 'update_tasks' not in rendered
+        assert 'No tasks defined' not in rendered
+
+    def test_render_bookkeeping_line_follows_tool_availability(self):
+        ms = AgentState(mode='execute', tasks=[
+            {'id': 1, 'text': 'Do the thing', 'status': 'pending'},
+        ])
+        assert 'Keep this list current' in ms.render()
+        assert 'Keep this list current' not in ms.render(update_tasks_available=False)

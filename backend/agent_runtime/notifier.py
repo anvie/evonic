@@ -190,10 +190,17 @@ def notify_agent(agent_id: str, tag: str, message: str,
             )
         else:
             meta = dict(metadata) if metadata else {}
-            db.add_chat_message(
+            message_id = db.add_chat_message(
                 target_session_id, role='user', content=full_message,
                 agent_id=_db_agent_id, metadata=meta if meta else None,
             )
+            message_id = message_id if type(message_id) in (int, str) else None
+            from models.chatlog import chatlog_manager
+            chatlog_manager.get(_db_agent_id, target_session_id).append({
+                'type': 'user', 'session_id': target_session_id,
+                'content': full_message, 'metadata': meta,
+                'message_id': message_id,
+            })
             from backend.event_stream import event_stream
             event_stream.emit('message_received', {
                 'agent_id': agent_id,
@@ -202,6 +209,8 @@ def notify_agent(agent_id: str, tag: str, message: str,
                 'channel_id': channel_id,
                 'message': full_message,
                 'metadata': meta,
+                'message_id': message_id,
+                'role': 'user',
             })
             if deliver_external and channel_id:
                 from backend.channels.registry import channel_manager

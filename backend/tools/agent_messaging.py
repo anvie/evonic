@@ -121,6 +121,8 @@ _TOOL_DEFS = [
                 "Send a message to another agent on this platform. "
                 "The message is delivered asynchronously — the target agent will process it "
                 "and their reply will be automatically forwarded back to you (fire-and-forget). "
+                "Call this tool directly; do not invoke Evonic's internal messaging executor "
+                "through bash, Python, or another tool. "
                 "Use this for delegation, collaboration, or requesting specialist help. "
                 "By default, the message is delivered to the agent's inter-agent session "
                 "(__agent__&lt;sender-id&gt;). Pass 'session' to target a specific session."
@@ -501,19 +503,38 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
     if session_id:
         metadata['session_id'] = session_id
 
+    # Register synchronous internal waits before dispatch so an immediate reply
+    # cannot beat the waiter into the registry. This option is intentionally not
+    # exposed in the public tool schema.
+    wait_for_reply = bool(args.get('wait_for_reply', False))
+    wait_timeout = _WAIT_TIMEOUT_DEFAULT
+    reply_queue = None
+    if wait_for_reply:
+        wait_timeout = int(args.get('wait_timeout', _WAIT_TIMEOUT_DEFAULT))
+        wait_timeout = max(_WAIT_TIMEOUT_MIN, min(wait_timeout, _WAIT_TIMEOUT_MAX))
+        reply_queue = Queue()
+        with _WAIT_REGISTRY_LOCK:
+            _WAIT_REGISTRY[reply_to_id] = reply_queue
+
     # Deliver via notify_agent (handles routing, dedup, and LLM triggering)
     from backend.agent_runtime.notifier import notify_agent
     target_session = args.get('session', '').strip() if args.get('session') else None
-    result = notify_agent(
-        agent_id=target_id,
-        tag=f"AGENT/{sender_name}",
-        message=message,
-        external_user_id=(f"{_AGENT_MSG_PREFIX}{sender_id}" if not target_session else None),
-        channel_id=None,
-        session_id=target_session,
-        dedup=False,
-        metadata=metadata,
-    )
+    try:
+        result = notify_agent(
+            agent_id=target_id,
+            tag=f"AGENT/{sender_name}",
+            message=message,
+            external_user_id=(f"{_AGENT_MSG_PREFIX}{sender_id}" if not target_session else None),
+            channel_id=None,
+            session_id=target_session,
+            dedup=False,
+            metadata=metadata,
+        )
+    except Exception:
+        if wait_for_reply:
+            with _WAIT_REGISTRY_LOCK:
+                _WAIT_REGISTRY.pop(reply_to_id, None)
+        raise
 
     _logger.info(
         "Agent message sent: '%s' → '%s' (depth=%d, reply_to=%s, report_to=%s, "
@@ -523,6 +544,9 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
     )
 
     if not result.get('success'):
+        if wait_for_reply:
+            with _WAIT_REGISTRY_LOCK:
+                _WAIT_REGISTRY.pop(reply_to_id, None)
         reason = result.get('reason', 'unknown')
         _logger.error(
             "Agent message FAILED: '%s' → '%s', notify_agent reason=%s, result=%s",
@@ -535,15 +559,7 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
         }
 
     # ---- wait_for_reply (internal-only, NOT in tool definition) ----
-    wait_for_reply = args.get('wait_for_reply', False)
     if wait_for_reply:
-        wait_timeout = int(args.get('wait_timeout', _WAIT_TIMEOUT_DEFAULT))
-        wait_timeout = max(_WAIT_TIMEOUT_MIN, min(wait_timeout, _WAIT_TIMEOUT_MAX))
-        reply_queue: Queue = Queue()
-
-        with _WAIT_REGISTRY_LOCK:
-            _WAIT_REGISTRY[reply_to_id] = reply_queue
-
         _logger.info(
             "Agent '%s' waiting for reply from '%s' (reply_to=%s, timeout=%ds).",
             sender_id, target_id, reply_to_id, wait_timeout,
@@ -551,7 +567,9 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
 
         wait_start = time.time()
         try:
-            answer = reply_queue.get(timeout=wait_timeout)
+            from backend.agent_runtime.concurrency import paused_model_gate
+            with paused_model_gate():
+                answer = reply_queue.get(timeout=wait_timeout)
             elapsed = time.time() - wait_start
             _logger.info(
                 "Agent '%s' received reply from '%s' after %.1fs (reply_to=%s).",
@@ -574,8 +592,6 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
                 "Agent '%s' wait_for_reply timed out after %ds for '%s' (reply_to=%s).",
                 sender_id, wait_timeout, target_id, reply_to_id,
             )
-            with _WAIT_REGISTRY_LOCK:
-                _WAIT_REGISTRY.pop(reply_to_id, None)
             return {
                 'success': True,
                 'wait_for_reply': True,
@@ -592,8 +608,6 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
                 "Agent '%s' wait_for_reply error for '%s': %s",
                 sender_id, target_id, e,
             )
-            with _WAIT_REGISTRY_LOCK:
-                _WAIT_REGISTRY.pop(reply_to_id, None)
             return {
                 'success': True,
                 'wait_for_reply': True,
@@ -603,6 +617,9 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
                     "The reply will arrive in your next turn."
                 ),
             }
+        finally:
+            with _WAIT_REGISTRY_LOCK:
+                _WAIT_REGISTRY.pop(reply_to_id, None)
 
     return {
         'success': True,
@@ -813,19 +830,36 @@ def _on_final_answer(data: dict) -> None:
         )
         return
 
-    if not meta or meta.get('from_agent_id') != sender_id or not meta.get('report_to_id'):
+    if not meta or meta.get('from_agent_id') != sender_id:
         _logger.warning(
-            "Auto-forward skip: no routable request metadata found for sender '%s' in session '%s'.",
+            "Auto-forward skip: no matching request metadata found for sender '%s' in session '%s'.",
             sender_id, session_id,
         )
         return
 
-    report_to_id = meta['report_to_id']
+    reply_to_id = meta.get('reply_to_id')
+    if reply_to_id:
+        with _WAIT_REGISTRY_LOCK:
+            reply_queue = _WAIT_REGISTRY.pop(reply_to_id, None)
+        if reply_queue is not None:
+            reply_queue.put_nowait(answer)
+            _logger.info(
+                "Wait registry: woke up waiter for reply_to=%s (sender=%s, agent_b=%s).",
+                reply_to_id, sender_id, agent_b_id,
+            )
+
+    report_to_id = meta.get('report_to_id')
+    if not report_to_id:
+        _logger.warning(
+            "Auto-forward skip: request from '%s' in session '%s' has no human route.",
+            sender_id, session_id,
+        )
+        return
+
     report_to_channel_id = meta.get('report_to_channel_id') or None
     session_id_from_meta = meta.get('session_id')
     original_depth = meta.get('agent_message_depth', 0)
     subagent_user_direct = meta.get('subagent_user_direct', False)
-    reply_to_id = meta.get('reply_to_id')
     skip_auto_forward = meta.get('skip_auto_forward', False)
 
     if skip_auto_forward:
@@ -914,23 +948,6 @@ def _on_final_answer(data: dict) -> None:
         _logger.error(
             "Auto-forward failed for '%s' → '%s': %s", agent_b_id, sender_id, e,
         )
-
-    # ---- wake-up: signal any waiting send_agent_message(wait_for_reply=true) ----
-    if reply_to_id:
-        with _WAIT_REGISTRY_LOCK:
-            q = _WAIT_REGISTRY.pop(reply_to_id, None)
-        if q is not None:
-            try:
-                q.put(answer, timeout=1)
-                _logger.info(
-                    "Wait registry: woke up waiter for reply_to=%s (sender=%s, agent_b=%s).",
-                    reply_to_id, sender_id, agent_b_id,
-                )
-            except Exception:
-                _logger.warning(
-                    "Wait registry: failed to wake waiter for reply_to=%s (full queue?).",
-                    reply_to_id,
-                )
 
 # NOTE: _on_final_answer listener is registered in
 # backend/agent_runtime/__init__.py at startup, not here,
@@ -1116,17 +1133,27 @@ def _exec_send_channel_message(args: dict, agent_context: dict) -> dict:
 
     # ---- Record in chat log ----
     try:
-        db.add_chat_message(
+        message_id = db.add_chat_message(
             session_id, 'assistant', message,
             agent_id=sender_id,
             metadata={'channel_send': True},
         )
+        message_id = message_id if type(message_id) in (int, str) else None
         from models.chatlog import chatlog_manager
         chatlog_manager.get(sender_id, session_id).append({
             'type': 'final',
             'session_id': session_id,
             'content': message,
             'metadata': {'channel_send': True},
+            'message_id': message_id,
+        })
+        from backend.event_stream import event_stream
+        event_stream.emit('message_received', {
+            'agent_id': sender_id, 'session_id': session_id,
+            'external_user_id': external_user_id, 'channel_id': channel_id,
+            'message': message, 'message_id': message_id,
+            'metadata': {'channel_send': True},
+            'role': 'assistant', 'sender': sender_id,
         })
     except Exception as e:
         _logger.warning("send_channel_message: chat log error: %s", e)

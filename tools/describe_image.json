@@ -8,7 +8,7 @@
     "parameters": {
       "properties": {
         "path": {
-          "description": "Absolute or relative path to the image file (.jpg, .jpeg, .png, .gif, .webp, .bmp).",
+          "description": "Absolute or relative path to an image visible in the agent's local filesystem, sandbox, scratchpad, or workplace (.jpg, .jpeg, .png, .gif, .webp, .bmp).",
           "type": "string"
         },
         "query": {

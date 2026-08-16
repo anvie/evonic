@@ -32,3 +32,14 @@ def test_update_tasks_contract_requires_atomic_entries():
     item_description = tasks_schema["items"]["description"].lower()
     assert "exactly one concrete" in item_description
     assert "independently completable" in item_description
+
+
+def test_update_tasks_contract_states_when_to_call():
+    """The tool prompt must state the bookkeeping timing contract."""
+    tool_def, _ = _builtin_update_tasks_factory({})
+    description = tool_def["function"]["description"].lower()
+
+    assert "when to call" in description
+    assert "before giving your final answer" in description
+    assert ("never end a turn that did implementation work "
+            "without reconciling task statuses") in description

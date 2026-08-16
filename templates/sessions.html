@@ -442,42 +442,52 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=60"></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=63"></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=5"></script>
 <script>
 let allSessions = [];
 let currentSessionId = null;
 let currentAgentId = null;
 let currentAttachmentsEnabled = true;
-let lastChatTs = 0;
-let pollTimer = null;
 let sidebarPollTimer = null;
 let _selectGeneration = 0;  // incremented on every selectSession call; guards stale async renders
 let _sseThinkingId = null;  // active thinking bubble from SSE
-let _sseCompleted = false;  // compatibility guard for poll ownership
 let _sessionTurn = { phase: 'idle', lastSeq: 0, terminalSeq: 0 };
 let _pendingIntermediateResponse = null;  // queued intermediate response, shown when next thinking event starts
-let _pollThinkingId = null;  // active thinking bubble from incremental poll (persists across calls)
-let _pollInFlight = false;  // guard against concurrent pollNewMessages calls
+const _seenRealtimeMessages = new Set();
+const _optimisticMessages = new Map();
+
+function newClientMessageId() {
+    return (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function handleRealtimeMessage(data, sessionId) {
+    if (currentSessionId !== sessionId || !data || !data.message_id) return;
+    const key = `${sessionId}:${data.message_id}`;
+    if (_seenRealtimeMessages.has(key)) return;
+    _seenRealtimeMessages.add(key);
+    let $message = data.client_message_id && _optimisticMessages.get(data.client_message_id);
+    const optimistic = $message;
+    if (optimistic) {
+        optimistic.attr('data-message-id', data.message_id);
+        _optimisticMessages.delete(data.client_message_id);
+    } else {
+        $message = chatUI.appendMessage(data.role || 'user', data.content || data.message || '', {
+            metadata: data.metadata || {},
+            timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : null,
+        }).attr('data-message-id', data.message_id);
+    }
+    if ((data.role || 'user') === 'user' && data.turn_id) {
+        chatUI.markLastUserBubbleQueued($message);
+    }
+    chatUI.scrollToBottom();
+}
 let _chatPerspective = 'A';  // 'A' (right) or 'B' (left) — controls which side your messages appear on
 let _sessionsAbort = null;  // AbortController for the in-flight /api/sessions load; supersede on new call
 
-// ==================== Reasoning State (refresh recovery) ====================
-// Save { sessionId, lastSeq } to sessionStorage while a turn is in progress so
-// that on page refresh the client can replay the trace and resume from the right seq.
-
-const _REASONING_KEY = 'evonic_active_reasoning';
 const _LAST_SESSION_KEY = 'evonic_last_session';
-
-function saveReasoningState(sessionId, lastSeq) {
-    try { sessionStorage.setItem(_REASONING_KEY, JSON.stringify({ sessionId, lastSeq })); } catch (_) {}
-}
-function clearReasoningState() {
-    try { sessionStorage.removeItem(_REASONING_KEY); } catch (_) {}
-}
-function loadReasoningState() {
-    try { return JSON.parse(sessionStorage.getItem(_REASONING_KEY) || 'null'); } catch (_) { return null; }
-}
 
 // ==================== SSE Event Dispatcher (module-level) ====================
 // Kept outside connectSessionStream so selectSession can call it during replay.
@@ -486,7 +496,6 @@ function _beginSessionTurn(startTs = null, anchor = null) {
     if (_sessionTurn.phase === 'active') return _sseThinkingId;
     _sessionTurn.phase = 'active';
     _sessionTurn.terminalSeq = 0;
-    _sseCompleted = false;
     if (!_sseThinkingId) {
         _sseThinkingId = chatUI.showThinkingIndicator(startTs, anchor);
     }
@@ -494,20 +503,14 @@ function _beginSessionTurn(startTs = null, anchor = null) {
     return _sseThinkingId;
 }
 
-function _completeSessionTurn(seq = 0) {
+function _completeSessionTurn(seq = 0, thinkingDuration = null) {
     if (_sessionTurn.phase === 'complete') return false;
     _sessionTurn.phase = 'complete';
     _sessionTurn.terminalSeq = Math.max(_sessionTurn.terminalSeq, seq || 0, _sessionTurn.lastSeq);
-    _sseCompleted = true;
-    clearReasoningState();
     showStopBtn(false);
     if (_sseThinkingId) {
-        chatUI.finalizeThinkingBubble(_sseThinkingId);
+        chatUI.finalizeThinkingBubble(_sseThinkingId, thinkingDuration);
         _sseThinkingId = null;
-    }
-    if (_pollThinkingId) {
-        chatUI.finalizeThinkingBubble(_pollThinkingId);
-        _pollThinkingId = null;
     }
     return true;
 }
@@ -524,7 +527,13 @@ function dispatchSessionEvent(evtName, data, sessionId) {
     if (currentSessionId !== sessionId) return;
     const seq = data.seq || 0;
     if (_sessionTurn.phase === 'complete' && seq && seq <= _sessionTurn.terminalSeq) return;
-    if (evtName === 'turn_begin') {
+    if (evtName === 'agent_busy_changed') {
+        const ownsSession = data.session_id === sessionId ||
+            (data.session_ids || []).includes(sessionId);
+        if (data.busy && ownsSession) _beginSessionTurn(data.timestamp || null);
+    } else if (evtName === 'turn_queued') {
+        _beginSessionTurn(data.timestamp || null);
+    } else if (evtName === 'turn_begin') {
         _beginSessionTurn(data.ts || null);
     } else if (evtName === 'thinking') {
         _beginSessionTurn();
@@ -534,11 +543,6 @@ function dispatchSessionEvent(evtName, data, sessionId) {
             _pendingIntermediateResponse = null;
         }
         if (!_sseThinkingId) {
-            // Finalize any orphaned poll bubble before SSE takes over
-            if (_pollThinkingId) {
-                chatUI.finalizeThinkingBubble(_pollThinkingId);
-                _pollThinkingId = null;
-            }
             _sseThinkingId = chatUI.showThinkingIndicator();
         }
         chatUI.appendTimelineEntry(_sseThinkingId, {type: 'thinking', content: data.content});
@@ -581,15 +585,13 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         chatUI.appendMessage('system', formatWhatsAppRestriction(data.content, data.metadata),
             {metadata: data.metadata || {}});
     } else if (evtName === 'done') {
-        _completeSessionTurn(seq);
+        _completeSessionTurn(seq, data.thinking_duration);
     } else if (evtName === 'session_clear') {
-        // Clear chat history when session is cleared, reset cursor so poll reloads
-        lastChatTs = 0;
+        // Clear the rendered history when this session is reset.
         chatUI.clearContainer();
     }
 }
 
-const POLL_INTERVAL = 2000;       // poll chat every 2s
 const SIDEBAR_POLL_INTERVAL = 5000; // refresh sidebar every 5s
 
 const chatUI = new ChatUI($('#chat-messages'), {
@@ -642,13 +644,10 @@ function scrollChatToBottom() {
 }
 
 // Render a flat list of JSONL entries into the chat container.
-// Pass { persistent: true } when called from incremental polling so the thinking
-// bubble persists across multiple poll calls within a single turn.
-function renderEntries(entries, { persistent = false } = {}) {
-    let thinkingId = persistent ? _pollThinkingId : null;
+function renderEntries(entries) {
+    let thinkingId = null;
     let entryCount = 0;
     for (const entry of entries) {
-        if (entry.ts > lastChatTs) lastChatTs = entry.ts;
         const type = entry.type;
         entryCount++;
         if (type === 'user') {
@@ -662,7 +661,11 @@ function renderEntries(entries, { persistent = false } = {}) {
                 _pendingFileUpload = false;
                 continue;
             }
-            chatUI.appendMessage('user', entry.content || '', {timestamp: entry.ts ? new Date(entry.ts).toISOString() : null, metadata: entry.metadata});
+            const $el = chatUI.appendMessage('user', entry.content || '', {timestamp: entry.ts ? new Date(entry.ts).toISOString() : null, metadata: entry.metadata});
+            if (entry.message_id) {
+                $el.attr('data-message-id', entry.message_id);
+                _seenRealtimeMessages.add(`${currentSessionId}:${entry.message_id}`);
+            }
         } else if (type === 'thinking') {
             if (!thinkingId) thinkingId = chatUI.showThinkingIndicator();
             chatUI.appendTimelineEntry(thinkingId, {type: 'thinking', content: entry.content});
@@ -696,6 +699,10 @@ function renderEntries(entries, { persistent = false } = {}) {
                     console.log('[renderEntries] FINAL skipped (matched _pendingSlashResponse from SSE done)');
                 } else {
                     const $el = chatUI.appendMessage('assistant', entry.content, {timestamp: entry.ts ? new Date(entry.ts).toISOString() : null, metadata: meta});
+                    if (entry.message_id) {
+                        $el.attr('data-message-id', entry.message_id);
+                        _seenRealtimeMessages.add(`${currentSessionId}:${entry.message_id}`);
+                    }
                     console.log('[renderEntries] FINAL appendMessage returned element:', !!$el.length);
                 }
             } else {
@@ -719,16 +726,12 @@ function renderEntries(entries, { persistent = false } = {}) {
             if (thinkingId) { chatUI.finalizeThinkingBubble(thinkingId, entry.thinking_duration); thinkingId = null; }
         }
     }
-    if (persistent) {
-        _pollThinkingId = thinkingId;  // save for next incremental poll call
-    } else if (thinkingId) {
-        // In-progress turn detected: remove the incomplete bubble so the event-buffer
-        // replay (dispatchSessionEvent / restoreActiveReasoning) can create a fresh one
-        // without duplicating the entries that are already in the buffer.
+    if (thinkingId) {
+        // Active telemetry is rebuilt from the durable stream after history loads.
         console.warn('[renderEntries] removing orphan thinking indicator at end, thinkingId:', thinkingId);
         chatUI.removeThinkingIndicator(thinkingId);
     }
-    console.log('[renderEntries] processed', entryCount, 'entries, persistent:', persistent, 'orphanThinking:', !!thinkingId);
+    console.log('[renderEntries] processed', entryCount, 'entries, orphanThinking:', !!thinkingId);
 }
 
 // Render a history message whose timeline should be split into per-iteration bubbles
@@ -868,21 +871,14 @@ document.addEventListener('click', e => {
 
 async function selectSession(sessionId) {
     const gen = ++_selectGeneration;  // capture this call's generation; stale callbacks check against it
-    stopPolling();
     disconnectSessionStream();
-    // Dispose any poll Turn that wasn't finalized — clears its setInterval/setTimeout
-    if (_pollThinkingId) { chatUI.removeThinkingIndicator(_pollThinkingId); _pollThinkingId = null; }
     // Dispose all remaining active Turns and clear the container
     chatUI.clear();
     currentSessionId = sessionId;
     currentAgentId = null;
-    lastChatTs = 0;
     _sseThinkingId = null;
-    _sseCompleted = false;
     _sessionTurn = { phase: 'idle', lastSeq: 0, terminalSeq: 0 };
     _pendingIntermediateResponse = null;
-    _pollThinkingId = null;
-    _pollInFlight = false;
     _pendingSlashResponse = null;
     _pendingReplyText = null;
     _pendingFileUpload = false;
@@ -901,6 +897,7 @@ async function selectSession(sessionId) {
             `<div class="flex items-center justify-center h-full text-gray-400 text-sm px-6 text-center">${esc(msg)}</div>`;
         return;
     }
+    let realtimeCursor = Number(res.headers.get('X-Evonic-Realtime-Cursor') || 0);
     const data = await res.json();
     if (data.error) return;
 
@@ -945,6 +942,10 @@ async function selectSession(sessionId) {
             const jr = await fetch(`/api/agents/${encodeURIComponent(currentAgentId)}/chat?${qs}`);
             if (_selectGeneration !== gen) return;  // stale — another selectSession started
             if (jr.ok) {
+                realtimeCursor = Math.max(
+                    realtimeCursor,
+                    Number(jr.headers.get('X-Evonic-Realtime-Cursor') || 0),
+                );
                 const jd = await jr.json();
                 if (_selectGeneration !== gen) return;
                 const entries = jd.entries || [];
@@ -970,7 +971,6 @@ async function selectSession(sessionId) {
             console.error('[selectSession] JSONL fetch/parse error, falling back to SQLite:', e);
             // Clear any partial render before falling back to SQLite
             chatUI.clear();
-            _pollThinkingId = null;
             _renderSqliteMessages(messages, container);
         }
     } else {
@@ -992,73 +992,8 @@ async function selectSession(sessionId) {
     clearAgentStatePanel();
     loadAgentState();
 
-    // Always check for any in-progress reasoning trace on the server.
-    // This is a fast in-memory buffer lookup — no I/O cost.
-    // Replay found events so the thinking bubble is restored immediately,
-    // then start SSE from resumeSeq so the backend only delivers the gap
-    // between this fetch and the moment the SSE subscription is registered.
-    let resumeSeq = 0;
-    if (currentAgentId) {
-        const selectedAgentId = currentAgentId;
-        let restoredReasoning = false;
-        try {
-            const [r, busyRes] = await Promise.all([
-                fetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/chat/events?session_id=${encodeURIComponent(sessionId)}&after=0`),
-                fetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/busy`),
-            ]);
-            if (_selectGeneration !== gen || currentSessionId !== sessionId || currentAgentId !== selectedAgentId) return;
-            let busyState = null;
-            if (busyRes.ok) busyState = await busyRes.json();
-            if (_selectGeneration !== gen || currentSessionId !== sessionId || currentAgentId !== selectedAgentId) return;
-            const ownsActiveTurn = !!(busyState && busyState.busy && busyState.session_id === sessionId);
-
-            if (r.ok) {
-                const body = await r.json();
-                if (_selectGeneration !== gen || currentSessionId !== sessionId || currentAgentId !== selectedAgentId) return;
-                const events = body.events || [];
-                console.log('[selectSession] event-buffer replay: got', events.length, 'events, types:', events.map(e=>e.event).join(','));
-                // Buffered traces enrich the active bubble but never establish activity
-                // alone: /busy owns that decision after a refresh.
-                const lastDoneIdx = events.reduce((idx, ev, i) => ev.event === 'done' ? i : idx, -1);
-                const replayEvents = lastDoneIdx >= 0 ? events.slice(lastDoneIdx + 1) : events;
-                console.log('[selectSession] event-buffer replay: lastDoneIdx=', lastDoneIdx, 'replayEvents=', replayEvents.length);
-                if (ownsActiveTurn && replayEvents.length) {
-                    const userMessages = container.querySelectorAll('[data-msg-role="user"]');
-                    const userMsgEl = userMessages.length ? userMessages[userMessages.length - 1] : null;
-                    const begin = replayEvents.find(ev => ev.event === 'turn_begin');
-                    _beginSessionTurn(begin?.data?.ts || null, userMsgEl);
-                    for (const ev of replayEvents) {
-                        if (ev.seq > resumeSeq) resumeSeq = ev.seq;
-                        _sessionTurn.lastSeq = Math.max(_sessionTurn.lastSeq, ev.seq || 0);
-                        dispatchSessionEvent(ev.event, ev.data, sessionId);
-                    }
-                    restoredReasoning = true;
-                    saveReasoningState(sessionId, resumeSeq);
-                    chatUI.scrollToBottom();
-                }
-            }
-
-            // An immediate refresh can beat the first buffered SSE event. In that
-            // empty-buffer window, restore a placeholder only when this exact
-            // session is still the agent's active turn.
-            if (!restoredReasoning && ownsActiveTurn) {
-                const userMessages = container.querySelectorAll('[data-msg-role="user"]');
-                const userMsgEl = userMessages.length ? userMessages[userMessages.length - 1] : null;
-                _beginSessionTurn(null, userMsgEl);
-                saveReasoningState(sessionId, resumeSeq);
-                restoredReasoning = true;
-                chatUI.scrollToBottom();
-            }
-        } catch (_) {
-            // Treat failed recovery checks as stale state; live SSE can still
-            // create a fresh bubble when a subsequent event arrives.
-        }
-        if (!restoredReasoning) clearReasoningState();
-    }
-
-    // Connect SSE for real-time thinking events, then start polling.
-    connectSessionStream(sessionId, resumeSeq);
-    startPolling();
+    // The durable stream restores queued/running state and any active telemetry.
+    connectSessionStream(sessionId, realtimeCursor);
 }
 
 function _renderSqliteMessages(messages, container) {
@@ -1071,76 +1006,22 @@ function _renderSqliteMessages(messages, container) {
         if (msg.role === 'assistant' && msg.metadata?.send_intermediate_responses && msg.metadata?.timeline?.length) {
             renderInterleavedHistory(msg);
         } else {
-            chatUI.appendMessage(msg.role, msg.content, {timestamp: msg.created_at, metadata: msg.metadata});
+            const $el = chatUI.appendMessage(msg.role, msg.content, {timestamp: msg.created_at, metadata: msg.metadata});
+            if (msg.id) {
+                $el.attr('data-message-id', msg.id);
+                _seenRealtimeMessages.add(`${currentSessionId}:${msg.id}`);
+            }
         }
     }
     container.scrollTop = container.scrollHeight;
 }
 
-// ==================== Real-time Polling ====================
-
-function startPolling() {
-    stopPolling();
-    pollTimer = setInterval(pollNewMessages, POLL_INTERVAL);
-}
-
-function stopPolling() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-async function pollNewMessages() {
-    if (!currentSessionId || !currentAgentId) return;
-    if (_pollInFlight) return;
-    _pollInFlight = true;
-    const pollGen = _selectGeneration;  // capture generation; discard result if session changed
-    try {
-        const qs = `session_id=${encodeURIComponent(currentSessionId)}&after_ts=${lastChatTs}`;
-        const res = await fetch(`/api/agents/${encodeURIComponent(currentAgentId)}/chat?${qs}`);
-        if (_selectGeneration !== pollGen) return;  // session changed while fetch was in-flight
-        const data = await res.json();
-        if (_selectGeneration !== pollGen) return;
-        const entries = data.entries || [];
-        if (!entries.length) return;
-
-        const wasAtBottom = chatUI.isNearBottom(80);
-
-        // SSE owns live turn rendering. Poll only fills durable final messages or
-        // provides a terminal fallback when the stream missed the done event.
-        const turnEnded = entries.some(e => e.type === 'final' || e.type === 'turn_end' || e.type === 'error');
-        if (_sessionTurn.phase === 'active' || _sessionTurn.phase === 'complete') {
-            if (!turnEnded) {
-                for (const e of entries) {
-                    if (e.type !== 'user' && e.type !== 'system' && e.ts > lastChatTs) lastChatTs = e.ts;
-                }
-                return;
-            }
-            _completeSessionTurn(_sessionTurn.lastSeq);
-            // Only render final/user entries — SSE already showed the thinking+tool details
-            const finalEntries = entries.filter(e => e.type === 'final' || e.type === 'user' || e.type === 'error' || e.type === 'system');
-            renderEntries(finalEntries);
-            // Still advance lastChatTs for all entries
-            for (const e of entries) { if (e.ts > lastChatTs) lastChatTs = e.ts; }
-        } else {
-            renderEntries(entries, { persistent: true });
-        }
-
-        if (wasAtBottom) chatUI.scrollToBottom();
-
-        // Refresh summary when new messages arrive
-        loadSessionSummary();
-        loadAgentState();
-    } catch (e) {
-        // Silently ignore poll errors
-    } finally {
-        _pollInFlight = false;
-    }
-}
-
 // ==================== SSE Stream ====================
 
 let _sessionEs = null;
+let _sessionHistoryResyncing = false;
 
-// afterSeq: last seq the client already has from replay; SSE pre-fills only the gap above it.
+// afterSeq is the history snapshot's durable journal cursor.
 function connectSessionStream(sessionId, afterSeq = 0) {
     // Close the old EventSource if any, but do NOT finalize the thinking bubble —
     // it may have been restored by the replay in selectSession and must be kept alive.
@@ -1150,7 +1031,7 @@ function connectSessionStream(sessionId, afterSeq = 0) {
     }
     if (!currentAgentId) return;
     afterSeq = Math.max(afterSeq, _sessionTurn.lastSeq, _sessionTurn.terminalSeq);
-    const url = `/api/realtime/stream?chat=1&agent_id=${encodeURIComponent(currentAgentId)}&session_id=${encodeURIComponent(sessionId)}&after=${afterSeq}`;
+    const url = `/api/realtime/stream?chat=1&cursor_version=2&snapshot=1&agent_id=${encodeURIComponent(currentAgentId)}&session_id=${encodeURIComponent(sessionId)}&after=${afterSeq}`;
     // LOG-A: track every connect/reconnect and whether _lastSeq will reset
     console.log(`[sse] connect afterSeq=${afterSeq} sseThinkingId=${!!_sseThinkingId} url=${url}`);
     if (afterSeq === 0 && _sseThinkingId) {
@@ -1159,72 +1040,23 @@ function connectSessionStream(sessionId, afterSeq = 0) {
     const es = new EventSource(url);
     _sessionEs = es;
 
-    let _lastSeq = afterSeq;  // start from where the replay left off
-    let _fillingGap = false;
-    const _gapQueue = [];
-    let _dispatchCount = 0; // LOG-B: count events dispatched per connection
-
-    async function fillGap(fromSeq, upToSeq) {
-        try {
-            const res = await fetch(`/api/agents/${encodeURIComponent(currentAgentId)}/chat/events?session_id=${encodeURIComponent(sessionId)}&after=${fromSeq}&up_to=${upToSeq}`);
-            const body = await res.json();
-            const gapEvents = body.events || [];
-            console.log(`[gap-fill] from=${fromSeq} to=${upToSeq} got ${gapEvents.length} events`);
-            for (const ev of gapEvents) {
-                if (ev.seq <= _lastSeq) continue;
-                _lastSeq = ev.seq;
-                _sessionTurn.lastSeq = Math.max(_sessionTurn.lastSeq, ev.seq || 0);
-                dispatchSessionEvent(ev.event, ev.data, sessionId);
-            }
-        } catch (err) {
-            console.warn('[gap-fill] failed:', err);
-            _lastSeq = upToSeq - 1;
-        }
-    }
+    let _lastSeq = afterSeq;
 
     function handleSeq(evtName, data, dispatch) {
         const seq = data.seq || 0;
-        if (_fillingGap) {
-            _gapQueue.push({evtName, data});
-            return;
-        }
-        // Skip events already covered by the replay or a previous gap-fill
         if (seq && seq <= _lastSeq) {
-            console.log(`[sse] dedup skip ${evtName} seq=${seq} _lastSeq=${_lastSeq}`);
-            return;
-        }
-        if (seq && _lastSeq > 0 && seq > _lastSeq + 1) {
-            console.warn(`[sse] gap detected ${evtName} seq=${seq} _lastSeq=${_lastSeq} gap=${seq-_lastSeq-1}`);
-            _fillingGap = true;
-            _gapQueue.push({evtName, data});
-            fillGap(_lastSeq, seq).then(() => {
-                _fillingGap = false;
-                console.log(`[gap-fill] draining queue len=${_gapQueue.length}`);
-                while (_gapQueue.length > 0) {
-                    const item = _gapQueue.shift();
-                    const itemSeq = item.data.seq || 0;
-                    if (itemSeq && itemSeq <= _lastSeq) continue;
-                    if (itemSeq) _lastSeq = itemSeq;
-                    dispatchSessionEvent(item.evtName, item.data, sessionId);
-                }
-            });
             return;
         }
         if (seq) _lastSeq = seq;
         if (seq) _sessionTurn.lastSeq = Math.max(_sessionTurn.lastSeq, seq);
-        saveReasoningState(sessionId, _lastSeq);
-        // LOG-B: count and log every event actually dispatched
-        _dispatchCount++;
-        console.log(`[sse] dispatch #${_dispatchCount} ${evtName} seq=${seq} _lastSeq=${_lastSeq} sseId=${!!_sseThinkingId}`);
         dispatch(data);
     }
 
-    for (const evtName of ['turn_begin', 'thinking', 'tool_call_started', 'tool_executed', 'state:changed', 'response_chunk', 'turn_split', 'whatsapp_restriction_warning', 'session_clear', 'approval_required', 'approval_resolved']) {
+    for (const evtName of ['agent_busy_changed', 'turn_queued', 'turn_begin', 'thinking', 'tool_call_started', 'tool_executed', 'state:changed', 'response_chunk', 'turn_split', 'whatsapp_restriction_warning', 'session_clear', 'approval_required', 'approval_resolved']) {
         es.addEventListener(evtName, e => {
             if (currentSessionId !== sessionId) return;
             const data = JSON.parse(e.data);
-            // Normalize raw SSE field names to match gap-fill/replay format so
-            // dispatchSessionEvent receives consistent field names regardless of path.
+            // Normalize legacy field aliases before dispatching.
             if (evtName === 'tool_call_started') {
                 data.tool = data.tool_name || data.tool;
                 data.args = data.tool_args || data.args;
@@ -1237,6 +1069,25 @@ function connectSessionStream(sessionId, afterSeq = 0) {
         });
     }
 
+    es.addEventListener('message_received', e => {
+        if (currentSessionId !== sessionId) return;
+        const data = JSON.parse(e.data);
+        handleSeq('message_received', data, d => handleRealtimeMessage(d, sessionId));
+    });
+
+    es.addEventListener('history_resync_required', () => {
+        if (_sessionEs !== es || currentSessionId !== sessionId || _sessionHistoryResyncing) return;
+        _sessionHistoryResyncing = true;
+        es.close();
+        _sessionEs = null;
+        selectSession(sessionId).finally(() => { _sessionHistoryResyncing = false; });
+    });
+
+    es.addEventListener('auth_expired', () => {
+        es.close();
+        window.location.href = '/login';
+    });
+
     es.addEventListener('done', (e) => {
         if (currentSessionId !== sessionId) return;
 
@@ -1245,7 +1096,7 @@ function connectSessionStream(sessionId, afterSeq = 0) {
         try { payload = JSON.parse(e.data); } catch(_) {}
         const doneSeq = payload.seq || 0;
         _sessionTurn.lastSeq = Math.max(_sessionTurn.lastSeq, doneSeq);
-        if (!_completeSessionTurn(doneSeq)) return;
+        if (!_completeSessionTurn(doneSeq, payload.thinking_duration)) return;
 
         if (payload.slash_command && payload.response) {
             // Slash command response — finalize any thinking bubble and display the response.
@@ -1261,7 +1112,7 @@ function connectSessionStream(sessionId, afterSeq = 0) {
                 _sseThinkingId = null;
             }
             if (!alreadyRendered) {
-                // Not rendered yet — display the response and mark it so POST/poll skip it
+                // Not rendered yet — display it and let message IDs deduplicate later delivery.
                 const msgOpts = {};
                 if (payload.attachment_info) {
                     msgOpts.metadata = { attachment_info: payload.attachment_info };
@@ -1271,17 +1122,7 @@ function connectSessionStream(sessionId, afterSeq = 0) {
                 _pendingSlashResponse = payload.response;
             }
             // If alreadyRendered is true: POST handler already rendered + set _pendingSlashResponse.
-            // Leave _pendingSlashResponse as-is so the poll can still dedup the stored entry.
-            _sseCompleted = true;
-            // Reconnect so we're ready for the next incoming message
-            es.close();
-            if (_sessionEs === es) {
-                _sessionEs = null;
-                const doneGen = _selectGeneration;
-                setTimeout(() => {
-                    if (currentSessionId === sessionId && _selectGeneration === doneGen) connectSessionStream(sessionId, _sessionTurn.lastSeq);
-                }, 500);
-            }
+            // Leave _pendingSlashResponse set for a later history refresh.
             return;
         }
 
@@ -1300,47 +1141,32 @@ function connectSessionStream(sessionId, afterSeq = 0) {
         }
         // Render the final response from the done event. The SSE done event
         // already carries the response text (from turn_complete). Rendering it
-        // here means the chat bubble appears instantly rather than waiting for
-        // the next poll tick. This is also the ONLY path that works for
+        // here means the chat bubble appears instantly without a history refresh.
+        // This is also the ONLY path that works for
         // explorer sub-agent sessions — their JSONL chatlog lives under the
-        // parent's agent ID, so the poll's chatlog_manager.get(agent_id, ...)
+        // parent's agent ID, so the history endpoint's chatlog lookup
         // lookup returns nothing (see routes/agents.py api_chat_jsonl).
-        if (payload.response) {
+        const responseSeen = payload.message_id &&
+            _seenRealtimeMessages.has(`${sessionId}:${payload.message_id}`);
+        if (payload.response && !responseSeen) {
             const wasAtBottom = chatUI.isNearBottom(80);
             const msgOpts = {};
             if (payload.attachment_info) {
                 msgOpts.metadata = { attachment_info: payload.attachment_info };
             }
-            chatUI.appendMessage('assistant', payload.response, msgOpts);
+            const $el = chatUI.appendMessage('assistant', payload.response, msgOpts);
+            if (payload.message_id) {
+                $el.attr('data-message-id', payload.message_id);
+                _seenRealtimeMessages.add(`${sessionId}:${payload.message_id}`);
+            }
             if (wasAtBottom) requestAnimationFrame(() => chatUI.scrollToBottom());
             _pendingSlashResponse = payload.response;
-        }
-        _sseCompleted = true;
-        // Reconnect so we're ready for the next incoming message
-        es.close();
-        if (_sessionEs === es) {
-            _sessionEs = null;
-            const doneGen = _selectGeneration;
-            setTimeout(() => {
-                if (currentSessionId === sessionId && _selectGeneration === doneGen) connectSessionStream(sessionId, _sessionTurn.lastSeq);
-            }, 500);
         }
     });
 
     es.onerror = () => {
-        // SSE dropped — reconnect after a short delay if session is still active.
-        // Do NOT clear reasoning state here: the turn may still be running,
-        // and the saved state lets a page refresh recover properly.
-        // Do NOT finalize the thinking bubble — keep _sseThinkingId alive so the
-        // reconnected stream continues appending to the same bubble.
-        _pendingIntermediateResponse = null;
-        es.close();
-        if (_sessionEs === es) {
-            _sessionEs = null;
-            setTimeout(() => {
-                if (currentSessionId === sessionId) connectSessionStream(sessionId, _sessionTurn.lastSeq);
-            }, 2000);
-        }
+        // Native EventSource reconnects with Last-Event-ID. The durable journal
+        // fills the disconnect window without replacing the active bubble.
     };
 }
 
@@ -1368,9 +1194,9 @@ function startSidebarPolling() {
 
 // ==================== Admin Reply ====================
 
-let _pendingReplyText = null; // text of optimistically-rendered reply; suppressed in poll
-let _pendingFileUpload = false; // skip next user entry in poll (file upload dedup)
-let _pendingSlashResponse = null; // content of just-rendered slash command response; suppressed in poll
+let _pendingReplyText = null; // fallback content dedup for optimistic replies
+let _pendingFileUpload = false; // fallback dedup for uploaded JSONL entries
+let _pendingSlashResponse = null; // fallback content dedup for slash responses
 
 // ==================== File Upload Helpers ====================
 
@@ -1664,6 +1490,9 @@ async function doSendReply() {
     }
     const displayText = text || (file ? (file.type.startsWith('image/') ? '[Image]' : `[File: ${file.name}]`) : '');
     const $msgEl = chatUI.appendMessage(outRole, displayText, {metadata: optimisticMeta});
+    const clientMessageId = newClientMessageId();
+    $msgEl.attr('data-client-message-id', clientMessageId);
+    _optimisticMessages.set(clientMessageId, $msgEl);
     // Render a turn immediately. SSE later adopts this same bubble on turn_begin;
     // a message injected into an existing turn remains queued instead.
     const wasActiveTurn = _sessionTurn.phase === 'active';
@@ -1694,6 +1523,7 @@ async function doSendReply() {
         const formData = new FormData();
         formData.append('text', text);
         formData.append('perspective', _chatPerspective);
+        formData.append('client_message_id', clientMessageId);
         formData.append('file', file);
         res = await $.ajax({
             url: `/api/sessions/${currentSessionId}/reply`,
@@ -1719,12 +1549,14 @@ async function doSendReply() {
             url: `/api/sessions/${currentSessionId}/reply`,
             method: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({text, perspective: _chatPerspective}),
+            data: JSON.stringify({text, perspective: _chatPerspective, client_message_id: clientMessageId}),
         }).catch(err => ({ error: err.responseJSON?.error || 'Request failed' }));
     }
 
     $btn.prop('disabled', false);
     if (res.error) {
+        _optimisticMessages.delete(clientMessageId);
+        if ($msgEl.attr('data-message-id')) return;
         _pendingReplyText = null;
         _pendingFileUpload = false;
         if (optimisticThinkingId && _sseThinkingId === optimisticThinkingId) {
@@ -1733,7 +1565,7 @@ async function doSendReply() {
             _sessionTurn = { phase: 'idle', lastSeq: _sessionTurn.lastSeq, terminalSeq: _sessionTurn.terminalSeq };
             showStopBtn(false);
         }
-        $msgEl.remove(); // remove optimistically-rendered message on failure
+        if (!$msgEl.attr('data-message-id')) $msgEl.remove();
         return alert(res.error);
     }
     hideEditorTip();
@@ -1808,9 +1640,8 @@ async function deleteSession(sessionId) {
     if (!await showConfirm({title: 'Delete Session', message: 'This will clear all chat history for this session. The session will be hidden from the list but not deleted.', confirmText: 'Delete'})) return;
     await fetch(`/api/sessions/${sessionId}`, {method: 'DELETE'});
     if (sessionId === currentSessionId) {
-        stopPolling();
+        disconnectSessionStream();
         currentSessionId = null;
-        lastChatTs = 0;
         document.getElementById('chat-header').classList.add('hidden');
         document.getElementById('reply-bar').classList.add('hidden');
         document.getElementById('chat-messages').innerHTML = '<div id="empty-state" class="flex items-center justify-center h-full text-gray-400 text-sm">Select a session to view conversation</div>';
@@ -1849,7 +1680,7 @@ function buildBgProcessesHtml(procs) {
     for (const p of running) {
         const secs = Math.max(0, Math.floor(Date.now() / 1000 - p.started_at));
         const elapsed = secs < 60 ? `${secs}s` : (secs < 3600 ? `${Math.floor(secs / 60)}m` : `${Math.floor(secs / 3600)}h${Math.floor((secs % 3600) / 60)}m`);
-        html += `<li class="flex items-center gap-1.5 cursor-pointer rounded px-1 py-0.5 -mx-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" onclick="openBgProcessModal('${esc(p.job_id)}')" title="Click to view details">${liveDot}<span class="text-green-500 dark:text-green-400 font-mono text-[11px] flex-shrink-0 select-none">❯</span><span class="font-mono text-[11px] text-gray-700 dark:text-gray-200 truncate">${esc(p.command)}</span><span class="font-mono text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0 ml-auto tabular-nums">${esc(elapsed)}</span></li>`;
+        html += `<li class="flex items-center gap-1.5 cursor-pointer rounded px-1 py-0.5 -mx-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" onclick="openBgProcessModal('${esc(p.job_id)}')" title="Click to view details">${liveDot}<span class="text-green-500 dark:text-green-400 font-mono text-[11px] flex-shrink-0 select-none">❯</span><span class="font-mono text-[11px] text-gray-700 dark:text-gray-200 truncate">${esc(p.command)}</span>${p.monitored ? '<span class="font-mono text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0" title="A monitor is attached — the agent will be notified">👁</span>' : ''}<span class="font-mono text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0 ml-auto tabular-nums">${esc(elapsed)}</span></li>`;
     }
     html += '</ul></div>';
     return html;
@@ -2145,14 +1976,21 @@ function clearSummaryPanel() {
 
 // ==================== Agent State ====================
 
+let _agentStateReq = 0;
+
 async function loadAgentState() {
     if (!currentAgentId) return;
     const userId = document.getElementById('hdr-user')?.textContent || 'web_test';
+    const myReq = ++_agentStateReq;
     try {
         const url = `/api/agents/${currentAgentId}/chat/state?user_id=${encodeURIComponent(userId)}&session_id=${encodeURIComponent(currentSessionId || '')}`;
         const response = await fetch(url);
         if (!response.ok) return;
-        _sessionStateData = await response.json();
+        const data = await response.json();
+        // A fresher state:changed snapshot or newer fetch landed while this
+        // response was in flight — don't overwrite it with stale data.
+        if (myReq !== _agentStateReq) return;
+        _sessionStateData = data;
         _renderSessionStateSnapshot(_sessionStateData);
         renderAgentState(
             currentAgentId,
@@ -2193,6 +2031,9 @@ document.addEventListener('evonic:agent-state-changed', function(event) {
     const hasStateSnapshot = stateKeys.some(key => Object.prototype.hasOwnProperty.call(detail, key));
 
     if (hasStateSnapshot) {
+        // Invalidate any in-flight loadAgentState() fetch: its response is now
+        // older than this snapshot and must not overwrite it.
+        _agentStateReq++;
         for (const key of stateKeys) {
             if (Object.prototype.hasOwnProperty.call(detail, key)) _sessionStateData[key] = detail[key];
         }
@@ -2412,9 +2253,8 @@ async function clearAllSessions() {
     const data = await res.json();
     if (data.success) {
         // Reset chat view
-        stopPolling();
+        disconnectSessionStream();
         currentSessionId = null;
-        lastChatTs = 0;
         allSessions = [];
         renderSessionList();
         document.getElementById('chat-header').classList.add('hidden');
@@ -2535,7 +2375,7 @@ startSidebarPolling();
 })();
 
 // Cleanup on page leave
-window.addEventListener('beforeunload', () => { stopPolling(); disconnectSessionStream(); clearTimeout(sidebarPollTimer); });
+window.addEventListener('beforeunload', () => { disconnectSessionStream(); clearTimeout(sidebarPollTimer); });
 
 // ==================== Plan File Modal ====================
 

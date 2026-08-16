@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.2.0] - 2026-08-14
+
+### Features
+
+- Added visibility into running background jobs, opt-in job monitors, and completion notifications for the originating chat.
+- Added custom slash-command bindings for panel actions.
+- Added durable keyed memory facts with automatic supersession.
+- Added rendered Markdown and source editing tabs to the plan-file viewer.
+- Added shared WhatsApp routing controls, sender identity resolution, and direct-message-only agent support.
+- Added focused highlighting for potentially dangerous code in approval prompts.
+- Added a per-call LLM retry override.
+
+### Bug Fixes
+
+- Fixed sandbox artifact-registry access, background-job command parsing, and missing job-exit notices.
+- Improved Codex stream failure reporting and provider/SSE diagnostics, including failing vision-model identification.
+- Enforced external-channel file delivery and blocked local filesystem paths from chat links.
+- Corrected workspace and tunnel file handling, including remote binary reads and virtual-path policy enforcement.
+- Improved WhatsApp handling for attachments, documents, status broadcasts, newsletters, and shared-channel sender expiry.
+- Corrected scheduler tidy timing and constrained Explorer cancellation and oversized output handling.
+
+### Dependencies
+
+- Added headless QR decoder support for ID-card processing.
+
 ## [1.1.2] - 2026-08-02
 
 ### Features

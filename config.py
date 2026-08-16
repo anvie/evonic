@@ -317,6 +317,10 @@ STALE_SESSION_THRESHOLD_SECONDS = _get_env_int("STALE_SESSION_THRESHOLD_SECONDS"
 # Separate from STALE_SESSION which checks gap between consecutive messages.
 LONG_GAP_WEEKS = _get_env_int("LONG_GAP_WEEKS", 3, min_val=1, max_val=52)
 
+# Background jobs injection — list the session's still-running background
+# processes each turn, so the agent does not forget what it started.
+BACKGROUND_JOBS_INJECTION_ENABLED = _get_env_bool("BACKGROUND_JOBS_INJECTION_ENABLED", True)
+
 # Thinking budget cap for small reasoning models (tokens per turn).
 # Only active when explicitly set per-model via thinking_budget field in DB.
 # Models with thinking_budget=0 have no cap (disabled by default).

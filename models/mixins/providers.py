@@ -14,7 +14,7 @@ class ProvidersMixin:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT id, name, type, base_url, api_key, api_format, enabled, "
-                "auth_type, refresh_token, token_expires_at, "
+                "auth_type, refresh_token, token_expires_at, credential_source, "
                 "created_at, updated_at FROM providers ORDER BY name"
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -25,7 +25,7 @@ class ProvidersMixin:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT id, name, type, base_url, api_key, api_format, enabled, "
-                "auth_type, refresh_token, token_expires_at, "
+                "auth_type, refresh_token, token_expires_at, credential_source, "
                 "created_at, updated_at FROM providers WHERE id = ?",
                 (provider_id,),
             )
@@ -37,8 +37,8 @@ class ProvidersMixin:
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO providers (id, name, type, base_url, api_key, api_format, enabled) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO providers (id, name, type, base_url, api_key, api_format, enabled, auth_type, credential_source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     pid,
                     data.get("name", pid),
@@ -47,6 +47,8 @@ class ProvidersMixin:
                     data.get("api_key", ""),
                     data.get("api_format", "openai"),
                     data.get("enabled", 1),
+                    data.get("auth_type", "api_key"),
+                    data.get("credential_source", "api_key"),
                 ),
             )
             conn.commit()
@@ -54,7 +56,7 @@ class ProvidersMixin:
 
     def update_provider(self, provider_id: str, data: Dict[str, Any]) -> bool:
         allowed = {"name", "type", "base_url", "api_key", "api_format", "enabled",
-                   "auth_type", "refresh_token", "token_expires_at"}
+                   "auth_type", "refresh_token", "token_expires_at", "credential_source"}
         updates = {k: v for k, v in data.items() if k in allowed}
         if not updates:
             return False

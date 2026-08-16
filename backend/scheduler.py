@@ -592,15 +592,20 @@ class Scheduler:
                 action_summary = f"{method} {url} -> {status_code}"
                 if resp_body:
                     action_output = resp_body
-            elif action_type == 'poll_background_job':
-                from backend.agent_runtime.background_jobs import run_poll_action
-                result = run_poll_action(action_config)
-                action_summary = (f"poll '{action_config.get('command', '?')}': "
+            elif action_type == 'poll_monitor':
+                from backend.agent_runtime.monitors import run_monitor_poll
+                result = run_monitor_poll(action_config)
+                action_summary = (f"monitor '{action_config.get('command', '?')}': "
                                   f"{result.get('state', '?')}")
                 if result.get('done'):
-                    # Job finished (or timed out) — agent already notified.
-                    # Self-delete so the interval stops running.
+                    # Monitor resolved (fired, ended, or expired) and the agent
+                    # was notified. Self-delete so the interval stops running.
                     _cancel_after = schedule_id
+            elif action_type == 'poll_background_job':
+                # Legacy auto-watch rows left in SQLite from before background
+                # processes became opt-in. Drain them silently on first tick.
+                action_summary = 'legacy background-job poll: removed'
+                _cancel_after = schedule_id
             else:
                 log.warning("Unknown action_type '%s' for %s",
                             action_type, schedule_id)
@@ -698,13 +703,13 @@ class Scheduler:
             'action_type': action_type, 'fired_at': fired_at,
         })
 
-        # Self-cleanup for finished background-job polls — runs last so the
+        # Self-cleanup for resolved monitors — runs last so the
         # row updates above don't touch an already-deleted schedule.
         if _cancel_after:
             try:
                 self.cancel_schedule(_cancel_after)
             except Exception as e:
-                log.warning("poll_background_job %s: self-cancel failed: %s",
+                log.warning("monitor %s: self-cancel failed: %s",
                             _cancel_after, e)
 
     def _action_emit_event(self, config: dict):
@@ -754,8 +759,21 @@ class Scheduler:
         if external_user_id != '__scheduler__' and channel_id:
             session_id = main_db.get_or_create_session(
                 agent_id, external_user_id, channel_id)
-            main_db.add_chat_message(
+            message_id = main_db.add_chat_message(
                 session_id, 'assistant', message, agent_id=agent_id)
+            message_id = message_id if type(message_id) in (int, str) else None
+            from models.chatlog import chatlog_manager
+            chatlog_manager.get(agent_id, session_id).append({
+                'type': 'final', 'session_id': session_id,
+                'content': message, 'message_id': message_id,
+            })
+            from backend.event_stream import event_stream
+            event_stream.emit('message_received', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': external_user_id, 'channel_id': channel_id,
+                'message': message, 'message_id': message_id,
+                'role': 'assistant', 'sender': 'scheduler',
+            })
 
             # Push via channel (Telegram, etc.) so the user sees it immediately.
             # Only return on successful delivery — if the channel is down or

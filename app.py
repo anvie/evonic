@@ -93,6 +93,7 @@ from routes.scheduler import scheduler_bp
 from routes.models import models_bp
 from routes.providers import providers_bp
 from routes.codex import codex_bp
+from routes.claude import claude_bp
 from routes.health import health_bp
 from routes.workplaces import workplaces_bp
 from routes.logs import logs_bp
@@ -240,6 +241,7 @@ app.register_blueprint(dashboard_bp)
 app.register_blueprint(models_bp)
 app.register_blueprint(providers_bp)
 app.register_blueprint(codex_bp)
+app.register_blueprint(claude_bp)
 app.register_blueprint(health_bp)
 app.register_blueprint(workplaces_bp)
 app.register_blueprint(logs_bp)
@@ -330,7 +332,8 @@ _is_reloader_child = _os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
 # Smoke-test import (used by the updater to validate a new tree before
 # restarting): import all modules but skip channel/scheduler startup.
 _smoke_test = _os.environ.get('EVONIC_SMOKE_TEST') == '1'
-if (not _reloader_active or _is_reloader_child) and not _smoke_test:
+_testing = _os.environ.get('EVONIC_TESTING') == '1'
+if (not _reloader_active or _is_reloader_child) and not _smoke_test and not _testing:
     # Run SYSTEM.md migration eagerly (not lazily on first GET /api/agents).
     # Agents that predate the on-disk SYSTEM.md feature need their file written
     # before they start processing messages — otherwise read_file("/_self/SYSTEM.md")

@@ -49,6 +49,25 @@ except ImportError:
 _HELPERS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'runpy_helpers'))
 _HELPERS_MOUNT = '/usr/local/lib/python3.11/site-packages/evonic'
 
+# Host artifact registry root: BASE_DIR/shared/agents/<agent_id>/artifacts is
+# the authoritative artifact location served by the web UI / list_artifacts /
+# fetch_artifact.  It is bind-mounted into every sandbox container at
+# /workspace/shared/agents/<agent_id>/artifacts so bash/runpy writes land on
+# the same directory the UI reads (prevents silent artifact divergence).
+#
+# When an agent's workspace differs from BASE_DIR (e.g. an agent whose
+# workspace is agents/<id>/), the sandbox's /workspace mount does NOT include
+# that registry, so /workspace/shared/agents/<id>/artifacts would silently
+# resolve to a DIFFERENT directory than the one the UI serves.  To keep the
+# sandbox view and the host registry consistent we bind-mount the registry into
+# the container at the same relative path.
+_ARTIFACTS_ROOT = os.path.normpath(os.path.join(SANDBOX_WORKSPACE, 'shared', 'agents'))
+
+# Bump when the container mount layout changes so existing containers are
+# recreated with the new mounts (persistent containers survive restarts, so an
+# in-memory version check is required to detect stale mounts).
+_MOUNT_LAYOUT_VERSION = 2
+
 _MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB
 
 # PATH prefix prepended to every bash script so evonic/bin binaries take priority.
@@ -409,8 +428,9 @@ def _get_or_create_container(
     with _pool_lock:
         if pool_key in _containers:
             info = _containers[pool_key]
-            if info.get('workspace') != effective_workspace:
-                logger.info(f'Workspace changed for {("persistent " if persistent else "")}session {pool_key[:12]} — recreating container')
+            if (info.get('workspace') != effective_workspace
+                    or info.get('mount_version') != _MOUNT_LAYOUT_VERSION):
+                logger.info(f'Workspace/mount changed for {("persistent " if persistent else "")}{pool_key[:12]} — recreating container')
                 needs_destroy = True
             else:
                 info['last_used'] = time.time()
@@ -429,6 +449,26 @@ def _get_or_create_container(
     scratch = scratch_dir(agent_id)
     created_at = time.time()
 
+    # Bind-mount the agent's host artifact registry into the container at the
+    # same relative path the sandbox-visible path convention uses, so that
+    # /workspace/shared/agents/<id>/artifacts/ always points at the SAME
+    # directory the web UI / list_artifacts / fetch_artifact serve.  Without
+    # this, agents whose workspace differs from BASE_DIR would silently append
+    # to a sandbox copy the UI never reads (artifact divergence bug).
+    artifacts_mounts = []
+    if agent_id and _ARTIFACTS_ROOT:
+        registry_dir = os.path.join(_ARTIFACTS_ROOT, agent_id, 'artifacts')
+        # Skip when the workspace mount already exposes the registry at the
+        # same container path (workspace == BASE_DIR): bind-mounting a
+        # directory onto itself is redundant.
+        ws_relative = os.path.join(effective_workspace, 'shared', 'agents',
+                                   agent_id, 'artifacts')
+        if os.path.realpath(ws_relative) != os.path.realpath(registry_dir):
+            os.makedirs(registry_dir, exist_ok=True)
+            artifacts_mounts = [
+                '-v', f'{registry_dir}:/workspace/shared/agents/{agent_id}/artifacts:rw',
+            ]
+
     cmd = [
         'run', '-d',
         *(('--rm',) if not persistent else ()),
@@ -446,6 +486,7 @@ def _get_or_create_container(
         '--label', f'evonic.created_at={created_at:.0f}',
         '--label', f'evonic.persistent={1 if persistent else 0}',
         '-v', f'{effective_workspace}:/workspace:rw',
+        *artifacts_mounts,
         '-v', f'{_HELPERS_DIR}:{_HELPERS_MOUNT}:ro',
         '-w', '/workspace',
         '-e', f'SCRATCH={scratch}',
@@ -477,6 +518,7 @@ def _get_or_create_container(
             'created_at': created_at,
             'first_call': True,
             'workspace': effective_workspace,
+            'mount_version': _MOUNT_LAYOUT_VERSION,
             'persistent': persistent,
             'pool_key': pool_key,
         }
@@ -579,6 +621,15 @@ class DockerBackend(ExecutionBackend):
             self._container_workspace if self._container_workspace else SANDBOX_WORKSPACE)
         if path == effective or path.startswith(effective + os.sep):
             return '/workspace' + path[len(effective):]
+        # The host artifact registry is bind-mounted into the container at
+        # /workspace/shared/agents/<id>/artifacts; translate host registry
+        # paths to that container path (file tools resolve the sandbox path to
+        # the host registry via resolve_workspace_path).
+        if self._agent_id and _ARTIFACTS_ROOT:
+            registry = os.path.join(_ARTIFACTS_ROOT, self._agent_id, 'artifacts')
+            if path == registry or path.startswith(registry + os.sep):
+                rel = path[len(registry):]
+                return f'/workspace/shared/agents/{self._agent_id}/artifacts{rel}'
         return path
 
     def run_bash(self, script: str, timeout: int, env: dict, on_output=None) -> dict:

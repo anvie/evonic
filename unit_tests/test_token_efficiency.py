@@ -73,7 +73,8 @@ def test_compact_receipts_preserve_attribution_and_protocol_without_raw_data():
                   if "Active Turn Ledger" in (message.get("content") or ""))
 
     assert messages == canonical
-    assert "#1 read_file: success/informational; ref:" in ledger
+    # "secret" is not an allowlisted identity key, so the receipt names the tool only.
+    assert "#1 read_file: info" in ledger
     assert "argument" not in ledger
     assert "private output" not in ledger
     validate_tool_pairs(result.messages)
@@ -137,7 +138,10 @@ def test_artifact_instructions_keep_capabilities_with_lower_token_cost(monkeypat
     assert "/api/agents/token-test-agent/artifacts/<filename>" in artifact_section
     assert "<img src=" in artifact_section
     assert "`bash`/`runpy`" in artifact_section
-    assert estimate_tokens(artifact_section) < 150
+    # Ceiling raised from 150: commit 000fbcd deliberately added the send_file
+    # delivery rule and the no-local-filesystem-paths rule to this section after
+    # the original budget was set. The guard still bounds unintended growth.
+    assert estimate_tokens(artifact_section) < 185
 
 
 def test_offline_benchmark_is_deterministic_and_covers_required_shapes():

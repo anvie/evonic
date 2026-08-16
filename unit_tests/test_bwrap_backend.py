@@ -44,7 +44,8 @@ class FakeProc:
 def make_keeper_info(inner_pid=4242, workspace='/ws', last_used=None):
     return {'proc': FakeProc(), 'inner_pid': inner_pid, 'status_fd': -1,
             'created_at': time.time(), 'last_used': last_used or time.time(),
-            'workspace': workspace, 'hostname': 'agent'}
+            'workspace': workspace, 'hostname': 'agent',
+            'layout_version': bwrap_backend._KEEPER_LAYOUT_VERSION}
 
 
 # ---------------------------------------------------------------------------

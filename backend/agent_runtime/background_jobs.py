@@ -1,5 +1,5 @@
 """
-background_jobs — Track background processes and notify the agent on completion.
+background_jobs — Identify and track background processes started by an agent.
 
 Background processes reach this module two ways:
 
@@ -8,19 +8,17 @@ Background processes reach this module two ways:
 2. **Manual spawns** — the agent's own ``tmux new-session -d``, ``screen -dmS``
    or ``nohup … &`` scripts, detected by :func:`parse_manual_spawn`.
 
-Both are registered by the bash tool after a successful spawn and handed off to
-a persisted scheduler job (APScheduler + SQLite) via :func:`auto_watch` — no
-``/detach`` needed. The scheduler polls the OS process on an interval; on
-completion it feeds the result back into the agent (via handle_message) so the
-agent follows up for the user, then self-deletes so the interval stops.
+Both are registered by the bash tool after a successful spawn. Registration is
+**silent**: a background process is never watched and never notifies anyone on
+its own. It is visible on demand (the ``/jobs`` command, the Session State
+panel, ``tail`` via bash), and the agent attaches a monitor to the returned
+``job_id`` when — and only when — the outcome actually matters. See
+:mod:`backend.agent_runtime.monitors`.
 
-Using the scheduler (not an in-process thread) means tracking survives a server
-restart: the poll schedule is reloaded from the DB on boot and keeps going.
-
-The in-memory registry here is intentionally lightweight and transient — it
-holds job identity + status for the Session State UI. All state needed to resume
-polling lives in the schedule's action_config, so losing the registry on restart
-only blanks the UI list; notifications still fire.
+The registry here is in-memory and transient: it holds job identity + status for
+the Session State UI and to resolve ``job_id`` when a monitor is attached.
+Monitors keep everything they need in their own persisted schedule, so losing
+this registry on restart only blanks the UI list.
 """
 from __future__ import annotations
 
@@ -32,18 +30,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
-
-# Poll cadence and a hard lifetime cap (also enforced via schedule max_runs).
-_POLL_SECONDS = 30
-_MAX_WATCH_SECONDS = 6 * 60 * 60          # 6 hours
-_MAX_RUNS = _MAX_WATCH_SECONDS // _POLL_SECONDS  # backstop if self-cancel fails
-_POLL_TIMEOUT = 15
-_TAIL_LINES = 30
-
-# owner_type for internal poll schedules — distinct so they stay out of the
-# user-facing routines UI (which lists by a specific owner_type).
-SCHEDULE_OWNER_TYPE = "background_job"
-
 
 # Finished jobs kept per session for the Session State UI (oldest pruned).
 _MAX_FINISHED_PER_SESSION = 10
@@ -58,8 +44,6 @@ class BackgroundJob:
     pid_file: str
     command: str
     started_at: float
-    detached: bool = False
-    schedule_id: Optional[str] = None
     kind: str = "wrapper"            # wrapper | tmux | screen | nohup
     pgrep_pattern: str = ""          # nohup fallback when no PID file
     status: str = "running"          # running | done | timeout
@@ -113,35 +97,30 @@ class BackgroundJobRegistry:
         for j in finished[:max(0, excess)]:
             self._jobs.pop(j.job_id, None)
 
-    def mark_finished(self, session_id: str, session_name: str, command: str,
-                      status: str, exit_code: Optional[int]) -> None:
+    def mark_finished(self, job_id: str, status: str,
+                      exit_code: Optional[int]) -> None:
         """Record completion for UI display. No-op if the job is gone (restart)."""
         with self._guard:
-            for j in self._jobs.values():
-                if j.session_id == session_id and j.status == "running" and \
-                        (j.session_name == session_name or j.command == command):
-                    j.status = status
-                    j.exit_code = exit_code
-                    j.finished_at = time.time()
-                    self._prune_finished(session_id)
-                    return
+            j = self._jobs.get(job_id)
+            if not j or j.status != "running":
+                return
+            j.status = status
+            j.exit_code = exit_code
+            j.finished_at = time.time()
+            self._prune_finished(j.session_id)
 
-    def active_for_session(self, session_id: str) -> List[BackgroundJob]:
-        """Jobs in this session not yet detached (candidates for /detach)."""
+    def get(self, job_id: str) -> Optional[BackgroundJob]:
+        with self._guard:
+            return self._jobs.get(job_id)
+
+    def running_for_session(self, session_id: str) -> List[BackgroundJob]:
         with self._guard:
             return [j for j in self._jobs.values()
-                    if j.session_id == session_id and not j.detached]
+                    if j.session_id == session_id and j.status == "running"]
 
     def list_for_session(self, session_id: str) -> List[BackgroundJob]:
         with self._guard:
             return [j for j in self._jobs.values() if j.session_id == session_id]
-
-    def mark_detached(self, job_id: str, schedule_id: Optional[str]) -> None:
-        with self._guard:
-            j = self._jobs.get(job_id)
-            if j:
-                j.detached = True
-                j.schedule_id = schedule_id
 
 
 # Singleton
@@ -181,10 +160,35 @@ def parse_wrapper_script(script: str) -> Optional[dict]:
     }
 
 
-_TMUX_SPAWN_RE = re.compile(r'\btmux\s+(?:new-session|new)\b([^\n;|&]*)')
-_SCREEN_SPAWN_RE = re.compile(r'\bscreen\s+([^\n;|&]*)')
+_TMUX_SPAWN_RE = re.compile(r'\btmux\s+(?:new-session|new)\b(.*)', re.DOTALL)
+_SCREEN_SPAWN_RE = re.compile(r'\bscreen\s+(.*)', re.DOTALL)
 _NOHUP_LINE_RE = re.compile(r'^\s*nohup\s+(.+)$', re.MULTILINE)
 _PID_CAPTURE_RE = re.compile(r'echo\s+\$!\s*>>?\s*(\S+)')
+
+
+def _trim_unquoted(text: str) -> str:
+    """Cut ``text`` at the first ``;``/``|``/``&``/newline outside quotes.
+
+    Those metacharacters end the spawn only when the shell sees them — inside a
+    quoted argument they belong to the command being run, and cutting on them
+    truncates the command mid-string.
+    """
+    quote = ''
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == '\\' and quote != "'":
+            i += 2  # escaped char (backslash is literal inside single quotes)
+            continue
+        if quote:
+            if ch == quote:
+                quote = ''
+        elif ch in '"\'':
+            quote = ch
+        elif ch in ';|&\n':
+            return text[:i]
+        i += 1
+    return text
 
 
 def parse_manual_spawn(script: str) -> Optional[dict]:
@@ -206,7 +210,7 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
     # tmux new-session -d -s NAME 'cmd'
     m = _TMUX_SPAWN_RE.search(script)
     if m:
-        seg = m.group(1)
+        seg = _trim_unquoted(m.group(1))
         detached = re.search(r'\s-[A-Za-z]*d', ' ' + seg)
         name_m = re.search(r'-[A-Za-z]*s\s+["\']?([^\s"\';|&]+)', seg)
         if detached and name_m:
@@ -216,13 +220,13 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
                 "log_file": "",
                 "pid_file": "",
                 "pgrep_pattern": "",
-                "command": m.group(0).strip()[:1000],
+                "command": (script[m.start():m.start(1)] + seg).strip()[:1000],
             }
 
     # screen -dmS NAME cmd  (or -d -m -S NAME)
     m = _SCREEN_SPAWN_RE.search(script)
     if m:
-        seg = m.group(1)
+        seg = _trim_unquoted(m.group(1))
         name_m = re.search(r'-(?:[A-Za-z]*S)\s+["\']?([^\s"\';|&]+)', seg)
         detached = '-dmS' in seg or ('-d' in seg and '-m' in seg)
         if detached and name_m:
@@ -232,7 +236,7 @@ def parse_manual_spawn(script: str) -> Optional[dict]:
                 "log_file": "",
                 "pid_file": "",
                 "pgrep_pattern": "",
-                "command": m.group(0).strip()[:1000],
+                "command": (script[m.start():m.start(1)] + seg).strip()[:1000],
             }
 
     # nohup CMD [> log 2>&1] &  [echo $! > pidfile]
@@ -283,183 +287,143 @@ def build_manual_status_script(kind: str, session_name: str, pid_file: str,
             f'&& echo "RUNNING" || echo "DONE"')
 
 
-def auto_watch(job: BackgroundJob, agent_id: str,
-               external_user_id: Optional[str],
-               channel_id: Optional[str]) -> Optional[str]:
-    """Start the completion watcher for a freshly registered job.
+# Max jobs listed in the per-turn context block; the rest collapse to a count.
+_MAX_IN_CONTEXT = 8
+# Command chars kept per line — the full text stays in the Session State panel.
+_CONTEXT_CMD_CHARS = 70
 
-    Idempotent: returns the existing schedule_id if the job is already watched.
+
+def _age(seconds: float) -> str:
+    secs = int(max(0, seconds))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
+
+
+def build_context_block(session_id: str, agent_id: str) -> str:
+    """Per-turn context block listing this session's running background jobs.
+
+    The registry is otherwise invisible to the agent: the ``background_job``
+    field on a bash result is seen once, at spawn time, and slash command output
+    never enters LLM context. Without this block the agent forgets processes it
+    started and leaves them to go stale.
+
+    Returns "" when nothing is running, so a session with no jobs pays nothing.
+    Status is whatever was last recorded — deliberately not refreshed here, as
+    that costs a shell round-trip per turn (see :func:`refresh_statuses`).
     """
-    if job.detached:
-        return job.schedule_id
-    schedule_id = create_detach_schedule(job, agent_id, external_user_id, channel_id)
-    if schedule_id:
-        background_jobs.mark_detached(job.job_id, schedule_id)
-    return schedule_id
+    jobs = sorted(background_jobs.running_for_session(session_id),
+                  key=lambda j: j.started_at)
+    if not jobs:
+        return ""
 
-
-def create_detach_schedule(job: BackgroundJob, agent_id: str,
-                           external_user_id: Optional[str],
-                           channel_id: Optional[str]) -> Optional[str]:
-    """Create a persisted scheduler job that polls `job` to completion.
-
-    Returns the schedule_id, or None on failure.
-    """
-    from backend.scheduler import scheduler
-
-    action_config = {
-        "session_name": job.session_name,
-        "log_file": job.log_file,
-        "pid_file": job.pid_file,
-        "command": job.command,
-        "kind": job.kind,
-        "pgrep_pattern": job.pgrep_pattern,
-        "session_id": job.session_id,
-        "agent_id": agent_id,
-        "external_user_id": external_user_id,
-        "channel_id": channel_id,
-        "deadline_ts": job.started_at + _MAX_WATCH_SECONDS,
-    }
     try:
-        sched = scheduler.create_schedule(
-            name=f"bgjob:{job.command[:40]}",
-            owner_type=SCHEDULE_OWNER_TYPE,
-            owner_id=agent_id,
-            trigger_type="interval",
-            trigger_config={"seconds": _POLL_SECONDS},
-            action_type="poll_background_job",
-            action_config=action_config,
-            max_runs=_MAX_RUNS,
-            metadata={"session_id": job.session_id},
-        )
-        return sched.get("id") if sched else None
+        from backend.agent_runtime import monitors
+        watched = monitors.monitored_job_ids(agent_id, session_id)
     except Exception as e:
-        _logger.warning("[bgjob] failed to create poll schedule: %s", e)
-        return None
+        _logger.warning("[bgjob] monitor lookup for context block failed: %s", e)
+        watched = set()
+
+    now = time.time()
+    lines = []
+    for j in jobs[:_MAX_IN_CONTEXT]:
+        cmd = " ".join((j.command or "").split())
+        if len(cmd) > _CONTEXT_CMD_CHARS:
+            cmd = cmd[:_CONTEXT_CMD_CHARS - 1] + "…"
+        flag = "monitored" if j.job_id in watched else "unmonitored"
+        lines.append(f"- `{j.job_id}` · {_age(now - j.started_at)} · {flag} — {cmd}")
+    if len(jobs) > _MAX_IN_CONTEXT:
+        lines.append(f"- …and {len(jobs) - _MAX_IN_CONTEXT} more")
+
+    plural = "es" if len(jobs) != 1 else ""
+    return (
+        "## Background Processes\n\n"
+        f"{len(jobs)} process{plural} you started {'are' if len(jobs) != 1 else 'is'} "
+        "still running in this session:\n\n"
+        + "\n".join(lines) +
+        "\n\nThese keep running until killed. If a process no longer matters, kill "
+        "it. If its outcome matters, attach a monitor — nothing will notify you "
+        "otherwise. Status is from the last check, not live; verify with bash if "
+        "it matters."
+    )
 
 
-def run_poll_action(action_config: dict) -> dict:
-    """Poll one background job (called by the scheduler each interval tick).
+_refresh_guard = threading.Lock()
+_last_refresh: Dict[str, float] = {}   # session_id -> monotonic-ish timestamp
+_refresh_inflight: set = set()         # sessions with a refresh thread running
 
-    Returns {'done': bool, 'state': str}. When done, the agent has been notified
-    and the caller (scheduler) self-cancels the schedule.
+
+def refresh_statuses(session_id: str, agent: dict) -> None:
+    """Probe every running job of a session in one round-trip; update statuses.
+
+    Synchronous and unthrottled — callers own the pacing. The ``/jobs`` command
+    calls it directly; browser-polled callers go through
+    :func:`refresh_statuses_async`.
     """
     from backend.tools.lib.exec_backend import registry
     from backend.tools.lib.long_running_guard import build_status_scripts
-    from models.db import db
 
-    session_id = action_config["session_id"]
-    session_name = action_config["session_name"]
-    log_file = action_config["log_file"]
-    pid_file = action_config["pid_file"]
-    kind = action_config.get("kind") or "wrapper"
-    pgrep_pattern = action_config.get("pgrep_pattern") or ""
-    deadline_ts = action_config.get("deadline_ts") or 0
+    jobs = background_jobs.running_for_session(session_id)
+    if not jobs:
+        return
 
-    if kind == "wrapper":
-        scripts = build_status_scripts(session_name, log_file, pid_file)
-        check_status_script = scripts["check_status_script"]
-    else:
-        scripts = None
-        check_status_script = build_manual_status_script(
-            kind, session_name, pid_file, pgrep_pattern)
-    agent = db.get_agent(action_config["agent_id"]) or {}
-
-    try:
-        backend = registry.get_backend(session_id, agent)
-    except Exception as e:
-        _logger.warning("[bgjob] backend resolve failed: %s", e)
-        return {"done": False, "state": "backend_error"}
-
-    timed_out = deadline_ts and time.time() > deadline_ts
-
-    if not timed_out:
-        try:
-            res = backend.run_bash(check_status_script, _POLL_TIMEOUT, {})
-            out = (res.get("stdout") or "")
-        except Exception as e:
-            _logger.warning("[bgjob] status poll failed: %s", e)
-            return {"done": False, "state": "poll_error"}
-        if "DONE" not in out:
-            return {"done": False, "state": "running"}
-
-    # Completed (or timed out) — gather exit code + log tail, then notify.
-    # Exit code is only knowable for guard wrappers (EXIT_CODE marker in log).
-    exit_code: Optional[int] = None
-    tail = ""
-    if not timed_out and scripts is not None:
-        try:
-            ec = backend.run_bash(scripts["check_exit_code_script"], _POLL_TIMEOUT, {})
-            ec_out = (ec.get("stdout") or "").strip()
-            if ec_out.isdigit():
-                exit_code = int(ec_out)
-        except Exception:
-            pass
-    if log_file:
-        try:
-            tr = backend.run_bash(f"tail -n {_TAIL_LINES} {log_file}", _POLL_TIMEOUT, {})
-            tail = (tr.get("stdout") or "")
-        except Exception:
-            pass
-
-    status = "timeout" if timed_out else "done"
-    background_jobs.mark_finished(session_id, session_name,
-                                  action_config.get("command", ""),
-                                  status=status, exit_code=exit_code)
-    _trigger_agent_summary(action_config, status=status,
-                           exit_code=exit_code, tail=tail)
-    return {"done": True, "state": status}
-
-
-def _trigger_agent_summary(action_config: dict, status: str,
-                           exit_code: Optional[int], tail: str) -> None:
-    """Feed the finished job back into the agent so it summarizes for the user.
-
-    Routes through handle_message (same path scheduled prompts use) so the
-    agent's reply is delivered via the normal pipeline (web SSE + channel).
-    """
-    command = action_config.get("command", "the background job")
-    log_file = action_config.get("log_file", "")
-    kind = action_config.get("kind") or "wrapper"
-    tail = (tail or "").strip()
-
-    if status == "done":
-        if exit_code is None and kind != "wrapper":
-            outcome = ("finished (exit code unknown — not available for "
-                       "manually spawned processes)")
-        elif exit_code in (0, None):
-            outcome = "finished successfully (exit code 0)"
+    lines = []
+    for j in jobs:
+        if j.kind == "wrapper":
+            probe = build_status_scripts(
+                j.session_name, j.log_file, j.pid_file)["check_status_script"]
         else:
-            outcome = f"finished with FAILURE (exit code {exit_code})"
-    else:
-        outcome = "is still running past the watch limit; monitoring was stopped"
-
-    trigger = (
-        "[SYSTEM] A background process you started has finished — there is no "
-        "user message to answer; proactively report the outcome. The background "
-        "tracking schedule has already been removed automatically, so no cleanup "
-        "is needed on your part.\n\n"
-        f"Command: `{command}`\n"
-        f"Outcome: {outcome}\n"
-    )
-    if log_file:
-        trigger += f"Log file: {log_file}\n"
-    if tail:
-        trigger += f"\nLast output:\n```\n{tail[-1500:]}\n```\n"
-    trigger += (
-        "\nFollow up appropriately: verify or summarize the result for the user "
-        "concisely and naturally. If it failed, note the likely cause from the "
-        "output and suggest a next step."
-    )
+            probe = build_manual_status_script(
+                j.kind, j.session_name, j.pid_file, j.pgrep_pattern)
+        lines.append(f"{{ {probe} ; }} 2>/dev/null | tail -1 | sed 's/^/{j.job_id}:/'")
 
     try:
-        from backend.agent_runtime import agent_runtime
-        agent_runtime.handle_message(
-            agent_id=action_config["agent_id"],
-            external_user_id=action_config.get("external_user_id") or "__system__",
-            message=trigger,
-            channel_id=action_config.get("channel_id"),
-            metadata={"background_job_trigger": True},
-        )
+        backend = registry.get_backend(session_id, agent or {})
+        res = backend.run_bash("\n".join(lines), 15, {})
     except Exception as e:
-        _logger.warning("[bgjob] summary trigger failed: %s", e)
+        _logger.warning("[bgjob] status refresh failed: %s", e)
+        return
+
+    for line in (res.get("stdout") or "").splitlines():
+        job_id, _, state = line.partition(":")
+        if state.strip() == "DONE":
+            background_jobs.mark_finished(job_id.strip(), "done", None)
+
+
+def refresh_statuses_async(session_id: str, agent: dict,
+                           max_age: float = 10.0) -> None:
+    """Fire-and-forget :func:`refresh_statuses` for a browser-polled caller.
+
+    Without this, a job that exits is only ever noticed by the ``/jobs``
+    command or by an attached monitor — so an unmonitored process stayed
+    ``running`` in the registry forever, kept a live row in the Session State
+    panel and was re-stated to the agent every turn.
+
+    The probe is a shell round-trip, so it must not block the request: the
+    caller returns the current snapshot and the panel converges on its next
+    poll. One thread per session at a time.
+    """
+    if not background_jobs.running_for_session(session_id):
+        return
+
+    with _refresh_guard:
+        if session_id in _refresh_inflight:
+            return
+        if time.time() - _last_refresh.get(session_id, 0.0) < max_age:
+            return
+        _refresh_inflight.add(session_id)
+
+    def _run():
+        try:
+            refresh_statuses(session_id, agent)
+        except Exception as e:
+            _logger.warning("[bgjob] async status refresh failed: %s", e)
+        finally:
+            with _refresh_guard:
+                _last_refresh[session_id] = time.time()
+                _refresh_inflight.discard(session_id)
+
+    threading.Thread(target=_run, daemon=True,
+                     name=f"bgjob-refresh-{session_id[:8]}").start()

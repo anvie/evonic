@@ -1,13 +1,16 @@
-"""Backend implementation for the patch tool — applies unified diff patches to files.
+"""Backend implementation for the patch tool.
 
-Primary backend: system `patch` utility (used when available on PATH).
-Fallback backend: pure-Python implementation that is reliable for all hunk types,
-including insertion-only hunks with no surrounding context.
+The model-facing tool accepts a single-file text patch in the standard format
+emitted by ``git diff``.  Application is handled by the pure-Python engine so
+tracked, untracked, and not-yet-created files all work without requiring a Git
+repository.
 """
 
+import ast
 import logging
 import os
 import re
+import shlex
 
 try:
     from config import SANDBOX_WORKSPACE as _WORKSPACE_ROOT
@@ -23,6 +26,17 @@ except ImportError:
     logger.warning("safety_pipeline unavailable — safety checks disabled for patch tool")
     should_skip_safety = lambda agent: True
 SEARCH_WINDOW = 50
+_HUNK_HEADER_RE = re.compile(
+    r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$'
+)
+_UNSUPPORTED_GIT_METADATA = (
+    'GIT binary patch',
+    'Binary files ',
+    'rename from ',
+    'rename to ',
+    'copy from ',
+    'copy to ',
+)
 
 
 def _unescape_llm(s: str) -> str:
@@ -43,6 +57,189 @@ def _normalize_for_match(s: str) -> str:
 # ---------------------------------------------------------------------------
 # Patch parser
 # ---------------------------------------------------------------------------
+
+def _patch_header_path(line: str, prefix: str) -> str:
+    """Extract a path from a ``---`` or ``+++`` patch header."""
+    value = line[len(prefix):]
+    if not value:
+        raise ValueError(f'Missing path after {prefix.strip()} header.')
+    # Traditional unified diffs may append a timestamp after a tab.
+    return _decode_git_path(value.split('\t', 1)[0])
+
+
+def _decode_git_path(value: str) -> str:
+    """Decode Git's C-style quoted path representation."""
+    if not value.startswith('"'):
+        return value
+    if not value.endswith('"'):
+        raise ValueError(f'Invalid quoted Git path: {value!r}.')
+    try:
+        raw = ast.literal_eval('b' + value)
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(f'Invalid quoted Git path: {value!r}.') from exc
+    return raw.decode('utf-8', errors='surrogateescape')
+
+
+def _strip_git_prefix(path: str) -> str:
+    if path.startswith(('a/', 'b/')):
+        return path[2:]
+    return path
+
+
+def validate_git_patch_format(patch_text: str) -> dict:
+    """Validate the model-facing single-file ``git diff`` patch contract.
+
+    The runtime intentionally does not invoke Git.  This validator enforces the
+    textual format before the pure-Python engine applies the hunks.
+    """
+    lines = patch_text.splitlines()
+    if not lines:
+        raise ValueError('Patch is empty.')
+
+    diff_indexes = [
+        i for i, line in enumerate(lines) if line.startswith('diff --git ')
+    ]
+    if not diff_indexes:
+        raise ValueError(
+            'Missing "diff --git a/<path> b/<path>" header. '
+            'Hunk-only patches are not accepted by the patch tool.'
+        )
+    if len(diff_indexes) != 1:
+        raise ValueError(
+            'The patch tool accepts exactly one file per call; '
+            'split multi-file patches into separate calls.'
+        )
+
+    diff_index = diff_indexes[0]
+    try:
+        diff_parts = shlex.split(lines[diff_index], posix=False)
+    except ValueError as exc:
+        raise ValueError(f'Invalid diff --git header: {exc}') from exc
+    if len(diff_parts) != 4 or diff_parts[:2] != ['diff', '--git']:
+        raise ValueError('Invalid diff --git header.')
+    diff_old_path = _decode_git_path(diff_parts[2])
+    diff_new_path = _decode_git_path(diff_parts[3])
+
+    section = lines[diff_index + 1:]
+    first_hunk_index = next(
+        (i for i, line in enumerate(section) if line.startswith('@@ ')),
+        None,
+    )
+    if first_hunk_index is None:
+        raise ValueError('Patch contains no hunks.')
+    metadata = section[:first_hunk_index]
+    for line in metadata:
+        if line.startswith(_UNSUPPORTED_GIT_METADATA):
+            raise ValueError(
+                'Binary, rename, and copy patches are not supported by this '
+                'single-file text patch tool.'
+            )
+
+    old_header_indexes = [
+        i for i, line in enumerate(metadata) if line.startswith('--- ')
+    ]
+    new_header_indexes = [
+        i for i, line in enumerate(metadata) if line.startswith('+++ ')
+    ]
+    if len(old_header_indexes) != 1 or len(new_header_indexes) != 1:
+        raise ValueError(
+            'A text patch must contain exactly one --- path and one +++ path header.'
+        )
+
+    old_header_index = old_header_indexes[0]
+    new_header_index = new_header_indexes[0]
+    if new_header_index != old_header_index + 1:
+        raise ValueError('The +++ path header must immediately follow the --- path header.')
+
+    old_path = _patch_header_path(section[old_header_index], '--- ')
+    new_path = _patch_header_path(section[new_header_index], '+++ ')
+    if old_path == '/dev/null' and new_path == '/dev/null':
+        raise ValueError('Both patch paths cannot be /dev/null.')
+    if new_path == '/dev/null':
+        raise ValueError(
+            'File-deletion patches are not supported; use the delete_file tool.'
+        )
+
+    is_new_file = old_path == '/dev/null'
+    normalized_new = _strip_git_prefix(new_path)
+    normalized_diff_old = _strip_git_prefix(diff_old_path)
+    normalized_diff_new = _strip_git_prefix(diff_new_path)
+    if normalized_diff_old != normalized_diff_new:
+        raise ValueError('Rename patches are not supported.')
+    if normalized_diff_new != normalized_new:
+        raise ValueError('The diff --git and +++ paths refer to different files.')
+    if not is_new_file and _strip_git_prefix(old_path) != normalized_new:
+        raise ValueError('The --- and +++ paths refer to different files.')
+
+    body = section[new_header_index + 1:]
+    if not body:
+        raise ValueError('Patch contains no hunks.')
+
+    hunk_count = 0
+    i = 0
+    while i < len(body):
+        header = body[i]
+        match = _HUNK_HEADER_RE.match(header)
+        if not match:
+            raise ValueError(f'Unexpected line outside a hunk: {header!r}.')
+
+        old_count = int(match.group(2)) if match.group(2) is not None else 1
+        new_count = int(match.group(4)) if match.group(4) is not None else 1
+        old_seen = 0
+        new_seen = 0
+        saw_patch_line = False
+        previous_was_patch_line = False
+        i += 1
+
+        while i < len(body) and not body[i].startswith('@@ '):
+            line = body[i]
+            if line.startswith(' '):
+                old_seen += 1
+                new_seen += 1
+                saw_patch_line = True
+                previous_was_patch_line = True
+            elif line.startswith('-'):
+                old_seen += 1
+                saw_patch_line = True
+                previous_was_patch_line = True
+            elif line.startswith('+'):
+                new_seen += 1
+                saw_patch_line = True
+                previous_was_patch_line = True
+            elif line == r'\ No newline at end of file':
+                if not previous_was_patch_line:
+                    raise ValueError(
+                        'The no-newline marker must follow a patch content line.'
+                    )
+                previous_was_patch_line = False
+            else:
+                raise ValueError(f'Invalid hunk line: {line!r}.')
+            i += 1
+
+        if not saw_patch_line:
+            raise ValueError('Patch hunk has no content.')
+        if old_seen != old_count or new_seen != new_count:
+            raise ValueError(
+                'Hunk line counts do not match its @@ header '
+                f'(expected old={old_count}, new={new_count}; '
+                f'found old={old_seen}, new={new_seen}).'
+            )
+        hunk_count += 1
+
+    if is_new_file:
+        hunks = parse_hunks(patch_text)
+        if any(h['old_start'] != 0 or h['old_count'] != 0 for h in hunks):
+            raise ValueError(
+                'A new-file patch must use an empty old range such as -0,0.'
+            )
+
+    return {
+        'old_path': old_path,
+        'new_path': new_path,
+        'is_new_file': is_new_file,
+        'hunk_count': hunk_count,
+    }
+
 
 def parse_hunks(patch_text: str) -> list:
     """
@@ -67,15 +264,16 @@ def parse_hunks(patch_text: str) -> list:
         line = raw_line.rstrip('\r\n')
 
         if re.match(r'^(diff --git|index |old mode|new mode|deleted file|new file)', line):
-            continue
-
-        if line.startswith('--- ') or line.startswith('+++ '):
-            if current_hunk is not None:
+            if line.startswith('diff --git') and current_hunk is not None:
                 hunks.append(current_hunk)
                 current_hunk = None
             continue
 
-        hunk_match = re.match(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', line)
+        if current_hunk is None and (
+                line.startswith('--- ') or line.startswith('+++ ')):
+            continue
+
+        hunk_match = _HUNK_HEADER_RE.match(line)
         if hunk_match:
             if current_hunk is not None:
                 hunks.append(current_hunk)
@@ -275,11 +473,14 @@ def _apply_hunks_to_content(raw: str, patch_text: str) -> dict:
         if hunk['old_count'] == 0:
             insert_pos = hunk['new_start'] - 1 + offset
             insert_pos = max(0, min(insert_pos, len(lines)))
-            new_lines = [txt for op, txt, _ in hunk_lines if op == '+']
+            touches_eof = insert_pos == len(lines)
+            added = [(txt, no_newline) for op, txt, no_newline in hunk_lines
+                     if op == '+']
+            new_lines = [txt for txt, _ in added]
             lines = lines[:insert_pos] + new_lines + lines[insert_pos:]
             offset += len(new_lines)
-            if new_lines:
-                trailing_newline = True
+            if new_lines and touches_eof:
+                trailing_newline = not added[-1][1]
             continue
 
         # ── Context hunk: find matching position ──
@@ -339,8 +540,13 @@ def _apply_hunks_to_content(raw: str, patch_text: str) -> dict:
 
         consumed = sum(1 for op, _, _ in hunk_lines if op in (' ', '-'))
         produced = sum(1 for op, _, _ in hunk_lines if op in (' ', '+'))
+        touches_eof = pos + consumed == len(lines)
         lines = lines[:pos] + result_lines + lines[pos + consumed:]
         offset += produced - consumed
+        if touches_eof:
+            new_side = [(op, no_newline) for op, _, no_newline in hunk_lines
+                        if op in (' ', '+')]
+            trailing_newline = bool(new_side) and not new_side[-1][1]
 
     # Reconstruct file content.
     result = '\n'.join(lines)
@@ -407,11 +613,14 @@ def apply_hunks(file_path: str, patch_text: str) -> dict:
         if hunk['old_count'] == 0:
             insert_pos = hunk['new_start'] - 1 + offset
             insert_pos = max(0, min(insert_pos, len(lines)))
-            new_lines = [txt for op, txt, _ in hunk_lines if op == '+']
+            touches_eof = insert_pos == len(lines)
+            added = [(txt, no_newline) for op, txt, no_newline in hunk_lines
+                     if op == '+']
+            new_lines = [txt for txt, _ in added]
             lines = lines[:insert_pos] + new_lines + lines[insert_pos:]
             offset += len(new_lines)
-            if new_lines:
-                trailing_newline = True
+            if new_lines and touches_eof:
+                trailing_newline = not added[-1][1]
             continue
 
         # ── Context hunk: find matching position ──────────────────────────
@@ -473,8 +682,13 @@ def apply_hunks(file_path: str, patch_text: str) -> dict:
 
         consumed = sum(1 for op, _, _ in hunk_lines if op in (' ', '-'))
         produced = sum(1 for op, _, _ in hunk_lines if op in (' ', '+'))
+        touches_eof = pos + consumed == len(lines)
         lines = lines[:pos] + result_lines + lines[pos + consumed:]
         offset += produced - consumed
+        if touches_eof:
+            new_side = [(op, no_newline) for op, _, no_newline in hunk_lines
+                        if op in (' ', '+')]
+            trailing_newline = bool(new_side) and not new_side[-1][1]
 
     # Reconstruct file content.
     result = '\n'.join(lines)
@@ -507,6 +721,23 @@ def apply_patch(file_path: str, patch_text: str) -> dict:
         return {'error': 'No valid hunks found in patch. Make sure it contains @@ hunk headers. For simple edits, consider using str_replace instead.'}
 
     return apply_hunks(file_path, patch_text)
+
+
+_LEGACY_FORMAT_WARNING = (
+    'Legacy hunk-only patch accepted for backward compatibility; '
+    'prefer a complete single-file git diff.'
+)
+
+
+def _with_legacy_format_warning(result: dict, legacy_hunk_only: bool) -> dict:
+    if not legacy_hunk_only or result.get('result') != 'success':
+        return result
+    existing = result.get('warning')
+    result['warning'] = (
+        f'{existing} {_LEGACY_FORMAT_WARNING}' if existing
+        else _LEGACY_FORMAT_WARNING
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +797,24 @@ def execute(agent, args: dict) -> dict:
     # Normalise smart quotes in patch content before applying
     from backend.normalizer import normalize_code_quotes
     patch_text = normalize_code_quotes(patch_text)
+    parsed_hunks = parse_hunks(patch_text)
+    has_git_header = any(
+        line.startswith('diff --git ') for line in patch_text.splitlines()
+    )
+    legacy_hunk_only = not has_git_header and bool(parsed_hunks)
+    if legacy_hunk_only:
+        creating_new = all(
+            h['old_start'] == 0 and h['old_count'] == 0
+            for h in parsed_hunks
+        )
+        declares_new_file = False
+    else:
+        try:
+            patch_info = validate_git_patch_format(patch_text)
+        except ValueError as e:
+            return {'error': f'Invalid Git unified diff: {e}'}
+        creating_new = patch_info['is_new_file']
+        declares_new_file = creating_new
 
     # /_self/ path: always route to the agent's local directory on the evonic server.
     # Sub-agents inherit their parent's directory — use effective agent ID.
@@ -576,16 +825,12 @@ def execute(agent, args: dict) -> dict:
         local_path = resolve_self_path(agent_id, file_path)
         if not local_path:
             return {'error': "Access denied — path escapes agent directory."}
+        target_exists = os.path.exists(local_path)
+        if declares_new_file and target_exists:
+            return {'error': f'File already exists: {file_path}'}
         # If the file doesn't exist (and patch isn't creating a new file),
         # check for similar names (typos).
-        if not os.path.exists(local_path):
-            # Check if this patch is creating a new file
-            creating_new = False
-            try:
-                hunks_temp = parse_hunks(patch_text)
-                creating_new = all(h['old_start'] == 0 and h['old_count'] == 0 for h in hunks_temp)
-            except Exception:
-                pass
+        if not target_exists:
             if not creating_new:
                 suggestion = _self_fuzzy_suggestion(agent_id, file_path)
                 if suggestion:
@@ -607,7 +852,7 @@ def execute(agent, args: dict) -> dict:
                         result['warning'] = _warn
                 except Exception:
                     pass
-        return result
+        return _with_legacy_format_warning(result, legacy_hunk_only)
 
     # Hint when path starts with _self/ but missing leading slash
     if agent_id and file_path and (file_path.startswith('_self/') or file_path == '_self'):
@@ -619,15 +864,10 @@ def execute(agent, args: dict) -> dict:
         if backend is None:
             return {'error': real_path}  # error message
 
-        # Parse hunks to check if this is creating a new file
-        creating_new = False
-        try:
-            hunks = parse_hunks(patch_text)
-            creating_new = all(h['old_start'] == 0 and h['old_count'] == 0 for h in hunks)
-        except Exception:
-            pass
-
-        if not backend.file_exists(real_path):
+        target_exists = backend.file_exists(real_path)
+        if declares_new_file and target_exists:
+            return {'error': f'File already exists: {file_path}'}
+        if not target_exists:
             if not creating_new:
                 return {'error': f'File not found: {file_path}'}
             parent = os.path.dirname(real_path)
@@ -649,7 +889,10 @@ def execute(agent, args: dict) -> dict:
         if 'error' in wr:
             return {'error': wr['error']}
 
-        return {'result': 'success', 'hunks_applied': result.get('hunks_applied', 0)}
+        return _with_legacy_format_warning({
+            'result': 'success',
+            'hunks_applied': result.get('hunks_applied', 0),
+        }, legacy_hunk_only)
 
     # When sandbox is enabled, the agent has a workplace, or run-as-user is
     # set, route file I/O through the execution backend (Docker container,
@@ -667,14 +910,10 @@ def execute(agent, args: dict) -> dict:
         target_path = resolve_workspace_path(agent, file_path, _WORKSPACE_ROOT)
         # Convert host path to the backend's view (e.g. /workspace for Docker)
         target_path = backend.resolve_path(target_path)
-        creating_new = False
-        try:
-            hunks = parse_hunks(patch_text)
-            creating_new = all(h['old_start'] == 0 and h['old_count'] == 0 for h in hunks)
-        except Exception:
-            pass
-
-        if not backend.file_exists(target_path):
+        target_exists = backend.file_exists(target_path)
+        if declares_new_file and target_exists:
+            return {'error': f'File already exists: {file_path}'}
+        if not target_exists:
             if not creating_new:
                 return {'error': f'File not found: {file_path}'}
             parent = os.path.dirname(target_path)
@@ -696,7 +935,10 @@ def execute(agent, args: dict) -> dict:
         if 'error' in wr:
             return {'error': wr['error']}
 
-        return {'result': 'success', 'hunks_applied': result.get('hunks_applied', 0)}
+        return _with_legacy_format_warning({
+            'result': 'success',
+            'hunks_applied': result.get('hunks_applied', 0),
+        }, legacy_hunk_only)
 
     # No sandbox — direct host filesystem access (original behavior)
     workspace_root = None
@@ -710,6 +952,9 @@ def execute(agent, args: dict) -> dict:
                 workspace_root = os.path.abspath(agent_workspace or fallback)
                 file_path = resolved
 
+    if declares_new_file and os.path.exists(file_path):
+        return {'error': f'File already exists: {file_path}'}
+
     result = apply_patch(file_path, patch_text)
 
     # Replace absolute host paths in error messages with /workspace-relative paths
@@ -717,7 +962,7 @@ def execute(agent, args: dict) -> dict:
     if workspace_root and 'error' in result:
         result['error'] = result['error'].replace(workspace_root, '/workspace')
 
-    return result
+    return _with_legacy_format_warning(result, legacy_hunk_only)
 
 
 # ---------------------------------------------------------------------------

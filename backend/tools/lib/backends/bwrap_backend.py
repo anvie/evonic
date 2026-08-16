@@ -97,6 +97,21 @@ _PATH_PREFIX = (
 _HOME_MOUNT = '/home/agent'
 _HOME_SUBDIR = '.home'  # host dir under the workspace backing /home/agent
 
+# Host artifact registry root.  save_artifact/list_artifacts/fetch_artifact and
+# the web UI all read/write BASE_DIR/shared/agents/<agent_id>/artifacts on the
+# HOST.  When an agent's workspace differs from BASE_DIR, the sandbox's
+# /workspace bind does NOT include that registry, so /workspace/shared/agents/
+# <id>/artifacts would silently resolve to a DIFFERENT directory than the one
+# the UI serves.  We bind the registry into the sandbox at the same relative
+# path and map it back in _to_host so bash/runpy and file tools stay
+# consistent with the host registry (prevents silent artifact divergence).
+_ARTIFACTS_ROOT = os.path.normpath(os.path.join(SANDBOX_WORKSPACE, 'shared', 'agents'))
+
+# Bump when the sandbox bind layout changes so existing keepers are recreated
+# with the new binds (keepers survive within a process lifetime, so an
+# in-memory version check is required to detect stale layouts).
+_KEEPER_LAYOUT_VERSION = 2
+
 _USERNS_HINT = (
     ' Hint: bubblewrap needs unprivileged user namespaces — check '
     '`sysctl kernel.unprivileged_userns_clone` (Debian) or '
@@ -552,11 +567,34 @@ class BwrapBackend(LocalBackend):
                           else ['--bind', ws, '/workspace'])
         home_bind = (['--bind-fd', str(home_fd), _HOME_MOUNT] if home_fd is not None
                      else ['--bind', os.path.join(ws, _HOME_SUBDIR), _HOME_MOUNT])
+        # Bind the agent's host artifact registry into the sandbox at the same
+        # relative path the sandbox-visible path convention uses, so that
+        # /workspace/shared/agents/<id>/artifacts/ always points at the SAME
+        # directory the web UI / list_artifacts / fetch_artifact serve.
+        # Without this, agents whose workspace differs from BASE_DIR would
+        # silently append to a sandbox copy the UI never reads (artifact
+        # divergence bug).  The destination dir is created inside the sandbox
+        # (bwrap creates missing mount points); the host source is ensured by
+        # _ensure_dirs on the host side.
+        artifacts_binds = []
+        if self._agent_id and _ARTIFACTS_ROOT:
+            registry_dir = os.path.join(_ARTIFACTS_ROOT, self._agent_id, 'artifacts')
+            # Skip when the workspace bind already exposes the registry at the
+            # same sandbox path (workspace == BASE_DIR): binding a directory
+            # onto itself is redundant.
+            ws_relative = os.path.join(ws, 'shared', 'agents',
+                                       self._agent_id, 'artifacts')
+            if os.path.realpath(ws_relative) != os.path.realpath(registry_dir):
+                os.makedirs(registry_dir, exist_ok=True)
+                artifacts_binds = [
+                    '--bind', registry_dir, f'/workspace/shared/agents/{self._agent_id}/artifacts',
+                ]
         argv += [
             '--proc', '/proc',
             '--dev', '/dev',
             '--tmpfs', '/tmp',
             *workspace_bind,
+            *artifacts_binds,
             *home_bind,
             '--ro-bind', helpers_dir, _HELPERS_MOUNT,
             '--unshare-pid', '--unshare-uts', '--unshare-ipc', '--unshare-user',
@@ -674,7 +712,8 @@ class BwrapBackend(LocalBackend):
         # bwrap never hits a broken pipe when writing its exit-status line.
         return {'proc': proc, 'inner_pid': inner_pid, 'status_fd': r_fd,
                 'created_at': now, 'last_used': now,
-                'workspace': self._cwd(), 'hostname': self._hostname}, None
+                'workspace': self._cwd(), 'hostname': self._hostname,
+                'layout_version': _KEEPER_LAYOUT_VERSION}, None
 
     def _get_or_create_keeper(self):
         """Return (inner_pid, None) or (None, error_message)."""
@@ -686,6 +725,9 @@ class BwrapBackend(LocalBackend):
                 if info['workspace'] != ws:
                     logger.info(f'Workspace changed for session {self._session_id[:12]} — recreating keeper')
                     stale = True
+                elif info.get('layout_version') != _KEEPER_LAYOUT_VERSION:
+                    logger.info(f'Sandbox layout changed for session {self._session_id[:12]} — recreating keeper')
+                    stale = True
                 elif not _keeper_alive(info):
                     logger.warning(f'bwrap keeper vanished for session {self._session_id[:12]} — recreating')
                     stale = True
@@ -696,7 +738,8 @@ class BwrapBackend(LocalBackend):
             _destroy_keeper(self._session_id)
         with _pool_lock:
             info = _keepers.get(self._session_id)  # re-check after re-acquire
-            if info is not None and _keeper_alive(info) and info['workspace'] == ws:
+            if info is not None and _keeper_alive(info) and info['workspace'] == ws \
+                    and info.get('layout_version') == _KEEPER_LAYOUT_VERSION:
                 info['last_used'] = time.time()
                 return info['inner_pid'], None
             new_info, err = self._spawn_keeper()
@@ -806,6 +849,15 @@ class BwrapBackend(LocalBackend):
         effective = self._cwd()
         if path.startswith(effective):
             return '/workspace' + path[len(effective):]
+        # The host artifact registry is bind-mounted into the sandbox at
+        # /workspace/shared/agents/<id>/artifacts; translate host registry
+        # paths to that sandbox path (file tools resolve the sandbox path to
+        # the host registry via resolve_workspace_path; _to_host maps back).
+        if self._agent_id and _ARTIFACTS_ROOT:
+            registry = os.path.join(_ARTIFACTS_ROOT, self._agent_id, 'artifacts')
+            if path == registry or path.startswith(registry + os.sep):
+                rel = path[len(registry):]
+                return f'/workspace/shared/agents/{self._agent_id}/artifacts{rel}'
         return path
 
     def _to_host(self, path: str) -> str:
@@ -819,6 +871,14 @@ class BwrapBackend(LocalBackend):
         agents should keep tool-visible files under /workspace or /home/agent.
         """
         ws = self._cwd()
+        # The artifact registry is bind-mounted into the sandbox at
+        # /workspace/shared/agents/<id>/artifacts; map sandbox-view paths
+        # under that prefix back to the HOST registry, not a workspace copy.
+        if self._agent_id and _ARTIFACTS_ROOT:
+            artifacts_rel = f'/workspace/shared/agents/{self._agent_id}/artifacts'
+            if path == artifacts_rel or path.startswith(artifacts_rel + '/'):
+                registry = os.path.join(_ARTIFACTS_ROOT, self._agent_id, 'artifacts')
+                return registry + path[len(artifacts_rel):]
         if path == '/workspace' or path.startswith('/workspace/'):
             return ws + path[len('/workspace'):]
         if path == _HOME_MOUNT or path.startswith(_HOME_MOUNT + '/'):

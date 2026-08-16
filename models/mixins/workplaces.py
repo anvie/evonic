@@ -64,6 +64,25 @@ class WorkplaceMixin:
             conn.commit()
             return cursor.rowcount > 0
 
+    def clone_workplace(self, source_id: str, new_name: str) -> Optional[str]:
+        """Clone a workplace: copy type and config, fresh id, disconnected status.
+
+        Tunnel connectors are NOT copied — the clone needs its own pairing.
+        Returns the new workplace ID, or None if source not found.
+        """
+        source = self.get_workplace(source_id)
+        if not source:
+            return None
+        new_id = uuid.uuid4().hex[:12]
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO workplaces (id, name, type, config, status)
+                VALUES (?, ?, ?, ?, 'disconnected')
+            """, (new_id, new_name, source['type'], source['config']))
+            conn.commit()
+        return new_id
+
     def get_workplace_agents(self, workplace_id: str) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row

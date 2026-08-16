@@ -364,11 +364,12 @@ class AgentChatDB:
             return rows
 
     def get_latest_agent_request_metadata(self, session_id: str, sender_agent_id: str = None) -> Optional[dict]:
-        """Return the newest routable agent-request metadata in a session.
+        """Return the newest reply-capable agent request in a session.
 
         Only user-role rows are candidates. Invalid JSON, non-agent messages,
-        sender mismatches, and requests without ``report_to_id`` are skipped so
-        later background notifications cannot shadow a routable delegation.
+        sender mismatches, and requests without either a human route or a
+        synchronous reply ID are skipped so background notifications cannot
+        shadow an active delegation.
         """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -386,7 +387,7 @@ class AgentChatDB:
                     continue
                 if sender_agent_id and metadata.get('from_agent_id') != sender_agent_id:
                     continue
-                if metadata.get('report_to_id'):
+                if metadata.get('report_to_id') or metadata.get('reply_to_id'):
                     return metadata
         return None
 
@@ -1070,6 +1071,20 @@ class AgentChatManager:
                 if agent_id not in self._dbs:
                     self._dbs[agent_id] = AgentChatDB(agent_id)
         return self._dbs[agent_id]
+
+    def drop(self, agent_id: str) -> None:
+        """Drop a cached AgentChatDB (e.g. when the agent is deleted).
+
+        Closes the persistent connection first so it cannot keep reading a
+        chat.db inode that is about to be unlinked from disk. Without this,
+        recreating an agent with the same id returns the stale cached
+        instance whose connection points at the deleted file → queries
+        fail with 'no such table: chat_sessions'.
+        """
+        with self._lock:
+            db = self._dbs.pop(agent_id, None)
+        if db is not None:
+            db.close()
 
 
 agent_chat_manager = AgentChatManager()

@@ -144,16 +144,32 @@ def _system_prompt(variant: str) -> str:
     )
 
 
+_LEGACY_RECEIPT_KINDS = {"info": "informational", "mut": "mutation", "ctl": "context-control"}
+
+
 def _use_legacy_receipts(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Recreate the pre-change receipt wording while retaining the same projection."""
+    """Recreate the pre-change receipt wording while retaining the same projection.
+
+    Receipts now read `- #1 read_file(src/a.py): info`. The legacy wording spelled the
+    kind out in full, carried no identity argument, and ended in a result digest that
+    nothing read back, so all three are reconstructed here to keep the comparison
+    measuring the wording rather than the projection.
+    """
+    import hashlib
     import re
     legacy = deepcopy(messages)
-    pattern = re.compile(r"^- #(\d+) ([^:]+): success/([^;]+); ref:([0-9a-f]{12})$", re.MULTILINE)
+    pattern = re.compile(r"^- #(\d+) (.+?): (info|mut|ctl)$", re.MULTILINE)
+
+    def _restore(match: "re.Match[str]") -> str:
+        labels = re.sub(r"\([^)]*\)", "", match.group(2))
+        kind = _LEGACY_RECEIPT_KINDS[match.group(3)]
+        digest = hashlib.sha256(match.group(0).encode("utf-8")).hexdigest()[:12]
+        return f"- #{match.group(1)} {labels} — success ({kind}); result-ref sha256:{digest}"
+
     for message in legacy:
         content = message.get("content")
         if isinstance(content, str) and "Active Turn Ledger" in content:
-            message["content"] = pattern.sub(
-                r"- #\1 \2 — success (\3); result-ref sha256:\4", content)
+            message["content"] = pattern.sub(_restore, content)
     return legacy
 
 
