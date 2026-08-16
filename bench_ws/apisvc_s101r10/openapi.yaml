@@ -1,0 +1,58 @@
+openapi: 3.0.0
+info:
+  title: Orders API
+  version: 1.0.0
+  description: A simple REST API for managing orders.
+paths:
+  /orders:
+    get:
+      summary: List orders
+      responses:
+        '200':
+          description: A list of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    item:
+                      type: string
+                    quantity:
+                      type: integer
+                    price:
+                      type: number
+    post:
+      summary: Create a new order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                item:
+                  type: string
+                quantity:
+                  type: integer
+                price:
+                  type: number
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  item:
+                    type: string
+                  quantity:
+                    type: integer
+                  price:
+                    type: number

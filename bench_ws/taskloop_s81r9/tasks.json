@@ -1,0 +1,10 @@
+[
+  {
+    "description": "Buy groceries",
+    "done": true
+  },
+  {
+    "description": "Finish project",
+    "done": false
+  }
+]

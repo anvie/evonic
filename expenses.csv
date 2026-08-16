@@ -1,0 +1,12 @@
+item,amount
+Lunch,15.5
+Coffee,4.75
+Groceries,45.0
+Gas,60.0
+Food,Dinner,0
+Transport,Uber,0
+2026-07-19 23:34:34,Food,15.50,Lunch
+2026-07-19 23:34:47,Food,15.50,Lunch
+Food,10.5
+Lunch with Dana,15.5,Food,2026-07-20 14:54:02
+Test Expense,10.0,TestCategory,2026-07-20 14:54:17
