@@ -471,6 +471,13 @@ def api_delete_agent(agent_id):
     agent_dir = os.path.join(AGENTS_DIR, agent_id)
     if os.path.isdir(agent_dir):
         shutil.rmtree(agent_dir)
+    # Drop the cached chat DB so a recreated agent with the same id gets a
+    # fresh connection instead of a stale handle on the deleted chat.db inode.
+    try:
+        from models.chat import agent_chat_manager
+        agent_chat_manager.drop(agent_id)
+    except Exception:
+        pass
     audit.log_agent_crud(user_id='admin', agent_id=agent_id, action='delete', ip=_audit_ip())
     return jsonify({'success': True})
 

@@ -511,6 +511,11 @@ def _exec_delete_agent(args: dict) -> dict:
         agent_dir = os.path.join(AGENTS_DIR, agent_id)
         if os.path.isdir(agent_dir):
             shutil.rmtree(agent_dir)
+        try:
+            from models.chat import agent_chat_manager
+            agent_chat_manager.drop(agent_id)
+        except Exception:
+            pass
         return {'success': True, 'message': f"Agent '{agent_id}' deleted."}
     except Exception as e:
         return {'error': str(e)}
