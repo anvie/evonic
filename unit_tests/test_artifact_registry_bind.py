@@ -172,21 +172,25 @@ def test_bwrap_resolve_path_roundtrip_registry(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_resolve_workspace_path_artifacts_maps_to_host_registry():
-    from backend.tools._workspace import resolve_workspace_path
+    from backend.tools._workspace import resolve_workspace_path, _SHARED_AGENTS_DIR
     agent = {'id': 'rina', 'workspace': '/home/robin/dev/evonic/agents/rina',
              'sandbox_enabled': 1}
     resolved = resolve_workspace_path(
         agent, '/workspace/shared/agents/rina/artifacts/location-variations.md', '/workspace')
-    assert resolved == '/home/robin/dev/evonic/shared/agents/rina/artifacts/location-variations.md'
+    # The registry root is derived from the checkout location, not from the agent's
+    # workspace — that independence is the property under test, so the expectation
+    # must come from the same source instead of a hardcoded developer path.
+    assert resolved == os.path.join(
+        _SHARED_AGENTS_DIR, 'rina', 'artifacts/location-variations.md')
 
 
 def test_resolve_workspace_path_artifacts_subagent_uses_parent():
-    from backend.tools._workspace import resolve_workspace_path
+    from backend.tools._workspace import resolve_workspace_path, _SHARED_AGENTS_DIR
     sub = {'id': 'sub1', 'parent_id': 'rina', 'is_subagent': True,
            'workspace': '/tmp/scratch', 'sandbox_enabled': 1}
     resolved = resolve_workspace_path(
         sub, '/workspace/shared/agents/rina/artifacts/x.md', '/workspace')
-    assert resolved == '/home/robin/dev/evonic/shared/agents/rina/artifacts/x.md'
+    assert resolved == os.path.join(_SHARED_AGENTS_DIR, 'rina', 'artifacts/x.md')
 
 
 def test_resolve_workspace_path_non_artifacts_untouched():
