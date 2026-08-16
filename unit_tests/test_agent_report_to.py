@@ -34,6 +34,22 @@ class TestResolveReportToFromContext(unittest.TestCase):
         self.assertEqual(sid, '')  # inter-agent fallback returns empty session_id
         mock_lookup.assert_called_once_with('agent_a')
 
+    def test_inter_agent_preserves_originating_whatsapp_session(self):
+        """A chained delegation keeps its WhatsApp origin over a newer web session."""
+        context = {
+            'user_id': '__agent__agent_a',
+            'session_id': 'agent-session',
+            'origin_report_to_id': 'whatsapp_group_123',
+            'origin_report_to_channel_id': 'whatsapp-1',
+            'origin_session_id': 'amar-e17cfaa3',
+        }
+        with mock.patch('models.db.db.get_latest_human_session') as mock_lookup:
+            rid, ch, sid = resolve_report_to_from_context(context, 'agent_a')
+        self.assertEqual(rid, 'whatsapp_group_123')
+        self.assertEqual(ch, 'whatsapp-1')
+        self.assertEqual(sid, 'amar-e17cfaa3')
+        mock_lookup.assert_not_called()
+
     def test_subagent_uses_parent_for_lookup(self):
         human = {'external_user_id': 'user_456', 'channel_id': None}
         with mock.patch(
