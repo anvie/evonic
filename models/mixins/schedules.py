@@ -72,7 +72,8 @@ class ScheduleMixin:
 
     def update_schedule(self, schedule_id: str, **kwargs) -> bool:
         allowed = {'name', 'enabled', 'next_run_at', 'last_run_at',
-                    'run_count', 'max_runs', 'metadata', 'trigger_config', 'action_config'}
+                    'run_count', 'max_runs', 'metadata', 'trigger_config', 'action_config',
+                    'trigger_type', 'action_type'}
         updates = {}
         for k, v in kwargs.items():
             if k not in allowed:

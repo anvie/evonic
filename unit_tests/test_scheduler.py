@@ -197,6 +197,31 @@ class TestSchedulerEngine:
         assert fetched is not None
         assert fetched['owner_id'] == 'my-plugin'
 
+    def test_update_schedule_changes_fields(self, mock_apscheduler):
+        from backend.scheduler import scheduler
+        result = scheduler.create_schedule(
+            name='Before Edit', owner_type='agent', owner_id='agent-1',
+            trigger_type='interval', trigger_config={'minutes': 5},
+            action_type='emit_event', action_config={'event_name': 'x', 'payload': {}},
+        )
+        updated = scheduler.update_schedule(
+            result['id'],
+            name='After Edit',
+            trigger_config={'minutes': 30},
+            action_config={'event_name': 'y', 'payload': {'k': 'v'}},
+        )
+        assert updated is not None
+        assert updated['name'] == 'After Edit'
+        assert updated['trigger_config']['minutes'] == 30
+        assert updated['action_config']['event_name'] == 'y'
+        fetched = db.get_schedule(result['id'])
+        assert fetched['name'] == 'After Edit'
+        assert fetched['trigger_config'] == {'minutes': 30}
+
+    def test_update_schedule_nonexistent(self, mock_apscheduler):
+        from backend.scheduler import scheduler
+        assert scheduler.update_schedule('does-not-exist', name='X') is None
+
     def test_cancel_schedule_success(self, mock_apscheduler):
         from backend.scheduler import scheduler
         result = scheduler.create_schedule(
@@ -539,6 +564,29 @@ class TestSchedulerAPI:
         from app import app
         with app.test_client() as client:
             resp = client.get('/api/schedules/nonexistent')
+            assert resp.status_code == 404
+
+    def test_api_update_schedule(self):
+        from app import app
+        kwargs = _make_schedule_kwargs(name='Before API Edit')
+        db.create_schedule(**kwargs)
+        with app.test_client() as client:
+            resp = client.put(
+                f"/api/schedules/{kwargs['schedule_id']}",
+                json={'name': 'After API Edit',
+                      'action_config': {'event_name': 'updated', 'payload': {}}},
+            )
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data['schedule']['name'] == 'After API Edit'
+        fetched = db.get_schedule(kwargs['schedule_id'])
+        assert fetched['name'] == 'After API Edit'
+        assert fetched['action_config']['event_name'] == 'updated'
+
+    def test_api_update_schedule_not_found(self):
+        from app import app
+        with app.test_client() as client:
+            resp = client.put('/api/schedules/nonexistent', json={'name': 'X'})
             assert resp.status_code == 404
 
     def test_api_cancel_schedule(self):

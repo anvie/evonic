@@ -1,4 +1,4 @@
-"""Scheduler management routes — list, toggle, cancel, run-now, and create schedules."""
+"""Scheduler management routes — list, toggle, cancel, run-now, create, and edit schedules."""
 
 from flask import Blueprint, render_template, jsonify, request
 from backend.scheduler import scheduler
@@ -53,6 +53,33 @@ def api_get_schedule(schedule_id):
     if not s:
         return jsonify({'error': 'Not found'}), 404
     return jsonify({'schedule': s})
+
+
+@scheduler_bp.route('/api/schedules/<schedule_id>', methods=['PUT'])
+def api_update_schedule(schedule_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body required'}), 400
+
+    try:
+        clear_max_runs = 'max_runs' in data and data.get('max_runs') is None
+        result = scheduler.update_schedule(
+            schedule_id,
+            name=data.get('name'),
+            trigger_type=data.get('trigger_type'),
+            trigger_config=data.get('trigger_config'),
+            action_type=data.get('action_type'),
+            action_config=data.get('action_config'),
+            max_runs=data.get('max_runs'),
+            clear_max_runs=clear_max_runs,
+        )
+        if not result:
+            return jsonify({'error': 'Not found'}), 404
+        return jsonify({'schedule': result})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 
 @scheduler_bp.route('/api/schedules/<schedule_id>/cancel', methods=['POST'])
