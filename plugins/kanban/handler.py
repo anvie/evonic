@@ -627,6 +627,13 @@ def _format_followup_comment(comment: dict, attachments: list) -> str:
     return '\n'.join(lines)
 
 
+def _busy_task_for(agent_id: str) -> str | None:
+    """Task the agent is already committed to, or None if it can take work."""
+    with _state_lock:
+        return (_pending_tasks.get(agent_id) or _active_tasks.get(agent_id)
+                or _paused_tasks.get(agent_id))
+
+
 def _notify_agent_followup(agent_id: str, task: dict, merged_content: str,
                            channel_type: str, sdk=None,
                            prior_content: str = None, comment_author: str = None) -> bool:
@@ -637,10 +644,8 @@ def _notify_agent_followup(agent_id: str, task: dict, merged_content: str,
     Respects the busy guard — if the agent is already working on another task,
     the notification is skipped and the follow-up will be picked up next scan.
     """
-    with _state_lock:
-        is_busy = agent_id in _pending_tasks or agent_id in _active_tasks or agent_id in _paused_tasks
-        busy_task_id = _pending_tasks.get(agent_id) or _active_tasks.get(agent_id) or _paused_tasks.get(agent_id)
-    if is_busy:
+    busy_task_id = _busy_task_for(agent_id)
+    if busy_task_id:
         _log(
             f'Agent {agent_id} is busy with task {busy_task_id}, '
             f'deferring follow-up for task "{task["title"]}" until current task is done',
@@ -1032,9 +1037,22 @@ def _scan_comments_for_followup(sdk=None):
         if not unclassified:
             continue
 
+        # Nothing below here is retryable — classifying consumes the comment and
+        # notifying reopens the task — so check the busy guard before consuming
+        # anything.  A busy agent means "try again next scan", not "drop it".
+        busy_task_id = _busy_task_for(assignee)
+        if busy_task_id:
+            _log(
+                f'Agent {assignee} is busy with task {busy_task_id}, '
+                f'deferring comment follow-up on task {task_id} until it is free',
+                'info', sdk,
+            )
+            continue
+
         # Mark all as classified upfront to avoid re-processing on next scan
-        for comment in unclassified:
-            _classified_comments.add(comment.get('id'))
+        comment_ids = [c.get('id') for c in unclassified]
+        for comment_id in comment_ids:
+            _classified_comments.add(comment_id)
 
         # Merge multiple new comments into one string for a single LLM call
         parts = []
@@ -1095,10 +1113,16 @@ def _scan_comments_for_followup(sdk=None):
             ))
             notify_author = ', '.join(authors) if authors else _get_owner_name()
 
-        _notify_agent_followup(
+        notified = _notify_agent_followup(
             assignee, task, merged_content, channel_type, sdk,
             prior_content=prior_content, comment_author=notify_author,
         )
+        if not notified:
+            # Un-consume the comments so a later scan can retry.  The task stays
+            # reopened on purpose: an in-progress task whose agent was never
+            # notified is what the stale-task scan exists to pick up.
+            for comment_id in comment_ids:
+                _classified_comments.discard(comment_id)
 
 
 def _setup_scheduler():

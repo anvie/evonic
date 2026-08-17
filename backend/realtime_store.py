@@ -24,6 +24,11 @@ log = logging.getLogger(__name__)
 
 RETENTION_MS = 60 * 60 * 1000
 _CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+# A running turn with no journal activity for this long is treated as dead.
+# Every turn event (thinking, tool call, status) refreshes the heartbeat, so
+# only a hung or lost turn can reach it.
+STALE_TURN_HEARTBEAT_MS = 15 * 60 * 1000
+_REAP_INTERVAL_MS = 60 * 1000
 MAX_EVENT_PAYLOAD_BYTES = 256 * 1024
 _PAYLOAD_PREVIEW_BYTES = 32 * 1024
 _ATTACHMENT_KEYS = frozenset({
@@ -33,6 +38,23 @@ _ATTACHMENT_KEYS = frozenset({
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _pid_alive(pid) -> bool:
+    """True unless the process is known to be gone.
+
+    Unknown/unreadable pids count as alive so a reaper never clears state it
+    cannot prove is abandoned.
+    """
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except (TypeError, ValueError, OverflowError):
+        return True
+    except OSError:
+        return True  # e.g. PermissionError — alive, owned by another user
+    return True
 
 
 def _json_default(value):
@@ -159,6 +181,8 @@ class RealtimeStore:
         self._last_cleanup_ms = 0
         self._recovery_lock = threading.Lock()
         self._recovered: set[tuple[int, str]] = set()
+        self._reap_lock = threading.Lock()
+        self._last_reap_ms = 0
 
     @contextmanager
     def _connect(self):
@@ -340,6 +364,13 @@ class RealtimeStore:
             """, (now, expires_at, channel, event_type, agent_id, session_id,
                   workplace_id, turn_id, body))
             event_id = int(cursor.lastrowid)
+            if turn_id:
+                # Heartbeat: journal activity is the liveness signal that keeps
+                # a long turn from being reaped as stale.
+                conn.execute(
+                    'UPDATE active_turns SET updated_at_ms = ? WHERE turn_id = ?',
+                    (now, turn_id),
+                )
         with self._condition:
             self._condition.notify_all()
         self._maybe_cleanup(now)
@@ -630,6 +661,37 @@ class RealtimeStore:
         with self._condition:
             self._condition.notify_all()
 
+    def _finalize_turn(self, turn: dict, reason: str) -> None:
+        """Close one abandoned turn: emit its terminal events and drop the row."""
+        with self._connect() as conn:
+            terminal = conn.execute("""
+                SELECT 1 FROM realtime_events
+                WHERE turn_id = ? AND event_type = 'done' LIMIT 1
+            """, (turn['turn_id'],)).fetchone()
+        if not terminal:
+            payload = {
+                'agent_id': turn['agent_id'],
+                'session_id': turn['session_id'],
+                'response': '',
+                'interrupted': True,
+                'is_error': True,
+                'reason': reason,
+            }
+            self.publish('chat', 'done', payload,
+                         agent_id=turn['agent_id'], session_id=turn['session_id'],
+                         turn_id=turn['turn_id'])
+        self.finish_turn(turn['turn_id'])
+        remaining = self.busy_agents().get(turn['agent_id'])
+        self.publish('status', 'agent_busy_changed', {
+            'agent_id': turn['agent_id'],
+            'session_id': remaining.get('session_id', turn['session_id']) if remaining else turn['session_id'],
+            'session_ids': remaining.get('session_ids', []) if remaining else [],
+            'active_count': remaining.get('active_count', 0) if remaining else 0,
+            'state': remaining.get('state', 'idle') if remaining else 'idle',
+            'busy': bool(remaining),
+            'interrupted': True,
+        }, agent_id=turn['agent_id'], session_id=turn['session_id'])
+
     def interrupt_stale_turns(self) -> list[dict]:
         key = (os.getpid(), self._resolve_db_path())
         with self._recovery_lock:
@@ -638,36 +700,52 @@ class RealtimeStore:
             self._maybe_cleanup(_now_ms())
             stale = self.active_turns()
             for turn in stale:
-                with self._connect() as conn:
-                    terminal = conn.execute("""
-                        SELECT 1 FROM realtime_events
-                        WHERE turn_id = ? AND event_type = 'done' LIMIT 1
-                    """, (turn['turn_id'],)).fetchone()
-                if not terminal:
-                    payload = {
-                        'agent_id': turn['agent_id'],
-                        'session_id': turn['session_id'],
-                        'response': '',
-                        'interrupted': True,
-                        'is_error': True,
-                        'reason': 'server_restart',
-                    }
-                    self.publish('chat', 'done', payload,
-                                 agent_id=turn['agent_id'], session_id=turn['session_id'],
-                                 turn_id=turn['turn_id'])
-                self.finish_turn(turn['turn_id'])
-                remaining = self.busy_agents().get(turn['agent_id'])
-                self.publish('status', 'agent_busy_changed', {
-                    'agent_id': turn['agent_id'],
-                    'session_id': remaining.get('session_id', turn['session_id']) if remaining else turn['session_id'],
-                    'session_ids': remaining.get('session_ids', []) if remaining else [],
-                    'active_count': remaining.get('active_count', 0) if remaining else 0,
-                    'state': remaining.get('state', 'idle') if remaining else 'idle',
-                    'busy': bool(remaining),
-                    'interrupted': True,
-                }, agent_id=turn['agent_id'], session_id=turn['session_id'])
+                self._finalize_turn(turn, 'server_restart')
             self._recovered.add(key)
             return stale
+
+    def reap_stale_turns(self) -> list[dict]:
+        """Clear busy state left behind by a crashed worker or a hung turn.
+
+        Restart recovery only runs at boot, so without this a leaked row keeps
+        an agent 'busy' for the life of the process — blocking notifications,
+        focus release and every watchdog that skips busy agents.  Rate-limited;
+        most calls are a timestamp comparison.
+
+        Queued rows of a live process are never reaped: their task is still in
+        that process's in-memory queue, and deleting the row would make
+        ``start_turn`` return None and drop the message.
+        """
+        now = _now_ms()
+        if now - self._last_reap_ms < _REAP_INTERVAL_MS:
+            return []
+        # Non-blocking: also stops re-entry via the publishes in _finalize_turn.
+        if not self._reap_lock.acquire(blocking=False):
+            return []
+        try:
+            if now - self._last_reap_ms < _REAP_INTERVAL_MS:
+                return []
+            self._last_reap_ms = now
+            reaped = []
+            for turn in self.active_turns():
+                if _pid_alive(turn['owner_pid']):
+                    if turn['state'] != 'running':
+                        continue
+                    if now - (turn['updated_at_ms'] or 0) <= STALE_TURN_HEARTBEAT_MS:
+                        continue
+                    reason = 'stale_turn_timeout'
+                else:
+                    reason = 'worker_gone'
+                log.warning(
+                    "Reaping stale %s turn %s (agent=%s session=%s reason=%s)",
+                    turn['state'], turn['turn_id'], turn['agent_id'],
+                    turn['session_id'], reason,
+                )
+                self._finalize_turn(turn, reason)
+                reaped.append(turn)
+            return reaped
+        finally:
+            self._reap_lock.release()
 
     def _maybe_cleanup(self, now_ms: int) -> None:
         if now_ms - self._last_cleanup_ms < _CLEANUP_INTERVAL_MS:
