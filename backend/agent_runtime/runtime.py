@@ -970,13 +970,20 @@ class AgentRuntime:
         })
 
     def is_agent_busy(self, agent_id: str, ttl: int = 600) -> bool:
-        """Return durable queued/running state. ``ttl`` is kept for callers."""
+        """Return durable queued/running state. ``ttl`` is kept for callers.
+
+        Reaps abandoned turns first: restart recovery runs only at boot, so a
+        row left by a crashed worker or a hung turn would otherwise pin the
+        agent busy for the life of the process.
+        """
         from backend.realtime_store import realtime_store
+        realtime_store.reap_stale_turns()
         return bool(realtime_store.active_turns(agent_id=agent_id))
 
     def get_busy_agents(self, ttl: int = 600) -> dict:
         """Return all durable queued/running turns grouped by agent."""
         from backend.realtime_store import realtime_store
+        realtime_store.reap_stale_turns()
         return realtime_store.busy_agents()
 
     @contextmanager

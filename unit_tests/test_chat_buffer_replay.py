@@ -685,3 +685,129 @@ def test_legacy_routes_keep_safe_compatibility_contract(monkeypatch):
                 "events": [], "reset": True, "cursor": 0,
             }
         store.close()
+
+
+def test_reaper_clears_turn_left_by_a_dead_worker():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE active_turns SET owner_pid = ? WHERE turn_id = ?",
+                (os.getpid() + 100_000, turn_id),
+            )
+
+        assert [turn["turn_id"] for turn in store.reap_stale_turns()] == [turn_id]
+        assert store.active_turns() == []
+        events = store.events_after(
+            0, {"chat"}, session_id="session-a", agent_id="agent-a",
+        )
+        assert events[-2]["event"] == "done"
+        assert events[-2]["data"]["reason"] == "worker_gone"
+        store.close()
+
+
+def test_reaper_clears_running_turn_with_a_stale_heartbeat():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE active_turns SET updated_at_ms = ? WHERE turn_id = ?",
+                (realtime_module._now_ms() - realtime_module.STALE_TURN_HEARTBEAT_MS - 1,
+                 turn_id),
+            )
+
+        assert [turn["turn_id"] for turn in store.reap_stale_turns()] == [turn_id]
+        assert store.active_turns() == []
+        store.close()
+
+
+def test_reaper_spares_a_live_turn_and_a_queued_one():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        running, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(running)
+        queued, _ = store.queue_turn("agent-b", "session-b", "turn-b")
+        # A queued turn never heartbeats: its task waits in the live process's
+        # in-memory queue, and reaping it would silently drop the message.
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE active_turns SET updated_at_ms = ? WHERE turn_id = ?",
+                (realtime_module._now_ms() - realtime_module.STALE_TURN_HEARTBEAT_MS - 1,
+                 queued),
+            )
+
+        assert store.reap_stale_turns() == []
+        assert sorted(turn["turn_id"] for turn in store.active_turns()) == [running, queued]
+        store.close()
+
+
+def test_turn_event_refreshes_the_heartbeat():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        stale_ms = realtime_module._now_ms() - realtime_module.STALE_TURN_HEARTBEAT_MS - 1
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE active_turns SET updated_at_ms = ? WHERE turn_id = ?",
+                (stale_ms, turn_id),
+            )
+
+        store.publish("chat", "thinking", {"content": "still working"},
+                      agent_id="agent-a", session_id="session-a", turn_id=turn_id)
+
+        assert store.active_turns()[0]["updated_at_ms"] > stale_ms
+        assert store.reap_stale_turns() == []
+        assert [turn["turn_id"] for turn in store.active_turns()] == [turn_id]
+        store.close()
+
+
+def test_reaper_is_rate_limited():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        assert store.reap_stale_turns() == []
+
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE active_turns SET owner_pid = ? WHERE turn_id = ?",
+                (os.getpid() + 100_000, turn_id),
+            )
+
+        # Second call inside the interval is skipped, so the ghost survives...
+        assert store.reap_stale_turns() == []
+        assert [turn["turn_id"] for turn in store.active_turns()] == [turn_id]
+        # ...until the interval elapses.
+        store._last_reap_ms -= realtime_module._REAP_INTERVAL_MS
+        assert [turn["turn_id"] for turn in store.reap_stale_turns()] == [turn_id]
+        store.close()
+
+
+def test_is_agent_busy_self_heals_a_turn_whose_worker_died(monkeypatch):
+    """Without this, a leaked row pins the agent busy until the next restart."""
+    from backend.agent_runtime.runtime import AgentRuntime
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        monkeypatch.setattr(realtime_module, "realtime_store", store)
+        runtime = AgentRuntime.__new__(AgentRuntime)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+
+        assert runtime.is_agent_busy("agent-a") is True
+
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE active_turns SET owner_pid = ? WHERE turn_id = ?",
+                (os.getpid() + 100_000, turn_id),
+            )
+        store._last_reap_ms -= realtime_module._REAP_INTERVAL_MS
+
+        assert runtime.is_agent_busy("agent-a") is False
+        assert runtime.get_busy_agents() == {}
+        store.close()
