@@ -38,7 +38,7 @@ from backend.channels.registry import channel_manager
 from backend.channels.base import BaseChannel
 from backend.event_stream import event_stream
 from backend.plugin_manager import get_busy_message
-from backend.slash_commands import parse_command, execute_command
+from backend.slash_commands import parse_command, execute_command, COMMAND_SUPPRESSED
 from backend.agent_runtime.prefetch import TurnPrefetcher
 import atexit
 import json
@@ -1237,6 +1237,38 @@ class AgentRuntime:
                 cmd_name, cmd_args, session_id, agent_id,
                 external_user_id, channel_id,
             )
+            if response is COMMAND_SUPPRESSED:
+                # Command recognized but suppressed by a per-agent setting
+                # (e.g. /help disabled) — save the user message for the record,
+                # emit message_received, but send NO reply and do NOT fall
+                # through to LLM processing.
+                command_meta = {"slash_command": True, "suppressed": True}
+                if metadata and metadata.get('client_message_id'):
+                    command_meta['client_message_id'] = metadata['client_message_id']
+                message_id = _db_retry(
+                    db.add_chat_message, session_id, 'user', message,
+                    agent_id=db_agent_id, metadata=command_meta,
+                    label="save suppressed command message",
+                )
+                _cl = chatlog_manager.get(db_agent_id, session_id)
+                _cl.append({'type': 'user', 'session_id': session_id, 'content': message,
+                             'sender_id': external_user_id,
+                             'metadata': command_meta, 'message_id': message_id})
+                event_stream.emit('message_received', {
+                    'agent_id': agent_id, 'session_id': session_id,
+                    'external_user_id': external_user_id, 'channel_id': channel_id,
+                    'message': message, 'message_id': message_id,
+                    'client_message_id': command_meta.get('client_message_id'),
+                    'metadata': command_meta, 'role': 'user',
+                })
+                self._prefetcher.invalidate(session_id)
+                return {
+                    "response": None, "tool_trace": [], "timeline": [],
+                    "message_id": message_id,
+                    "response_message_id": None,
+                    "client_message_id": command_meta.get('client_message_id'),
+                    "slash_command": True, "suppressed": True,
+                }
             if response is not None:
                 # Command was recognized — save command echo and response, then return
                 command_meta = {"slash_command": True}
@@ -3083,6 +3115,45 @@ class AgentRuntime:
                 cmd_name, cmd_args, session_id, agent_id,
                 external_user_id, channel_id,
             )
+            if response is COMMAND_SUPPRESSED:
+                # Command recognized but suppressed by a per-agent setting
+                # (e.g. /help disabled) — save the user message for the record,
+                # emit message_received, then finalize the turn with an empty
+                # response so web clients clear the thinking bubble without
+                # rendering any reply. Never falls through to LLM processing.
+                command_meta = {'slash_command': True, 'suppressed': True}
+                if metadata and metadata.get('client_message_id'):
+                    command_meta['client_message_id'] = metadata['client_message_id']
+                message_id = db.add_chat_message(
+                    session_id, 'user', text,
+                    agent_id=agent_id, metadata=command_meta,
+                )
+                chatlog_manager.get(agent_id, session_id).append(
+                    {'type': 'user', 'session_id': session_id, 'content': text,
+                     'metadata': command_meta, 'message_id': message_id})
+                event_stream.emit('message_received', {
+                    'agent_id': agent_id, 'session_id': session_id,
+                    'external_user_id': external_user_id, 'channel_id': channel_id,
+                    'message': text, 'message_id': message_id,
+                    'client_message_id': command_meta.get('client_message_id'),
+                    'metadata': command_meta, 'role': 'user',
+                })
+                agent = db.get_agent(agent_id)
+                event_stream.emit('turn_complete', {
+                    'agent_id': agent_id,
+                    'agent_name': agent.get('name', '') if agent else '',
+                    'session_id': session_id,
+                    'external_user_id': external_user_id,
+                    'channel_id': channel_id,
+                    'response': '',
+                    'tool_trace': [],
+                    'is_error': False,
+                    'thinking_duration': 0.0,
+                    'slash_command': True,
+                    'message_id': message_id,
+                })
+                self._prefetcher.invalidate(session_id)
+                return True
             if response is not None:
                 # Command was recognized — save command echo and response, then return
                 command_meta = {'slash_command': True}

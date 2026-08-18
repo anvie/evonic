@@ -823,6 +823,12 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
         if remove_set:
             slash_commands = [(n, d) for n, d in slash_commands if n not in remove_set]
 
+    # Hide /help from the advertised command list when the per-agent help
+    # toggle is off — the command is silently ignored at runtime (no reply,
+    # no LLM fallthrough), so advertising it would be misleading.
+    if not bool(agent.get('help_enabled', True)):
+        slash_commands = [(n, d) for n, d in slash_commands if n != '/help']
+
     if slash_commands:
         prompt += "\n\n## Slash Commands\n\n**Available commands:**\n"
         for name, desc in slash_commands:

@@ -696,6 +696,16 @@ html.dark .agent-tab.active {
                     </div>
 
                     <div>
+                        <label class="flex items-center gap-3 cursor-pointer select-none">
+                            {{ toggle_widget(id='agent-help-enabled', checked=(agent.help_enabled is none or agent.help_enabled)) }}
+                            <div>
+                                <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Respond to <code>/help</code> Command</span>
+                                <p class="text-xs text-gray-400 mt-0.5">When enabled (default), the agent replies to <code>/help</code> with the list of available commands. When disabled, incoming <code>/help</code> messages are ignored entirely — no reply is sent and the message is not processed by the agent. Takes effect immediately.</p>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div>
                         <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Hidden Slash Commands</label>
                         <input type="text" id="agent-hidden-slash-commands" value="{{ agent.hidden_slash_commands or '' }}" placeholder="e.g. help,summary" class="w-full p-2.5 border border-gray-300 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
                         <p class="text-xs text-gray-400 mt-1">Comma-separated list of <!-- --><code>/commands</code> to hide from this agent's system prompt (still executable by the user). Use <code>*</code> for all, or <code>!</code> prefix for inverse mode (e.g. <code>!clear,model</code> = only <code>/clear</code> &amp; <code>/model</code> visible). No effect on super agents. Available commands: clear, help, summary, investigate, stop, cwd, cd, restart, shutdown, plan, exec, unfocus, status, model, sub, detach, jobs, kb-organize, dump.</p>
@@ -2332,6 +2342,7 @@ const AgentAutoSave = {
         { id: 'agent-send-file-allowed-path-regex', key: 'send_file_allowed_path_regex', type: 'str' },
         { id: 'agent-hidden-slash-commands', key: 'hidden_slash_commands', type: 'str' },
         { id: 'agent-disabled-slash-commands', key: 'disabled_slash_commands', type: 'str' },
+        { id: 'agent-help-enabled', key: 'help_enabled', type: 'bool' },
         // Special-handled controls (persist fn registered below); listed here so
         // they still get change/blur listeners wired.
         { id: 'agent-model-select' },

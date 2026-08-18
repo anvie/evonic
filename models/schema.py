@@ -1069,6 +1069,11 @@ class SchemaMixin:
                 cursor.execute("ALTER TABLE agents ADD COLUMN disabled_slash_commands TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Migration: per-agent /help command toggle (1 = respond to /help, 0 = ignore)
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN help_enabled BOOLEAN DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
 
             # Migration: relax connector_token NOT NULL so NULL is allowed before pairing completes
             try:
