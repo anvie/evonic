@@ -3,7 +3,7 @@
 import json
 from unittest.mock import patch
 
-from backend.slash_commands import execute_command
+from backend.slash_commands import COMMAND_SUPPRESSED, execute_command
 
 
 def _execute_clear(args: str):
@@ -107,3 +107,66 @@ def test_agent_mode_transition_still_requires_plan_file():
 
     assert "error" in result
     assert state.mode == "plan"
+
+
+# ==================== /help suppression (help_enabled) ====================
+
+
+def test_help_suppressed_when_help_enabled_off():
+    """/help returns COMMAND_SUPPRESSED when the agent has help_enabled=0."""
+    with patch("models.db.db.get_agent", return_value={"help_enabled": 0}):
+        response = execute_command("help", "", "session-123", "agent-123", "user-123")
+
+    assert response is COMMAND_SUPPRESSED
+
+
+def test_help_responds_when_help_enabled_on():
+    """/help returns the command list when help_enabled=1 (default behavior)."""
+    with patch("models.db.db.get_agent", return_value={"help_enabled": 1}), \
+         patch("models.db.db.get_super_agent", return_value=None), \
+         patch("models.db.db.get_agent_skills", return_value=[]):
+        response = execute_command("help", "", "session-123", "agent-123", "user-123")
+
+    assert response is not COMMAND_SUPPRESSED
+    assert response.startswith("**Available commands:**")
+
+
+def test_help_responds_when_help_enabled_missing():
+    """Missing help_enabled defaults to enabled for backward compatibility."""
+    with patch("models.db.db.get_agent", return_value={}), \
+         patch("models.db.db.get_super_agent", return_value=None), \
+         patch("models.db.db.get_agent_skills", return_value=[]):
+        response = execute_command("help", "", "session-123", "agent-123", "user-123")
+
+    assert response is not COMMAND_SUPPRESSED
+    assert response.startswith("**Available commands:**")
+
+
+def test_list_available_commands_omits_help_when_disabled():
+    """help_enabled=0 removes /help from list_available_commands()."""
+    from backend.slash_commands import list_available_commands
+
+    with patch("models.db.db.get_agent", return_value={
+        "help_enabled": 0, "disabled_slash_commands": "", "workplace_id": None,
+        "is_super": False,
+    }), \
+         patch("models.db.db.get_super_agent", return_value=None), \
+         patch("models.db.db.get_agent_skills", return_value=[]):
+        names = {cmd.name for cmd in list_available_commands("agent-123")}
+
+    assert "help" not in names
+
+
+def test_list_available_commands_includes_help_when_enabled():
+    """help_enabled=1 keeps /help in list_available_commands()."""
+    from backend.slash_commands import list_available_commands
+
+    with patch("models.db.db.get_agent", return_value={
+        "help_enabled": 1, "disabled_slash_commands": "", "workplace_id": None,
+        "is_super": False,
+    }), \
+         patch("models.db.db.get_super_agent", return_value=None), \
+         patch("models.db.db.get_agent_skills", return_value=[]):
+        names = {cmd.name for cmd in list_available_commands("agent-123")}
+
+    assert "help" in names
