@@ -539,6 +539,13 @@ function closeDetailModal() {
     _detailScheduleData = null;
 }
 
+function editFromDetail() {
+    if (!_detailScheduleId) return;
+    const id = _detailScheduleId;
+    closeDetailModal();
+    openEditModal(id);
+}
+
 function switchDetailTab(tab) {
     document.querySelectorAll('#detail-modal .tab-btn').forEach(b => {
         const active = b.dataset.tab === tab;
@@ -802,9 +809,15 @@ async function clearLogs() {
                 <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100" id="detail-modal-title">Schedule Detail</h3>
                 <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Configuration and execution history</p>
             </div>
-            <button onclick="closeDetailModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 dark:hover:text-gray-300 transition">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
+            <div class="flex items-center gap-2">
+                <button onclick="editFromDetail()" class="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-3 py-1.5 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition" title="Edit schedule">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                    Edit
+                </button>
+                <button onclick="closeDetailModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 dark:hover:text-gray-300 transition">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
         </div>
 
         <!-- Tab Bar -->
