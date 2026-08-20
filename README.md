@@ -260,6 +260,11 @@ Manage LLM configurations:
 ./evonic model rm gpt4o
 ```
 
+Any OpenAI-compatible endpoint works via the `custom` provider type, including a plain
+Gemini API key. Google Vertex AI (project-based, OAuth-authenticated) is also supported
+with automatic access-token refresh — see [docs/vertex-ai-provider.md](docs/vertex-ai-provider.md)
+for setup.
+
 ---
 
 ## Training Data Collection

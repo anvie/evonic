@@ -367,10 +367,27 @@ class LLMClient:
 
         return self.model
 
+    def _maybe_refresh_google_oauth(self) -> None:
+        """Refresh self.api_key in place if this client's provider is a Google
+        OAuth-authenticated one (Vertex AI via ADC refresh token) and the
+        current access token is near/at expiry. No-op for every other
+        provider (single indexed provider-row lookup)."""
+        if not self.provider:
+            return
+        try:
+            from models.db import db as _db
+            from backend.provider.oauth_google import get_valid_token
+            token = get_valid_token(_db, self.provider)
+            if token:
+                self.api_key = token
+        except Exception:
+            pass
+
     def test_connection(self) -> Dict[str, Any]:
         """Test connection to the model endpoint."""
         if self.api_format == "codex":
             return self._test_codex_connection()
+        self._maybe_refresh_google_oauth()
         try:
             if self.api_format == "ollama":
                 models_url = f"{self.base_url}/tags"
@@ -741,6 +758,7 @@ class LLMClient:
             if self.api_key:
                 headers["x-api-key"] = self.api_key
         else:
+            self._maybe_refresh_google_oauth()
             headers = {
                 "Content-Type": "application/json",
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
