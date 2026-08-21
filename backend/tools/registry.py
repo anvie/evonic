@@ -12,10 +12,13 @@ import sys
 import glob
 import json
 import types
+import logging
 import threading
 import importlib
 import importlib.util
 from typing import Dict, Any, Optional, Callable, List
+
+_logger = logging.getLogger(__name__)
 
 # Directory containing tool backend Python files
 TOOLS_DIR = os.path.join(os.path.dirname(__file__))
@@ -200,6 +203,14 @@ class ToolRegistry:
                         for tid in _assigned
                     )
                     if not _namespaced_match:
+                        _logger.warning(
+                            "Authorization guard blocked tool '%s' for agent '%s' "
+                            "(session=%s user=%s): tool is not in assigned_tool_ids",
+                            function_name,
+                            ctx.get('agent_id', '?'),
+                            ctx.get('session_id', '?'),
+                            ctx.get('user_id', '?'),
+                        )
                         return {
                             "error": (
                                 f"Tool '{function_name}' is not assigned to this agent. "
