@@ -343,18 +343,26 @@ class LocalBackend(ExecutionBackend):
     # user instead of the Evonic server process user.
     # ------------------------------------------------------------------
 
-    def _sudo_subprocess(self, python_code: str, timeout: int = 10) -> dict:
+    def _sudo_subprocess(self, python_code: str, timeout: int = 10,
+                         stdin_data: str = None) -> dict:
         """Run a short Python snippet as *run_as_user* via sudo.
 
         Returns ``{'ok': True, 'result': ...}`` or ``{'error': str}``.
         *result* is the decoded stdout, or the raw dict parsed from a
         JSON line printed by the snippet.
+
+        Large payloads (e.g. base64-encoded file content) must be passed
+        via *stdin_data* rather than embedded in *python_code*: each
+        execve() argument is capped at MAX_ARG_STRLEN (128 KiB), so an
+        oversized argv entry fails with OSError E2BIG ("Argument list
+        too long").
         """
         if self._run_as_user is None:
             return {'error': 'run_as_user not set'}
         try:
             proc = subprocess.run(
                 ['sudo', '-u', self._run_as_user, 'python3', '-c', python_code],
+                input=stdin_data,
                 capture_output=True, text=True, timeout=timeout,
             )
             if proc.returncode != 0:
@@ -468,30 +476,10 @@ class LocalBackend(ExecutionBackend):
                 return {'error': f'Path is a directory, not a file: {path}'}
             except Exception as e:
                 return {'error': str(e)}
-        import base64
-        encoded = base64.b64encode(content.encode('utf-8')).decode('ascii')
-        code = (
-            "import os, base64\n"
-            "p=" + repr(path) + "\n"
-            "cd=" + repr(create_dirs) + "\n"
-            "data=base64.b64decode(" + repr(encoded) + ").decode('utf-8')\n"
-            "try:\n"
-            " if cd:\n"
-            "  d=os.path.dirname(p)\n"
-            "  if d: os.makedirs(d,exist_ok=True)\n"
-            " f=open(p,'w',encoding='utf-8'); f.write(data); f.close()\n"
-            " print('__OK__')\n"
-            "except PermissionError: print('__ERR__Permission denied')\n"
-            "except IsADirectoryError: print('__ERR__Path is a directory')\n"
-            "except Exception as e: print('__ERR__'+str(e))"
-        )
-        r = self._sudo_subprocess(code)
-        if r.get('ok'):
-            result = r.get('result', '')
-            if isinstance(result, str) and result.startswith('__ERR__'):
-                return {'error': result[7:]}
-            return {'ok': True}
-        return {'error': r.get('error', 'Unknown error')}
+        # Delegate to write_file_bytes, which streams the content via stdin.
+        # Embedding the content in the sudo argv would hit the 128 KiB
+        # execve per-argument limit (E2BIG) for files larger than ~96 KiB.
+        return self.write_file_bytes(path, content.encode('utf-8'), create_dirs)
 
     def cat_file_bytes(self, path: str) -> dict:
         """Read a file as raw bytes directly from the host filesystem."""
@@ -579,12 +567,16 @@ class LocalBackend(ExecutionBackend):
             except Exception as e:
                 return {'error': str(e)}
         import base64
+        # Content is streamed via stdin, NOT embedded in the python3 -c argv:
+        # each execve() argument is capped at MAX_ARG_STRLEN (128 KiB), so
+        # embedding base64 content fails with OSError E2BIG ("Argument list
+        # too long") for files larger than ~96 KiB.
         encoded = base64.b64encode(data).decode('ascii')
         code = (
-            "import os, base64\n"
+            "import os, sys, base64\n"
             "p=" + repr(path) + "\n"
             "cd=" + repr(create_dirs) + "\n"
-            "data=base64.b64decode(" + repr(encoded) + ")\n"
+            "data=base64.b64decode(sys.stdin.read())\n"
             "try:\n"
             " if cd:\n"
             "  d=os.path.dirname(p)\n"
@@ -595,7 +587,7 @@ class LocalBackend(ExecutionBackend):
             "except IsADirectoryError: print('__ERR__Path is a directory')\n"
             "except Exception as e: print('__ERR__'+str(e))"
         )
-        r = self._sudo_subprocess(code)
+        r = self._sudo_subprocess(code, stdin_data=encoded)
         if r.get('ok'):
             result = r.get('result', '')
             if isinstance(result, str) and result.startswith('__ERR__'):
