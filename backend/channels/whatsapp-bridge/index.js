@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { attachmentTransportReady, submitAttachment } = require('./attachment-message');
 const { downloadInboundDocument, extractInboundText } = require('./inbound-document');
+const { extractInboundLocation } = require('./inbound-location');
 const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
 const { normalizeRecipientJid } = require('./jid');
 const { OutboundLifecycle } = require('./outbound-lifecycle');
@@ -462,10 +463,15 @@ async function startBaileys() {
                 }
             }
 
+            // Extract shared location (static or live). Coordinates are metadata,
+            // so no media download is required.
+            const location = extractInboundLocation(content);
+
             // Log every inbound message without logging attachment contents.
-            console.log('[whatsapp-bridge] MSG id=%s from=%s jid=%s group=%s text_len=%d image=%s document=%s document_download_failed=%s',
+            console.log('[whatsapp-bridge] MSG id=%s from=%s jid=%s group=%s text_len=%d image=%s document=%s document_download_failed=%s location=%s',
                 messageId, sender, jid, isGroup, text.length, !!image, !!document,
-                documentDownloadFailed);
+                documentDownloadFailed,
+                location ? `${location.latitude},${location.longitude}${location.is_live ? ' (live)' : ''}` : '-');
             if (isGroup) {
                 console.log('[whatsapp-bridge] GROUP MSG keys:', JSON.stringify(Object.keys(msg.message || {})),
                     'unwrapped:', JSON.stringify(Object.keys(content || {})));
@@ -519,7 +525,7 @@ async function startBaileys() {
             const groupName = isGroup ? await getGroupSubject(jid) : null;
 
             postCallback({
-                from: sender, jid, message_id: messageId, text, image, document,
+                from: sender, jid, message_id: messageId, text, image, document, location,
                 document_download_failed: documentDownloadFailed,
                 message_timestamp: messageTimestamp,
                 content_type: contentType,

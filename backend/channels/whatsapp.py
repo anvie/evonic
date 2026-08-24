@@ -197,6 +197,43 @@ def _format_attachment_marker(attachment_info: Dict[str, Any]) -> str:
     )
 
 
+def _normalize_location_payload(location_data: Any) -> Optional[Dict[str, Any]]:
+    """Validate the bridge location payload and coerce numeric coordinates."""
+    if not isinstance(location_data, dict):
+        return None
+    try:
+        latitude = float(location_data.get('latitude'))
+        longitude = float(location_data.get('longitude'))
+    except (TypeError, ValueError):
+        _logger.warning("WhatsApp location payload has invalid coordinates: %r",
+                        location_data)
+        return None
+    if not (-90.0 <= latitude <= 90.0) or not (-180.0 <= longitude <= 180.0):
+        _logger.warning("WhatsApp location coordinates out of range: %s, %s",
+                        latitude, longitude)
+        return None
+    return {
+        'latitude': latitude,
+        'longitude': longitude,
+        'name': str(location_data.get('name') or '').strip(),
+        'address': str(location_data.get('address') or '').strip(),
+        'accuracy_in_meters': location_data.get('accuracy_in_meters'),
+        'is_live': bool(location_data.get('is_live')),
+    }
+
+
+def _format_location_text(location_data: Dict[str, Any]) -> str:
+    """Render a shared location as agent-readable text with a maps link."""
+    latitude = location_data['latitude']
+    longitude = location_data['longitude']
+    label = location_data.get('name') or location_data.get('address') or ''
+    kind = 'Live location' if location_data.get('is_live') else 'Location'
+    header = f'[{kind} shared]' + (f' {label}' if label else '')
+    return (f'{header}\n'
+            f'latitude={latitude}, longitude={longitude}\n'
+            f'https://www.google.com/maps?q={latitude},{longitude}')
+
+
 def _format_quoted_context(quoted_text=None, quoted_message=None,
                            quoted_is_bot=False, quoted_sender_name='',
                            quoted_sender='', is_group=False) -> str:
@@ -803,6 +840,7 @@ class WhatsAppChannel(BaseChannel):
         audio_data = payload.get('audio')
         video_data = payload.get('video')
         document_data = payload.get('document')
+        location_data = _normalize_location_payload(payload.get('location'))
         quoted_text = payload.get('quoted_text')
         quoted_message = payload.get('quoted_message')
         quoted_context = _format_quoted_context(
@@ -826,7 +864,7 @@ class WhatsAppChannel(BaseChannel):
             msg_type = 'document'
         elif payload.get('sticker'):
             msg_type = 'sticker'
-        elif payload.get('location'):
+        elif location_data:
             msg_type = 'location'
 
         # Resolve before emitting diagnostics so the listener can report the route
@@ -953,6 +991,9 @@ class WhatsAppChannel(BaseChannel):
             text = '[Document]'
         elif payload.get('document_download_failed') and not text:
             text = '[Document download failed]'
+
+        if location_data and not text:
+            text = _format_location_text(location_data)
 
         if not text and not image_url and not video_url and not quoted_context:
             _logger.info("WhatsApp message dropped (no usable content): sender=%s", sender)
