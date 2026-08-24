@@ -3085,26 +3085,43 @@ async function syncKB(btn) {
     }
 }
 
-function toggleKBGraphView() {
+// Applies container visibility + toggle-button label for the current kbGraphMode.
+function applyKBViewMode() {
     const toggleBtn = document.getElementById('kb-graph-toggle');
     const graphContainer = document.getElementById('kb-graph-container');
     const listContainer = document.getElementById('kb-list-container');
 
-    if (kbGraphMode === 'graph') {
-        kbGraphMode = 'list';
+    if (kbGraphMode === 'list') {
         if (toggleBtn) toggleBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg> Graph';
         graphContainer.classList.add('hidden');
         listContainer.classList.remove('hidden');
-        loadKBFiles();
     } else {
-        kbGraphMode = 'graph';
         if (toggleBtn) toggleBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg> List';
         listContainer.classList.add('hidden');
         graphContainer.classList.remove('hidden');
+    }
+}
+
+function toggleKBGraphView() {
+    kbGraphMode = kbGraphMode === 'graph' ? 'list' : 'graph';
+    try { localStorage.setItem('evonic-kb-view-mode', kbGraphMode); } catch (e) {}
+    applyKBViewMode();
+    if (kbGraphMode === 'list') {
+        loadKBFiles();
+    } else {
         if (kbGraphData) renderKBGraph();
         else loadKBGraph();
     }
 }
+
+// Restore the last-used KB view mode (graph/list) on page load. Runs before the
+// hash-based tab restore below, so showTab('knowledge') loads matching data.
+(function() {
+    let saved = null;
+    try { saved = localStorage.getItem('evonic-kb-view-mode'); } catch (e) {}
+    if (saved === 'list' || saved === 'graph') kbGraphMode = saved;
+    applyKBViewMode();
+})();
 
 function toggleOrphans() {
     kbGraphShowOrphans = document.getElementById('kb-graph-show-orphans').checked;
