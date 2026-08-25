@@ -406,18 +406,50 @@ class WhatsAppChannel(BaseChannel):
         message silently."""
         return self.agent_id
 
+    def _request_group_approval(self, group_id: str, group_name: str) -> None:
+        """Create a pending approval for an unapproved group (idempotent).
+
+        Unlike DMs, no pairing code is sent into the group — the admin
+        approves the group from the channel's Pending Approvals list. Once
+        approved, every group member can chat with the agent via @mention.
+        The pending entry lives 24h; each new group message recreates it
+        after expiry so it stays visible while the group is active.
+        """
+        from models.db import db
+        from datetime import datetime, timedelta
+        try:
+            existing = db.get_pending_approvals(self.channel_id)
+            if any(p.get('external_user_id') == group_id for p in existing):
+                return
+            expires_at = (datetime.utcnow() + timedelta(hours=24)).isoformat()
+            db.create_pending_approval(
+                channel_id=self.channel_id,
+                external_user_id=group_id,
+                user_name=group_name or group_id,
+                pair_code=db._generate_pair_code(),
+                expires_at=expires_at,
+            )
+            _logger.info(
+                "WhatsApp group approval requested: group=%s name=%r channel=%s",
+                group_id, group_name, self.channel_id)
+        except Exception as e:
+            _logger.warning("Failed to create group pending approval: %s", e)
+
     def _gate_sender(self, sender: str, is_group: bool, jid: str, text: str,
                      push_name: str, payload: dict) -> bool:
         """Allowlist/pairing gate — returns True when the message should be
         processed. Groups are checked by group ID, DMs by individual user ID.
+        Unapproved groups raise a pending approval request (visible in the
+        channel modal) instead of being dropped silently.
         Subclasses may override (e.g. when a routing table is the allowlist)."""
         from models.db import db
         if is_group:
             group_id = jid.split('@')[0] if '@' in jid else jid
-            if not db.is_user_allowed(self.channel_id, group_id):
-                _logger.info("WhatsApp group not in allowlist: group=%s", group_id)
-                return False
-            return True
+            if db.is_user_allowed(self.channel_id, group_id):
+                return True
+            self._request_group_approval(group_id, (payload or {}).get('group_name') or '')
+            _logger.info("WhatsApp group not in allowlist (approval pending): group=%s", group_id)
+            return False
 
         user_name = push_name or payload.get('name') or sender
 
@@ -922,6 +954,12 @@ class WhatsAppChannel(BaseChannel):
                          agent_id, sender, text[:80] if text else "")
             return
 
+        # Allowlist check — groups use group ID, DMs use individual user ID.
+        # Runs before the mention gate so that any activity in an unapproved
+        # group surfaces a pending approval request in the channel modal.
+        if not self._gate_sender(sender, is_group, jid, text, push_name, payload):
+            return
+
         # In groups, only respond when @mentioned or when user replies to a bot message
         if is_group and not bot_mentioned and not quoted_is_bot:
             _logger.info("WhatsApp group message dropped (not mentioned): sender=%s text=%s", sender, text[:80] if text else "")
@@ -930,10 +968,6 @@ class WhatsAppChannel(BaseChannel):
         # Strip the @mention tag from the message text
         if bot_mentioned and text:
             text = re.sub(r'@\d+', '', text).strip()
-
-        # Allowlist check — groups use group ID, DMs use individual user ID
-        if not self._gate_sender(sender, is_group, jid, text, push_name, payload):
-            return
 
         image_url = None
         video_url = None
