@@ -273,26 +273,24 @@ function loadModels() {
     .then(response => response.json())
     .then(data => {
         const models = data.models || [];
-        selector.innerHTML = '';
         if (models.length === 0) {
             selector.innerHTML = '<option value="" disabled selected>No models found</option>';
             return;
         }
-        models.forEach(model => {
-            const option = document.createElement('option');
-            option.value = model.model_name;
-            option.textContent = model.name;
-            selector.appendChild(option);
-        });
-        
         // Try to restore saved selection
         const savedModel = localStorage.getItem('eval_selected_model');
-        if (savedModel && Array.from(selector.options).some(opt => opt.value === savedModel)) {
-            selector.value = savedModel;
-        } else if (configModel) {
-            const configOpt = Array.from(selector.options).find(opt => opt.value === configModel);
-            if (configOpt) selector.value = configModel;
+        let selected = null;
+        if (savedModel && models.some(m => m.model_name === savedModel)) {
+            selected = savedModel;
+        } else if (configModel && models.some(m => m.model_name === configModel)) {
+            selected = configModel;
         }
+        ui.populateModelSelect(selector, models, {
+            valueFor: m => m.model_name,
+            labelFor: m => m.name,
+            emptyLabel: null,
+            selectedValue: selected
+        });
     })
     .catch(err => {
         console.error('Failed to load models:', err);
