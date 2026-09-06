@@ -169,20 +169,6 @@ def start_server(port=None, host=None, debug=None, daemon=False):
     # For daemon mode the child process (app.py) will acquire its own lock.
     pid_lock_fd = _acquire_pid_lock()
 
-    # Check if already running (legacy PID check — redundant with flock but kept
-    # for backward compat and a friendlier error message).
-    existing_pid = _get_pid()
-    if existing_pid and _is_running(existing_pid):
-        print(f"Server is already running (PID: {existing_pid})")
-        try:
-            import config
-
-            print(f"Port: {port or config.PORT}")
-        except Exception:
-            pass
-        os.close(pid_lock_fd)
-        return
-
     # Import config to get defaults
     try:
         import config
