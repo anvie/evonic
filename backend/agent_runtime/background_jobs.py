@@ -26,6 +26,7 @@ import logging
 import threading
 import time
 import re
+import shlex
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -121,6 +122,35 @@ class BackgroundJobRegistry:
     def list_for_session(self, session_id: str) -> List[BackgroundJob]:
         with self._guard:
             return [j for j in self._jobs.values() if j.session_id == session_id]
+
+    def stop_for_session(self, session_id: str, runner) -> List[str]:
+        """Stop detached jobs owned by one session via its execution backend."""
+        jobs = self.running_for_session(session_id)
+        if not jobs:
+            return []
+        commands = []
+        for job in jobs:
+            if job.kind == "tmux" and job.session_name:
+                commands.append(f"tmux kill-session -t {shlex.quote(job.session_name)} 2>/dev/null || true")
+            elif job.kind == "screen" and job.session_name:
+                commands.append(f"screen -S {shlex.quote(job.session_name)} -X quit 2>/dev/null || true")
+            elif job.pid_file:
+                pid = shlex.quote(job.pid_file)
+                commands.append(
+                    f"if [ -s {pid} ]; then p=$(cat {pid}); kill -- -$p 2>/dev/null || kill $p 2>/dev/null || true; "
+                    f"sleep 0.1; kill -9 -- -$p 2>/dev/null || kill -9 $p 2>/dev/null || true; fi")
+            elif job.pgrep_pattern:
+                commands.append(f"pkill -f -- {shlex.quote(job.pgrep_pattern)} 2>/dev/null || true")
+        try:
+            result = runner("\n".join(commands))
+        except Exception:
+            _logger.exception("[bgjob] failed stopping session %s", session_id)
+            return []
+        if result and result.get("error"):
+            return []
+        for job in jobs:
+            self.mark_finished(job.job_id, "stopped", None)
+        return [job.job_id for job in jobs]
 
 
 # Singleton

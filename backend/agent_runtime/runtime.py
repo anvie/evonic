@@ -636,10 +636,25 @@ class AgentRuntime:
         #  being registered once but workers being tracked per-instance)
         # We don't hold a class-level workers list here — instances call
         # _join_workers() themselves. The executor is shared, so we shut it down.
+        _logger.info("Stopping detached background jobs...")
+        try:
+            from backend.agent_runtime.background_jobs import background_jobs
+            from backend.tools.lib.exec_backend import registry
+            for job in list(background_jobs._jobs.values()):
+                if job.status != "running":
+                    continue
+                backend = registry.get_backend(job.session_id, {})
+                background_jobs.stop_for_session(
+                    job.session_id,
+                    lambda script, backend=backend: backend.run_bash(script, 15, {}),
+                )
+        except Exception:
+            _logger.exception("Failed to stop detached background jobs")
+
         _logger.info("Shutting down background executor...")
         cls._bg_executor.shutdown(wait=False, cancel_futures=True)
 
-        # Cancel the cleanup timer (already done above, but defensive)
+        # Cancel the cleanup timer (already done above, but defensive:)
         _logger.info("Graceful shutdown complete.")
 
     @classmethod
@@ -1039,6 +1054,18 @@ class AgentRuntime:
         # Kill any running tool subprocess for this session
         from backend.tools.lib.process_tracker import process_tracker
         process_tracker.kill(session_id)
+
+        # Also stop detached tmux/screen/nohup jobs owned by this session.
+        try:
+            from backend.agent_runtime.background_jobs import background_jobs
+            from backend.tools.lib.exec_backend import registry
+            backend = registry.get_backend(session_id, {})
+            background_jobs.stop_for_session(
+                session_id,
+                lambda script: backend.run_bash(script, 15, {}),
+            )
+        except Exception:
+            _logger.exception("Failed to stop detached background jobs for %s", session_id)
 
     def is_stop_requested(self, session_id: str) -> bool:
         """True if /stop was signalled for this session and not yet consumed.
