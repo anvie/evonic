@@ -95,6 +95,11 @@ function _renderAgentStateCore(containerIds, data) {
     var empty = '<p class="text-sm text-gray-400 dark:text-gray-500 italic">No state yet.</p>';
     var hasAnyState = data.focus ||
         data.active_model ||
+        data.mode ||
+        data.plan_file ||
+        (Array.isArray(data.tasks) && data.tasks.length > 0) ||
+        (Array.isArray(data.loaded_skills) && data.loaded_skills.length > 0) ||
+        (data.context_usage && data.context_usage.used > 0) ||
         (data.cmp && data.cmp.paths && data.cmp.paths.length > 0) ||
         (data.states && Object.keys(data.states).length > 0);
     if (!hasAnyState) {
@@ -127,6 +132,9 @@ function _renderAgentStateCore(containerIds, data) {
     }
 
     // CMP session-path map badge (clickable — opens the graph modal)
+    if (data.cmp_error) {
+        cards += '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 ml-1" title="' + esc(data.cmp_error) + '">CMP unavailable</span>';
+    }
     if (data.cmp && data.cmp.paths && data.cmp.paths.length > 0) {
         _cmpMapData = data.cmp;
         var activePath = null;
@@ -146,6 +154,9 @@ function _renderAgentStateCore(containerIds, data) {
 
     // Status cards row
     html += '<div class="flex flex-wrap gap-1">' + cards + '</div>';
+    if (data.cmp_error) {
+        html += '<p class="text-xs text-amber-600 dark:text-amber-400">' + esc(data.cmp_error) + '</p>';
+    }
 
     // Plugin states section
     if (data.states && Object.keys(data.states).length > 0) {

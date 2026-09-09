@@ -1985,7 +1985,17 @@ async function loadAgentState() {
     try {
         const url = `/api/agents/${currentAgentId}/chat/state?user_id=${encodeURIComponent(userId)}&session_id=${encodeURIComponent(currentSessionId || '')}`;
         const response = await fetch(url);
-        if (!response.ok) return;
+        if (!response.ok) {
+            console.warn('[Sessions] Session state request failed:', response.status, currentAgentId, currentSessionId);
+            if (myReq === _agentStateReq) {
+                const message = `Unable to load session state (HTTP ${response.status}). Please refresh or try again.`;
+                ['agent-state-content', 'mobile-agent-state-content'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.innerHTML = `<p class="text-sm text-amber-600 dark:text-amber-400 italic">${message}</p>`;
+                });
+            }
+            return;
+        }
         const data = await response.json();
         // A fresher state:changed snapshot or newer fetch landed while this
         // response was in flight — don't overwrite it with stale data.
@@ -1999,7 +2009,16 @@ async function loadAgentState() {
             currentSessionId,
             _sessionStateData
         );
-    } catch(e) { /* ignore */ }
+    } catch(e) {
+        console.error('[Sessions] Session state request failed:', e, currentAgentId, currentSessionId);
+        if (myReq === _agentStateReq) {
+            const message = 'Unable to load session state. Please refresh or try again.';
+            ['agent-state-content', 'mobile-agent-state-content'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = `<p class="text-sm text-amber-600 dark:text-amber-400 italic">${message}</p>`;
+            });
+        }
+    }
 }
 
 function clearAgentStatePanel() {
