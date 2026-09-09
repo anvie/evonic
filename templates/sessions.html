@@ -443,7 +443,7 @@ html.dark #plan-modal .recap-prose pre { background: #1e293b; }
 </div>
 
 <script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=64"></script>
-<script src="{{ url_for('static', filename='js/agent-state.js') }}?v=6"></script>
+<script src="{{ url_for('static', filename='js/agent-state.js') }}?v=7"></script>
 <script>
 let allSessions = [];
 let currentSessionId = null;
@@ -554,6 +554,10 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         chatUI.appendTimelineEntry(_sseThinkingId, {type: 'tool_result', tool: data.tool, result: data.result, error: data.error});
     } else if (evtName === 'state:changed') {
         document.dispatchEvent(new CustomEvent('evonic:state-changed', {detail: data}));
+        document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', {detail: data}));
+    } else if (evtName === 'state_changed') {
+        // Context-usage persistence emits this underscore-form event. It has no
+        // snapshot, so refresh the session-scoped state from the API.
         document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', {detail: data}));
     } else if (evtName === 'response_chunk') {
         if (data.content && _sseThinkingId) {
@@ -1052,7 +1056,7 @@ function connectSessionStream(sessionId, afterSeq = 0) {
         dispatch(data);
     }
 
-    for (const evtName of ['agent_busy_changed', 'turn_queued', 'turn_begin', 'thinking', 'tool_call_started', 'tool_executed', 'state:changed', 'response_chunk', 'turn_split', 'whatsapp_restriction_warning', 'session_clear', 'approval_required', 'approval_resolved']) {
+    for (const evtName of ['agent_busy_changed', 'turn_queued', 'turn_begin', 'thinking', 'tool_call_started', 'tool_executed', 'state:changed', 'state_changed', 'response_chunk', 'turn_split', 'whatsapp_restriction_warning', 'session_clear', 'approval_required', 'approval_resolved']) {
         es.addEventListener(evtName, e => {
             if (currentSessionId !== sessionId) return;
             const data = JSON.parse(e.data);
