@@ -73,11 +73,10 @@ function markDirty() {
 async function loadEvaluationModel(selectedId) {
     const selector = document.getElementById("eval-model-selector");
     const models = await fetch("/api/models").then(response => response.json());
-    (models.models || []).forEach(model => {
-        const option = document.createElement("option");
-        option.value = model.id; option.textContent = model.name; selector.appendChild(option);
+    ui.populateModelSelect(selector, models.models || [], {
+        labelFor: m => m.name,
+        selectedValue: selectedId || ""
     });
-    selector.value = selectedId;
 }
 
 async function saveEvaluationModel(modelId) {
