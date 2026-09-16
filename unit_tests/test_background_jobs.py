@@ -96,6 +96,22 @@ def test_other_sessions_are_excluded():
     assert build_context_block('sess-bg', 'agent-1') == ''
 
 
+def test_stop_for_session_uses_only_owned_jobs():
+    owned = _job(command='sleep 100')
+    other = _job(session_id='other', command='sleep 200')
+    calls = []
+
+    def runner(script):
+        calls.append(script)
+        return {'exit_code': 0}
+
+    stopped = background_jobs.stop_for_session('sess-bg', runner)
+    assert stopped == [owned.job_id]
+    assert owned.status == 'stopped'
+    assert other.status == 'running'
+    assert 'sleep 100' not in calls[0]
+
+
 def test_monitored_jobs_are_flagged(monkeypatch):
     from backend.agent_runtime import monitors
     j = _job()

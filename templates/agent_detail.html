@@ -6386,21 +6386,9 @@ async function loadAgentModelSelector() {
 
         const sel = document.getElementById('agent-model-select');
         const fbSel = document.getElementById('agent-fallback-model-select');
-        (modelsData.models || []).forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m.id;
-            opt.textContent = `${m.name} (${m.model_name})`;
-            if (m.id === currentModelId) opt.selected = true;
-            sel.appendChild(opt);
-
-            const fbOpt = document.createElement('option');
-            fbOpt.value = m.id;
-            fbOpt.textContent = `${m.name} (${m.model_name})`;
-            if (m.id === currentFallbackModelId) fbOpt.selected = true;
-            fbSel.appendChild(fbOpt);
-        });
-        if (!currentModelId) sel.value = '';
-        if (!currentFallbackModelId) fbSel.value = '';
+        const models = modelsData.models || [];
+        ui.populateModelSelect(sel, models, { selectedValue: currentModelId });
+        ui.populateModelSelect(fbSel, models, { selectedValue: currentFallbackModelId });
     } catch (err) {
         console.error('[ModelSelector] Failed to load:', err);
     }

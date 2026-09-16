@@ -2050,7 +2050,10 @@ def api_chat_agent_state(agent_id):
                     'paths': _path_cards,
                 }
             except Exception:
-                pass
+                logger.exception(
+                    'Unable to build CMP state payload for agent_id=%s session_id=%s',
+                    agent_id, session_id)
+                payload['cmp_error'] = 'CMP details are temporarily unavailable.'
     elif _is_explorer:
         # Minimal state, but still surface the explorer's model badge.
         payload = {
