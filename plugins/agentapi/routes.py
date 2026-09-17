@@ -386,14 +386,21 @@ def create_blueprint():
         agent_thread.start()
 
         def generate():
-            content_sent = False
+            # Send an immediate SSE comment so proxies and clients establish
+            # the stream before the first model token is available.
+            yield ": open\n\n"
+            deadline = time.monotonic() + 600
             try:
-                while True:
+                while time.monotonic() < deadline:
                     try:
-                        item = q.get(timeout=120)
+                        item = q.get(timeout=10)
                     except queue.Empty:
-                        # Timeout — agent took too long, send a keepalive?
-                        break
+                        # Comments are valid SSE frames and do not change the
+                        # OpenAI-compatible payload stream.
+                        yield ": keepalive\n\n"
+                        if not agent_thread.is_alive() and q.empty():
+                            break
+                        continue
 
                     if item[0] is _SENTINEL:
                         break
@@ -412,7 +419,6 @@ def create_blueprint():
                             }],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
-                        content_sent = True
 
                 # Send final [DONE] chunk
                 final_chunk = {

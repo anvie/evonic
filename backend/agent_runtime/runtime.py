@@ -2167,21 +2167,18 @@ class AgentRuntime:
                 if chan_instr:
                     messages.insert(1, {"role": "system", "content": chan_instr})
 
-        # Inject channel user identity so the agent knows who it's speaking with.
-        # This is authoritative for the session and overrides any stale remembered name.
-        # Skip if the identity was already injected (e.g. via prefetcher) to avoid
-        # piling up duplicates across turns.
-        if ctx.channel_id and not ctx.external_user_id.startswith("__agent__"):
-            _already_injected = any(
-                "## Current User" in (m.get("content") or "")
-                for m in messages[:6]
+        # Inject trusted channel sender identity for eligible human-facing sessions.
+        # Skip if already present (e.g. via prefetcher) to avoid duplicate blocks.
+        _already_injected = any(
+            "## Current User" in (m.get("content") or "")
+            for m in messages[:6]
+        )
+        if not _already_injected:
+            user_id_ctx = _ctx.build_user_identity_context(
+                ctx.channel_id, ctx.external_user_id,
             )
-            if not _already_injected:
-                user_id_ctx = _ctx.build_user_identity_context(
-                    ctx.channel_id, ctx.external_user_id,
-                )
-                if user_id_ctx:
-                    messages.insert(1, {"role": "system", "content": user_id_ctx})
+            if user_id_ctx:
+                messages.insert(1, {"role": "system", "content": user_id_ctx})
 
         # Build tool definitions (use prefetched if available)
         if _used_prefetch:

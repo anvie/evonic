@@ -311,14 +311,13 @@ class TurnPrefetcher:
                     if chan_instr:
                         fresh_messages.insert(1, {"role": "system", "content": chan_instr})
 
-            # Inject channel user identity (authoritative name for this session).
-            # Skip if already present in the message list (from JSONL history) to
-            # avoid duplicates when rebuilding from scratch.
+            # Inject trusted channel sender identity.  Skip if already present in
+            # the message list (from JSONL history) to avoid duplicate blocks.
             _already_injected = any(
                 "## Current User" in (m.get("content") or "")
                 for m in fresh_messages[:6]
             )
-            if ctx.channel_id and not ctx.external_user_id.startswith("__agent__") and not _already_injected:
+            if not _already_injected:
                 user_id_ctx = _ctx.build_user_identity_context(
                     ctx.channel_id, ctx.external_user_id,
                 )
