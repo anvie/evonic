@@ -1,0 +1,33 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "generate_image",
+      "description": "Generate validated image artifacts through an enabled Image Generator provider. Specify provider to override the configured default.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Text description of the image to generate."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Optional provider ID. If omitted, the configured default provider is used."
+          },
+          "size": {
+            "type": "string",
+            "description": "Optional image size, such as 1024x1024. Supported values depend on the selected provider."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Number of images to generate. Subject to the configured per-request limit."
+          }
+        },
+        "required": ["prompt"]
+      }
+    }
+  }
+]

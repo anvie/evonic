@@ -1,0 +1,48 @@
+{
+  "id": "image-generator",
+  "name": "Image Generator",
+  "version": "1.0.0",
+  "description": "Generates image artifacts through configured cloud or approved local providers. Provider selection is explicit or uses the configured default.",
+  "brief": "Use the `image-generator` skill only after an administrator enables it and configures an approved provider. The `generate_image` tool accepts an explicit provider or uses the configured default provider.",
+  "author": "Evonic",
+  "tools_file": "tools.json",
+  "lazy_tools": true,
+  "default_enabled": false,
+  "variables": [
+    {
+      "name": "default_provider",
+      "label": "Default Provider",
+      "type": "string",
+      "default": "",
+      "description": "Provider ID used when generate_image does not specify a provider. It must identify an enabled provider from the provider registry."
+    },
+    {
+      "name": "allowed_providers",
+      "label": "Allowed Providers",
+      "type": "string",
+      "default": "mock",
+      "description": "Comma-separated provider IDs permitted for this skill. Keep this allowlist limited to reviewed cloud or local providers."
+    },
+    {
+      "name": "allow_local_providers",
+      "label": "Allow Approved Local Providers",
+      "type": "boolean",
+      "default": false,
+      "description": "When enabled, permits providers declared as local only when they also appear in Allowed Providers."
+    },
+    {
+      "name": "max_images_per_request",
+      "label": "Maximum Images Per Request",
+      "type": "number",
+      "default": 1,
+      "description": "Upper limit for images requested in a single generation call."
+    },
+    {
+      "name": "provider_api_key",
+      "label": "Provider API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Optional provider credential. It is reserved for future production adapters and is never returned in tool results."
+    }
+  ]
+}
