@@ -74,6 +74,8 @@ class ProviderCapabilities:
 
     supported_sizes: Sequence[str]
     max_images_per_request: int = 1
+    supported_output_formats: Sequence[str] = ("png",)
+    supported_models: Sequence[str] = ()
     supports_negative_prompt: bool = False
     supports_seed: bool = False
     supports_style: bool = False
@@ -90,6 +92,8 @@ class ImageGenerationRequest:
     count: int = 1
     negative_prompt: Optional[str] = None
     seed: Optional[int] = None
+    model: Optional[str] = None
+    output_format: Optional[str] = None
     style: Optional[str] = None
     transparent_background: bool = False
     reference_image_ids: Sequence[str] = ()

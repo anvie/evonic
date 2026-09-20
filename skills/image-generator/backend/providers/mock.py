@@ -17,7 +17,7 @@ from .base import (
 # A tiny, valid, transparent 1x1 PNG.  Its stable bytes make tests deterministic.
 _PNG_1X1 = bytes.fromhex(
     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
-    "0000000d49444154789c6360f8cff01f00050001ff89993d1d0000000049454e44ae426082"
+    "0000000d49444154789c6360606060000000050001a5f645400000000049454e44ae426082"
 )
 
 
@@ -30,6 +30,8 @@ class DeterministicMockProvider(ImageProvider):
     capabilities = ProviderCapabilities(
         supported_sizes=("256x256", "512x512", "1024x1024"),
         max_images_per_request=4,
+        supported_output_formats=("png",),
+        supported_models=("deterministic-mock-v1",),
         supports_negative_prompt=True,
         supports_seed=True,
         supports_style=True,

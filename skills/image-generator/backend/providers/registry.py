@@ -71,6 +71,10 @@ class ImageProviderRegistry:
             raise ImageGenerationError(SafeErrorCode.INVALID_REQUEST, "Requested image count is not supported by the selected provider.")
         if request.size not in provider.capabilities.supported_sizes:
             raise ImageGenerationError(SafeErrorCode.INVALID_REQUEST, "Requested image size is not supported by the selected provider.")
+        if request.output_format and request.output_format not in provider.capabilities.supported_output_formats:
+            raise ImageGenerationError(SafeErrorCode.INVALID_REQUEST, "Requested output format is not supported by the selected provider.")
+        if request.model and provider.capabilities.supported_models and request.model not in provider.capabilities.supported_models:
+            raise ImageGenerationError(SafeErrorCode.INVALID_REQUEST, "Requested model is not supported by the selected provider.")
         if request.negative_prompt and not provider.capabilities.supports_negative_prompt:
             raise ImageGenerationError(SafeErrorCode.INVALID_REQUEST, "The selected provider does not support negative prompts.")
         if request.seed is not None and not provider.capabilities.supports_seed:
