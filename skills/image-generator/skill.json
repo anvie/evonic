@@ -31,6 +31,34 @@
       "description": "When enabled, permits providers declared as local only when they also appear in Allowed Providers."
     },
     {
+      "name": "automatic1111_endpoint",
+      "label": "AUTOMATIC1111 Endpoint",
+      "type": "string",
+      "default": "",
+      "description": "Administrator-approved base URL for the local AUTOMATIC1111-compatible API. Agents cannot override it."
+    },
+    {
+      "name": "automatic1111_trusted_hosts",
+      "label": "AUTOMATIC1111 Trusted Hosts",
+      "type": "string",
+      "default": "",
+      "description": "Comma-separated exact endpoint hostnames approved by an administrator. Required when enabling the local provider."
+    },
+    {
+      "name": "automatic1111_timeout_seconds",
+      "label": "AUTOMATIC1111 Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Bounded request timeout for the local provider, from 1 through 120 seconds."
+    },
+    {
+      "name": "automatic1111_steps",
+      "label": "AUTOMATIC1111 Default Steps",
+      "type": "number",
+      "default": 20,
+      "description": "Administrator-controlled fixed generation step count for the local provider, from 1 through 100."
+    },
+    {
       "name": "max_images_per_request",
       "label": "Maximum Images Per Request",
       "type": "number",

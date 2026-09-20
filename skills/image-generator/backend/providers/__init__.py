@@ -10,10 +10,12 @@ from .base import (
     ProviderConfigField,
     SafeErrorCode,
 )
+from .automatic1111 import Automatic1111Provider
 from .mock import DeterministicMockProvider
 from .registry import ImageProviderRegistry, provider_registry
 
 __all__ = [
+    "Automatic1111Provider",
     "DeterministicMockProvider",
     "ImageArtifact",
     "ImageGenerationError",

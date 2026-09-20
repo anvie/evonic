@@ -44,8 +44,10 @@ def test_skill_manifest_registers_disabled_lazy_generation_tool():
     assert variables["default_provider"]["default"] == ""
     assert variables["allowed_providers"]["default"] == "mock"
     assert variables["allow_local_providers"]["type"] == "boolean"
+    assert variables["automatic1111_endpoint"]["default"] == ""
+    assert variables["automatic1111_trusted_hosts"]["default"] == ""
     assert variables["provider_api_key"]["type"] == "secret"
-    assert [provider.id for provider in provider_registry.list()] == ["mock"]
+    assert [provider.id for provider in provider_registry.list()] == ["automatic1111", "mock"]
 
 
 def test_registry_resolves_explicit_and_default_provider():

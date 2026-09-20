@@ -87,10 +87,12 @@ class ImageProviderRegistry:
             raise ImageGenerationError(SafeErrorCode.INVALID_REQUEST, "The selected provider does not support reference images.")
 
 
-# The mock adapter is intentionally the only built-in provider. It is offline,
-# deterministic, and disabled at the skill feature gate by default. Production
-# cloud or approved-local adapters must be explicitly added in future work.
+# Built-in providers remain disabled until an administrator places their ID in
+# ``allowed_providers``. The local adapter additionally requires the global local
+# provider opt-in and an exact trusted-host configuration.
+from .automatic1111 import Automatic1111Provider
 from .mock import DeterministicMockProvider
 
 provider_registry = ImageProviderRegistry()
+provider_registry.register(Automatic1111Provider())
 provider_registry.register(DeterministicMockProvider())
