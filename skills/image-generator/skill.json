@@ -59,6 +59,28 @@
       "description": "Administrator-controlled fixed generation step count for the local provider, from 1 through 100."
     },
     {
+      "name": "google_gemini_api_key",
+      "label": "Google Gemini API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Write-only Google Generative Language API credential used only by the approved Google Gemini provider."
+    },
+    {
+      "name": "google_gemini_model",
+      "label": "Google Gemini Model",
+      "type": "string",
+      "default": "gemini-2.5-flash-image",
+      "choices": ["gemini-2.5-flash-image"],
+      "description": "Approved Google image-generation model."
+    },
+    {
+      "name": "google_gemini_timeout_seconds",
+      "label": "Google Gemini Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Bounded request timeout for Google Gemini, from 1 through 120 seconds."
+    },
+    {
       "name": "max_images_per_request",
       "label": "Maximum Images Per Request",
       "type": "number",

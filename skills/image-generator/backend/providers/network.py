@@ -61,7 +61,8 @@ def _trusted_hosts(value: Any) -> tuple[str, ...]:
     return tuple(sorted({host.strip().lower().rstrip(".") for host in value.split(",") if host.strip()}))
 
 
-def _timeout(value: Any) -> int:
+def bounded_timeout(value: Any) -> int:
+    """Validate a provider timeout against the shared outbound-request bound."""
     try:
         timeout = int(value if value is not None else _DEFAULT_TIMEOUT_SECONDS)
     except (TypeError, ValueError) as exc:
@@ -108,7 +109,7 @@ def configured_endpoint(config: Mapping[str, Any], prefix: str, *, local: bool) 
     normalized_path = parsed.path.rstrip("/")
     return SafeEndpoint(
         base_url=f"{parsed.scheme}://{parsed.netloc}{normalized_path}",
-        timeout_seconds=_timeout(config.get(f"{prefix}_timeout_seconds")),
+        timeout_seconds=bounded_timeout(config.get(f"{prefix}_timeout_seconds")),
         allow_private_network=allow_private,
         trusted_hosts=trusted_hosts,
     )
@@ -158,12 +159,26 @@ class BoundedHttpClient:
             raise ImageGenerationError(SafeErrorCode.GENERATION_FAILED, "The provider response exceeded the permitted size.")
         return data, content_type
 
-    def json(self, method: str, path: str, payload: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+    def json(
+        self,
+        method: str,
+        path: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> Mapping[str, Any]:
+        """Send JSON with optional adapter-controlled request headers.
+
+        Provider adapters supply authentication headers from administrator-only
+        configuration. Agent tool arguments never reach this interface.
+        """
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8") if payload is not None else None
-        headers = {"Accept": "application/json"}
+        request_headers = {"Accept": "application/json"}
         if body is not None:
-            headers["Content-Type"] = "application/json"
-        data, _ = self.request(method, path, body=body, headers=headers)
+            request_headers["Content-Type"] = "application/json"
+        if headers:
+            request_headers.update(headers)
+        data, _ = self.request(method, path, body=body, headers=request_headers)
         try:
             decoded = json.loads(data)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
