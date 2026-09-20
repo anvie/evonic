@@ -24,6 +24,8 @@ class SafeErrorCode(str, Enum):
     PERMISSION_DENIED = "permission_denied"
     CONTENT_REJECTED = "content_rejected"
     RATE_LIMITED = "rate_limited"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    CANCELLED = "cancelled"
     GENERATION_FAILED = "generation_failed"
     ARTIFACT_INVALID = "artifact_invalid"
 

@@ -20,7 +20,7 @@
       "name": "allowed_providers",
       "label": "Allowed Providers",
       "type": "string",
-      "default": "mock",
+      "default": "",
       "description": "Comma-separated provider IDs permitted for this skill. Keep this allowlist limited to reviewed cloud or local providers."
     },
     {
@@ -85,7 +85,35 @@
       "label": "Maximum Images Per Request",
       "type": "number",
       "default": 1,
-      "description": "Upper limit for images requested in a single generation call."
+      "description": "Upper limit for images requested in a single generation call (1 through 10)."
+    },
+    {
+      "name": "requests_per_minute",
+      "label": "Requests Per Minute Per Agent",
+      "type": "number",
+      "default": 6,
+      "description": "Per-agent rolling request cap. Set from 1 through 60 for a controlled pilot."
+    },
+    {
+      "name": "max_concurrent_requests",
+      "label": "Maximum Concurrent Requests Per Agent",
+      "type": "number",
+      "default": 1,
+      "description": "Per-agent in-flight generation cap (1 through 4)."
+    },
+    {
+      "name": "images_per_day",
+      "label": "Images Per Day Per Agent",
+      "type": "number",
+      "default": 20,
+      "description": "Per-agent UTC rolling daily image quota. Set to 0 only to disable this skill through quota."
+    },
+    {
+      "name": "mock_enabled",
+      "label": "Enable Deterministic Mock Provider",
+      "type": "boolean",
+      "default": false,
+      "description": "Development and test only. The mock provider remains unavailable unless this is explicitly enabled."
     },
     {
       "name": "provider_api_key",

@@ -46,6 +46,7 @@ def image_tool(monkeypatch, tmp_path):
             "default_provider": "mock",
             "allowed_providers": "mock",
             "allow_local_providers": True,
+            "mock_enabled": True,
             "max_images_per_request": 2,
         },
     )
@@ -89,6 +90,7 @@ def test_generate_image_uses_no_implicit_provider_fallback(image_tool, monkeypat
             "default_provider": "",
             "allowed_providers": "mock",
             "allow_local_providers": True,
+            "mock_enabled": True,
             "max_images_per_request": 1,
         },
     )
@@ -123,6 +125,7 @@ def test_generate_image_enforces_allowlist_and_capabilities(image_tool, monkeypa
             "default_provider": "mock",
             "allowed_providers": "mock",
             "allow_local_providers": True,
+            "mock_enabled": True,
             "max_images_per_request": 1,
         },
     )

@@ -42,8 +42,12 @@ def test_skill_manifest_registers_disabled_lazy_generation_tool():
 
     variables = {variable["name"]: variable for variable in manifest["variables"]}
     assert variables["default_provider"]["default"] == ""
-    assert variables["allowed_providers"]["default"] == "mock"
+    assert variables["allowed_providers"]["default"] == ""
     assert variables["allow_local_providers"]["type"] == "boolean"
+    assert variables["mock_enabled"]["default"] is False
+    assert variables["requests_per_minute"]["default"] == 6
+    assert variables["max_concurrent_requests"]["default"] == 1
+    assert variables["images_per_day"]["default"] == 20
     assert variables["automatic1111_endpoint"]["default"] == ""
     assert variables["automatic1111_trusted_hosts"]["default"] == ""
     assert variables["provider_api_key"]["type"] == "secret"
