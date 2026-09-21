@@ -19,12 +19,17 @@ def test_image_generator_declares_provider_first_settings_metadata():
     assert {provider["id"] for provider in settings_ui["provider_selector"]["providers"]} == {
         "google-gemini",
         "automatic1111",
+        "comfyui",
         "mock",
     }
 
     variables = {variable["name"]: variable for variable in manifest["variables"]}
     assert variables["google_gemini_api_key"]["provider"] == "google-gemini"
     assert variables["automatic1111_endpoint"]["provider"] == "automatic1111"
+    assert variables["comfyui_endpoint"]["provider"] == "comfyui"
+    assert variables["comfyui_workflow_template"]["default"] == "default"
+    assert variables["comfyui_timeout_seconds"]["advanced"] is True
+    assert variables["comfyui_polling_interval_seconds"]["advanced"] is True
     assert variables["default_provider"]["section"] == "global"
     assert variables["automatic1111_timeout_seconds"]["advanced"] is True
 

@@ -26,6 +26,10 @@
           "label": "AUTOMATIC1111"
         },
         {
+          "value": "comfyui",
+          "label": "ComfyUI"
+        },
+        {
           "value": "mock",
           "label": "Deterministic Mock"
         }
@@ -81,6 +85,49 @@
       "default": 20,
       "description": "Administrator-controlled fixed generation step count for the local provider, from 1 through 100.",
       "provider": "automatic1111",
+      "advanced": true
+    },
+    {
+      "name": "comfyui_endpoint",
+      "label": "ComfyUI Endpoint",
+      "type": "string",
+      "default": "",
+      "description": "Base URL for the approved local ComfyUI API.",
+      "provider": "comfyui"
+    },
+    {
+      "name": "comfyui_workflow_template",
+      "label": "ComfyUI Workflow Template",
+      "type": "string",
+      "default": "default",
+      "description": "Name of the administrator-approved workflow template used for image generation.",
+      "provider": "comfyui"
+    },
+    {
+      "name": "comfyui_timeout_seconds",
+      "label": "ComfyUI Timeout (seconds)",
+      "type": "number",
+      "default": 120,
+      "description": "Bounded request timeout for ComfyUI, from 1 through 300 seconds.",
+      "provider": "comfyui",
+      "advanced": true
+    },
+    {
+      "name": "comfyui_polling_interval_seconds",
+      "label": "ComfyUI Polling Interval (seconds)",
+      "type": "number",
+      "default": 2,
+      "description": "Interval used to check asynchronous ComfyUI jobs, from 1 through 10 seconds.",
+      "provider": "comfyui",
+      "advanced": true
+    },
+    {
+      "name": "comfyui_api_key",
+      "label": "ComfyUI API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Optional credential for ComfyUI deployments that require API authentication.",
+      "provider": "comfyui",
       "advanced": true
     },
     {
@@ -180,6 +227,11 @@
           "id": "automatic1111",
           "label": "AUTOMATIC1111",
           "description": "Approved local AUTOMATIC1111-compatible image generation API."
+        },
+        {
+          "id": "comfyui",
+          "label": "ComfyUI",
+          "description": "Local ComfyUI image generation using an administrator-approved workflow template."
         },
         {
           "id": "mock",
