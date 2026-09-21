@@ -19,10 +19,11 @@ import config
 from models.db import db
 
 # ---------------------------------------------------------------------------
-# Platform default timezone
+# Platform defaults
 # ---------------------------------------------------------------------------
 
 DEFAULT_PLATFORM_TIMEZONE = "UTC"
+DEFAULT_SUPER_AGENT_NAME = "Super Agent"
 
 # ---------------------------------------------------------------------------
 # Provider defaults
@@ -416,13 +417,13 @@ def run_setup(
     if language not in LANGUAGE_PRESETS:
         language = "english"
 
+    agent_name = (agent_name or "").strip() or DEFAULT_SUPER_AGENT_NAME
+
     # Derive agent ID if not provided
     if not agent_id:
         agent_id = _derive_agent_id(agent_name)
 
     # Validate
-    if not agent_name.strip():
-        return {"error": "Agent name is required"}
     if not re.match(r"^[a-z0-9_]+$", agent_id):
         return {
             "error": "Agent ID must be lowercase alphanumeric and underscores only (snake_case)"

@@ -12,7 +12,8 @@ from backend.plugin_manager import plugin_manager
 from backend.skills_manager import skills_manager
 from backend.skillsets import list_skillsets, count_skillsets
 from backend.setup import (run_setup, test_connection, PROVIDER_DEFAULTS,
-                            LANGUAGE_PRESETS, check_docker_available)
+                            LANGUAGE_PRESETS, DEFAULT_SUPER_AGENT_NAME,
+                            check_docker_available)
 import config
 
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -83,12 +84,10 @@ def api_setup():
 
     # Legacy payload (backward compat): {id, name, description, system_prompt, model}
     from routes.agents import _ensure_kb_dir, _write_system_prompt
-    agent_id = data.get('id', '').strip().lower()
-    name = data.get('name', '').strip()
-    if not agent_id or not re.match(r'^[a-z0-9_]+$', agent_id):
+    name = (data.get('name') or '').strip() or DEFAULT_SUPER_AGENT_NAME
+    agent_id = (data.get('id') or '').strip().lower() or 'super_agent'
+    if not re.match(r'^[a-z0-9_]+$', agent_id):
         return jsonify({'error': 'Invalid ID. Use only lowercase alphanumeric characters and underscores (snake_case).'}), 400
-    if not name:
-        return jsonify({'error': 'Name is required.'}), 400
     if db.get_agent(agent_id):
         return jsonify({'error': 'Agent ID already exists.'}), 400
     sandbox_enabled = data.get('sandbox_enabled', check_docker_available().get('available', False))
