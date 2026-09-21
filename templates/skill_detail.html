@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from 'partials/toggle.html' import toggle_widget %}
 {% block content %}
-<div class="p-4 md:p-6">
+<div class="px-3 py-4 md:p-6">
     <!-- Header -->
     <div class="flex flex-wrap justify-between items-center gap-2 mb-6">
         <div class="flex flex-wrap items-center gap-2">
@@ -10,7 +10,7 @@
             <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100" id="skill-title">Loading...</h2>
             <span id="skill-version" class="text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded font-mono"></span>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 w-full justify-end sm:w-auto">
             <!-- Actions Dropdown Menu -->
             <div class="relative" id="skill-actions-dropdown">
                 <button id="skill-actions-btn" onclick="toggleActionsMenu()" aria-expanded="false" aria-haspopup="true"
@@ -19,7 +19,7 @@
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/></svg>
                     Actions
                 </button>
-                <div id="skill-actions-menu" class="hidden absolute right-0 mt-1 w-52 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50 py-1" role="menu" aria-labelledby="skill-actions-btn">
+                <div id="skill-actions-menu" class="hidden absolute left-0 mt-1 w-52 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50 py-1" role="menu" aria-labelledby="skill-actions-btn">
                     <button onclick="toggleEnabledFromMenu(); closeActionsMenu()" id="menu-toggle-skill"
                             class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2.5 transition-colors"
                             role="menuitem">
@@ -55,7 +55,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <!-- Left: Settings -->
         <div id="settings-column">
-            <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+            <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-4 md:p-6">
                 <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-4">Settings</h3>
                 <div id="settings-form">
                     <p class="text-sm text-gray-400 dark:text-gray-500">Loading...</p>
@@ -80,7 +80,7 @@
         <div class="flex flex-col gap-6">
             <!-- System Prompt -->
             <div id="system-md-editor" class="hidden">
-                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-4 md:p-6">
                     <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-4">System Prompt (SYSTEM.md)</h3>
                     <textarea id="system-md-content" rows="12"
                               class="w-full p-2.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-xs font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
@@ -98,7 +98,7 @@
 
             <!-- Tools -->
             <div>
-                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-4 md:p-6">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">Tools <span id="tool-count" class="text-sm font-normal text-gray-400 dark:text-gray-500"></span></h3>
                     </div>
