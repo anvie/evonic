@@ -384,10 +384,11 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         )
         parts.append("`" + "`, `".join(_mem_keys) + "`")
 
-    # List available skills with SYSTEM.md so the agent knows what it can load
+    # List available lazy skills so the agent knows what it can load. SYSTEM.md
+    # is optional: a lazy skill can expose tools without additional instructions.
     skills_mgr = skills_manager
     _allowed_skills = None if agent.get('is_super') else set(db.get_agent_skills(eid))
-    skills_with_system_md = []
+    lazy_skills = []
     skill_briefs = []
     for skill in skills_mgr.list_skills():
         if not skills_mgr.is_skill_enabled(skill.get('id', '')):
@@ -401,19 +402,16 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         # Only list lazy skills — eager skills' tools are already in the tool list
         if not skill.get('lazy_tools', False):
             continue
-        skill_dir = skill.get('_dir', os.path.join(_BASE_DIR, 'skills', skill['id']))
-        system_md_path = os.path.join(skill_dir, 'SYSTEM.md')
-        if os.path.isfile(system_md_path):
-            skills_with_system_md.append(skill['id'])
-            # brief is for agents; fall back to description if no brief defined
-            brief = skill.get('brief', '').strip() or skill.get('description', '').strip()
-            if brief:
-                skill_briefs.append(brief)
+        lazy_skills.append(skill['id'])
+        # brief is for agents; fall back to description if no brief defined
+        brief = skill.get('brief', '').strip() or skill.get('description', '').strip()
+        if brief:
+            skill_briefs.append(brief)
 
-    if skills_with_system_md:
+    if lazy_skills:
         parts.append("\n## Skills")
         parts.append("You have these skills that can be loaded using `use_skill` tool:")
-        for skill_id in skills_with_system_md:
+        for skill_id in lazy_skills:
             parts.append(f"- `{skill_id}`")
         # Inject skill briefs — short usage hints defined in skill.json
         if skill_briefs:
