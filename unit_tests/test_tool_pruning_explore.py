@@ -3,11 +3,12 @@ Regression test for #713 tool-pruning regression (Explore tool silently pruned).
 
 Root cause: _prune_tools() in backend/agent_runtime/llm_loop.py removes zero-call
 tools after _TOOL_PRUNE_THRESHOLD (=3) iterations within a turn, unless they are
-essential, belong to a loaded LAZY skill, or have been called. Eager skill tools
-(explorer's Explore, direxplorer's Grep/Glob/Read) were unprotected, so the model
-lost them for the rest of the turn and could never use them again.
+essential, assigned to the agent, provided by an enabled skill, or have been
+called. Tools that are required later in the turn (for example, after locating
+an image attachment) must remain available until they are used.
 
-Fix: protect tools from enabled EAGER skills (_eager_skill_fns) in the keep-condition.
+Fix: protect functions derived from assigned_tool_ids, including vision and media
+tools, and tools from enabled eager skills, in the keep-condition.
 """
 
 import sys
@@ -90,8 +91,14 @@ def _tool_call(name='bash', call_id='c1'):
 class TestToolPruningProtectsEagerSkillTools(unittest.TestCase):
     """Regression: Explore (eager skill tool) must survive _prune_tools at iteration >= threshold."""
 
-    def _make_agent_context(self):
-        return {'user_id': 'u1', 'channel_id': 'ch1', 'is_super': False, 'agent_state': None}
+    def _make_agent_context(self, assigned_tool_ids=None):
+        return {
+            'user_id': 'u1',
+            'channel_id': 'ch1',
+            'is_super': False,
+            'agent_state': None,
+            'assigned_tool_ids': assigned_tool_ids or [],
+        }
 
     def _make_agent(self, agent_id='test_agent'):
         return {
@@ -102,7 +109,7 @@ class TestToolPruningProtectsEagerSkillTools(unittest.TestCase):
             'summarize_threshold': 0,
         }
 
-    def _run_tool_loop(self, llm, messages, session_id, tools):
+    def _run_tool_loop(self, llm, messages, session_id, tools, assigned_tool_ids=None):
         run_tool_loop = _llm_loop_mod.run_tool_loop
         mock_db = MagicMock()
         mock_db.get_setting.side_effect = lambda key, default=None: default or '0'
@@ -117,6 +124,9 @@ class TestToolPruningProtectsEagerSkillTools(unittest.TestCase):
         mock_tr.get_builtin_executor.return_value = lambda n, a: None
         mock_tr.get_real_executor.return_value = lambda n, a: None
         import backend.event_stream as _es_mod
+        agent_context = self._make_agent_context()
+        if assigned_tool_ids is not None:
+            agent_context['assigned_tool_ids'] = assigned_tool_ids
         with patch.object(_llm_loop_mod, 'db', mock_db), \
              patch.object(_llm_loop_mod, 'tool_registry', mock_tr), \
              patch.object(_es_mod, 'event_stream', MagicMock()), \
@@ -124,7 +134,7 @@ class TestToolPruningProtectsEagerSkillTools(unittest.TestCase):
              patch.object(_llm_loop_mod, 'llm_client', llm):
             return run_tool_loop(
                 agent=self._make_agent(),
-                agent_context=self._make_agent_context(),
+                agent_context=agent_context,
                 messages=messages,
                 tools=tools,
                 session_id=session_id,
@@ -168,6 +178,43 @@ class TestToolPruningProtectsEagerSkillTools(unittest.TestCase):
         self.assertIn('Explore', last_tools,
                       'Explore (eager skill tool) was pruned at iteration >= threshold: %s' % last_tools)
         # calculator (non-essential, zero calls) SHOULD be pruned — token optimization retained.
+        self.assertNotIn('calculator', last_tools)
+
+    def test_assigned_vision_and_media_tools_survive_pruning_after_threshold(self):
+        """Assigned attachment tools remain available until the agent can use them."""
+        tool_defs = [
+            {'type': 'function', 'function': {'name': 'describe_image'}},
+            {'type': 'function', 'function': {'name': 'transcribe_audio'}},
+            {'type': 'function', 'function': {'name': 'bash'}},
+            {'type': 'function', 'function': {'name': 'calculator'}},
+        ]
+        llm = MagicMock()
+        llm.chat_completion.side_effect = [
+            _tool_call('bash', 'c1'),
+            _tool_call('bash', 'c2'),
+            _tool_call('bash', 'c3'),
+            _tool_call('bash', 'c4'),
+            _ok('Final answer'),
+        ]
+        messages = [{'role': 'system', 'content': 'sys'}, {'role': 'user', 'content': 'go'}]
+        result, _, _ = self._run_tool_loop(
+            llm,
+            messages,
+            'sess-prune-assigned-media',
+            tool_defs,
+            assigned_tool_ids=['describe_image', 'plugin:media:transcribe_audio'],
+        )
+        self.assertIn('Final answer', str(result))
+
+        tools_seen = [
+            [tool['function']['name'] for tool in call.kwargs['tools']]
+            for call in llm.chat_completion.call_args_list
+            if call.kwargs.get('tools') is not None
+        ]
+        self.assertGreaterEqual(len(tools_seen), 4, 'expected >=4 LLM calls with tools')
+        last_tools = tools_seen[-1]
+        self.assertIn('describe_image', last_tools)
+        self.assertIn('transcribe_audio', last_tools)
         self.assertNotIn('calculator', last_tools)
 
 

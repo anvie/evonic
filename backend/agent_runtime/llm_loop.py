@@ -649,13 +649,32 @@ def run_tool_loop(agent: Dict[str, Any],
     except Exception:
         pass
 
+    # Add restored skill tool IDs to assigned_tool_ids for authorization guard.
+    # Keep a corresponding set of function names so tools explicitly assigned to
+    # the agent remain available for the entire turn, even before first use.
+    _assigned = agent_context.get('assigned_tool_ids')
+    if _assigned is not None:
+        for sk_id, fns in _loaded_lazy_skills.items():
+            for fn in fns:
+                if fn:
+                    _tid = f'skill:{sk_id}:{fn}'
+                    if _tid not in _assigned:
+                        _assigned.append(_tid)
+    _assigned_tool_fns = {
+        tool_id.rsplit(':', 1)[-1]
+        for tool_id in (_assigned or [])
+        if tool_id
+    }
+
     def _prune_tools(tools_list: List[dict], iteration: int) -> List[dict]:
-        """Prune zero-call tools after the threshold iteration.
-        
+        """Prune uncalled tools after the threshold while retaining assigned tools.
+
         After _TOOL_PRUNE_THRESHOLD iterations, tools that have never been called
         (call count == 0) are removed from the list sent to the LLM, except for
-        essential tools and tools belonging to a loaded lazy skill. Lazy-skill
-        tools may be injected after the threshold and must get a chance to run.
+        essential tools, tools explicitly assigned to the agent, and tools
+        provided by enabled skills. Assigned tools include vision and media tools
+        such as ``describe_image`` and ``transcribe_audio`` that may be needed
+        only after the agent discovers a relevant attachment.
         """
         if iteration < _TOOL_PRUNE_THRESHOLD:
             return tools_list
@@ -668,6 +687,7 @@ def run_tool_loop(agent: Dict[str, Any],
         for t in tools_list:
             fn_name = t.get('function', {}).get('name', '')
             if (fn_name in _ESSENTIAL_TOOLS
+                    or fn_name in _assigned_tool_fns
                     or fn_name in _loaded_skill_fns
                     or fn_name in _eager_skill_fns
                     or _tool_call_counts.get(fn_name, 0) > 0):
@@ -677,16 +697,6 @@ def run_tool_loop(agent: Dict[str, Any],
                 "Tool pruning: %d -> %d tools (iteration %d >= threshold %d)",
                 len(tools_list), len(pruned), iteration, _TOOL_PRUNE_THRESHOLD)
         return pruned
-
-    # Add restored skill tool IDs to assigned_tool_ids for authorization guard
-    _assigned = agent_context.get('assigned_tool_ids')
-    if _assigned is not None:
-        for sk_id, fns in _loaded_lazy_skills.items():
-            for fn in fns:
-                if fn:
-                    _tid = f'skill:{sk_id}:{fn}'
-                    if _tid not in _assigned:
-                        _assigned.append(_tid)
 
     # Fast mode is a session preference. The Codex client revalidates support
     # against every effective model, so it cannot leak into an incompatible fallback.
