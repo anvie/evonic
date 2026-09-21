@@ -36,10 +36,26 @@
                        class="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
             </div>
         </div>
-        <!-- Skills Grid -->
+        <!-- Enabled Skills Grid -->
         <div id="skills-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
             <!-- Populated by JS -->
         </div>
+
+        <!-- Disabled Skills -->
+        <section id="disabled-skills-section" class="hidden mt-8" aria-labelledby="disabled-skills-heading">
+            <button type="button" id="disabled-skills-toggle" onclick="toggleDisabledSkills()"
+                    class="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-left transition-colors hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800/50 dark:hover:bg-gray-800"
+                    aria-expanded="false" aria-controls="disabled-skills-grid">
+                <span id="disabled-skills-heading" class="text-sm font-semibold text-gray-700 dark:text-gray-200">Disabled Skills</span>
+                <span class="flex items-center gap-2">
+                    <span id="disabled-skills-count" class="rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300"></span>
+                    <svg id="disabled-skills-chevron" class="h-4 w-4 text-gray-500 transition-transform dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 9 6 6 6-6"/></svg>
+                </span>
+            </button>
+            <div id="disabled-skills-grid" class="hidden mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+                <!-- Populated by JS -->
+            </div>
+        </section>
 
         <div id="empty-state" class="hidden text-center py-16 text-gray-400">
             <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
@@ -101,6 +117,9 @@ async function loadSkills() {
 
 function renderSkills() {
     const grid = document.getElementById('skills-grid');
+    const disabledSection = document.getElementById('disabled-skills-section');
+    const disabledGrid = document.getElementById('disabled-skills-grid');
+    const disabledCount = document.getElementById('disabled-skills-count');
     const empty = document.getElementById('empty-state');
     const search = document.getElementById('skill-search').value.toLowerCase().trim();
     const skills = search
@@ -109,6 +128,8 @@ function renderSkills() {
 
     if (skills.length === 0) {
         grid.innerHTML = '';
+        disabledGrid.innerHTML = '';
+        disabledSection.classList.add('hidden');
         empty.classList.remove('hidden');
         empty.querySelector('p:first-of-type').textContent = search ? 'No skills found' : 'No skills installed';
         empty.querySelector('p:last-of-type').textContent = search ? 'Try a different search term.' : 'Upload a skill zip package to get started';
@@ -116,7 +137,17 @@ function renderSkills() {
     }
     empty.classList.add('hidden');
 
-    grid.innerHTML = skills.map(s => `
+    const enabledSkills = [];
+    const disabledSkills = [];
+    skills.forEach(skill => {
+        if (skill.enabled !== false && skill.enabled !== 0) {
+            enabledSkills.push(skill);
+        } else {
+            disabledSkills.push(skill);
+        }
+    });
+
+    grid.innerHTML = enabledSkills.map(s => `
         <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition-shadow overflow-hidden">
             <div class="p-3">
                 <div class="flex items-start gap-2">
@@ -144,6 +175,43 @@ function renderSkills() {
             </div>
         </div>
     `).join('');
+
+    disabledGrid.innerHTML = disabledSkills.map(s => `
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition-shadow overflow-hidden">
+            <div class="p-3">
+                <div class="flex items-start gap-2">
+                    <div class="flex-1 min-w-0 cursor-pointer" onclick="window.location.href='/skills/${s.id}'">
+                        <h3 class="font-semibold text-sm text-gray-800 dark:text-gray-100 truncate">${esc(s.name || s.id)}</h3>
+                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">ID: ${esc(s.id)} · v${esc(s.version || '?')} by ${esc(s.author || 'Unknown')}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">${esc(s.description || 'No description')}</p>
+                    </div>
+                    <div class="flex items-center gap-1 flex-shrink-0 mt-1">
+                        ${s.lazy_tools ? `<span class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/30 px-2 py-1 rounded-full">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            Lazy
+                        </span>` : ''}
+                        <span class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/30 px-2 py-1 rounded-full">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                            ${s.tool_count || 0}
+                        </span>
+                        ${mkToggle({ checked: false, onChange: `toggleSkill('${s.id}', this.checked)` })}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    disabledCount.textContent = disabledSkills.length;
+    disabledSection.classList.toggle('hidden', disabledSkills.length === 0);
+}
+
+function toggleDisabledSkills() {
+    const toggle = document.getElementById('disabled-skills-toggle');
+    const grid = document.getElementById('disabled-skills-grid');
+    const chevron = document.getElementById('disabled-skills-chevron');
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', String(!expanded));
+    grid.classList.toggle('hidden', expanded);
+    chevron.classList.toggle('rotate-180', !expanded);
 }
 
 function filterSkills() {

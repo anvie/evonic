@@ -1,6 +1,11 @@
 """Regression tests for setup-time platform timezone configuration."""
 
-from backend.setup import DEFAULT_PLATFORM_TIMEZONE, run_setup, validate_timezone
+from backend.setup import (
+    DEFAULT_PLATFORM_TIMEZONE,
+    DEFAULT_SUPER_AGENT_NAME,
+    run_setup,
+    validate_timezone,
+)
 from models.db import db
 
 
@@ -37,6 +42,20 @@ def test_run_setup_persists_default_timezone(tmp_path, monkeypatch):
     assert result["success"] is True
     env_text = (tmp_path / ".env").read_text()
     assert f"EVONIC_TIMEZONE={DEFAULT_PLATFORM_TIMEZONE}" in env_text
+
+
+def test_run_setup_defaults_blank_super_agent_name(tmp_path, monkeypatch):
+    _remove_seed_super_agent()
+    monkeypatch.setattr("config.BASE_DIR", str(tmp_path))
+    monkeypatch.setenv("SECRET_KEY", "test-key")
+
+    result = run_setup(
+        provider="ollama", model_name="llama3", base_url="", api_key="",
+        agent_name="   ", agent_id=None,
+    )
+
+    assert result == {"success": True, "agent_id": "super_agent"}
+    assert db.get_agent("super_agent")["name"] == DEFAULT_SUPER_AGENT_NAME
 
 
 def test_run_setup_persists_custom_timezone(tmp_path, monkeypatch):

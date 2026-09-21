@@ -45,3 +45,16 @@ def test_cli_setup_reprompts_invalid_timezone(monkeypatch, capsys):
 def test_cli_non_interactive_uses_default_timezone(monkeypatch):
     run_setup = _run_cli_setup(monkeypatch, [], non_interactive=True)
     assert run_setup.call_args.kwargs["timezone_name"] == "Asia/Jakarta"
+
+
+def test_cli_non_interactive_uses_default_super_agent_name(monkeypatch):
+    run_setup = _run_cli_setup(monkeypatch, [], non_interactive=True)
+    assert run_setup.call_args.kwargs["agent_name"] == "Super Agent"
+
+
+def test_cli_blank_super_agent_name_uses_default(monkeypatch):
+    run_setup = _run_cli_setup(
+        monkeypatch,
+        ["3", "", "", "", "", "", "", "n"],
+    )
+    assert run_setup.call_args.kwargs["agent_name"] == "Super Agent"

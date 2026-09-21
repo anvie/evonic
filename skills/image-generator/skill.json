@@ -1,0 +1,126 @@
+{
+  "id": "image-generator",
+  "name": "Image Generator",
+  "version": "1.0.0",
+  "description": "Generates image artifacts through configured cloud or approved local providers. Provider selection is explicit or uses the configured default.",
+  "brief": "Use the `image-generator` skill only after an administrator enables it and configures an approved provider. The `generate_image` tool accepts an explicit provider or uses the configured default provider.",
+  "author": "Evonic",
+  "tools_file": "tools.json",
+  "lazy_tools": true,
+  "default_enabled": false,
+  "variables": [
+    {
+      "name": "default_provider",
+      "label": "Default Provider",
+      "type": "string",
+      "default": "",
+      "description": "Provider ID used when generate_image does not specify a provider. It must identify an enabled provider from the provider registry."
+    },
+    {
+      "name": "allowed_providers",
+      "label": "Allowed Providers",
+      "type": "string",
+      "default": "",
+      "description": "Comma-separated provider IDs permitted for this skill. Keep this allowlist limited to reviewed cloud or local providers."
+    },
+    {
+      "name": "allow_local_providers",
+      "label": "Allow Approved Local Providers",
+      "type": "boolean",
+      "default": false,
+      "description": "When enabled, permits providers declared as local only when they also appear in Allowed Providers."
+    },
+    {
+      "name": "automatic1111_endpoint",
+      "label": "AUTOMATIC1111 Endpoint",
+      "type": "string",
+      "default": "",
+      "description": "Administrator-approved base URL for the local AUTOMATIC1111-compatible API. Agents cannot override it."
+    },
+    {
+      "name": "automatic1111_trusted_hosts",
+      "label": "AUTOMATIC1111 Trusted Hosts",
+      "type": "string",
+      "default": "",
+      "description": "Comma-separated exact endpoint hostnames approved by an administrator. Required when enabling the local provider."
+    },
+    {
+      "name": "automatic1111_timeout_seconds",
+      "label": "AUTOMATIC1111 Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Bounded request timeout for the local provider, from 1 through 120 seconds."
+    },
+    {
+      "name": "automatic1111_steps",
+      "label": "AUTOMATIC1111 Default Steps",
+      "type": "number",
+      "default": 20,
+      "description": "Administrator-controlled fixed generation step count for the local provider, from 1 through 100."
+    },
+    {
+      "name": "google_gemini_api_key",
+      "label": "Google Gemini API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Write-only Google Generative Language API credential used only by the approved Google Gemini provider."
+    },
+    {
+      "name": "google_gemini_model",
+      "label": "Google Gemini Model",
+      "type": "string",
+      "default": "gemini-2.5-flash-image",
+      "choices": ["gemini-2.5-flash-image"],
+      "description": "Approved Google image-generation model."
+    },
+    {
+      "name": "google_gemini_timeout_seconds",
+      "label": "Google Gemini Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Bounded request timeout for Google Gemini, from 1 through 120 seconds."
+    },
+    {
+      "name": "max_images_per_request",
+      "label": "Maximum Images Per Request",
+      "type": "number",
+      "default": 1,
+      "description": "Upper limit for images requested in a single generation call (1 through 10)."
+    },
+    {
+      "name": "requests_per_minute",
+      "label": "Requests Per Minute Per Agent",
+      "type": "number",
+      "default": 6,
+      "description": "Per-agent rolling request cap. Set from 1 through 60 for a controlled pilot."
+    },
+    {
+      "name": "max_concurrent_requests",
+      "label": "Maximum Concurrent Requests Per Agent",
+      "type": "number",
+      "default": 1,
+      "description": "Per-agent in-flight generation cap (1 through 4)."
+    },
+    {
+      "name": "images_per_day",
+      "label": "Images Per Day Per Agent",
+      "type": "number",
+      "default": 20,
+      "description": "Per-agent UTC rolling daily image quota. Set to 0 only to disable this skill through quota."
+    },
+    {
+      "name": "mock_enabled",
+      "label": "Enable Deterministic Mock Provider",
+      "type": "boolean",
+      "default": false,
+      "description": "Development and test only. The mock provider remains unavailable unless this is explicitly enabled."
+    },
+    {
+      "name": "provider_api_key",
+      "label": "Provider API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Optional provider credential. It is reserved for future production adapters and is never returned in tool results."
+    }
+  ]
+}

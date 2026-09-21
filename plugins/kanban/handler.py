@@ -477,6 +477,14 @@ def _notify_agent(agent_id: str, task: dict, channel_type: str, sdk=None, force:
     if description:
         body += f'**Description:** {description}\n'
 
+    try:
+        from plugins.kanban.db import kanban_db
+        attachment_references = _format_attachment_references(task_id, kanban_db.get_attachments(task_id))
+        if attachment_references:
+            body += f'{attachment_references}\n'
+    except Exception as exc:
+        _log(f'Failed to load attachments for task {task_id}: {exc}', 'warn', sdk)
+
     body += f"</task>\n"
 
     body += (
@@ -592,25 +600,23 @@ def _pre_set_execute_mode(agent_id: str, task: dict, sdk=None) -> bool:
 
 
 
-def _format_followup_comment(comment: dict, attachments: list) -> str:
-    """Render a follow-up comment with actionable references to its attachments."""
-    content = (comment.get('content') or '').strip()
+def _format_attachment_references(task_id: str | int, attachments: list) -> str:
+    """Render actionable attachment metadata shared by all task notifications."""
     if not attachments:
-        return content
+        return ''
 
     from plugins.kanban.db import ATTACHMENTS_DIR
 
-    lines = [content] if content else []
-    lines.append('Attachments:')
+    lines = ['Attachments:']
     for attachment in attachments:
         attachment_id = attachment.get('id')
         filename = attachment.get('filename') or 'unnamed attachment'
         mime_type = attachment.get('mime_type') or 'application/octet-stream'
         stored_name = attachment.get('stored_name')
-        task_id = attachment.get('task_id') or comment.get('task_id')
+        attachment_task_id = attachment.get('task_id') or task_id
         path = (
-            os.path.join(ATTACHMENTS_DIR, f'task_{task_id}', stored_name)
-            if task_id and stored_name else None
+            os.path.join(ATTACHMENTS_DIR, f'task_{attachment_task_id}', stored_name)
+            if attachment_task_id and stored_name else None
         )
         url = f'/api/kanban/attachments/{attachment_id}/file' if attachment_id else None
         reference = ', '.join(part for part in (
@@ -625,6 +631,15 @@ def _format_followup_comment(comment: dict, attachments: list) -> str:
                 'before acting on visual annotations or feedback.'
             )
     return '\n'.join(lines)
+
+
+def _format_followup_comment(comment: dict, attachments: list) -> str:
+    """Render a follow-up comment with actionable references to its attachments."""
+    content = (comment.get('content') or '').strip()
+    attachment_references = _format_attachment_references(comment.get('task_id'), attachments)
+    if not attachment_references:
+        return content
+    return '\n'.join(part for part in (content, attachment_references) if part)
 
 
 def _busy_task_for(agent_id: str) -> str | None:
@@ -761,6 +776,15 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
     )
     if description:
         body += f'**Description:** {description}\n'
+
+    try:
+        from plugins.kanban.db import kanban_db
+        attachment_references = _format_attachment_references(task_id, kanban_db.get_attachments(task_id))
+        if attachment_references:
+            body += f'{attachment_references}\n'
+    except Exception as exc:
+        _log(f'Failed to load attachments for stale task {task_id}: {exc}', 'warn', sdk)
+
     body += (
         f'</task>\n\n'
         f'Please resume or close this task:\n'

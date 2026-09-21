@@ -2246,16 +2246,18 @@ def setup_command(non_interactive=False):
         model_name = inp if inp else default_model
 
     # --- Agent name ---
+    from backend.setup import DEFAULT_SUPER_AGENT_NAME
+
     if non_interactive:
-        agent_name = "Siwa Miwa"
+        agent_name = DEFAULT_SUPER_AGENT_NAME
         print(f"  [non-interactive] Using default agent name: {agent_name}")
     else:
         try:
-            agent_name = input("  Your super agent's name (default: Siwa Miwa): ").strip()
+            agent_name = input(f"  Your super agent's name (default: {DEFAULT_SUPER_AGENT_NAME}): ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n  Setup aborted.")
             return
-        agent_name = agent_name if agent_name else "Siwa Miwa"
+        agent_name = agent_name or DEFAULT_SUPER_AGENT_NAME
 
     # --- Language ---
     if non_interactive:

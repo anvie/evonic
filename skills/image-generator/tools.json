@@ -1,0 +1,54 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "generate_image",
+      "description": "Generate validated image artifacts through an enabled Image Generator provider. Specify provider to override the configured default.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Text description of the image to generate."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Optional provider ID. If omitted, the configured default provider is used."
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional provider model identifier. Supported values depend on the selected provider."
+          },
+          "size": {
+            "type": "string",
+            "description": "Optional image size in WIDTHxHEIGHT notation, such as 1024x1024. Supported values depend on the selected provider."
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "description": "Optional aspect ratio represented as WIDTHxHEIGHT when size is omitted."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Number of images to generate. Subject to the configured per-request limit."
+          },
+          "output_format": {
+            "type": "string",
+            "enum": ["png", "jpeg", "webp", "gif"],
+            "description": "Requested output format when supported by the selected provider."
+          },
+          "negative_prompt": {
+            "type": "string",
+            "description": "Optional content to exclude when supported by the selected provider."
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Optional deterministic seed when supported by the selected provider."
+          }
+        },
+        "required": ["prompt"]
+      }
+    }
+  }
+]
