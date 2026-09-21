@@ -228,87 +228,135 @@ async function loadToolDefs() {
     }
 }
 
+let settingsState = {};
+let settingsVariables = [];
+let selectedSettingsProvider = '';
+
+function inputClass() {
+    return 'w-full p-2.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10';
+}
+
+function captureSettingsState() {
+    document.querySelectorAll('[data-var]').forEach(el => {
+        settingsState[el.dataset.var] = el.dataset.type === 'boolean' ? el.checked : el.value;
+    });
+}
+
+function valueFor(variable) {
+    return settingsState[variable.name] !== undefined ? settingsState[variable.name] : (variable.default || '');
+}
+
+function renderSettingField(v) {
+    const val = valueFor(v);
+    if (v.type === 'boolean') {
+        return `
+        <div class="mb-4">
+            <label class="flex items-center gap-3 cursor-pointer select-none">
+                <span class="relative inline-flex items-center">
+                    <input type="checkbox" data-var="${esc(v.name)}" data-type="boolean" ${val ? 'checked' : ''} class="sr-only peer">
+                    <span class="dyn-toggle"></span>
+                </span>
+                <div>
+                    <span class="text-gray-700 dark:text-gray-200 text-sm font-medium">${esc(v.label || v.name)}</span>
+                    ${v.description ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">${esc(v.description)}</p>` : ''}
+                </div>
+            </label>
+        </div>`;
+    }
+    const labelHtml = `<label class="block mb-1 text-gray-700 dark:text-gray-200 text-sm font-medium">${esc(v.label || v.name)}</label>`;
+    const descHtml = v.description ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">${esc(v.description)}</p>` : '';
+    if (v.type === 'select') {
+        const staticOpts = Array.isArray(v.options) ? v.options : [];
+        const optsHtml = staticOpts.map(o => {
+            const ov = (o && typeof o === 'object') ? o.value : o;
+            const ol = (o && typeof o === 'object') ? (o.label || o.value) : o;
+            return `<option value="${esc(String(ov))}" ${String(ov) === String(val) ? 'selected' : ''}>${esc(String(ol))}</option>`;
+        }).join('');
+        return `<div class="mb-4">${labelHtml}<select data-var="${esc(v.name)}" data-type="select" ${v.options_source ? `data-options-source="${esc(v.options_source)}"` : ''} data-current="${esc(String(val))}" class="${inputClass()}"><option value="">${esc(v.empty_label || '— Default —')}</option>${optsHtml}</select>${descHtml}</div>`;
+    }
+    if (v.type === 'textarea') {
+        return `<div class="mb-4">${labelHtml}<textarea data-var="${esc(v.name)}" data-type="textarea" rows="8" placeholder="${esc(String(v.default || ''))}" class="${inputClass()}">${esc(String(val))}</textarea>${descHtml}</div>`;
+    }
+    const inputType = v.type === 'number' ? 'number' : (v.type === 'secret' || v.type === 'password' ? 'password' : 'text');
+    return `<div class="mb-4">${labelHtml}<input type="${inputType}" data-var="${esc(v.name)}" data-type="${esc(v.type || 'string')}" value="${esc(String(val))}" placeholder="${esc(String(v.default || ''))}" class="${inputClass()}">${descHtml}</div>`;
+}
+
+function providerStatus(provider, variables) {
+    const required = variables.filter(v => v.required);
+    const configured = required.every(v => {
+        const value = valueFor(v);
+        return v.type === 'boolean' ? Boolean(value) : String(value || '').trim().length > 0;
+    });
+    return configured ? 'Configured' : 'Needs configuration';
+}
+
+function renderProviderSettings(layout) {
+    const form = document.getElementById('settings-form');
+    const providers = Array.isArray(layout.providers) ? layout.providers : [];
+    const providerVariables = settingsVariables.filter(v => v.provider);
+    const globalVariables = settingsVariables.filter(v => !v.provider);
+    const selected = providers.find(p => p.id === selectedSettingsProvider);
+    const activeVariables = selected ? providerVariables.filter(v => v.provider === selected.id) : [];
+    const basic = activeVariables.filter(v => !v.advanced);
+    const advanced = activeVariables.filter(v => v.advanced);
+    const options = providers.map(p => `<option value="${esc(p.id)}" ${p.id === selectedSettingsProvider ? 'selected' : ''}>${esc(p.label || p.id)}</option>`).join('');
+    const status = selected ? providerStatus(selected, activeVariables) : 'Select a provider to configure';
+    const globalSection = layout.global_section || {};
+    // Keep the fallback explicit so schemas may omit global_section safely.
+    const globalSectionLabel = layout.global_section?.label || 'Global defaults';
+    form.innerHTML = `
+        <section class="mb-6" aria-labelledby="provider-configuration-heading">
+            <h4 id="provider-configuration-heading" class="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">Provider configuration</h4>
+            <label for="settings-provider-picker" class="block mb-1 text-gray-700 dark:text-gray-200 text-sm font-medium">${esc(layout.label || 'Provider')}</label>
+            <select id="settings-provider-picker" class="${inputClass()}" aria-describedby="provider-configuration-status">
+                <option value="">${esc(layout.empty_label || '— Select a provider —')}</option>${options}
+            </select>
+            ${layout.description ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">${esc(layout.description)}</p>` : ''}
+            <p id="provider-configuration-status" class="text-xs text-gray-400 dark:text-gray-500 mt-1" aria-live="polite">${esc(status)}</p>
+            ${selected ? `<div class="mt-5 pt-5 border-t border-gray-200 dark:border-gray-600"><h5 class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-4">${esc(selected.label || selected.id)} settings</h5>${basic.map(renderSettingField).join('') || '<p class="text-sm text-gray-400">This provider has no additional settings.</p>'}${advanced.length ? `<details class="mb-4"><summary class="cursor-pointer text-sm font-medium text-indigo-600 dark:text-indigo-400">Advanced settings</summary><div class="mt-4">${advanced.map(renderSettingField).join('')}</div></details>` : ''}</div>` : '<div class="mt-5 rounded-md border border-dashed border-gray-300 dark:border-gray-600 p-4 text-sm text-gray-500 dark:text-gray-400">Choose a provider to view its configuration fields.</div>'}
+        </section>
+        <section class="pt-5 border-t border-gray-200 dark:border-gray-600" aria-labelledby="global-defaults-heading">
+            <h4 id="global-defaults-heading" class="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-1">${esc(globalSectionLabel)}</h4>
+            ${globalSection.description ? `<p class="text-xs text-gray-400 dark:text-gray-500 mb-4">${esc(globalSection.description)}</p>` : ''}
+            ${globalVariables.map(renderSettingField).join('')}
+        </section>`;
+    document.getElementById('settings-provider-picker').addEventListener('change', event => {
+        captureSettingsState();
+        selectedSettingsProvider = event.target.value;
+        renderProviderSettings(layout);
+        populateDynamicSelects();
+    });
+}
+
 function renderSettings(variables, config) {
     const form = document.getElementById('settings-form');
     const actions = document.getElementById('settings-actions');
     const noVars = document.getElementById('no-variables');
-
     if (!variables.length) {
-        form.classList.add('hidden');
-        actions.classList.add('hidden');
-        noVars.classList.remove('hidden');
-        return;
+        form.classList.add('hidden'); actions.classList.add('hidden'); noVars.classList.remove('hidden'); return;
     }
-
-    noVars.classList.add('hidden');
-    actions.classList.remove('hidden');
-
-    form.innerHTML = variables.map(v => {
-        const val = config[v.name] !== undefined ? config[v.name] : (v.default || '');
-        if (v.type === 'boolean') {
-            return `
-            <div class="mb-4">
-                <label class="flex items-center gap-3 cursor-pointer select-none">
-                    <span class="relative inline-flex items-center">
-                        <input type="checkbox" data-var="${esc(v.name)}" data-type="boolean"
-                               ${val ? 'checked' : ''} class="sr-only peer">
-                        <span class="dyn-toggle"></span>
-                    </span>
-                    <div>
-                        <span class="text-gray-700 dark:text-gray-200 text-sm font-medium">${esc(v.label || v.name)}</span>
-                        ${v.description ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">${esc(v.description)}</p>` : ''}
-                    </div>
-                </label>
-            </div>`;
-        }
-        const labelHtml = `<label class="block mb-1 text-gray-700 dark:text-gray-200 text-sm font-medium">${esc(v.label || v.name)}</label>`;
-        const descHtml = v.description ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">${esc(v.description)}</p>` : '';
-        const inputClass = 'w-full p-2.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm font-mono focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10';
-
-        if (v.type === 'select') {
-            const staticOpts = Array.isArray(v.options) ? v.options : [];
-            const optsHtml = staticOpts.map(o => {
-                const ov = (o && typeof o === 'object') ? o.value : o;
-                const ol = (o && typeof o === 'object') ? (o.label || o.value) : o;
-                return `<option value="${esc(String(ov))}" ${String(ov) === String(val) ? 'selected' : ''}>${esc(String(ol))}</option>`;
-            }).join('');
-            return `
-            <div class="mb-4">
-                ${labelHtml}
-                <select data-var="${esc(v.name)}" data-type="select"
-                        ${v.options_source ? `data-options-source="${esc(v.options_source)}"` : ''}
-                        data-current="${esc(String(val))}"
-                        class="${inputClass}">
-                    <option value="">${esc(v.empty_label || '— Default —')}</option>
-                    ${optsHtml}
-                </select>
-                ${descHtml}
-            </div>`;
-        }
-
-        if (v.type === 'textarea') {
-            return `
-            <div class="mb-4">
-                ${labelHtml}
-                <textarea data-var="${esc(v.name)}" data-type="textarea" rows="8"
-                          placeholder="${esc(String(v.default || ''))}"
-                          class="${inputClass}">${esc(String(val))}</textarea>
-                ${descHtml}
-            </div>`;
-        }
-
-        const inputType = v.type === 'number' ? 'number' : 'text';
-        return `
-        <div class="mb-4">
-            ${labelHtml}
-            <input type="${inputType}" data-var="${esc(v.name)}" data-type="${esc(v.type || 'string')}"
-                   value="${esc(String(val))}"
-                   placeholder="${esc(String(v.default || ''))}"
-                   class="${inputClass}">
-            ${descHtml}
-        </div>`;
-    }).join('');
-
+    noVars.classList.add('hidden'); actions.classList.remove('hidden');
+    settingsVariables = variables;
+    settingsState = {...config};
+    const settingsUi = skillData.settings_ui || {};
+    const providerSelector = settingsUi.provider_selector;
+    if (settingsUi.layout === 'provider-first' && providerSelector) {
+        const layout = {
+            providers: providerSelector.providers || [],
+            label: providerSelector.label || 'Provider',
+            description: providerSelector.description || '',
+            empty_label: providerSelector.empty_label || '— Select a provider —',
+            global_section: settingsUi.global_section || {}
+        };
+        // Prefer the configured default when it is a known provider. Otherwise
+        // start in the intentional empty state instead of guessing a provider.
+        selectedSettingsProvider = (providerSelector.providers || []).some(
+            provider => provider.id === settingsState.default_provider
+        ) ? settingsState.default_provider : '';
+        renderProviderSettings(layout);
+    } else {
+        form.innerHTML = variables.map(renderSettingField).join('');
+    }
     populateDynamicSelects();
 }
 
@@ -388,17 +436,13 @@ async function saveConfig() {
     btn.textContent = 'Saving...';
     status.classList.add('hidden');
 
+    captureSettingsState();
     const values = {};
-    document.querySelectorAll('[data-var]').forEach(el => {
-        const name = el.dataset.var;
-        const type = el.dataset.type;
-        if (type === 'boolean') {
-            values[name] = el.checked;
-        } else if (type === 'number') {
-            values[name] = el.value;
-        } else {
-            values[name] = el.value;
-        }
+    settingsVariables.forEach(variable => {
+        const value = settingsState[variable.name] !== undefined
+            ? settingsState[variable.name]
+            : (variable.default || '');
+        values[variable.name] = variable.type === 'boolean' ? Boolean(value) : value;
     });
 
     try {

@@ -12,115 +12,186 @@
     {
       "name": "default_provider",
       "label": "Default Provider",
-      "type": "string",
+      "type": "select",
       "default": "",
-      "description": "Provider ID used when generate_image does not specify a provider. It must identify an enabled provider from the provider registry."
+      "description": "Provider ID used when generate_image does not specify a provider. It must identify an enabled provider from the provider registry.",
+      "section": "global",
+      "options": [
+        {
+          "value": "google-gemini",
+          "label": "Google Gemini"
+        },
+        {
+          "value": "automatic1111",
+          "label": "AUTOMATIC1111"
+        },
+        {
+          "value": "mock",
+          "label": "Deterministic Mock"
+        }
+      ],
+      "empty_label": "\u2014 No default provider \u2014"
     },
     {
       "name": "allowed_providers",
       "label": "Allowed Providers",
       "type": "string",
       "default": "",
-      "description": "Comma-separated provider IDs permitted for this skill. Keep this allowlist limited to reviewed cloud or local providers."
+      "description": "Comma-separated provider IDs permitted for this skill. Keep this allowlist limited to reviewed cloud or local providers.",
+      "section": "global"
     },
     {
       "name": "allow_local_providers",
       "label": "Allow Approved Local Providers",
       "type": "boolean",
       "default": false,
-      "description": "When enabled, permits providers declared as local only when they also appear in Allowed Providers."
+      "description": "When enabled, permits providers declared as local only when they also appear in Allowed Providers.",
+      "section": "global"
     },
     {
       "name": "automatic1111_endpoint",
       "label": "AUTOMATIC1111 Endpoint",
       "type": "string",
       "default": "",
-      "description": "Administrator-approved base URL for the local AUTOMATIC1111-compatible API. Agents cannot override it."
+      "description": "Administrator-approved base URL for the local AUTOMATIC1111-compatible API. Agents cannot override it.",
+      "provider": "automatic1111"
     },
     {
       "name": "automatic1111_trusted_hosts",
       "label": "AUTOMATIC1111 Trusted Hosts",
       "type": "string",
       "default": "",
-      "description": "Comma-separated exact endpoint hostnames approved by an administrator. Required when enabling the local provider."
+      "description": "Comma-separated exact endpoint hostnames approved by an administrator. Required when enabling the local provider.",
+      "provider": "automatic1111",
+      "advanced": true
     },
     {
       "name": "automatic1111_timeout_seconds",
       "label": "AUTOMATIC1111 Timeout (seconds)",
       "type": "number",
       "default": 60,
-      "description": "Bounded request timeout for the local provider, from 1 through 120 seconds."
+      "description": "Bounded request timeout for the local provider, from 1 through 120 seconds.",
+      "provider": "automatic1111",
+      "advanced": true
     },
     {
       "name": "automatic1111_steps",
       "label": "AUTOMATIC1111 Default Steps",
       "type": "number",
       "default": 20,
-      "description": "Administrator-controlled fixed generation step count for the local provider, from 1 through 100."
+      "description": "Administrator-controlled fixed generation step count for the local provider, from 1 through 100.",
+      "provider": "automatic1111",
+      "advanced": true
     },
     {
       "name": "google_gemini_api_key",
       "label": "Google Gemini API Key",
       "type": "secret",
       "default": "",
-      "description": "Write-only Google Generative Language API credential used only by the approved Google Gemini provider."
+      "description": "Write-only Google Generative Language API credential used only by the approved Google Gemini provider.",
+      "provider": "google-gemini"
     },
     {
       "name": "google_gemini_model",
       "label": "Google Gemini Model",
       "type": "string",
       "default": "gemini-2.5-flash-image",
-      "choices": ["gemini-2.5-flash-image"],
-      "description": "Approved Google image-generation model."
+      "choices": [
+        "gemini-2.5-flash-image"
+      ],
+      "description": "Approved Google image-generation model.",
+      "provider": "google-gemini"
     },
     {
       "name": "google_gemini_timeout_seconds",
       "label": "Google Gemini Timeout (seconds)",
       "type": "number",
       "default": 60,
-      "description": "Bounded request timeout for Google Gemini, from 1 through 120 seconds."
+      "description": "Bounded request timeout for Google Gemini, from 1 through 120 seconds.",
+      "provider": "google-gemini",
+      "advanced": true
     },
     {
       "name": "max_images_per_request",
       "label": "Maximum Images Per Request",
       "type": "number",
       "default": 1,
-      "description": "Upper limit for images requested in a single generation call (1 through 10)."
+      "description": "Upper limit for images requested in a single generation call (1 through 10).",
+      "section": "global"
     },
     {
       "name": "requests_per_minute",
       "label": "Requests Per Minute Per Agent",
       "type": "number",
       "default": 6,
-      "description": "Per-agent rolling request cap. Set from 1 through 60 for a controlled pilot."
+      "description": "Per-agent rolling request cap. Set from 1 through 60 for a controlled pilot.",
+      "section": "global",
+      "advanced": true
     },
     {
       "name": "max_concurrent_requests",
       "label": "Maximum Concurrent Requests Per Agent",
       "type": "number",
       "default": 1,
-      "description": "Per-agent in-flight generation cap (1 through 4)."
+      "description": "Per-agent in-flight generation cap (1 through 4).",
+      "section": "global",
+      "advanced": true
     },
     {
       "name": "images_per_day",
       "label": "Images Per Day Per Agent",
       "type": "number",
       "default": 20,
-      "description": "Per-agent UTC rolling daily image quota. Set to 0 only to disable this skill through quota."
+      "description": "Per-agent UTC rolling daily image quota. Set to 0 only to disable this skill through quota.",
+      "section": "global",
+      "advanced": true
     },
     {
       "name": "mock_enabled",
       "label": "Enable Deterministic Mock Provider",
       "type": "boolean",
       "default": false,
-      "description": "Development and test only. The mock provider remains unavailable unless this is explicitly enabled."
+      "description": "Development and test only. The mock provider remains unavailable unless this is explicitly enabled.",
+      "section": "global"
     },
     {
       "name": "provider_api_key",
       "label": "Provider API Key",
       "type": "secret",
       "default": "",
-      "description": "Optional provider credential. It is reserved for future production adapters and is never returned in tool results."
+      "description": "Optional provider credential. It is reserved for future production adapters and is never returned in tool results.",
+      "provider": "mock",
+      "advanced": true
     }
-  ]
+  ],
+  "settings_ui": {
+    "layout": "provider-first",
+    "provider_selector": {
+      "label": "Provider",
+      "description": "Choose the provider you want to configure. Your unsaved values are retained while you switch providers.",
+      "empty_label": "\u2014 Select a provider \u2014",
+      "providers": [
+        {
+          "id": "google-gemini",
+          "label": "Google Gemini",
+          "description": "Cloud image generation through the configured Google Gemini model."
+        },
+        {
+          "id": "automatic1111",
+          "label": "AUTOMATIC1111",
+          "description": "Approved local AUTOMATIC1111-compatible image generation API."
+        },
+        {
+          "id": "mock",
+          "label": "Deterministic Mock",
+          "description": "Development-only provider for predictable test images."
+        }
+      ]
+    },
+    "global_section": {
+      "id": "image-generator-defaults",
+      "label": "Global Image Generator Defaults",
+      "description": "These preferences apply to Image Generator regardless of the provider you are configuring."
+    }
+  }
 }
