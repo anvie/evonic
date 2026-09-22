@@ -23,10 +23,26 @@
         </div>
     </div>
 
-    <!-- Plugins Grid -->
+    <!-- Enabled Plugins Grid -->
     <div id="plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <!-- Populated by JS -->
     </div>
+
+    <!-- Disabled Plugins -->
+    <section id="disabled-plugins-section" class="hidden mt-8" aria-labelledby="disabled-plugins-heading">
+        <button type="button" id="disabled-plugins-toggle" onclick="toggleDisabledPlugins()"
+                class="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-left transition-colors hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800/50 dark:hover:bg-gray-700/50"
+                aria-expanded="false" aria-controls="disabled-plugins-grid">
+            <span id="disabled-plugins-heading" class="text-sm font-semibold text-gray-700 dark:text-gray-300">Disabled Plugins</span>
+            <span class="flex items-center gap-2">
+                <span id="disabled-plugins-count" class="rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300"></span>
+                <svg id="disabled-plugins-chevron" class="h-4 w-4 text-gray-500 transition-transform dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 9 6 6 6-6"/></svg>
+            </span>
+        </button>
+        <div id="disabled-plugins-grid" class="hidden mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+            <!-- Populated by JS -->
+        </div>
+    </section>
 
     <div id="empty-state" class="hidden text-center py-16 text-gray-400">
         <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -78,35 +94,32 @@ function filterPlugins() {
 function renderPlugins() {
     const query = document.getElementById('plugin-search').value.toLowerCase().trim();
     const grid = document.getElementById('plugins-grid');
+    const disabledSection = document.getElementById('disabled-plugins-section');
+    const disabledGrid = document.getElementById('disabled-plugins-grid');
+    const disabledCount = document.getElementById('disabled-plugins-count');
     const empty = document.getElementById('empty-state');
 
-    let filtered = allPlugins;
-    if (query) {
-        filtered = allPlugins.filter(p => {
-            return (p.name || '').toLowerCase().includes(query) ||
-                   (p.id || '').toLowerCase().includes(query) ||
-                   (p.description || '').toLowerCase().includes(query) ||
-                   (p.author || '').toLowerCase().includes(query);
-        });
-    }
+    const filtered = query ? allPlugins.filter(p =>
+        (p.name || '').toLowerCase().includes(query) ||
+        (p.id || '').toLowerCase().includes(query) ||
+        (p.description || '').toLowerCase().includes(query) ||
+        (p.author || '').toLowerCase().includes(query)
+    ) : allPlugins;
 
-    if (filtered.length === 0) {
+    if (!filtered.length) {
         grid.innerHTML = '';
+        disabledGrid.innerHTML = '';
+        disabledSection.classList.add('hidden');
         empty.classList.remove('hidden');
-        if (query) {
-            empty.querySelector('p:first-child').textContent = 'No plugins found';
-            empty.querySelector('p:last-child').textContent = 'Try a different search term.';
-        } else {
-            empty.querySelector('p:first-child').textContent = 'No plugins installed';
-            empty.querySelector('p:last-child').textContent = 'Upload a plugin zip package to get started';
-        }
+        empty.querySelector('p:first-child').textContent = query ? 'No plugins found' : 'No plugins installed';
+        empty.querySelector('p:last-child').textContent = query ? 'Try a different search term.' : 'Upload a plugin zip package to get started';
         return;
     }
-    empty.classList.add('hidden');
 
-    grid.innerHTML = filtered.map(p => {
-        const isSystem = p.is_system;
-        const categoryBadge = isSystem
+    const enabledPlugins = filtered.filter(p => p.enabled !== false && p.enabled !== 0);
+    const disabledPlugins = filtered.filter(p => p.enabled === false || p.enabled === 0);
+    const renderCard = p => {
+        const categoryBadge = p.is_system
             ? '<span class="inline-flex items-center gap-1 text-xs font-medium text-purple-600 bg-purple-50 px-2 py-1 rounded-full"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>System</span>'
             : '';
         return `
@@ -131,7 +144,30 @@ function renderPlugins() {
                 </div>
             </div>
         </div>
-    `}).join('');
+    `;
+    };
+
+    empty.classList.add('hidden');
+    grid.innerHTML = enabledPlugins.map(renderCard).join('');
+    disabledGrid.innerHTML = disabledPlugins.map(renderCard).join('');
+    disabledCount.textContent = disabledPlugins.length;
+    disabledSection.classList.toggle('hidden', disabledPlugins.length === 0);
+
+    const toggle = document.getElementById('disabled-plugins-toggle');
+    const chevron = document.getElementById('disabled-plugins-chevron');
+    toggle.setAttribute('aria-expanded', 'false');
+    disabledGrid.classList.add('hidden');
+    chevron.classList.remove('rotate-180');
+}
+
+function toggleDisabledPlugins() {
+    const toggle = document.getElementById('disabled-plugins-toggle');
+    const grid = document.getElementById('disabled-plugins-grid');
+    const chevron = document.getElementById('disabled-plugins-chevron');
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', String(!expanded));
+    grid.classList.toggle('hidden', expanded);
+    chevron.classList.toggle('rotate-180', !expanded);
 }
 
 async function togglePlugin(pluginId, enabled) {
