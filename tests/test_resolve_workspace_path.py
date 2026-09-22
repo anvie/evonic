@@ -1,6 +1,19 @@
 """Regression tests for shared workspace path resolution."""
 
-from backend.tools._workspace import resolve_workspace_path
+from backend.tools._workspace import resolve_workspace_path, scratch_dir
+
+
+def test_scratch_dir_uses_direct_tmp_path():
+    assert scratch_dir("linus") == "/tmp/evonic-linus-scratchpad"
+
+
+def test_scratch_dir_uses_default_identifier_when_empty():
+    assert scratch_dir("") == "/tmp/evonic-default-scratchpad"
+
+
+def test_subagent_relative_path_uses_canonical_scratchpad():
+    agent = {"id": "linus", "is_subagent": True}
+    assert resolve_workspace_path(agent, "work.py", "/workspace") == "/tmp/evonic-linus-scratchpad/work.py"
 
 
 def test_preserves_absolute_path_already_inside_agent_workspace():

@@ -19,7 +19,7 @@ def scratch_dir(agent_id: str) -> str:
     redirection all resolve here so an agent's scripts and their output stay
     together and never clutter the project workspace.
     """
-    return f"/tmp/evonic-temp/{agent_id or 'default'}-scratchpad"
+    return f"/tmp/evonic-{agent_id or 'default'}-scratchpad"
 
 
 def effective_agent_id(agent: dict) -> str:
