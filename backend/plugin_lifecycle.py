@@ -370,6 +370,26 @@ class PluginManager:
         """Return list of registered blueprint names."""
         return list(self._blueprints.keys())
 
+    def get_plugin_endpoints(self, plugin_id: str) -> List[Dict[str, Any]]:
+        """Return HTTP routes registered by a plugin's runtime Flask blueprint."""
+        blueprint = self._blueprints.get(plugin_id)
+        if blueprint is None:
+            return []
+
+        from flask import current_app
+        endpoint_prefix = f'{blueprint.name}.'
+        endpoints = []
+        for rule in current_app.url_map.iter_rules():
+            if not rule.endpoint.startswith(endpoint_prefix):
+                continue
+            methods = sorted(method for method in rule.methods if method not in {'HEAD', 'OPTIONS'})
+            endpoints.append({
+                'path': rule.rule,
+                'methods': methods,
+                'endpoint': rule.endpoint,
+            })
+        return sorted(endpoints, key=lambda item: (item['path'], item['methods'], item['endpoint']))
+
     def dispatch(self, event_name: str, event_data: dict):
         """Dispatch an event via the event stream (non-blocking). Backward compat."""
         from backend.event_stream import event_stream
@@ -592,6 +612,8 @@ class PluginManager:
         manifest['enabled'] = self._is_plugin_enabled(plugin_id)
         manifest['events'] = manifest.get('events', [])
         manifest['event_count'] = len(manifest['events'])
+        manifest['endpoints'] = self.get_plugin_endpoints(plugin_id)
+        manifest['endpoint_count'] = len(manifest['endpoints'])
         manifest['variables'] = manifest.get('variables', [])
         manifest['config'] = self.get_plugin_config(plugin_id)
 

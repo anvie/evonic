@@ -63,13 +63,21 @@
                 </div>
             </div>
 
-            <!-- Right: Events -->
-            <div>
+            <!-- Right: Runtime capabilities -->
+            <div class="space-y-6">
                 <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">Subscribed Events <span id="event-count" class="text-sm font-normal text-gray-400"></span></h3>
                     </div>
                     <div id="events-list" class="space-y-2">
+                        <p class="text-sm text-gray-400">Loading...</p>
+                    </div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">HTTP/API Endpoints <span id="endpoint-count" class="text-sm font-normal text-gray-400"></span></h3>
+                    </div>
+                    <div id="endpoints-list" class="space-y-2">
                         <p class="text-sm text-gray-400">Loading...</p>
                     </div>
                 </div>
@@ -136,6 +144,7 @@ async function loadPlugin() {
 
     renderSettings(pluginData.variables || [], pluginData.config || {});
     renderEvents(pluginData.events || []);
+    renderEndpoints(pluginData.endpoints || []);
     renderReadme(pluginData.readme);
 
     // Show token management section for agentapi plugin
@@ -283,6 +292,32 @@ function renderEvents(events) {
             <div class="flex-1 min-w-0">
                 <p class="text-sm font-medium text-gray-800 dark:text-gray-100 font-mono">${esc(e)}</p>
                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${esc(EVENT_DESCRIPTIONS[e] || 'Custom event')}</p>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderEndpoints(endpoints) {
+    const list = document.getElementById('endpoints-list');
+    const count = document.getElementById('endpoint-count');
+
+    count.textContent = `(${endpoints.length})`;
+    if (endpoints.length === 0) {
+        list.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No HTTP/API endpoints registered</p>';
+        return;
+    }
+
+    list.innerHTML = endpoints.map(item => `
+        <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg dark:bg-gray-600">
+            <div class="flex-shrink-0 w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center mt-0.5">
+                <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m2.656-2.656l1.5-1.5a4 4 0 115.656 5.656l-1.5 1.5M8 16l8-8"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="flex flex-wrap items-center gap-1.5">
+                    ${(item.methods || []).map(method => `<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold font-mono bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">${esc(method)}</span>`).join('')}
+                    <span class="text-sm font-medium text-gray-800 dark:text-gray-100 font-mono break-all">${esc(item.path)}</span>
+                </div>
+                ${item.endpoint ? `<p class="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono break-all">${esc(item.endpoint)}</p>` : ''}
             </div>
         </div>
     `).join('');
