@@ -38,6 +38,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_meta (
     agent_id TEXT PRIMARY KEY,
     locale TEXT NOT NULL DEFAULT 'en',
+    -- Legacy: the skillset a 3.1.0 agent was built from. Never written any more
+    -- (the template is the only source now); kept so old rows stay readable.
     skillset TEXT,
     -- Template the agent was instantiated from, and the params used (JSON).
     template_id TEXT,
@@ -172,8 +174,13 @@ def _loads(value: Optional[str], fallback: Any = None) -> Any:
 # ---------------------------------------------------------------- agent meta
 
 def save_meta(agent_id: str, **fields: Any) -> None:
-    """Upsert the console-owned metadata of an agent."""
-    columns = ("locale", "skillset", "template_id", "template_params", "account",
+    """Upsert the console-owned metadata of an agent.
+
+    Only the columns listed below are writable; any other key in ``fields`` is
+    ignored. ``skillset`` is deliberately absent: every agent is built from a
+    template now, and the legacy column is history only.
+    """
+    columns = ("locale", "template_id", "template_params", "account",
                "instance", "profile", "owner", "callback_url", "hosting_hash",
                "profile_hash", "activate_pending")
     values = {}

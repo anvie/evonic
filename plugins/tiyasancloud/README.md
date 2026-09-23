@@ -15,12 +15,12 @@ Start with [PLUGIN.md](PLUGIN.md) for installation, settings and the full API.
 - **One call registers a customer's agent.** `POST /register_agent` creates
   the agent from the console's onboarding form, confined to its instance's
   tunnel workplace, writes the two TiyasanCloud blocks into its `SYSTEM.md`,
-  and returns its WhatsApp link. The agent is built either from a legacy
-  `skillset` id (unchanged since 3.0.0) or, when the request carries a
-  `template` object, from Evonic's parameterized **template engine**
-  (`backend.agent_templates`), which renders the system prompt and resolves the
-  tools and skills. The plugin never lists, reads, changes or deletes agents
-  afterwards: that is Evonic's business.
+  and returns its WhatsApp link. The agent is built by Evonic’s parameterized
+  **template engine** (`backend.agent_templates`): from the request’s `template`
+  object, else from the `AGENT_TEMPLATE_ID` plugin setting, which renders the
+  system prompt and resolves the tools and skills. A `skillset` field is no
+  longer read (ignored, never rejected). The plugin never lists, reads, changes
+  or deletes agents afterwards: that is Evonic’s business.
 - **Monthly token quota.** Registration sets `tokens_monthly` and a soft
   threshold; the period rolls with the calendar month. Evonic then stops at the
   hard cap without calling the LLM, and warns the agent before it gets there.
@@ -67,13 +67,20 @@ confinement, quota hooks and pairing code underneath).
 | `plugin.json` | Manifest and settings. |
 | `handler.py` | Lifecycle: registers the quota hooks, starts the two workers. |
 | `routes.py` | The HTTP API (both path prefixes, auth on every route). |
-| `agents.py` | Agent registration (legacy and template paths), confinement, the `SYSTEM.md` blocks, switching a new agent on. |
+| `agents.py` | Agent registration (template only), confinement, the `SYSTEM.md` blocks, switching a new agent on. |
 | `quota.py` | Limits, usage, state and the three enforcement hooks. |
 | `whatsapp.py` | Active channel + number, the WhatsApp link and its message, redeeming from the inbox, routes, status. |
 | `callbacks.py` | Signed, queued, retried callbacks to the console. |
 | `store.py` | The plugin's SQLite tables. |
 | `common.py` | Config, auth, validation, error shape. |
 | `tests/` | Unit tests (`test_register_template.py`); Evonic is stubbed, so they run anywhere. |
+
+## Changes from 3.1.0
+
+| 3.1.0 | Now |
+| --- | --- |
+| `POST /register_agent` fell back to the legacy `skillset` path when the request carried no `template` | The template is the only path. A request without a `template` object is built from `AGENT_TEMPLATE_ID`; with that setting empty it is refused with `400 template_required` instead of creating an agent without a prompt |
+| `skillset` chose the prompt, tools and skills, and `store.save_meta` wrote the `skillset` column | `skillset` is no longer read: a caller that still sends one is ignored, never rejected. `_skillset()`, `DEFAULT_KB` and `_copy_default_kb()` are gone; the column stays as read-only history |
 
 ## Changes from 3.0.0
 

@@ -23,7 +23,7 @@ enable it in Evonic, then fill in the settings:
 | `ENFORCE_QUOTA` | Off = report usage but never block a turn. |
 | `PAIRING_POLL_SECONDS` | How often incoming pairing codes are picked up (default 3). |
 | `ALLOWED_TOOLS` | Tool filter. `"*"` (default) or empty = **no filtering**: every tool the template engine assigns is kept, host-side tools included. A comma-separated list keeps only those tools. |
-| `AGENT_TEMPLATE_ID` | Optional default template id (default empty). When set, a `register_agent` request **without** a `template` object is instantiated from this template with the request's `params`. Empty = today's skillset-only behaviour. |
+| `AGENT_TEMPLATE_ID` | The template every registration **without** its own `template` object is built from. **Set this**: the template is the only source of the system prompt, tools and skills, so with it empty a request that carries no `template` is refused with `400 template_required`. |
 
 The plugin never creates a WhatsApp channel and never asks a customer to scan a
 QR: an operator connects the shared number once, in Evonic.
@@ -59,8 +59,9 @@ The console registers one agent per user: `agent_id` = `tc_<user id>` and
 WhatsApp.
 
 `POST /register_agent` takes `agent_id`, `name`, `description`, `locale`,
-`account`, `instance` (`slug`), `hosting_prompt`, `profile_prompt`, the
-optional `skillset`, `limits` and `callback_url`.
+`account`, `instance` (`slug`), `hosting_prompt`, `profile_prompt`, `limits`,
+`callback_url` and the `template` object (below). A `skillset` field is no
+longer read: a caller that still sends one is ignored, never rejected.
 
 - **New agent → `201`** with `agent_id`, `agent_name`, `connector_token`,
   `workplace_id` and `whatsapp.link`.
@@ -69,9 +70,9 @@ optional `skillset`, `limits` and `callback_url`.
   the `connector_token`, so a console that lost the first answer can still
   start the connector.
 
-A new agent is created the way `evonic agent add` creates it (agent dir, KB
-with Evonic's default files, workspace under `shared/agents/<id>`, the resolved
-tools of the optional `skillset`), with `model_id` left to the global default.
+A new agent is created by Evonic’s template engine (agent dir and KB from
+`backend/agent_factory`, workspace under `shared/agents/<id>`, the tools and
+skills the template resolves), with `model_id` left to the global default.
 
 **Confinement.** A customer agent runs only inside its own server. The plugin:
 
@@ -88,18 +89,21 @@ instance sandbox. The agent starts **disabled**; the plugin's worker switches
 it on once, as soon as its workplace reports `connected`. An operator who
 disables it later keeps it disabled.
 
-`SYSTEM.md` gets the skillset's prompt with two blocks of ours:
+`SYSTEM.md` gets the template’s rendered prompt with two blocks of ours:
 `<!-- tiyasan-profile -->` … `<!-- /tiyasan-profile -->` at the top and
 `<!-- tiyasan-hosting -->` … `<!-- /tiyasan-hosting -->` at the end. After
 registration the prompt is Evonic's. Ids that look like Evonic sub-agents
 (`_sub_N`, `_explorer_N`, `_organizer_N`) are refused.
 
-### Registering from a template
+### Building the agent from a template
 
-`POST /register_agent` accepts an optional `template` object. When present, the
-agent is created through Evonic's template engine
-(`backend.agent_templates.create_agent_from_template`), never by hand; when
-absent, the legacy `skillset` path runs unchanged.
+`POST /register_agent` builds **every** agent through Evonic’s template engine
+(`backend.agent_templates.create_agent_from_template`), never by hand. The request
+carries a `template` object; when it does not, the plugin falls back to
+`AGENT_TEMPLATE_ID`. With neither, the request is refused (`400 template_required`)
+instead of creating an agent without a prompt. Since 3.2.0 the legacy `skillset`
+branch, its `DEFAULT_KB` / `_copy_default_kb` helpers and the `skillset` store write
+are gone.
 
 ```json
 {
@@ -142,12 +146,13 @@ Errors use the same `{error, message}` shape:
 | Invalid params/overrides, or an unrenderable prompt | `400` | `invalid_template` |
 | Template needs tools/skills Evonic lacks | `409` | `template_unresolved` |
 | The agent already exists | `200` | `agent_exists` (replay, unchanged) |
+| No `template` object and no `AGENT_TEMPLATE_ID` | `400` | `template_required` |
 
 An existing agent is returned first, before any template is read, so it is
 never modified and never receives template parameters.
 
-If `AGENT_TEMPLATE_ID` is set and the request carries no `template`, the plugin
-instantiates from that template id with the request's `params`.
+When the request carries no `template` object, the plugin instantiates from
+`AGENT_TEMPLATE_ID` with the request’s params (`template_params`, else `params`).
 
 ### Token quota
 

@@ -1,7 +1,7 @@
 {
   "id": "tiyasancloud",
   "name": "TiyasanCloud",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Registers TiyasanCloud customer agents (confined, with a one-tap WhatsApp link on the shared number) and enforces their monthly token quota.",
   "author": "Evonic",
   "enabled": true,
@@ -66,10 +66,10 @@
     },
     {
       "name": "AGENT_TEMPLATE_ID",
-      "label": "Default agent template (optional)",
+      "label": "Agent template",
       "type": "string",
       "default": "",
-      "description": "Leave empty for today's behaviour. When set, a register_agent request without a \"template\" object is instantiated from this template id with the request's params."
+      "description": "The template every registration without its own \"template\" object is built from. Required: with this empty, such a request is refused with 400 template_required. The request's params come from \"template_params\" (or \"params\")."
     },
     {
       "name": "PAIRING_POLL_SECONDS",

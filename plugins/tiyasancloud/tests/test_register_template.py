@@ -1,7 +1,7 @@
 """Registration through the template engine, with Evonic stubbed.
 
 Evonic does not need to be installed: ``config``, ``models.db``, ``backend``
-(``agent_templates`` / ``agent_factory`` / ``skillsets`` / ``plugin_manager``)
+(``agent_templates`` / ``agent_factory`` / ``plugin_manager``)
 are replaced with the smallest faithful surface the plugin uses, then the
 plugin is imported as the ``tiyasancloud`` package. The fake template engine
 renders ``agent_templates/<id>.json`` the way the real one does, so the tests
@@ -261,32 +261,17 @@ def _install_stubs() -> None:
     manager_mod = types.ModuleType("backend.plugin_manager")
     manager_mod.plugin_manager = _Manager()
 
-    skillsets_mod = types.ModuleType("backend.skillsets")
-    skillsets_mod.get_skillset = _SKILLSETS.get
-    skillsets_mod.resolve_skillset = _resolve_skillset
-
     backend_pkg = types.ModuleType("backend")
     backend_pkg.agent_templates = templates_mod
     backend_pkg.agent_factory = factory_mod
-    backend_pkg.skillsets = skillsets_mod
     backend_pkg.plugin_manager = manager_mod
     sys.modules["backend"] = backend_pkg
     sys.modules["backend.agent_templates"] = templates_mod
     sys.modules["backend.agent_factory"] = factory_mod
     sys.modules["backend.plugin_manager"] = manager_mod
-    sys.modules["backend.skillsets"] = skillsets_mod
 
     if PLUGINS_ROOT not in sys.path:
         sys.path.insert(0, PLUGINS_ROOT)
-
-
-#: The legacy skillsets the fake ``backend.skillsets`` serves.
-_SKILLSETS: Dict[str, Dict[str, Any]] = {}
-
-
-def _resolve_skillset(skillset: str) -> Dict[str, Any]:
-    data = _SKILLSETS.get(skillset) or {}
-    return {"resolved_tools": list(data.get("tools") or [])}
 
 
 _install_stubs()
@@ -303,7 +288,6 @@ def _clean():
     DB.reset()
     ENGINE.reset()
     PLUGIN_CONFIG.clear()
-    _SKILLSETS.clear()
     shutil_rmtree_files(os.path.join(BASE_DIR, "agent_templates"))
     shutil_rmtree_files(os.path.join(BASE_DIR, "agents"))
     # A brand-new plugin DB per test (store caches the schema per path).
@@ -530,22 +514,60 @@ def test_unresolved_template_maps_to_409_with_the_report():
     assert "zzz" in excinfo.value.message
 
 
-def test_legacy_path_is_untouched_without_a_template():
-    _SKILLSETS["legacy"] = {
-        "system_prompt": "You are a legacy agent.",
-        "tools": ["bash", "read_file"],
-        "skills": ["github"],
-    }
+def test_skillset_field_is_ignored_and_the_template_wins():
+    """A console that still sends 'skillset' keeps working: it is never read."""
+    write_template("support_triage_bot")
+    body = base_body(skillset="legacy", template={
+        "id": "support_triage_bot", "params": {"company": "PT Acme"}})
 
-    result, created = agents.register("tc_1", base_body(skillset="legacy"))
+    result, created = agents.register("tc_1", body)
 
     assert created is True
-    assert ENGINE.calls == []
-    assert DB.get_agent_tools("tc_1") == ["bash", "read_file"]
-    assert DB.get_agent_skills("tc_1") == ["github"]
+    assert result["agent_id"] == "tc_1"
+    # The template built the agent and the legacy field changed nothing.
+    assert len(ENGINE.calls) == 1
+    assert ENGINE.calls[0]["template_id"] == "support_triage_bot"
     prompt = read_prompt("tc_1")
-    assert "You are a legacy agent." in prompt
+    assert "PT Acme" in prompt
     assert agents.PROFILE_MARK in prompt and agents.HOSTING_MARK in prompt
+    assert "bash" not in DB.get_agent_tools("tc_1")
+    assert store.get_meta("tc_1")["template_id"] == "support_triage_bot"
+    assert store.get_meta("tc_1").get("skillset") is None
+
+
+def test_skillset_only_request_is_refused_without_a_template():
+    """No 'template' object and no AGENT_TEMPLATE_ID: refused, nothing created."""
+    body = base_body(skillset="legacy")
+
+    with pytest.raises(common.ApiError) as excinfo:
+        agents.register("tc_1", body)
+
+    assert excinfo.value.status == 400
+    assert excinfo.value.code == "template_required"
+    assert "AGENT_TEMPLATE_ID" in excinfo.value.message
+    assert ENGINE.calls == []
+    assert DB.get_agent("tc_1") is None
+    assert DB.workplaces == {} and DB.connectors == {}
+    assert store.get_meta("tc_1") == {}
+
+
+def test_save_meta_ignores_the_legacy_skillset_column():
+    """The column is history: passing it no longer writes anything."""
+    store.save_meta("tc_1", locale="id", skillset="legacy")
+
+    meta = store.get_meta("tc_1")
+    assert meta["locale"] == "id"
+    assert meta.get("skillset") is None
+
+
+def test_template_required_also_when_nothing_is_sent():
+    """An empty request is refused before anything is touched."""
+    with pytest.raises(common.ApiError) as excinfo:
+        agents.register("tc_1", base_body())
+
+    assert excinfo.value.status == 400
+    assert excinfo.value.code == "template_required"
+    assert DB.get_agent("tc_1") is None
 
 
 def test_default_template_setting_uses_request_params():

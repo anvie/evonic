@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import shutil
 from typing import Any, Dict, Optional, Tuple
 
 from .common import ApiError, agent_prefixes, config, evonic_unavailable, invalid_body, valid_agent_id
@@ -23,6 +22,12 @@ PROFILE_MARK = "<!-- tiyasan-profile -->"
 PROFILE_END = "<!-- /tiyasan-profile -->"
 
 LOCALES = ("id", "en")
+
+#: What a registration without a template (and without AGENT_TEMPLATE_ID) gets.
+TEMPLATE_REQUIRED_HINT = (
+    "this endpoint only creates agents from a template: send a 'template' object "
+    "({id, params, overrides}) or set AGENT_TEMPLATE_ID in the plugin settings"
+)
 
 
 def _base_dir() -> str:
@@ -108,9 +113,11 @@ def register(agent_id: str, body: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]
     template parameters: the result only repeats its connector token, so a
     console that lost the first answer can still start the connector.
 
-    The agent comes either from the legacy ``skillset`` id (unchanged) or, when
-    the request carries a ``template`` object (or the plugin setting
-    ``AGENT_TEMPLATE_ID`` is set), from the template engine.
+    The agent is always built by the template engine: from the request's
+    ``template`` object when it carries one, else from the plugin setting
+    ``AGENT_TEMPLATE_ID``. A ``skillset`` field a console still sends is
+    ignored, never rejected. A request with neither template nor setting is
+    refused (``template_required``).
     """
     from models.db import db
 
@@ -135,71 +142,22 @@ def register(agent_id: str, body: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]
         raise invalid_body("'callback_url' must be https")
 
     template = _template_request(body)
-    if template is not None:
-        return _register_from_template(
-            db, agent_id, template, body,
-            name=name, description=description, slug=slug, locale=locale,
-            account=account, instance=instance,
-            hosting_prompt=hosting_prompt, profile_prompt=profile_prompt,
-            callback_url=callback_url,
-        )
+    if template is None:
+        # The template is the only source of the system prompt, the tools and
+        # the skills: building the agent by hand here would create one without a
+        # prompt, so the request is refused instead.
+        raise ApiError(400, "template_required", TEMPLATE_REQUIRED_HINT)
 
-    skillset = _text(body, "skillset", required=False, limit=60)
-    system_prompt, tools, skills = _skillset(skillset)
-
-    workplace_id, connector_token = _tunnel_workplace(slug)
-    # Same steps as `evonic agent add` and Evonic's admin API: agent dir + KB,
-    # workspace under shared/agents/<id>, SYSTEM.md, resolved skillset tools.
-    workspace = os.path.join(_base_dir(), "shared", "agents", agent_id)
-    os.makedirs(os.path.join(_base_dir(), "agents", agent_id, "kb"), exist_ok=True)
-    os.makedirs(os.path.join(_base_dir(), "agents", agent_id, "artifacts"), exist_ok=True)
-    os.makedirs(workspace, exist_ok=True)
-    _copy_default_kb(agent_id)
-    prompt = put_block(system_prompt, PROFILE_MARK, PROFILE_END, profile_prompt, on_top=True)
-    prompt = put_block(prompt, HOSTING_MARK, HOSTING_END, hosting_prompt)
-    write_prompt(agent_id, prompt)
-    agent_row: Dict[str, Any] = {
-        "id": agent_id,
-        "name": name,
-        "description": description,
-        "system_prompt": prompt,
-        "workspace": workspace,
-        # The customer never picks a model (None = global default), never gets
-        # a host shell, and the agent runs in its own tunnel workplace.
-        "model_id": None,
-        "workplace_id": workplace_id,
-        "sandbox_enabled": 0,
-        "bash_exec_enabled": 0,
-        "agent_messaging_enabled": False,
-        "builtin_tools_enabled": False,
-        # Off until the Evonet connector inside the instance is connected.
-        "enabled": False,
-    }
-    try:
-        db.create_agent(agent_row)
-        if tools:
-            db.set_agent_tools(agent_id, tools)
-        if skills:
-            db.set_agent_skills(agent_id, skills)
-    except Exception as exc:
-        raise evonic_unavailable(f"cannot create the agent: {exc}")
-    _confine(agent_id, workplace_id)
-
-    store.save_meta(
-        agent_id,
-        locale=locale,
-        skillset=skillset,
-        account=account,
-        instance=instance,
-        profile=body.get("profile"),
-        owner=body.get("owner"),
+    # A 'skillset' field in the body is deliberately not read: the template wins
+    # and the field is ignored, never rejected, so a console that still sends it
+    # keeps working while AGENT_TEMPLATE_ID is set.
+    return _register_from_template(
+        db, agent_id, template, body,
+        name=name, description=description, slug=slug, locale=locale,
+        account=account, instance=instance,
+        hosting_prompt=hosting_prompt, profile_prompt=profile_prompt,
         callback_url=callback_url,
-        hosting_hash=block_hash(hosting_prompt),
-        profile_hash=block_hash(profile_prompt),
-        activate_pending=1,
     )
-    return {"agent_id": agent_id, "agent_name": name, "connector_token": connector_token,
-            "workplace_id": workplace_id}, True
 
 
 def _existing_result(db, agent_id: str, existing: Dict[str, Any]) -> Dict[str, Any]:
@@ -219,12 +177,12 @@ def _existing_result(db, agent_id: str, existing: Dict[str, Any]) -> Dict[str, A
 # -------------------------------------------------------------------- templates
 
 def _template_request(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """The template instantiation request, or ``None`` for the skillset path.
+    """The template instantiation request, or ``None`` when there is none.
 
     ``body[\"template\"]`` (``{id, params, overrides}``) wins. When it is absent
     and the plugin setting ``AGENT_TEMPLATE_ID`` is set, that id is used with
     the request's params (``template_params`` or ``params``). An empty setting
-    keeps today's behaviour.
+    means there is no template to build from, so the caller refuses the request.
     """
     raw = body.get("template")
     if raw is not None:
@@ -438,35 +396,6 @@ def _confine(agent_id: str, workplace_id: str) -> None:
         })
     except Exception as exc:
         raise evonic_unavailable(f"cannot confine the agent: {exc}")
-
-
-def _skillset(skillset: Optional[str]) -> Tuple[str, list, list]:
-    """(system prompt, resolved tool ids, skills) — as `evonic agent add` does."""
-    if not skillset:
-        return "", [], []
-    from backend import skillsets
-    data = skillsets.get_skillset(skillset)
-    if data is None:
-        raise ApiError(404, "skillset_not_found", f"skillset '{skillset}' does not exist")
-    resolved = skillsets.resolve_skillset(skillset) or {}
-    return data.get("system_prompt") or "", list(resolved.get("resolved_tools") or []), list(data.get("skills") or [])
-
-
-# Knowledge-base files Evonic gives every new agent (see routes/agents.py).
-DEFAULT_KB = {
-    "super_agent_kb_evonic.md": "evonic.md",
-    "reminder-and-schedule-creation-rules.md": "reminder-and-schedule-creation-rules.md",
-    "evonet.md": "evonet.md",
-}
-
-
-def _copy_default_kb(agent_id: str) -> None:
-    source_dir = os.path.join(_base_dir(), "defaults")
-    kb_dir = os.path.join(_base_dir(), "agents", agent_id, "kb")
-    for source, target in DEFAULT_KB.items():
-        path = os.path.join(source_dir, source)
-        if os.path.isfile(path):
-            shutil.copy2(path, os.path.join(kb_dir, target))
 
 
 # Evonic reserves these suffixes for sub-agents of an agent.
