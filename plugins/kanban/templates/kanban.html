@@ -772,6 +772,15 @@ html.dark .kb-task-title {
         const hasAvatar = hasAgentAvatar(task.assignee);
         const nUrl = task.assignee ? `/api/agents/${esc(task.assignee)}/avatar` : '';
         const agentTitle = task.assignee ? esc(getAgentName(task.assignee)) : '';
+        // Avatar background mirrors the sidebar agent list: the shared
+        // deterministic color for regular agents, while the super agent keeps
+        // its red badge as a deliberate, distinct indicator.
+        const avatarIsSuper = task.assignee === SUPER_AGENT_ID;
+        const avatarStyle = (hasAssignee && !avatarIsSuper)
+            ? ` style="background-color:${avatarBgColor(task.assignee)}"` : '';
+        const avatarFallbackCls = avatarIsSuper
+            ? 'bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400'
+            : 'text-white';
         const rocketBtn = task.status === 'todo' ? `<button class="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900/50 transition" title="Trigger agent" onclick="handleTrigger(${task.id}, ${hasAssignee}, event)">🚀</button>` : '';
         return `
         <div class="bg-white dark:bg-gray-700 rounded-lg p-3 shadow-sm hover:shadow-md dark:shadow-gray-900/30 transition border border-gray-200 dark:border-gray-700 cursor-grab active:cursor-grabbing" data-id="${task.id}" draggable="true" ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)">
@@ -783,8 +792,8 @@ html.dark .kb-task-title {
                 ${rocketBtn}
                 ${(task.status === 'in-progress' || (task.status === 'done' && task.started_at)) ? `<span class="flex items-center gap-1 text-[10px] text-indigo-500 dark:text-indigo-400 mx-auto"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${fmtDuration(task)}</span>` : ''}
                 ${task.assignee ? (hasAvatar
-                    ? `<span class="ml-auto inline-flex items-center gap-0"><img src="${nUrl}" alt="" class="w-5 h-5 rounded-full object-cover" title="${agentTitle}" onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.style.display='inline-flex'"><span class="hidden items-center justify-center w-5 h-5 rounded-full text-[9px] font-semibold ${task.assignee === SUPER_AGENT_ID ? 'bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400' : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300'}" title="${agentTitle}">${initials}</span></span>`
-                    : `<span class="ml-auto inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-semibold ${task.assignee === SUPER_AGENT_ID ? 'bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400' : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300'}" title="${agentTitle}">${initials}</span>`
+                    ? `<span class="ml-auto inline-flex items-center gap-0"><img src="${nUrl}" alt="" class="w-5 h-5 rounded-full object-cover" title="${agentTitle}" onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.style.display='inline-flex'"><span class="hidden items-center justify-center w-5 h-5 rounded-full text-[9px] font-semibold ${avatarFallbackCls}"${avatarStyle} title="${agentTitle}">${initials}</span></span>`
+                    : `<span class="ml-auto inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-semibold ${avatarFallbackCls}"${avatarStyle} title="${agentTitle}">${initials}</span>`
                 ) : ''}
             </div>
             <div class="flex gap-1 pt-1.5 border-t border-gray-100 dark:border-gray-700 flex-wrap">
@@ -2133,6 +2142,29 @@ html.dark .kb-task-title {
         return !!(agent && agent.avatar_path);
     }
 
+    // Deterministic per-agent avatar background color. Reuses the shared palette
+    // exposed by static/js/agent-sidebar.js (loaded globally via base.html) so
+    // Kanban avatars match the sidebar agent list exactly. The mirrored palette
+    // below is only a safety net for when that script is not present.
+    const _AVATAR_FALLBACK_COLORS = [
+        'hsl(200, 70%, 40%)',
+        'hsl(260, 60%, 45%)',
+        'hsl(330, 60%, 42%)',
+        'hsl(160, 55%, 35%)',
+        'hsl(30, 70%, 38%)',
+        'hsl(290, 50%, 40%)',
+        'hsl(80, 50%, 32%)',
+        'hsl(10, 65%, 40%)',
+    ];
+
+    function avatarBgColor(agentId) {
+        if (typeof _sidebarAvatarColor === 'function') return _sidebarAvatarColor(agentId);
+        let h = 0;
+        const s = String(agentId || '');
+        for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
+        return _AVATAR_FALLBACK_COLORS[Math.abs(h) % _AVATAR_FALLBACK_COLORS.length];
+    }
+
     function showAgentSkillWarning(selectId, warningId) {
         const agentId = $(selectId).val().trim();
         if (!agentId) {
@@ -2153,9 +2185,15 @@ html.dark .kb-task-title {
         const initials = esc(assignee).split(/[\s._-]+/).filter(Boolean).map(s => s[0].toUpperCase()).slice(0, 2).join('');
         const isSuper = assignee === SUPER_AGENT_ID;
         const hasAvatar = hasAgentAvatar(assignee);
+        // Mirror the sidebar agent list: deterministic per-agent background
+        // color; the super agent keeps its red badge as a distinct indicator.
+        const avatarStyle = isSuper ? '' : ` style="background-color:${avatarBgColor(assignee)}"`;
+        const avatarFallbackCls = isSuper
+            ? 'bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400'
+            : 'text-white';
         const avatarHtml = hasAvatar
-            ? `<div class="relative inline-flex"><img src="/api/agents/${esc(assignee)}/avatar" alt="" class="w-10 h-10 rounded-full object-cover" title="${esc(assignee)}" onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.style.display='inline-flex'"><span class="hidden items-center justify-center w-10 h-10 rounded-full text-xs font-semibold ${isSuper ? 'bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400' : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300'}" title="${esc(assignee)}">${initials}</span></div>`
-            : `<span class="inline-flex items-center justify-center w-10 h-10 rounded-full text-xs font-semibold ${isSuper ? 'bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400' : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300'}" title="${esc(assignee)}">${initials}</span>`;
+            ? `<div class="relative inline-flex"><img src="/api/agents/${esc(assignee)}/avatar" alt="" class="w-10 h-10 rounded-full object-cover" title="${esc(assignee)}" onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.style.display='inline-flex'"><span class="hidden items-center justify-center w-10 h-10 rounded-full text-xs font-semibold ${avatarFallbackCls}"${avatarStyle} title="${esc(assignee)}">${initials}</span></div>`
+            : `<span class="inline-flex items-center justify-center w-10 h-10 rounded-full text-xs font-semibold ${avatarFallbackCls}"${avatarStyle} title="${esc(assignee)}">${initials}</span>`;
         return `<div class="flex flex-col items-start gap-1">
             ${avatarHtml}
             <span class="text-xs ${isSuper ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-gray-600 dark:text-gray-400'}">${esc(agentName)}</span>
