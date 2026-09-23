@@ -2261,7 +2261,7 @@ def run_tool_loop(agent: Dict[str, Any],
                     else:
                         _future = _pool.submit(
                             _execute_tool_core, _fn_p, _args_p,
-                            builtin_exec, real_exec)
+                            builtin_exec, real_exec, agent_context)
                         # Record the deadline at submission, not when collection
                         # reaches this call, so ordering cannot extend its budget.
                         _parallel_jobs[p_idx] = (
@@ -2351,7 +2351,8 @@ def run_tool_loop(agent: Dict[str, Any],
                             'blocked_by': 'tool_guard'}
                 else:
                     tool_result = _execute_tool_core(fn_name, args,
-                                                     builtin_exec, real_exec)
+                                                     builtin_exec, real_exec,
+                                                     agent_context)
 
             # Human-in-the-loop approval for requires_approval safety results
             if isinstance(tool_result, dict) and tool_result.get('level') == 'requires_approval':

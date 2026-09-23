@@ -228,7 +228,8 @@ def _run_tool(ctx: _ExecCtx, tool: str, args: dict) -> dict:
     if guard:  # requires_approval from a plugin guard
         result = guard
     else:
-        result = _execute_tool_core(tool, args, ctx.builtin_exec, ctx.real_exec)
+        result = _execute_tool_core(tool, args, ctx.builtin_exec, ctx.real_exec,
+                                    ctx.agent_context)
 
     if isinstance(result, dict) and result.get('level') == 'requires_approval':
         result = _await_approval(ctx, tool, args, result)
