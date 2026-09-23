@@ -22,6 +22,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -346,3 +349,110 @@ def test_simulate_route_captures_outbox_without_side_effects(
 
     # The template store is untouched: render/simulate are pure reads.
     assert snapshot(repo_root) == before
+
+
+# ---------------------------------------------------------------------------
+# 6. Typing in a repeater field must not lose focus (task #30 follow-up)
+#
+# Robin reported that the caret disappeared after every keystroke in a field of
+# the editor.  Cause: the parameters list is re-rendered on each keystroke in a
+# parameter Name/Options field, and a plain ``renderParameters()`` replaced the
+# inputs the user was typing in.  The re-render is now focus-preserving.
+# ---------------------------------------------------------------------------
+
+PAGE_PATH = Path(__file__).resolve().parents[1] / "templates" / "edit_template.html"
+
+NODE = shutil.which("node") or shutil.which("nodejs")
+
+
+def _extract_js_function(source, name):
+    """Return the balanced-brace body of ``function <name>(...)`` in ``source``."""
+    start = source.index("function " + name + "(")
+    brace = source.index("{", start)
+    depth = 0
+    for pos in range(brace, len(source)):
+        if source[pos] == "{":
+            depth += 1
+        elif source[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:pos + 1]
+    raise AssertionError("unbalanced braces while extracting " + name)
+
+
+def test_repeater_list_inputs_use_the_focus_preserving_render(repo_root):
+    """The focus-preserving helpers exist and are what the list inputs call."""
+    source = PAGE_PATH.read_text(encoding="utf-8")
+
+    for name in ("datasetKey", "captureListFocus", "restoreListFocus",
+                 "rerenderParameters", "rerenderVariables"):
+        assert "function " + name + "(" in source, name
+
+    # A parameter Name/Options (and a variable's is_secret) edit re-renders the
+    # list through the focus-preserving wrapper instead of a bare render.
+    on_param = _extract_js_function(source, "onParamEdit")
+    assert "rerenderParameters()" in on_param
+    # No *bare* renderParameters() call: the wrapper must be used every time,
+    # otherwise the field the user is typing in is thrown away again.
+    assert not re.search(r"(?<![A-Za-z_])renderParameters\(\)", on_param)
+
+    on_var = _extract_js_function(source, "onVarEdit")
+    assert "rerenderVariables()" in on_var
+    assert not re.search(r"(?<![A-Za-z_])renderVariables\(\)", on_var)
+
+
+# A tiny DOM: re-rendering replaces the input nodes (that is what killed focus);
+# the wrapper must hand focus + caret back to the equivalent fresh node.
+FOCUS_HARNESS_JS = r"""
+let ACTIVE = null;
+function makeInput(p, f, val) {
+  const el = {
+    dataset: { p: String(p), f: f },
+    value: val,
+    selectionStart: 0,
+    selectionEnd: 0,
+    focus: function () { ACTIVE = el; },
+    setSelectionRange: function (a, b) { el.selectionStart = a; el.selectionEnd = b; },
+  };
+  return el;
+}
+const OLD = makeInput(0, "name", "ab");
+let NEW = null;
+const container = {
+  contains: function (el) { return el === OLD || el === NEW; },
+  querySelectorAll: function () { return NEW ? [NEW] : []; },
+};
+function $(id) { return container; }
+function renderParameters() { NEW = makeInput(0, "name", "ab"); }
+const document = { get activeElement() { return ACTIVE; } };
+
+__FNS__
+
+// The user focuses the parameter Name input and the caret sits after "ab".
+ACTIVE = OLD;
+OLD.selectionStart = 2;
+OLD.selectionEnd = 2;
+
+// A keystroke re-renders the list.
+rerenderParameters();
+
+if (ACTIVE !== NEW) { console.error("focus was lost across the re-render"); process.exit(1); }
+if (ACTIVE.selectionStart !== 2) { console.error("caret was lost: " + ACTIVE.selectionStart); process.exit(1); }
+if (ACTIVE.dataset.f !== "name" || ACTIVE.dataset.p !== "0") { console.error("wrong field restored"); process.exit(1); }
+console.log("focus+caret preserved");
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for the DOM harness")
+def test_focus_and_caret_survive_a_repeater_re_render(repo_root, tmp_path):
+    """Drive the real helpers against a tiny DOM: focus + caret must survive."""
+    source = PAGE_PATH.read_text(encoding="utf-8")
+    functions = "\n\n".join(
+        _extract_js_function(source, name)
+        for name in ("datasetKey", "captureListFocus", "restoreListFocus", "rerenderParameters"))
+    script = tmp_path / "focus_harness.js"
+    script.write_text(FOCUS_HARNESS_JS.replace("__FNS__", functions), encoding="utf-8")
+
+    result = subprocess.run([NODE, str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "focus+caret preserved" in result.stdout

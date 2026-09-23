@@ -1245,6 +1245,48 @@
         });
     }
 
+    // ── Focus-preserving re-render ─────────────────────────────────────────
+    // Re-rendering a repeater (parameters / variables) replaces its inputs. When
+    // the re-render is triggered *by typing* the focused field is destroyed and
+    // the caret is lost after every keystroke — that is why the parameter
+    // Name/Options fields were impossible to type into. Capture the active field
+    // by its data-* identity, re-render, then restore focus + caret to the
+    // equivalent element.
+    function datasetKey(el) {
+        return Object.keys(el.dataset).sort().map(function (k) { return k + "=" + el.dataset[k]; }).join("&");
+    }
+
+    function captureListFocus(container) {
+        const el = document.activeElement;
+        if (!el || !container || !container.contains(el) || !el.dataset || el.dataset.f === undefined) return null;
+        let start = null, end = null;
+        try { start = el.selectionStart; end = el.selectionEnd; } catch (err) { /* not a text field */ }
+        return { key: datasetKey(el), start: start, end: end };
+    }
+
+    function restoreListFocus(container, snap) {
+        if (!snap || !container) return;
+        const el = Array.prototype.slice.call(container.querySelectorAll("[data-f]"))
+            .filter(function (n) { return datasetKey(n) === snap.key; })[0];
+        if (!el) return;
+        el.focus();
+        if (snap.start !== null) { try { el.setSelectionRange(snap.start, snap.end); } catch (err) { /* ignore */ } }
+    }
+
+    function rerenderParameters() {
+        const container = $("tpl-params-list");
+        const snap = captureListFocus(container);
+        renderParameters();
+        restoreListFocus(container, snap);
+    }
+
+    function rerenderVariables() {
+        const container = $("tpl-vars-list");
+        const snap = captureListFocus(container);
+        renderVariables();
+        restoreListFocus(container, snap);
+    }
+
     function onParamEdit(e) {
         const el = e.target;
         if (!el.dataset || el.dataset.p === undefined || !el.dataset.f) return;
@@ -1253,9 +1295,9 @@
         let v;
         if (el.type === "checkbox") v = el.checked;
         else v = el.value;
-        if (f === "options") { p.options = String(v).split(",").map(function (x) { return x.trim(); }).filter(Boolean); renderParameters(); }
-        else if (f === "type") { p.type = v; renderParameters(); }
-        else if (f === "name") { const was = p.name; p.name = v; renderPlaceholderChips(); if (was !== v) { renderParameters(); } }
+        if (f === "options") { p.options = String(v).split(",").map(function (x) { return x.trim(); }).filter(Boolean); rerenderParameters(); }
+        else if (f === "type") { p.type = v; rerenderParameters(); }
+        else if (f === "name") { p.name = v; renderPlaceholderChips(); rerenderParameters(); }
         else p[f] = v;
         validatePrompt();
         markDirty();
@@ -1267,7 +1309,7 @@
         const v = state.variables[Number(el.dataset.v)]; if (!v) return;
         const f = el.dataset.f;
         v[f] = el.type === "checkbox" ? el.checked : el.value;
-        if (f === "is_secret") renderVariables();
+        if (f === "is_secret") rerenderVariables();
         markDirty();
     }
 
