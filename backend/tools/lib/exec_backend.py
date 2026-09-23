@@ -10,9 +10,12 @@ Usage from bash.py / runpy.py:
     return backend.run_bash(script, timeout, env)
 """
 
+import logging
 import re
 import threading
 from abc import ABC, abstractmethod
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -197,52 +200,92 @@ class BackendRegistry:
         self._lock = threading.Lock()
 
     def get_backend(self, session_id: str, agent_context: dict) -> 'ExecutionBackend':
-        """Return the active backend for a session, creating a default if needed."""
-        with self._lock:
-            if session_id in self._backends:
-                return self._backends[session_id]
+        """Return the active backend for a session, creating a default if needed.
 
-        # Extract sandbox setting from agent_context (used by both workplace and default paths)
-        sandbox_enabled = bool((agent_context or {}).get('sandbox_enabled', 1))
+        Simulation containment: when ``agent_context`` carries a simulation id
+        (see ``backend.tools.lib.simulation_scope``) the run is *forced* into an
+        isolating sandbox (docker/bwrap) regardless of the template's
+        ``sandbox_enabled`` / ``run_as_user`` / ``workplace_id``, and any
+        explicit per-session override (such as an SSHBackend installed by sshc)
+        is dropped -- a temp-root workspace is meaningless on a remote host.
+        """
+        from backend.tools.lib.simulation_scope import (
+            force_sandbox as _force_sandbox,
+            artifacts_root as _sim_artifacts_root,
+        )
 
-        # If agent has a Workplace assigned, delegate to WorkplaceManager
-        workplace_id = (agent_context or {}).get('workplace_id')
+        agent_context = agent_context or {}
+        forced = _force_sandbox(agent_context)
+
+        if forced:
+            # A simulation must never honour an explicit backend override
+            # (e.g. SSH) -- drop it so containment cannot be bypassed.
+            with self._lock:
+                override = self._backends.pop(session_id, None)
+            if override is not None:
+                logger.warning(
+                    'Simulation %s: dropping explicit backend override (%s) '
+                    'and forcing an isolating sandbox.',
+                    session_id, type(override).__name__)
+                try:
+                    override.destroy()
+                except Exception:
+                    pass
+        else:
+            with self._lock:
+                if session_id in self._backends:
+                    return self._backends[session_id]
+
+        # Extract sandbox setting from agent_context; a simulation forces it on
+        # so a template that ships sandbox_enabled: false cannot escape isolation.
+        sandbox_enabled = True if forced else bool(agent_context.get('sandbox_enabled', 1))
+
+        # If agent has a Workplace assigned, delegate to WorkplaceManager.
+        # Simulations skip this: a workplace may resolve to a remote (SSH) or
+        # tunnel backend where the local temp-root workspace does not exist.
+        workplace_id = None if forced else agent_context.get('workplace_id')
         if workplace_id:
             from backend.workplaces.manager import workplace_manager
             return workplace_manager.get_backend(workplace_id, sandbox_enabled=sandbox_enabled)
 
         # Create default backend based on agent_context
-        workspace = (agent_context or {}).get('workspace') or None
+        workspace = agent_context.get('workspace') or None
+        # Point the backend's artifact registry inside the simulation tree so the
+        # (otherwise guaranteed) artifact leak into shared/agents/<id> cannot happen.
+        artifacts_root = _sim_artifacts_root(agent_context) if forced else None
 
         if sandbox_enabled:
             try:
                 from config import SANDBOX_BACKEND
             except ImportError:
                 SANDBOX_BACKEND = 'docker'
-            agent_id = (agent_context or {}).get('agent_id', (agent_context or {}).get('id', ''))
-            is_subagent = bool((agent_context or {}).get('is_subagent'))
-            is_explorer = bool((agent_context or {}).get('is_explorer'))
+            agent_id = agent_context.get('agent_id', agent_context.get('id', ''))
+            is_subagent = bool(agent_context.get('is_subagent'))
+            is_explorer = bool(agent_context.get('is_explorer'))
             if SANDBOX_BACKEND == 'bwrap':
                 from backend.tools.lib.backends.bwrap_backend import BwrapBackend
-                agent_name = (agent_context or {}).get('agent_name') or (agent_context or {}).get('name') or ''
+                agent_name = agent_context.get('agent_name') or agent_context.get('name') or ''
                 backend = BwrapBackend(session_id, workspace=workspace, agent_id=agent_id,
                                        agent_name=agent_name, is_subagent=is_subagent,
-                                       is_explorer=is_explorer)
+                                       is_explorer=is_explorer, artifacts_root=artifacts_root)
             else:
                 from backend.tools.lib.backends.docker_backend import DockerBackend
                 from config import SANDBOX_PERSISTENT_CONTAINER_ENABLED
-                parent_session_id = ((agent_context or {}).get('_sandbox_parent_session_id')
+                parent_session_id = (agent_context.get('_sandbox_parent_session_id')
                                      if is_explorer else None)
-                parent_workspace = ((agent_context or {}).get('_sandbox_parent_workspace')
+                parent_workspace = (agent_context.get('_sandbox_parent_workspace')
                                     if parent_session_id else None)
                 # Main agent (not a sub-agent, not an explorer) gets a persistent
                 # container keyed by agent_id, so installed packages survive
                 # across sessions and across `evonic` restarts. Sub-agents and
-                # explorers share their parent agent's container.
+                # explorers share their parent agent's container. Simulations are
+                # never persistent -- the sim_id is unique and a cached container
+                # keyed by agent_id would survive teardown and leak state.
                 persistent = (
                     SANDBOX_PERSISTENT_CONTAINER_ENABLED
                     and not is_subagent
                     and not is_explorer
+                    and not forced
                 )
                 backend = DockerBackend(
                     session_id, agent_id=agent_id, workspace=workspace,
@@ -250,14 +293,15 @@ class BackendRegistry:
                     container_session_id=parent_session_id,
                     container_workspace=parent_workspace,
                     persistent=persistent,
+                    artifacts_root=artifacts_root,
                 )
         else:
             from backend.tools.lib.backends.local_backend import LocalBackend
-            run_as_user = (agent_context or {}).get('run_as_user') or None
+            run_as_user = agent_context.get('run_as_user') or None
             backend = LocalBackend(session_id=session_id, workspace=workspace,
                                    run_as_user=run_as_user)
 
-        # Don't store default backends — they're ephemeral and session-keyed
+        # Don't store default backends -- they're ephemeral and session-keyed
         # internally by DockerBackend itself. Only explicit overrides are stored.
         return backend
 

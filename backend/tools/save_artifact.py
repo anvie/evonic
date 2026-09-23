@@ -19,6 +19,7 @@ import pwd
 import shutil
 
 from backend.tools._workspace import effective_agent_id
+from backend.tools.lib.simulation_scope import shared_agents_dir
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _ATTACHMENTS_ROOT = os.path.join(BASE_DIR, 'data', 'attachments')
@@ -49,8 +50,10 @@ def _chown_to_run_as(path: str, run_as_user: str | None) -> None:
         pass
 
 
-def _artifacts_dir(agent_id: str, run_as_user: str | None = None) -> str:
-    d = os.path.join(BASE_DIR, 'shared', 'agents', agent_id, 'artifacts')
+def _artifacts_dir(agent_id: str, run_as_user: str | None = None,
+                   artifacts_root: str | None = None) -> str:
+    root = artifacts_root or os.path.join(BASE_DIR, 'shared', 'agents')
+    d = os.path.join(root, agent_id, 'artifacts')
     os.makedirs(d, exist_ok=True)
     _chown_to_run_as(d, run_as_user)
     return d
@@ -75,14 +78,19 @@ def execute(agent: dict, args: dict) -> dict:
     if '/' in filename or '\\' in filename or '..' in filename:
         return {'error': 'Invalid filename: must not contain "/", "\\", or "..". Use a plain basename like "chart.png" or "output.json"'}
 
-    artifacts_dir = _artifacts_dir(agent_id, run_as_user)
+    artifacts_dir = _artifacts_dir(agent_id, run_as_user, shared_agents_dir(agent))
     filepath = os.path.join(artifacts_dir, filename)
 
     try:
         if source_path:
             # --- source_path mode: stream file bytes into artifacts ---
-            workplace_id = agent.get('workplace_id')
-            sandbox_enabled = agent.get('sandbox_enabled', False)
+            from backend.tools.lib.simulation_scope import force_sandbox
+            # A simulation forces an isolating backend and drops any workplace
+            # (a workplace may resolve to a remote host the sim temp-root
+            # workspace does not exist on).
+            forced = force_sandbox(agent)
+            workplace_id = None if forced else agent.get('workplace_id')
+            sandbox_enabled = True if forced else agent.get('sandbox_enabled', False)
 
             if workplace_id:
                 from backend.workplaces.manager import workplace_manager

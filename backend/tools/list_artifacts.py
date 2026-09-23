@@ -9,6 +9,7 @@ category type filter, sorting, and result limiting.
 import os
 
 from backend.tools._workspace import effective_agent_id
+from backend.tools.lib.simulation_scope import shared_agents_dir
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -24,9 +25,9 @@ TEXT_DOCUMENT_EXTENSIONS = frozenset({
 })
 
 
-def _artifacts_dir(agent_id):
-    d = os.path.join(BASE_DIR, 'shared', 'agents', agent_id, 'artifacts')
-    return d
+def _artifacts_dir(agent_id, artifacts_root=None):
+    root = artifacts_root or os.path.join(BASE_DIR, 'shared', 'agents')
+    return os.path.join(root, agent_id, 'artifacts')
 
 
 def _get_file_category(fname):
@@ -69,7 +70,7 @@ def execute(agent, args):
     if not agent_id:
         return {'error': 'Agent ID not found in context'}
 
-    artifacts_dir = _artifacts_dir(agent_id)
+    artifacts_dir = _artifacts_dir(agent_id, shared_agents_dir(agent))
     if not os.path.isdir(artifacts_dir):
         return {'files': [], 'total': 0}
 

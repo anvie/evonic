@@ -61,7 +61,8 @@ def test_explorer_backend_looks_up_parent_pool_entry(tmp_path):
     )
     calls = []
 
-    def fake_get(session_id, agent_id="", workspace=None, persistent=False):
+    def fake_get(session_id, agent_id="", workspace=None, persistent=False,
+                 artifacts_root=None):
         calls.append((session_id, agent_id, workspace, persistent))
         return "parent-container", None
 

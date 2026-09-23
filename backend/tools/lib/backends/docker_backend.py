@@ -414,6 +414,7 @@ def _get_or_create_container(
     agent_id: str = '',
     workspace: str = None,
     persistent: bool = False,
+    artifacts_root: str = None,
 ) -> tuple:
     """Return (container_id, None) or (None, error_string).
 
@@ -421,15 +422,22 @@ def _get_or_create_container(
     ``session_id``) so every session of the same main agent reuses it,
     configured with ``--restart=unless-stopped`` and without ``--rm`` so
     it survives ``evonic`` restarts with all installed state preserved.
+
+    ``artifacts_root`` overrides the host artifact registry root
+    (default ``_ARTIFACTS_ROOT`` = ``<BASE_DIR>/shared/agents``).  A simulation
+    injects its own root so the bind-mounted registry lives *inside* the
+    simulation tree instead of the live one (containment).
     """
     effective_workspace = os.path.abspath(workspace if workspace else SANDBOX_WORKSPACE)
+    effective_artifacts_root = artifacts_root or _ARTIFACTS_ROOT
     needs_destroy = False
     pool_key = (agent_id or session_id) if persistent else session_id
     with _pool_lock:
         if pool_key in _containers:
             info = _containers[pool_key]
             if (info.get('workspace') != effective_workspace
-                    or info.get('mount_version') != _MOUNT_LAYOUT_VERSION):
+                    or info.get('mount_version') != _MOUNT_LAYOUT_VERSION
+                    or info.get('artifacts_root', _ARTIFACTS_ROOT) != effective_artifacts_root):
                 logger.info(f'Workspace/mount changed for {("persistent " if persistent else "")}{pool_key[:12]} — recreating container')
                 needs_destroy = True
             else:
@@ -456,8 +464,8 @@ def _get_or_create_container(
     # this, agents whose workspace differs from BASE_DIR would silently append
     # to a sandbox copy the UI never reads (artifact divergence bug).
     artifacts_mounts = []
-    if agent_id and _ARTIFACTS_ROOT:
-        registry_dir = os.path.join(_ARTIFACTS_ROOT, agent_id, 'artifacts')
+    if agent_id and effective_artifacts_root:
+        registry_dir = os.path.join(effective_artifacts_root, agent_id, 'artifacts')
         # Skip when the workspace mount already exposes the registry at the
         # same container path (workspace == BASE_DIR): bind-mounting a
         # directory onto itself is redundant.
@@ -519,6 +527,7 @@ def _get_or_create_container(
             'first_call': True,
             'workspace': effective_workspace,
             'mount_version': _MOUNT_LAYOUT_VERSION,
+            'artifacts_root': effective_artifacts_root,
             'persistent': persistent,
             'pool_key': pool_key,
         }
@@ -591,7 +600,7 @@ class DockerBackend(ExecutionBackend):
     def __init__(self, session_id: str, agent_id: str = '', workspace: str = None,
                  is_subagent: bool = False, is_explorer: bool = False,
                  container_session_id: str = None, container_workspace: str = None,
-                 persistent: bool = False):
+                 persistent: bool = False, artifacts_root: str = None):
         self._session_id = session_id
         self._container_session_id = container_session_id or session_id
         self._owns_container = not bool(container_session_id)
@@ -599,6 +608,10 @@ class DockerBackend(ExecutionBackend):
         self._persistent = persistent
         self._workspace = workspace
         self._container_workspace = container_workspace or workspace
+        # Injectable host artifact-registry root.  Defaults to the live registry
+        # (<BASE_DIR>/shared/agents); a simulation injects a root inside its
+        # temp tree so the bind-mount below never touches the authoritative copy.
+        self._artifacts_root = artifacts_root or _ARTIFACTS_ROOT
         # Normal sub-agents run with cwd = their scratchpad so their relative-path
         # writes stay out of the project root.  Explorer sub-agents have their own
         # explicit workspace and must NOT be redirected to the scratchpad.  The
@@ -625,8 +638,8 @@ class DockerBackend(ExecutionBackend):
         # /workspace/shared/agents/<id>/artifacts; translate host registry
         # paths to that container path (file tools resolve the sandbox path to
         # the host registry via resolve_workspace_path).
-        if self._agent_id and _ARTIFACTS_ROOT:
-            registry = os.path.join(_ARTIFACTS_ROOT, self._agent_id, 'artifacts')
+        if self._agent_id and self._artifacts_root:
+            registry = os.path.join(self._artifacts_root, self._agent_id, 'artifacts')
             if path == registry or path.startswith(registry + os.sep):
                 rel = path[len(registry):]
                 return f'/workspace/shared/agents/{self._agent_id}/artifacts{rel}'
@@ -642,6 +655,7 @@ class DockerBackend(ExecutionBackend):
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
             persistent=self._persistent,
+            artifacts_root=self._artifacts_root,
         )
         if err:
             return {'error': err}
@@ -693,6 +707,7 @@ class DockerBackend(ExecutionBackend):
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
             persistent=self._persistent,
+            artifacts_root=self._artifacts_root,
         )
         if err:
             return {'error': err}
@@ -713,6 +728,7 @@ class DockerBackend(ExecutionBackend):
                 self._container_session_id, agent_id=self._agent_id,
                 workspace=self._container_workspace,
                 persistent=self._persistent,
+                artifacts_root=self._artifacts_root,
             )
             if err:
                 return {'error': err}
@@ -821,6 +837,7 @@ class DockerBackend(ExecutionBackend):
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
             persistent=self._persistent,
+            artifacts_root=self._artifacts_root,
         )
         if err:
             return {'error': err}
@@ -1044,6 +1061,7 @@ class DockerBackend(ExecutionBackend):
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
             persistent=self._persistent,
+            artifacts_root=self._artifacts_root,
         )
         if err:
             return {'error': err}
@@ -1059,6 +1077,7 @@ class DockerBackend(ExecutionBackend):
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
             persistent=self._persistent,
+            artifacts_root=self._artifacts_root,
         )
         if err:
             return {'error': err}

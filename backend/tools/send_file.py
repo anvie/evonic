@@ -72,6 +72,12 @@ def _get_workplace_backend(agent: dict, session_id: str):
     sandbox_enabled = agent.get('sandbox_enabled', False)
     run_as_user = bool(((agent or {}).get('run_as_user') or '').strip())
 
+    # A simulation forces an isolating backend and drops any workplace.
+    from backend.tools.lib.simulation_scope import force_sandbox
+    if force_sandbox(agent):
+        workplace_id = None
+        sandbox_enabled = True
+
     if not workplace_id and not sandbox_enabled and not run_as_user:
         return None
 

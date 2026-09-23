@@ -520,13 +520,17 @@ class BwrapBackend(LocalBackend):
 
     def __init__(self, session_id: str = '', workspace: str = None,
                  agent_id: str = '', agent_name: str = '', is_subagent: bool = False,
-                 is_explorer: bool = False):
+                 is_explorer: bool = False, artifacts_root: str = None):
         super().__init__(session_id=session_id, workspace=workspace, run_as_user=None)
         self._agent_id = agent_id
         self._hostname = _sanitize_hostname(agent_name or agent_id)
         self._is_subagent = is_subagent
         self._is_explorer = is_explorer
         self._dirs_ready = False
+        # Injectable host artifact-registry root.  Defaults to the live registry
+        # (<BASE_DIR>/shared/agents); a simulation injects a root inside its
+        # temp tree so the bind below never touches the authoritative copy.
+        self._artifacts_root = artifacts_root or _ARTIFACTS_ROOT
 
     # ------------------------------------------------------------------
     # Sandbox construction
@@ -577,8 +581,8 @@ class BwrapBackend(LocalBackend):
         # (bwrap creates missing mount points); the host source is ensured by
         # _ensure_dirs on the host side.
         artifacts_binds = []
-        if self._agent_id and _ARTIFACTS_ROOT:
-            registry_dir = os.path.join(_ARTIFACTS_ROOT, self._agent_id, 'artifacts')
+        if self._agent_id and self._artifacts_root:
+            registry_dir = os.path.join(self._artifacts_root, self._agent_id, 'artifacts')
             # Skip when the workspace bind already exposes the registry at the
             # same sandbox path (workspace == BASE_DIR): binding a directory
             # onto itself is redundant.
@@ -853,8 +857,8 @@ class BwrapBackend(LocalBackend):
         # /workspace/shared/agents/<id>/artifacts; translate host registry
         # paths to that sandbox path (file tools resolve the sandbox path to
         # the host registry via resolve_workspace_path; _to_host maps back).
-        if self._agent_id and _ARTIFACTS_ROOT:
-            registry = os.path.join(_ARTIFACTS_ROOT, self._agent_id, 'artifacts')
+        if self._agent_id and self._artifacts_root:
+            registry = os.path.join(self._artifacts_root, self._agent_id, 'artifacts')
             if path == registry or path.startswith(registry + os.sep):
                 rel = path[len(registry):]
                 return f'/workspace/shared/agents/{self._agent_id}/artifacts{rel}'
@@ -874,10 +878,10 @@ class BwrapBackend(LocalBackend):
         # The artifact registry is bind-mounted into the sandbox at
         # /workspace/shared/agents/<id>/artifacts; map sandbox-view paths
         # under that prefix back to the HOST registry, not a workspace copy.
-        if self._agent_id and _ARTIFACTS_ROOT:
+        if self._agent_id and self._artifacts_root:
             artifacts_rel = f'/workspace/shared/agents/{self._agent_id}/artifacts'
             if path == artifacts_rel or path.startswith(artifacts_rel + '/'):
-                registry = os.path.join(_ARTIFACTS_ROOT, self._agent_id, 'artifacts')
+                registry = os.path.join(self._artifacts_root, self._agent_id, 'artifacts')
                 return registry + path[len(artifacts_rel):]
         if path == '/workspace' or path.startswith('/workspace/'):
             return ws + path[len('/workspace'):]

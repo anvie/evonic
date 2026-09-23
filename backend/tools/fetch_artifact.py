@@ -16,13 +16,14 @@ Usage:
 import os
 
 from backend.tools._workspace import effective_agent_id
+from backend.tools.lib.simulation_scope import shared_agents_dir
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _artifacts_dir(agent_id: str) -> str:
-    d = os.path.join(BASE_DIR, 'shared', 'agents', agent_id, 'artifacts')
-    return d
+def _artifacts_dir(agent_id: str, artifacts_root: str | None = None) -> str:
+    root = artifacts_root or os.path.join(BASE_DIR, 'shared', 'agents')
+    return os.path.join(root, agent_id, 'artifacts')
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -46,7 +47,7 @@ def execute(agent: dict, args: dict) -> dict:
                      'Use a plain basename like "chart.png" or "output.json"'
         }
 
-    artifacts_dir = _artifacts_dir(agent_id)
+    artifacts_dir = _artifacts_dir(agent_id, shared_agents_dir(agent))
     source_path = os.path.join(artifacts_dir, filename)
 
     if not os.path.isfile(source_path):
@@ -55,8 +56,12 @@ def execute(agent: dict, args: dict) -> dict:
     # Local agents (no workplace, no sandbox) can access artifacts directly via
     # bash/runpy at the artifacts directory. Return the absolute path instead of
     # copying the file — there's no sandbox to copy into.
-    workplace_id = agent.get('workplace_id')
-    sandbox_enabled = agent.get('sandbox_enabled', False)
+    from backend.tools.lib.simulation_scope import force_sandbox
+    # A simulation forces an isolating backend and drops any workplace (which
+    # may resolve to a remote host the sim temp-root workspace is absent on).
+    forced = force_sandbox(agent)
+    workplace_id = None if forced else agent.get('workplace_id')
+    sandbox_enabled = True if forced else agent.get('sandbox_enabled', False)
     if not workplace_id and not sandbox_enabled:
         return {
             'result': 'You are running as a local agent and can access artifacts directly.',
