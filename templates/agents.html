@@ -18,6 +18,9 @@
         <button id="tabBtnWorkplaces" class="px-5 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-300 transition-colors" onclick="switchTab('workplaces')">
             Workplaces
         </button>
+        <button id="tabBtnTemplates" class="px-5 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-300 transition-colors" onclick="switchTab('templates')">
+            Templates
+        </button>
     </div>
 
     <!-- ========== AGENTS TAB ========== -->
@@ -85,6 +88,32 @@
             <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
             <p class="text-lg font-medium">No workplaces yet</p>
             <p class="text-sm mt-1">Create a workplace to assign execution environments to your agents.</p>
+        </div>
+    </div>
+
+    <!-- ========== TEMPLATES TAB ========== -->
+    <div id="tab-templates" class="hidden">
+        <div class="flex flex-col sm:flex-row gap-3 mb-6">
+            <div class="relative">
+                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="search" id="template-search" name="template_search_filter" placeholder="Search templates..." oninput="filterTemplates()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                       class="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+            </div>
+            <button onclick="loadTemplates(true)"
+                    class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Refresh
+            </button>
+        </div>
+
+        <div id="templates-collisions" class="hidden mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></div>
+
+        <div id="templates-loading" class="hidden text-center py-12 text-gray-400 text-sm">Loading templates&hellip;</div>
+        <div id="templates-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        <div id="templates-empty" class="hidden text-center py-16 text-gray-400">
+            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+            <p class="text-lg font-medium">No templates available</p>
+            <p class="text-sm mt-1">Templates let you create pre-configured agents in a few clicks.</p>
         </div>
     </div>
 </div>
@@ -169,6 +198,68 @@
         <div class="flex gap-3 justify-end px-6 pb-5">
             <button onclick="closeImportAgentModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
             <button id="import-agent-submit" onclick="importAgent()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md text-sm font-medium">Import</button>
+        </div>
+    </div>
+</div>
+
+<!-- Template Preview Modal -->
+<div id="template-preview-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="closeTemplatePreview()"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-xl w-[92%] max-w-2xl shadow-xl max-h-[88vh] flex flex-col">
+        <div class="flex items-center justify-between p-5 border-b border-gray-200 dark:border-gray-700">
+            <h3 id="tpl-preview-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Template</h3>
+            <button onclick="closeTemplatePreview()" title="Close" class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div id="tpl-preview-body" class="p-5 overflow-y-auto text-sm text-gray-700 dark:text-gray-300"></div>
+        <div class="flex gap-3 justify-end px-5 py-4 border-t border-gray-200 dark:border-gray-700">
+            <a id="tpl-preview-edit" href="#" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Edit template</a>
+            <button onclick="createFromPreviewedTemplate()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Create Agent from this</button>
+        </div>
+    </div>
+</div>
+
+<!-- Create Agent from Template Modal -->
+<div id="template-create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="closeTemplateCreate()"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-xl w-[94%] max-w-3xl shadow-xl max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between p-5 border-b border-gray-200 dark:border-gray-700">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Create Agent from <span id="tpl-create-name"></span></h3>
+            <button onclick="closeTemplateCreate()" title="Close" class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div class="p-5 overflow-y-auto text-sm flex-1">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
+                <div>
+                    <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Agent ID</label>
+                    <input type="text" id="tpl-agent-id" placeholder="auto (derived from name)" autocapitalize="none" spellcheck="false"
+                           class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
+                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Lowercase letters, numbers and underscores. Leave blank to auto-derive.</p>
+                </div>
+                <div>
+                    <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Name</label>
+                    <input type="text" id="tpl-agent-name" placeholder="Name" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+            </div>
+
+            <div id="tpl-params-section" class="mb-4">
+                <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Parameters</h4>
+                <div id="tpl-param-fields" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+            </div>
+
+            <p id="tpl-render-warnings" class="hidden mb-3 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></p>
+
+            <div class="mb-4">
+                <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Resolved configuration</h4>
+                <div id="tpl-resolved-summary" class="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3 text-xs text-gray-600 dark:text-gray-300"></div>
+            </div>
+
+            <div>
+                <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">System prompt preview</h4>
+                <pre id="tpl-prompt-preview" class="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3 text-xs whitespace-pre-wrap break-words max-h-56 overflow-y-auto text-gray-700 dark:text-gray-200">(loading&hellip;)</pre>
+            </div>
+        </div>
+        <div class="flex gap-3 justify-end px-5 py-4 border-t border-gray-200 dark:border-gray-700">
+            <button onclick="closeTemplateCreate()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Cancel</button>
+            <button id="tpl-create-submit" onclick="submitTemplateCreate()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md text-sm font-medium transition-colors">Create Agent</button>
         </div>
     </div>
 </div>
@@ -270,25 +361,31 @@
 
 let currentTab = 'agents';
 
+const TAB_BTN_ACTIVE = 'px-5 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 -mb-px transition-colors';
+const TAB_BTN_IDLE = 'px-5 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
+
 function switchTab(tab) {
     currentTab = tab;
-    const tabAgents = document.getElementById('tab-agents');
-    const tabWorkplaces = document.getElementById('tab-workplaces');
-    const btnAgents = document.getElementById('tabBtnAgents');
-    const btnWorkplaces = document.getElementById('tabBtnWorkplaces');
-
-    if (tab === 'agents') {
-        tabAgents.classList.remove('hidden');
-        tabWorkplaces.classList.add('hidden');
-        btnAgents.className = 'px-5 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 -mb-px transition-colors';
-        btnWorkplaces.className = 'px-5 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
-    } else {
-        tabAgents.classList.add('hidden');
-        tabWorkplaces.classList.remove('hidden');
-        btnAgents.className = 'px-5 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
-        btnWorkplaces.className = 'px-5 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 -mb-px transition-colors';
-        if (!workplacesLoaded) loadWorkplaces();
+    const registry = {
+        agents: ['tab-agents', 'tabBtnAgents'],
+        workplaces: ['tab-workplaces', 'tabBtnWorkplaces'],
+        templates: ['tab-templates', 'tabBtnTemplates'],
+    };
+    for (const name of Object.keys(registry)) {
+        const [panelId, btnId] = registry[name];
+        const panel = document.getElementById(panelId);
+        const btn = document.getElementById(btnId);
+        if (!panel || !btn) continue;
+        if (name === tab) {
+            panel.classList.remove('hidden');
+            btn.className = TAB_BTN_ACTIVE;
+        } else {
+            panel.classList.add('hidden');
+            btn.className = TAB_BTN_IDLE;
+        }
     }
+    if (tab === 'workplaces' && !workplacesLoaded) loadWorkplaces();
+    if (tab === 'templates' && !templatesLoaded) loadTemplates();
 }
 
 // ===================== AGENTS =====================
@@ -836,6 +933,363 @@ function createWorkplace() {
             showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Failed to create workplace', 'error');
         }
     });
+}
+
+// ===================== TEMPLATES =====================
+
+let templatesLoaded = false;
+let templates = [];
+let tplPreviewReport = null;
+let tplCreateReport = null;
+let tplRenderTimer = null;
+
+async function loadTemplates(force) {
+    if (templatesLoaded && !force) return;
+    const grid = document.getElementById('templates-grid');
+    const empty = document.getElementById('templates-empty');
+    const loading = document.getElementById('templates-loading');
+    if (loading) loading.classList.remove('hidden');
+    try {
+        const res = await fetch('/api/templates');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        templates = data.templates || [];
+        templatesLoaded = true;
+        renderTemplates();
+    } catch (e) {
+        console.error('Failed to load templates:', e);
+        if (grid) grid.innerHTML = '';
+        if (empty) empty.classList.remove('hidden');
+        showToast('Failed to load templates', 'error');
+    } finally {
+        if (loading) loading.classList.add('hidden');
+    }
+}
+
+function templateMatchesSearch(t, search) {
+    return (t.name || t.id || '').toLowerCase().includes(search) ||
+           (t.description || '').toLowerCase().includes(search) ||
+           (t.category || '').toLowerCase().includes(search);
+}
+
+function renderTemplates() {
+    const grid = document.getElementById('templates-grid');
+    const empty = document.getElementById('templates-empty');
+    const collisionsEl = document.getElementById('templates-collisions');
+    if (!grid) return;
+    const search = (document.getElementById('template-search').value || '').toLowerCase().trim();
+    // Only usable templates: skip shadowed legacy copies and invalid ones.
+    const visible = templates.filter(t => !t.shadowed && t.valid !== false);
+    const filtered = search ? visible.filter(t => templateMatchesSearch(t, search)) : visible;
+
+    if (collisionsEl) {
+        const shadows = templates.filter(t => t.shadows);
+        if (shadows.length) {
+            collisionsEl.textContent = 'Some ids exist in both agent_templates/ and the legacy skillsets/ folder; the canonical copy wins: ' +
+                shadows.map(t => t.id).join(', ');
+            collisionsEl.classList.remove('hidden');
+        } else {
+            collisionsEl.classList.add('hidden');
+            collisionsEl.textContent = '';
+        }
+    }
+
+    if (filtered.length === 0) {
+        grid.innerHTML = '';
+        if (empty) {
+            empty.classList.remove('hidden');
+            const p = empty.querySelector('p:first-of-type');
+            if (p) p.textContent = search ? 'No templates found' : 'No templates available';
+        }
+        return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    grid.innerHTML = filtered.map(templateCard).join('');
+    if (window.lucide && lucide.createIcons) lucide.createIcons();
+}
+
+function templateCard(t) {
+    const icon = t.icon || 'layout-template';
+    const category = t.category
+        ? `<span class="text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full">${esc(t.category)}</span>`
+        : '';
+    const legacy = t.legacy
+        ? `<span class="text-xs font-medium text-gray-500 bg-gray-100 dark:bg-gray-700/50 px-2 py-0.5 rounded-full" title="Legacy skillset (read-only)">legacy</span>`
+        : '';
+    const stats = [
+        (t.parameter_count || 0) + ' parameter' + (t.parameter_count === 1 ? '' : 's'),
+        (t.tool_count || 0) + ' tool' + (t.tool_count === 1 ? '' : 's'),
+        (t.skill_count || 0) + ' skill' + (t.skill_count === 1 ? '' : 's'),
+    ].join(' &middot; ');
+    return `
+    <div class="flex flex-col rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 hover:shadow-md transition-shadow">
+        <div class="flex items-start gap-3 mb-2">
+            <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                <i data-lucide="${esc(icon)}" class="w-5 h-5"></i>
+            </div>
+            <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">${esc(t.name || t.id)}</h3>
+                    ${category}${legacy}
+                </div>
+                <p class="text-xs text-gray-400 dark:text-gray-500 font-mono truncate">${esc(t.id)}</p>
+            </div>
+        </div>
+        <p class="text-sm text-gray-500 dark:text-gray-400 flex-1 mb-3 line-clamp-3">${esc(t.description || 'No description')}</p>
+        <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">${stats}</p>
+        <div class="flex gap-2">
+            <button onclick="openTemplatePreview('${esc(t.id)}')" class="flex-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Preview</button>
+            <button onclick="openTemplateCreate('${esc(t.id)}')" class="flex-1 px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-xs font-medium transition-colors">Create Agent</button>
+        </div>
+    </div>`;
+}
+
+async function fetchTemplateReport(id) {
+    const res = await fetch('/api/templates/' + encodeURIComponent(id));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+}
+
+// Full editor page lives in T9; the route already exists.
+function templateEditorHref(id) {
+    return '/template/' + encodeURIComponent(id);
+}
+
+// ---- Preview modal ----
+
+async function openTemplatePreview(id) {
+    const modal = document.getElementById('template-preview-modal');
+    const body = document.getElementById('tpl-preview-body');
+    const title = document.getElementById('tpl-preview-title');
+    if (!modal) return;
+    if (title) title.textContent = 'Template';
+    body.innerHTML = '<p class="text-gray-400">Loading&hellip;</p>';
+    modal.classList.remove('hidden');
+    try {
+        const report = await fetchTemplateReport(id);
+        tplPreviewReport = report;
+        const tpl = report.template || {};
+        if (title) title.textContent = tpl.name || id;
+        document.getElementById('tpl-preview-edit').href = templateEditorHref(id);
+        body.innerHTML = templatePreviewHtml(report, tpl);
+        if (window.lucide && lucide.createIcons) lucide.createIcons();
+    } catch (e) {
+        console.error('preview failed', e);
+        body.innerHTML = '<p class="text-red-500">Failed to load template.</p>';
+    }
+}
+
+function templatePreviewHtml(report, tpl) {
+    const params = tpl.parameters || [];
+    const tools = ((report.tools || {}).declared) || [];
+    const skills = ((report.skills || {}).declared) || [];
+    const defaults = tpl.defaults || {};
+    const warnings = report.warnings || [];
+    const errors = report.errors || [];
+    const section = (t, inner) => `<div class="mb-4"><h4 class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">${t}</h4>${inner}</div>`;
+    const chips = (items) => items.length
+        ? `<div class="flex flex-wrap gap-1">${items.map(x => `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">${esc(String(x))}</span>`).join('')}</div>`
+        : '<p class="text-xs text-gray-400">None</p>';
+
+    const paramHtml = params.length
+        ? `<div class="space-y-1">${params.map(p => `
+            <div class="flex items-center justify-between gap-2 text-sm">
+                <span class="text-gray-700 dark:text-gray-300">${esc(p.label || p.name)}${p.required ? ' <span class="text-red-500">*</span>' : ''}</span>
+                <span class="text-xs text-gray-400">${esc(p.type || 'text')}${(p.default !== undefined && p.default !== null && p.default !== '') ? ' &middot; default: ' + esc(String(p.default)) : ''}</span>
+            </div>`).join('')}</div>`
+        : '<p class="text-xs text-gray-400">No parameters</p>';
+
+    const defaultsHtml = Object.keys(defaults).length
+        ? `<div class="space-y-1">${Object.keys(defaults).map(k => `<div class="flex justify-between gap-2 text-sm"><span class="text-gray-700 dark:text-gray-300">${esc(k)}</span><span class="text-xs text-gray-400 font-mono">${esc(String(defaults[k]))}</span></div>`).join('')}</div>`
+        : '<p class="text-xs text-gray-400">No overrides</p>';
+
+    const issues = errors.length
+        ? `<div class="mb-4 rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300">${errors.map(esc).join('<br>')}</div>`
+        : '';
+    const warnHtml = warnings.length
+        ? `<div class="mb-4 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">${warnings.map(esc).join('<br>')}</div>`
+        : '';
+
+    return `${issues}${warnHtml}
+        ${section('Parameters', paramHtml)}
+        ${section('Tools', chips(tools))}
+        ${section('Skills', chips(skills))}
+        ${section('Defaults', defaultsHtml)}`;
+}
+
+function closeTemplatePreview() {
+    const modal = document.getElementById('template-preview-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function createFromPreviewedTemplate() {
+    if (!tplPreviewReport) return;
+    const id = (tplPreviewReport.template || {}).id || tplPreviewReport.id;
+    closeTemplatePreview();
+    openTemplateCreate(id);
+}
+
+// ---- Create-from-template modal ----
+
+async function openTemplateCreate(id) {
+    const modal = document.getElementById('template-create-modal');
+    const fields = document.getElementById('tpl-param-fields');
+    if (!modal || !fields) return;
+    tplCreateReport = null;
+    document.getElementById('tpl-create-name').textContent = '';
+    fields.innerHTML = '<p class="text-xs text-gray-400">Loading&hellip;</p>';
+    const preview = document.getElementById('tpl-prompt-preview');
+    if (preview) preview.textContent = '';
+    const warnEl = document.getElementById('tpl-render-warnings');
+    if (warnEl) { warnEl.classList.add('hidden'); warnEl.innerHTML = ''; }
+    document.getElementById('tpl-resolved-summary').innerHTML = '';
+    document.getElementById('tpl-agent-id').value = '';
+    document.getElementById('tpl-agent-name').value = '';
+    modal.classList.remove('hidden');
+    try {
+        const report = await fetchTemplateReport(id);
+        tplCreateReport = report;
+        const tpl = report.template || {};
+        document.getElementById('tpl-create-name').textContent = tpl.name || id;
+        document.getElementById('tpl-agent-name').value = tpl.name || id;
+        fields.innerHTML = buildTemplateParamFields(tpl.parameters || []);
+        bindTemplateParamInputs();
+        await renderTemplatePreview();
+    } catch (e) {
+        console.error('create modal failed', e);
+        fields.innerHTML = '<p class="text-red-500 text-xs">Failed to load template.</p>';
+    }
+}
+
+function buildTemplateParamFields(params) {
+    if (!params.length) return '<p class="text-xs text-gray-400 col-span-full">This template has no parameters.</p>';
+    return params.map(p => {
+        const fieldId = 'tpl-param-' + p.name;
+        const label = esc(p.label || p.name);
+        const required = p.required ? ' <span class="text-red-500">*</span>' : '';
+        const def = (p.default === undefined || p.default === null) ? '' : String(p.default);
+        let control;
+        if (p.type === 'select' && Array.isArray(p.options) && p.options.length) {
+            control = `<select id="${fieldId}" data-param="${esc(p.name)}" class="w-full p-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">` +
+                p.options.map(o => `<option value="${esc(String(o))}"${String(o) === def ? ' selected' : ''}>${esc(String(o))}</option>`).join('') +
+                `</select>`;
+        } else if (p.type === 'boolean') {
+            control = `<input type="checkbox" id="${fieldId}" data-param="${esc(p.name)}"${(def === 'true' || def === '1') ? ' checked' : ''} class="w-4 h-4 rounded border-gray-300 dark:border-gray-600">`;
+        } else if (p.type === 'number') {
+            control = `<input type="number" id="${fieldId}" data-param="${esc(p.name)}" value="${esc(def)}" class="w-full p-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">`;
+        } else {
+            control = `<input type="text" id="${fieldId}" data-param="${esc(p.name)}" value="${esc(def)}" class="w-full p-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">`;
+        }
+        return `<div>
+            <label class="block mb-1 text-sm font-medium text-gray-700 dark:text-gray-300" for="${fieldId}">${label}${required}</label>
+            ${control}
+        </div>`;
+    }).join('');
+}
+
+function bindTemplateParamInputs() {
+    document.querySelectorAll('#tpl-param-fields [data-param]').forEach(el => {
+        el.addEventListener('input', scheduleTemplateRender);
+        el.addEventListener('change', scheduleTemplateRender);
+    });
+}
+
+function collectTemplateParams() {
+    const params = {};
+    document.querySelectorAll('#tpl-param-fields [data-param]').forEach(el => {
+        const name = el.getAttribute('data-param');
+        const value = (el.type === 'checkbox') ? (el.checked ? 'true' : 'false') : el.value;
+        // Omit blank fields so the template's own default applies server-side.
+        if (value !== '' && value !== undefined && value !== null) params[name] = value;
+    });
+    return params;
+}
+
+function scheduleTemplateRender() {
+    if (tplRenderTimer) clearTimeout(tplRenderTimer);
+    tplRenderTimer = setTimeout(renderTemplatePreview, 250);
+}
+
+async function renderTemplatePreview() {
+    if (!tplCreateReport) return;
+    const id = (tplCreateReport.template || {}).id || tplCreateReport.id;
+    const preview = document.getElementById('tpl-prompt-preview');
+    const warnEl = document.getElementById('tpl-render-warnings');
+    try {
+        const res = await fetch('/api/templates/' + encodeURIComponent(id) + '/render', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ params: collectTemplateParams() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            if (warnEl) { warnEl.textContent = data.message || data.error || 'Render failed'; warnEl.classList.remove('hidden'); }
+            return;
+        }
+        if (preview) preview.textContent = data.system_prompt || '';
+        renderResolvedSummary(data);
+        if (warnEl) {
+            const warns = data.warnings || [];
+            if (warns.length) { warnEl.innerHTML = warns.map(esc).join('<br>'); warnEl.classList.remove('hidden'); }
+            else { warnEl.classList.add('hidden'); warnEl.innerHTML = ''; }
+        }
+    } catch (e) {
+        console.error('render preview failed', e);
+    }
+}
+
+function renderResolvedSummary(data) {
+    const el = document.getElementById('tpl-resolved-summary');
+    if (!el) return;
+    const res = data.resolution || {};
+    const tools = ((res.tools || {}).resolved) || [];
+    const skills = ((res.skills || {}).resolved) || [];
+    const values = data.values || {};
+    const chip = (x) => `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">${esc(String(x))}</span>`;
+    const valueChips = Object.keys(values).map(k => `<span class="text-xs px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">${esc(k)}: ${esc(String(values[k]))}</span>`);
+    el.innerHTML =
+        `<div class="flex flex-wrap items-center gap-1 mb-1"><span class="text-xs font-semibold text-gray-400 mr-1">Tools</span>${tools.length ? tools.map(chip).join('') : '<span class="text-xs text-gray-400">none</span>'}</div>` +
+        `<div class="flex flex-wrap items-center gap-1 mb-1"><span class="text-xs font-semibold text-gray-400 mr-1">Skills</span>${skills.length ? skills.map(chip).join('') : '<span class="text-xs text-gray-400">none</span>'}</div>` +
+        `<div class="flex flex-wrap items-center gap-1">${valueChips.join('')}</div>`;
+}
+
+function closeTemplateCreate() {
+    const modal = document.getElementById('template-create-modal');
+    if (modal) modal.classList.add('hidden');
+    tplCreateReport = null;
+}
+
+async function submitTemplateCreate() {
+    if (!tplCreateReport) return;
+    const id = (tplCreateReport.template || {}).id || tplCreateReport.id;
+    const agentId = document.getElementById('tpl-agent-id').value.trim();
+    const agentName = document.getElementById('tpl-agent-name').value.trim();
+    const btn = document.getElementById('tpl-create-submit');
+    const body = { params: collectTemplateParams() };
+    if (agentId) body.id = agentId;
+    if (agentName) body.overrides = { name: agentName };
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch('/api/templates/' + encodeURIComponent(id) + '/instantiate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            showToast(data.message || data.error || 'Failed to create agent', 'error');
+            return;
+        }
+        closeTemplateCreate();
+        showToast(data.replayed ? 'Agent already exists' : 'Agent created', 'success');
+        window.location = '/agents/' + encodeURIComponent(data.agent_id);
+    } catch (e) {
+        console.error('instantiate failed', e);
+        showToast('Failed to create agent', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 // ===================== SHARED =====================
