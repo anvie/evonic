@@ -630,8 +630,15 @@ def run_tool_loop(agent: Dict[str, Any],
     # --- Tool pruning: track how many times each tool has been called in this loop ---
     _tool_call_counts: Dict[str, int] = {}
     _TOOL_PRUNE_THRESHOLD = 3  # prune zero-call tools after this many iterations
+    # Workflow / control-plane tools are never pruned. They are characteristically
+    # needed *late* in a turn (after the threshold has already been crossed) or at
+    # the very start of the next one: state() drives the plugin state machines
+    # (e.g. state('kanban:finish') releases task focus) and use_skill() is the only
+    # way to (re)load a lazy skill's toolset. Pruning them strands workflow state --
+    # the agent finishes a task but can never close it, leaving focus held.
     _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch',
-                        'set_mode', 'save_plan', 'update_tasks'}
+                        'set_mode', 'save_plan', 'update_tasks',
+                        'state', 'use_skill', 'unload_skill'}
 
     # Eager skill tools (e.g. explorer's Explore, direxplorer's Grep/Glob/Read)
     # are advertised upfront by build_tools() — never prune them mid-turn, or the
@@ -671,10 +678,11 @@ def run_tool_loop(agent: Dict[str, Any],
 
         After _TOOL_PRUNE_THRESHOLD iterations, tools that have never been called
         (call count == 0) are removed from the list sent to the LLM, except for
-        essential tools, tools explicitly assigned to the agent, and tools
-        provided by enabled skills. Assigned tools include vision and media tools
-        such as ``describe_image`` and ``transcribe_audio`` that may be needed
-        only after the agent discovers a relevant attachment.
+        essential tools (including the workflow/control-plane tools ``state``,
+        ``use_skill`` and ``unload_skill``), tools explicitly assigned to the
+        agent, and tools provided by enabled skills. Assigned tools include
+        vision and media tools such as ``describe_image`` and ``transcribe_audio``
+        that may be needed only after the agent discovers a relevant attachment.
         """
         if iteration < _TOOL_PRUNE_THRESHOLD:
             return tools_list
