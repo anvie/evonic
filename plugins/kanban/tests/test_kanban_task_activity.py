@@ -207,7 +207,7 @@ def test_manifest_declares_flash_events_with_handlers():
 
 
 def test_manifest_flash_defaults():
-    """The shipped defaults: enabled, and a 5 second fade."""
+    """The shipped defaults: enabled, and a 1 second fade."""
     variables = {v['name']: v for v in _manifest()['variables']}
     assert variables['TASK_FLASH_ENABLED']['default'] is True
-    assert variables['TASK_FLASH_DECAY_SECONDS']['default'] == 5
+    assert variables['TASK_FLASH_DECAY_SECONDS']['default'] == 1

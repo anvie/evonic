@@ -112,7 +112,7 @@ html.dark .kb-task-title {
     --kb-flash: #fde047;
 }
 .kb-task-title.kb-flash {
-    animation: kb-flash-fade var(--kb-decay, 5s) linear forwards;
+    animation: kb-flash-fade var(--kb-decay, 1s) linear forwards;
     animation-delay: var(--kb-seek, 0ms);
 }
 @media (prefers-reduced-motion: reduce) {
@@ -525,7 +525,7 @@ html.dark .kb-task-title {
     const API = '/api/kanban';
     const SUPER_AGENT_ID = '{{ super_agent_id }}';
     const TASK_FLASH_ENABLED = {{ 'true' if task_flash_enabled|default(true) else 'false' }};
-    const TASK_FLASH_DECAY_MS = {{ task_flash_decay_seconds|default(5) }} * 1000;
+    const TASK_FLASH_DECAY_MS = {{ task_flash_decay_seconds|default(1) }} * 1000;
     let tasks = [];
     let currentDetailId = null;
     let _isEditing = false;  // true when editing existing task — prevents backdrop-click-close
@@ -2347,7 +2347,7 @@ html.dark .kb-task-title {
 
     function _ensureFlashTicker() {
         if (_flashTicker) return;
-        _flashTicker = setInterval(_tickFlash, 1000);
+        _flashTicker = setInterval(_tickFlash, 250);
     }
 
     function _tickFlash() {

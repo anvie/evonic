@@ -64,9 +64,9 @@ def _task_flash_decay_seconds() -> int:
     try:
         from backend.plugin_manager import plugin_manager
         cfg = plugin_manager.get_plugin_config('kanban')
-        decay = int(float(cfg.get('TASK_FLASH_DECAY_SECONDS', 5) or 5))
+        decay = int(float(cfg.get('TASK_FLASH_DECAY_SECONDS', 1) or 1))
     except Exception:
-        decay = 5
+        decay = 1
     return max(1, min(decay, 3600))
 
 

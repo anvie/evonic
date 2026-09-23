@@ -48,8 +48,8 @@ polling is involved.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `TASK_FLASH_ENABLED` | `true` | Enable the yellow title text flash on tool calls. |
-| `TASK_FLASH_DECAY_SECONDS` | `5` | How long the title text takes to shade back to the original color. |
+| `TASK_FLASH_DECAY_SECONDS` | `1` | How long the title text takes to shade back to the original color. |
 
 Set `TASK_FLASH_ENABLED` to `false` to disable the effect entirely. Activity
-events are throttled to at most one per second per task.
+events are throttled to at most four per second per task.
 

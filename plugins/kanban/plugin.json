@@ -153,8 +153,8 @@
       "name": "TASK_FLASH_DECAY_SECONDS",
       "label": "Task Flash Decay (seconds)",
       "type": "number",
-      "default": 5,
-      "description": "How long the yellow title text takes to fully shade back to the original color after a tool call. Default: 5 seconds."
+      "default": 1,
+      "description": "How long the yellow title text takes to fully shade back to the original color after a tool call. Default: 1 second."
     }
   ],
   "agent_settings": [

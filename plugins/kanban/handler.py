@@ -652,10 +652,10 @@ def _busy_task_for(agent_id: str) -> str | None:
 # ─── Task title flash (Kanban board realtime push) ───────────────────────────
 
 _FLASH_CONFIG_TTL = 10.0
-_flash_config_cache: dict = {'at': 0.0, 'enabled': True, 'decay': 5}
+_flash_config_cache: dict = {'at': 0.0, 'enabled': True, 'decay': 1}
 _flash_last_emit: dict = {}        # task_id -> time.time() of last activity emit
 _flash_agent_tasks: dict = {}      # agent_id -> task_id last flashed
-_FLASH_MIN_EMIT_INTERVAL = 1.0
+_FLASH_MIN_EMIT_INTERVAL = 0.25
 
 
 def _as_bool(value) -> bool:
@@ -670,11 +670,11 @@ def _flash_settings() -> tuple:
     now = time.time()
     if now - _flash_config_cache['at'] < _FLASH_CONFIG_TTL:
         return _flash_config_cache['enabled'], _flash_config_cache['decay']
-    enabled, decay = True, 5
+    enabled, decay = True, 1
     try:
         cfg = _load_config()
         enabled = _as_bool(cfg.get('TASK_FLASH_ENABLED', True))
-        decay = int(float(cfg.get('TASK_FLASH_DECAY_SECONDS', 5) or 5))
+        decay = int(float(cfg.get('TASK_FLASH_DECAY_SECONDS', 1) or 1))
     except Exception:
         pass
     decay = max(1, min(decay, 3600))
@@ -695,7 +695,7 @@ def _publish_task_flash(task_id, agent_id: str, event_name: str, extra: dict) ->
 
 
 def _emit_task_activity(agent_id: str, tool_name: str = '', task_id=None) -> None:
-    """Flash the active task title on the board; throttled to 1 event/second."""
+    """Flash the active task title on the board; throttled to 4 events/second."""
     if not agent_id:
         return
     if task_id is None:
