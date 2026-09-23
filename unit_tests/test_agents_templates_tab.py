@@ -197,3 +197,40 @@ def test_create_from_template_produces_agent(client, repo_root):
         json={"id": "acme_bot", "overrides": {"name": "Acme Bot"}, "params": {}})
     assert replay.status_code == 200
     assert replay.get_json()["replayed"] is True
+
+
+# ---------------------------------------------------------------------------
+# 5. The Templates tab header ships a "New template" action (task #29 follow-up)
+# ---------------------------------------------------------------------------
+
+def test_templates_tab_ships_new_template_action_next_to_refresh(client, repo_root):
+    """Robin asked for a "create new template" action beside the Refresh button."""
+    login(client)
+    html = client.get("/agents").get_data(as_text=True)
+
+    # The action exists and points at the editor's create surface.
+    assert 'id="template-new-btn"' in html
+    assert 'href="/template/new"' in html
+    assert "New template" in html
+
+    # It sits in the Templates panel header, AFTER the Refresh button.
+    header = html.split('id="tab-templates"', 1)[1].split('id="templates-grid"', 1)[0]
+    assert "loadTemplates(true)" in header          # the Refresh button
+    assert "template-new-btn" in header
+    assert header.index("loadTemplates(true)") < header.index("template-new-btn")
+
+
+def test_new_template_link_opens_the_editor_in_create_mode(client, repo_root):
+    """``/template/new`` is an unknown id, so the editor renders its create mode
+    (empty form) instead of prefilling the sentinel as the template id."""
+    login(client)
+    response = client.get("/template/new")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+
+    assert 'id="tpl-editor"' in html
+    # Bootstrap carries the URL id but no saved template => create mode.
+    assert '"template_id": "new"' in html
+    assert '"report": null' in html
+    # The editor must ignore the "new" sentinel when seeding the id field.
+    assert 'BOOT.template_id !== "new"' in html

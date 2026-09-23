@@ -389,7 +389,7 @@
 
     // ── Editor state ─────────────────────────────────────────────────────────
     const state = {
-        id: SAVED ? SAVED.id : (BOOT.template_id || ""),
+        id: SAVED ? SAVED.id : ((BOOT.template_id && BOOT.template_id !== "new") ? BOOT.template_id : ""),
         name: SAVED ? SAVED.name : "",
         description: SAVED ? SAVED.description : "",
         category: SAVED ? SAVED.category : "general",
