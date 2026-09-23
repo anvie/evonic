@@ -1141,6 +1141,17 @@ html.dark .chat-img-skeleton {
     transition: opacity 0.35s ease;
 }
 
+#chat-messages div[data-msg-role="user"] > div > div,
+#chat-input,
+#chat-editor-textarea {
+    font-size: 0.9375rem;
+}
+
+#chat-messages .timeline-entry > div:not(.tl-detail) > span:last-child,
+#chat-messages .tl-thinking-pending > span:last-child {
+    font-size: 0.6875rem;
+}
+
 
 /* ── static/css/recap-prose.css ────────────────────────────────── */
 

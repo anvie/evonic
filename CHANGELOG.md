@@ -8,6 +8,7 @@
 
 ### Bug Fixes
 
+- Fixed the chat typography hierarchy: with a browser default font size below 16px, the user's own message and the composer shrank to the size of the agent reasoning/timeline lines (or smaller), so the reasoning text looked larger than the user's input. Both tiers are now sized in rem (`0.9375rem` / `0.6875rem`), keeping the ratio identical at every root font size.
 - LLM clients now retry once on their configured fallback model when the primary call fails. Shared callers (task and CMP classifiers, plugin helpers, dashboard enhancements) previously received the raw primary error whenever they did not run through the agent runtime.
 - Set the global default model fallback (`default_model_fallback_id`) to `deepseek/deepseek-v4-flash` so the default model has somewhere to fail over to.
 - Kanban comment follow-up: a failed classifier LLM call no longer counts as "no follow-up needed". The comment stays unconsumed and is retried on the next scan instead of being silently dropped, which used to lose user comments whenever the classifier model was unavailable.
