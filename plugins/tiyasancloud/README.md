@@ -14,10 +14,13 @@ Start with [PLUGIN.md](PLUGIN.md) for installation, settings and the full API.
 
 - **One call registers a customer's agent.** `POST /register_agent` creates
   the agent from the console's onboarding form, confined to its instance's
-  tunnel workplace with only the tools that run inside that instance, writes
-  the two TiyasanCloud blocks into its `SYSTEM.md`, and returns its WhatsApp
-  link. The plugin never lists, reads, changes or deletes agents afterwards:
-  that is Evonic's business.
+  tunnel workplace, writes the two TiyasanCloud blocks into its `SYSTEM.md`,
+  and returns its WhatsApp link. The agent is built either from a legacy
+  `skillset` id (unchanged since 3.0.0) or, when the request carries a
+  `template` object, from Evonic's parameterized **template engine**
+  (`backend.agent_templates`), which renders the system prompt and resolves the
+  tools and skills. The plugin never lists, reads, changes or deletes agents
+  afterwards: that is Evonic's business.
 - **Monthly token quota.** Registration sets `tokens_monthly` and a soft
   threshold; the period rolls with the calendar month. Evonic then stops at the
   hard cap without calling the LLM, and warns the agent before it gets there.
@@ -32,7 +35,8 @@ Start with [PLUGIN.md](PLUGIN.md) for installation, settings and the full API.
 | Concern | What the plugin uses |
 | --- | --- |
 | Agents, channels, workplaces | `models.db` mixins (`get_agent`, `create_agent`, `create_workplace`, `create_connector`, `update_channel`, …) |
-| Prompt | the agent's `SYSTEM.md`, between its own markers |
+| Prompt | the agent's `SYSTEM.md`, between its own markers (the template engine renders the base, the plugin adds the blocks) |
+| Templates | `backend.agent_templates.create_agent_from_template(...)` (one renderer, never two) |
 | Token usage | `plugins.token_monitor.db.usage_db.by_agent(since, rollup_subagents=True)` |
 | Quota enforcement | `register_turn_gate`, `register_message_interceptor`, `register_tool_result_gate` |
 | Pairing | the shared channel's inbox of unrouted senders + `routes` in its config |
@@ -63,13 +67,27 @@ confinement, quota hooks and pairing code underneath).
 | `plugin.json` | Manifest and settings. |
 | `handler.py` | Lifecycle: registers the quota hooks, starts the two workers. |
 | `routes.py` | The HTTP API (both path prefixes, auth on every route). |
-| `agents.py` | Agent registration, confinement, the `SYSTEM.md` blocks, switching a new agent on. |
+| `agents.py` | Agent registration (legacy and template paths), confinement, the `SYSTEM.md` blocks, switching a new agent on. |
 | `quota.py` | Limits, usage, state and the three enforcement hooks. |
 | `whatsapp.py` | Active channel + number, the WhatsApp link and its message, redeeming from the inbox, routes, status. |
 | `callbacks.py` | Signed, queued, retried callbacks to the console. |
 | `store.py` | The plugin's SQLite tables. |
 | `common.py` | Config, auth, validation, error shape. |
-| `tests/` | 58 tests; Evonic is stubbed, so they run anywhere. |
+| `tests/` | Unit tests (`test_register_template.py`); Evonic is stubbed, so they run anywhere. |
+
+## Changes from 3.0.0
+
+| 3.0.0 | Now |
+| --- | --- |
+| An agent could only be built from a legacy `skillset` id | `POST /register_agent` accepts an optional `template` object (`{id, params, overrides}`) and instantiates through `backend.agent_templates.create_agent_from_template(...)`; without it, the `skillset` path is byte-for-byte the same |
+| Tools were filtered against a curated `ALLOWED_TOOLS` allowlist | **Owner decision:** the tool filter is a wildcard. `ALLOWED_TOOLS` defaults to `"*"` (and an empty value also means "no filtering"), so every tool the template engine resolves is kept; set a comma-separated list to filter again |
+| No record of what an agent was built from | `store.save_meta` records `template_id` and `template_params` (JSON) for audit; `_migrate()` adds the columns to existing databases |
+
+Template errors keep the `{error, message}` shape: unknown template → `404
+template_not_found`; invalid params/overrides or an unrenderable prompt → `400
+invalid_template`; a template needing tools/skills Evonic lacks → `409
+template_unresolved`. An existing agent is still returned unchanged (the early
+`get_agent` branch wins) and never receives template parameters.
 
 ## Changes from 1.0.0
 
@@ -82,7 +100,7 @@ confinement, quota hooks and pairing code underneath).
 | Token usage read through Token Monitor's private `usage_db._connect()` and hand-written SQL | Public `usage_db.by_agent(...)`, with sub-agent rollup |
 | No quota enforcement | Soft cap, hard cap, suspension, mid-turn stop |
 | No agent deletion, WhatsApp status, unlink or callbacks | All present |
-| Agents kept Evonic's defaults, including host tools (`sshc`), agent messaging and built-in host tools | Confined on every upsert: tunnel workplace, workplace tools only, host features off |
+| Agents kept Evonic's defaults, including host tools (`sshc`), agent messaging and built-in host tools | Confined on every registration: own tunnel workplace, sandbox / host bash / agent messaging / built-in host tools off. The tool filter is a wildcard by default (see "Changes from 3.0.0") |
 | Agent id `tca_<user_id>` | `id_<slug>`, matching the console (prefix configurable) |
 
 `register_agent` and `token_usage` keep their names. `enable_agent` and

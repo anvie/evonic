@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS agent_meta (
     agent_id TEXT PRIMARY KEY,
     locale TEXT NOT NULL DEFAULT 'en',
     skillset TEXT,
+    -- Template the agent was instantiated from, and the params used (JSON).
+    template_id TEXT,
+    template_params TEXT,
     account TEXT,
     instance TEXT,
     profile TEXT,
@@ -145,8 +148,16 @@ def connect():
 def _migrate(conn: sqlite3.Connection) -> None:
     """Columns added after a database was first created."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_meta)")}
-    if "activate_pending" not in columns:
-        conn.execute("ALTER TABLE agent_meta ADD COLUMN activate_pending INTEGER NOT NULL DEFAULT 0")
+    for column, ddl in (
+        ("activate_pending",
+         "ALTER TABLE agent_meta ADD COLUMN activate_pending INTEGER NOT NULL DEFAULT 0"),
+        ("template_id",
+         "ALTER TABLE agent_meta ADD COLUMN template_id TEXT"),
+        ("template_params",
+         "ALTER TABLE agent_meta ADD COLUMN template_params TEXT"),
+    ):
+        if column not in columns:
+            conn.execute(ddl)
 
 
 def _loads(value: Optional[str], fallback: Any = None) -> Any:
@@ -162,8 +173,9 @@ def _loads(value: Optional[str], fallback: Any = None) -> Any:
 
 def save_meta(agent_id: str, **fields: Any) -> None:
     """Upsert the console-owned metadata of an agent."""
-    columns = ("locale", "skillset", "account", "instance", "profile", "owner",
-               "callback_url", "hosting_hash", "profile_hash", "activate_pending")
+    columns = ("locale", "skillset", "template_id", "template_params", "account",
+               "instance", "profile", "owner", "callback_url", "hosting_hash",
+               "profile_hash", "activate_pending")
     values = {}
     for key in columns:
         if key in fields:
@@ -193,7 +205,7 @@ def get_meta(agent_id: str) -> Dict[str, Any]:
     if not row:
         return {}
     meta = dict(row)
-    for key in ("account", "instance", "profile", "owner"):
+    for key in ("account", "instance", "profile", "owner", "template_params"):
         meta[key] = _loads(meta.get(key), None)
     return meta
 

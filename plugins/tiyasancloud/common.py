@@ -27,9 +27,13 @@ DEFAULTS = {
     "AGENT_ID_PREFIX": "tc_,id_",
     "ENFORCE_QUOTA": True,
     "PAIRING_POLL_SECONDS": 3,
-    # Tools that execute through the workplace, i.e. inside the instance
-    # sandbox. Everything else runs on the Evonic host and is never granted.
-    "ALLOWED_TOOLS": "bash,read_file,write_file,str_replace,patch,runpy,calculator",
+    # Tool filter for a customer agent. "*" (the default) or an empty value
+    # means "no filtering": every tool the template engine assigns is kept,
+    # host-side tools included. A comma-separated list keeps only those tools.
+    "ALLOWED_TOOLS": "*",
+    # Fallback template id: when set, a register request without a "template"
+    # object is instantiated from this template with the request's params.
+    "AGENT_TEMPLATE_ID": "",
 }
 
 

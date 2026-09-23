@@ -104,20 +104,19 @@ def register(agent_id: str, body: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]
 
     A new agent is created confined to its tunnel workplace, with our prompt
     blocks, and disabled; the worker enables it once its connector is up
-    (``activate_ready``). An existing agent is never changed: the result only
-    repeats its connector token, so a console that lost the first answer can
-    still start the connector.
+    (``activate_ready``). An existing agent is never changed and never receives
+    template parameters: the result only repeats its connector token, so a
+    console that lost the first answer can still start the connector.
+
+    The agent comes either from the legacy ``skillset`` id (unchanged) or, when
+    the request carries a ``template`` object (or the plugin setting
+    ``AGENT_TEMPLATE_ID`` is set), from the template engine.
     """
     from models.db import db
 
     existing = db.get_agent(agent_id)
     if existing:
-        token = None
-        workplace = db.get_workplace(existing["workplace_id"]) if existing.get("workplace_id") else None
-        if workplace and workplace.get("type") == "tunnel":
-            connector = db.get_connector_by_workplace(workplace["id"])
-            token = (connector or {}).get("connector_token")
-        return {"agent_id": agent_id, "agent_name": existing.get("name"), "connector_token": token}, False
+        return _existing_result(db, agent_id, existing), False
 
     name = _text(body, "name", required=True, limit=60)
     description = _text(body, "description", required=False, limit=500) or ""
@@ -131,10 +130,21 @@ def register(agent_id: str, body: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]
         raise invalid_body("'instance.slug' is required (the server's name)")
     hosting_prompt = _text(body, "hosting_prompt", required=True, limit=20000)
     profile_prompt = _text(body, "profile_prompt", required=False, limit=20000)
-    skillset = _text(body, "skillset", required=False, limit=60)
     callback_url = _text(body, "callback_url", required=False, limit=500)
     if callback_url and not callback_url.startswith("https://"):
         raise invalid_body("'callback_url' must be https")
+
+    template = _template_request(body)
+    if template is not None:
+        return _register_from_template(
+            db, agent_id, template, body,
+            name=name, description=description, slug=slug, locale=locale,
+            account=account, instance=instance,
+            hosting_prompt=hosting_prompt, profile_prompt=profile_prompt,
+            callback_url=callback_url,
+        )
+
+    skillset = _text(body, "skillset", required=False, limit=60)
     system_prompt, tools, skills = _skillset(skillset)
 
     workplace_id, connector_token = _tunnel_workplace(slug)
@@ -192,6 +202,157 @@ def register(agent_id: str, body: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]
             "workplace_id": workplace_id}, True
 
 
+def _existing_result(db, agent_id: str, existing: Dict[str, Any]) -> Dict[str, Any]:
+    """The replay result for an agent that exists (nothing is changed).
+
+    Only its tunnel connector token is repeated, so a console that lost the
+    first answer can still start the connector.
+    """
+    token = None
+    workplace = db.get_workplace(existing["workplace_id"]) if existing.get("workplace_id") else None
+    if workplace and workplace.get("type") == "tunnel":
+        connector = db.get_connector_by_workplace(workplace["id"])
+        token = (connector or {}).get("connector_token")
+    return {"agent_id": agent_id, "agent_name": existing.get("name"), "connector_token": token}
+
+
+# -------------------------------------------------------------------- templates
+
+def _template_request(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The template instantiation request, or ``None`` for the skillset path.
+
+    ``body[\"template\"]`` (``{id, params, overrides}``) wins. When it is absent
+    and the plugin setting ``AGENT_TEMPLATE_ID`` is set, that id is used with
+    the request's params (``template_params`` or ``params``). An empty setting
+    keeps today's behaviour.
+    """
+    raw = body.get("template")
+    if raw is not None:
+        if not isinstance(raw, dict):
+            raise invalid_body("'template' must be an object")
+        return _template_block(raw)
+    default_id = str(config().get("AGENT_TEMPLATE_ID") or "").strip()
+    if not default_id:
+        return None
+    params = body.get("template_params")
+    if params is None:
+        params = body.get("params")
+    return _template_block({"id": default_id, "params": params,
+                            "overrides": body.get("template_overrides")})
+
+
+def _template_block(raw: Dict[str, Any]) -> Dict[str, Any]:
+    template_id = _text(raw, "id", required=True, limit=64)
+    params = _obj(raw, "params", required=False) or {}
+    overrides = _obj(raw, "overrides", required=False) or {}
+    return {"id": template_id, "params": params, "overrides": overrides}
+
+
+def _short(message: Any, limit: int = 500) -> str:
+    text = str(message or "").strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _resolve_detail(exc: Any) -> str:
+    """The resolution report's errors as one line, else the exception text."""
+    errors = (getattr(exc, "report", None) or {}).get("errors") or []
+    return _short("; ".join(str(item) for item in errors) or str(exc))
+
+
+def _read_prompt(agent_id: str) -> str:
+    """The rendered prompt the template layer wrote to ``SYSTEM.md``."""
+    path = system_prompt_path(agent_id)
+    if not os.path.isfile(path):
+        return ""
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _instantiate_template(db, agent_id: str, template: Dict[str, Any], *,
+                          name: str, description: str) -> Optional[str]:
+    """Create the agent through the template engine; return its id.
+
+    Returns ``None`` when the id is already taken (the caller turns that into
+    the ``agent_exists`` replay). The plugin owns identity and confinement, so
+    the managed id, the request's name/description and the disabled flags are
+    forced into the overrides, last and win over the template or the caller.
+    """
+    from backend import agent_factory, agent_templates
+
+    overrides = dict(template["overrides"])
+    overrides.update({
+        "id": agent_id,
+        "name": name,
+        "description": description,
+        "enabled": 0,
+        "sandbox_enabled": 0,
+        "bash_exec_enabled": 0,
+        "agent_messaging_enabled": 0,
+        "builtin_tools_enabled": 0,
+    })
+    try:
+        return agent_templates.create_agent_from_template(
+            template["id"], template["params"], overrides,
+            db=db, base_dir=_base_dir(), if_exists="error",
+        )
+    except agent_templates.TemplateNotFoundError as exc:
+        raise ApiError(404, "template_not_found", _short(exc))
+    except agent_templates.TemplateResolveError as exc:
+        raise ApiError(409, "template_unresolved", _resolve_detail(exc))
+    except agent_templates.TemplateRenderError as exc:
+        raise ApiError(400, "invalid_template", _short(exc))
+    except agent_templates.TemplateValidationError as exc:
+        raise ApiError(400, "invalid_template", _short(exc))
+    except agent_factory.SpecValidationError as exc:
+        # A value inside the overrides the engine could not accept.
+        raise ApiError(400, "invalid_template", _short(exc))
+    except agent_factory.AgentAlreadyExistsError:
+        return None
+
+
+def _register_from_template(db, agent_id: str, template: Dict[str, Any], body: Dict[str, Any], *,
+                            name: str, description: str, slug: str, locale: str,
+                            account: Dict[str, Any], instance: Dict[str, Any],
+                            hosting_prompt: str, profile_prompt: Optional[str],
+                            callback_url: Optional[str]) -> Tuple[Dict[str, Any], bool]:
+    """Create the agent from a template and re-impose the plugin's confinement.
+
+    The template layer renders the system prompt (one renderer, never two); the
+    plugin reads that rendered text and only adds its two marker blocks on top
+    (PROFILE) and at the end (HOSTING). The agent is created disabled and is
+    confined to its own tunnel workplace.
+    """
+    if _instantiate_template(db, agent_id, template, name=name, description=description) is None:
+        existing = db.get_agent(agent_id)
+        if existing:
+            return _existing_result(db, agent_id, existing), False
+        raise evonic_unavailable("agent already exists but cannot be read")
+
+    prompt = put_block(_read_prompt(agent_id), PROFILE_MARK, PROFILE_END, profile_prompt, on_top=True)
+    prompt = put_block(prompt, HOSTING_MARK, HOSTING_END, hosting_prompt)
+    write_prompt(agent_id, prompt)
+
+    workplace_id, connector_token = _tunnel_workplace(slug)
+    _confine(agent_id, workplace_id)
+
+    store.save_meta(
+        agent_id,
+        locale=locale,
+        account=account,
+        instance=instance,
+        profile=body.get("profile"),
+        owner=body.get("owner"),
+        callback_url=callback_url,
+        hosting_hash=block_hash(hosting_prompt),
+        profile_hash=block_hash(profile_prompt),
+        activate_pending=1,
+        template_id=template["id"],
+        template_params=template["params"],
+    )
+    return {"agent_id": agent_id, "agent_name": name, "connector_token": connector_token,
+            "workplace_id": workplace_id}, True
+
+
 def activate_ready() -> None:
     """Enable each newly registered agent once its workplace is connected.
 
@@ -232,22 +393,39 @@ def _tunnel_workplace(slug: str) -> Tuple[str, str]:
     return workplace_id, token
 
 
-def allowed_tools() -> set:
-    raw = config().get("ALLOWED_TOOLS") or ""
-    items = raw if isinstance(raw, list) else str(raw).split(",")
-    return {str(item).strip() for item in items if str(item).strip()}
+def allowed_tools() -> Optional[set]:
+    """The explicit tool allowlist, or ``None`` when every tool is allowed.
+
+    ``ALLOWED_TOOLS`` is a wildcard: ``"*"`` (the default) and an empty value
+    both mean "no filtering" — the tool-list intersection is skipped entirely
+    and every tool the template engine resolved is kept, host-side tools
+    (``sshc``, ``send_file``, ``send_agent_message``, built-in host tools)
+    included. Any other value is a comma-separated allowlist. Note that an
+    empty value deliberately no longer means "allow nothing".
+    """
+    raw = config().get("ALLOWED_TOOLS")
+    items = raw if isinstance(raw, list) else str(raw or "").split(",")
+    names = {str(item).strip() for item in items if str(item).strip()}
+    if not names or "*" in names:
+        return None
+    return names
 
 
 def _confine(agent_id: str, workplace_id: str) -> None:
     """Keep a new agent inside its instance.
 
-    Only tools that run through the workplace are kept; tools and features that
-    run on the Evonic host (sshc, send_file, messaging other agents, built-in
-    host tools, a host shell, Docker sandbox) stay off.
+    Identity and confinement are the plugin's: the workplace is forced to the
+    instance's tunnel workplace, every host-side feature is turned off (Docker
+    sandbox, host bash, messaging other agents, the built-in host tools) and the
+    agent starts disabled until its connector connects.
+
+    The tool list is only filtered when ``ALLOWED_TOOLS`` is an explicit
+    allowlist; with the wildcard (the default) every resolved tool is kept.
     """
     from models.db import db
     allowed = allowed_tools()
-    tools = [tool for tool in (db.get_agent_tools(agent_id) or []) if tool in allowed]
+    current = db.get_agent_tools(agent_id) or []
+    tools = list(current) if allowed is None else [tool for tool in current if tool in allowed]
     try:
         db.set_agent_tools(agent_id, tools)
         db.update_agent(agent_id, {
@@ -256,6 +434,7 @@ def _confine(agent_id: str, workplace_id: str) -> None:
             "bash_exec_enabled": 0,
             "agent_messaging_enabled": 0,
             "builtin_tools_enabled": 0,
+            "enabled": 0,
         })
     except Exception as exc:
         raise evonic_unavailable(f"cannot confine the agent: {exc}")

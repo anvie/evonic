@@ -1,7 +1,7 @@
 {
   "id": "tiyasancloud",
   "name": "TiyasanCloud",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Registers TiyasanCloud customer agents (confined, with a one-tap WhatsApp link on the shared number) and enforces their monthly token quota.",
   "author": "Evonic",
   "enabled": true,
@@ -61,8 +61,15 @@
       "name": "ALLOWED_TOOLS",
       "label": "Allowed tools",
       "type": "string",
-      "default": "bash,read_file,write_file,str_replace,patch,runpy,calculator",
-      "description": "Comma-separated. Only tools that run through the workplace (inside the customer's instance). Host tools such as sshc or send_file must never be listed."
+      "default": "*",
+      "description": "Tool filter for a customer agent. \"*\" (default) or empty = no filtering: every tool the template engine assigns is kept, host-side tools included. A comma-separated list keeps only those tools."
+    },
+    {
+      "name": "AGENT_TEMPLATE_ID",
+      "label": "Default agent template (optional)",
+      "type": "string",
+      "default": "",
+      "description": "Leave empty for today's behaviour. When set, a register_agent request without a \"template\" object is instantiated from this template id with the request's params."
     },
     {
       "name": "PAIRING_POLL_SECONDS",

@@ -22,7 +22,8 @@ enable it in Evonic, then fill in the settings:
 | `AGENT_ID_PREFIX` | Comma-separated prefixes of the agents this plugin manages (default `tc_,id_`: `tc_<user>` for new agents, `id_<slug>` for older ones). |
 | `ENFORCE_QUOTA` | Off = report usage but never block a turn. |
 | `PAIRING_POLL_SECONDS` | How often incoming pairing codes are picked up (default 3). |
-| `ALLOWED_TOOLS` | Tools a customer agent may keep (default: the workplace tools `bash, read_file, write_file, str_replace, patch, runpy, calculator`). Never list host tools such as `sshc` or `send_file`. |
+| `ALLOWED_TOOLS` | Tool filter. `"*"` (default) or empty = **no filtering**: every tool the template engine assigns is kept, host-side tools included. A comma-separated list keeps only those tools. |
+| `AGENT_TEMPLATE_ID` | Optional default template id (default empty). When set, a `register_agent` request **without** a `template` object is instantiated from this template with the request's `params`. Empty = today's skillset-only behaviour. |
 
 The plugin never creates a WhatsApp channel and never asks a customer to scan a
 QR: an operator connects the shared number once, in Evonic.
@@ -76,7 +77,8 @@ tools of the optional `skillset`), with `model_id` left to the global default.
 
 - creates its own **tunnel workplace** `<slug> (instance)` rooted at
   `/workspace`, with an Evonet connector token;
-- keeps only `ALLOWED_TOOLS`, the tools that execute through that workplace;
+- keeps every tool the agent was created with (the owner's wildcard decision);
+  set `ALLOWED_TOOLS` to a comma-separated list to filter them again;
 - turns off everything that runs on the Evonic host: Docker sandbox, host
   bash, messaging other agents and the built-in host tools.
 
@@ -91,6 +93,61 @@ disables it later keeps it disabled.
 `<!-- tiyasan-hosting -->` … `<!-- /tiyasan-hosting -->` at the end. After
 registration the prompt is Evonic's. Ids that look like Evonic sub-agents
 (`_sub_N`, `_explorer_N`, `_organizer_N`) are refused.
+
+### Registering from a template
+
+`POST /register_agent` accepts an optional `template` object. When present, the
+agent is created through Evonic's template engine
+(`backend.agent_templates.create_agent_from_template`), never by hand; when
+absent, the legacy `skillset` path runs unchanged.
+
+```json
+{
+  "agent_id": "tc_1",
+  "name": "customer@example.com",
+  "account": {"id": "acc_1"},
+  "instance": {"slug": "acme-server"},
+  "hosting_prompt": "You run for PT Acme.",
+  "profile_prompt": "The customer prefers Indonesian.",
+  "template": {
+    "id": "support_triage_bot",
+    "params": {"company": "PT Acme"},
+    "overrides": {"variables": {"CRM_API_TOKEN": "…"}}
+  }
+}
+```
+
+- `template.id` — the template's slug.
+- `template.params` — values for the template's declared parameters.
+- `template.overrides` — optional structural overrides the engine accepts
+  (`variables`, `tools`, `skills`, `knowledge_base`, and allowlisted columns).
+
+The plugin still owns identity and confinement, and re-imposes them **after**
+instantiation: the agent id is the managed id from `agent_id` (the request name
+and description also win over the template), `workplace_id` is forced to the
+tunnel workplace, `sandbox_enabled`/`bash_exec_enabled`/`agent_messaging_enabled`/
+`builtin_tools_enabled` are `0`, and the agent starts `enabled = 0`. Callers can
+never override `id`, the workplace or those flags.
+
+The **rendered** system prompt comes from the template layer — one renderer,
+never two. The plugin reads it from `SYSTEM.md` and only adds its own blocks:
+`<!-- tiyasan-profile -->` on top and `<!-- tiyasan-hosting -->` at the end.
+`template_id` and `template_params` are recorded in the plugin store for audit.
+
+Errors use the same `{error, message}` shape:
+
+| Situation | Status | `error` |
+| --- | --- | --- |
+| Unknown template id | `404` | `template_not_found` |
+| Invalid params/overrides, or an unrenderable prompt | `400` | `invalid_template` |
+| Template needs tools/skills Evonic lacks | `409` | `template_unresolved` |
+| The agent already exists | `200` | `agent_exists` (replay, unchanged) |
+
+An existing agent is returned first, before any template is read, so it is
+never modified and never receives template parameters.
+
+If `AGENT_TEMPLATE_ID` is set and the request carries no `template`, the plugin
+instantiates from that template id with the request's `params`.
 
 ### Token quota
 
@@ -172,8 +229,11 @@ period.
 It contains no Evonic core changes and needs none: pairing, routing, quota
 hooks, workplaces and token data all use existing Evonic APIs. It never lists,
 reads, changes or deletes an agent, never creates or deletes channels, never
-picks a model for a customer, never grants a host tool, and never touches
-agents outside its prefix.
+picks a model for a customer, and never touches agents outside its prefix. It
+does not filter the tools a template resolves (the owner's wildcard decision):
+whatever the template engine assigns is kept, host-side tools included, since
+the customer runs in their own instance; set `ALLOWED_TOOLS` to a
+comma-separated list to filter them again.
 
 ## Tests
 
