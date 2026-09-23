@@ -323,3 +323,10 @@ backend/promptpurify/model.int8.onnx
 
 # Local tooling (standalone tailwindcss binary)
 .local/
+
+# -------------------------------
+# Agent templates (per-install data, NOT source)
+# Keep the directory itself, never index its contents.
+# -------------------------------
+agent_templates/*
+!agent_templates/.gitkeep
