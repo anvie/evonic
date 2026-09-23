@@ -649,6 +649,97 @@ def _busy_task_for(agent_id: str) -> str | None:
                 or _paused_tasks.get(agent_id))
 
 
+# ─── Task title flash (Kanban board realtime push) ───────────────────────────
+
+_FLASH_CONFIG_TTL = 10.0
+_flash_config_cache: dict = {'at': 0.0, 'enabled': True, 'decay': 5}
+_flash_last_emit: dict = {}        # task_id -> time.time() of last activity emit
+_flash_agent_tasks: dict = {}      # agent_id -> task_id last flashed
+_FLASH_MIN_EMIT_INTERVAL = 1.0
+
+
+def _as_bool(value) -> bool:
+    """Coerce a plugin config value (bool/str/number) to a boolean."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _flash_settings() -> tuple:
+    """Return (enabled, decay_seconds) for the task flash, cached briefly."""
+    now = time.time()
+    if now - _flash_config_cache['at'] < _FLASH_CONFIG_TTL:
+        return _flash_config_cache['enabled'], _flash_config_cache['decay']
+    enabled, decay = True, 5
+    try:
+        cfg = _load_config()
+        enabled = _as_bool(cfg.get('TASK_FLASH_ENABLED', True))
+        decay = int(float(cfg.get('TASK_FLASH_DECAY_SECONDS', 5) or 5))
+    except Exception:
+        pass
+    decay = max(1, min(decay, 3600))
+    _flash_config_cache.update({'at': now, 'enabled': enabled, 'decay': decay})
+    return enabled, decay
+
+
+def _publish_task_flash(task_id, agent_id: str, event_name: str, extra: dict) -> None:
+    """Publish a kanban task-activity event to the realtime journal."""
+    from backend.realtime_store import realtime_store
+    payload = {
+        'task_id': str(task_id),
+        'agent_id': agent_id or '',
+        'timestamp': int(time.time() * 1000),
+    }
+    payload.update(extra or {})
+    realtime_store.publish('kanban', event_name, payload)
+
+
+def _emit_task_activity(agent_id: str, tool_name: str = '', task_id=None) -> None:
+    """Flash the active task title on the board; throttled to 1 event/second."""
+    if not agent_id:
+        return
+    if task_id is None:
+        with _state_lock:
+            task_id = _active_tasks.get(agent_id)
+    if not task_id:
+        return
+    enabled, decay = _flash_settings()
+    if not enabled:
+        return
+    key = str(task_id)
+    now = time.time()
+    if now - _flash_last_emit.get(key, 0.0) < _FLASH_MIN_EMIT_INTERVAL:
+        return
+    _flash_last_emit[key] = now
+    _flash_agent_tasks[agent_id] = key
+    try:
+        _publish_task_flash(key, agent_id, 'kanban_task_activity', {
+            'tool_name': tool_name or '',
+            'decay_seconds': decay,
+        })
+    except Exception as exc:
+        _log(f'Failed to publish kanban task activity for #{key}: {exc}', 'error')
+
+
+def _emit_task_idle(agent_id: str, grace_seconds: int = 3) -> None:
+    """Tell the board to end the flash shortly after the agent stops working."""
+    if not agent_id:
+        return
+    task_id = _flash_agent_tasks.pop(agent_id, None)
+    if not task_id:
+        return
+    _flash_last_emit.pop(str(task_id), None)
+    enabled, _decay = _flash_settings()
+    if not enabled:
+        return
+    try:
+        _publish_task_flash(str(task_id), agent_id, 'kanban_task_idle', {
+            'grace_seconds': int(grace_seconds),
+        })
+    except Exception as exc:
+        _log(f'Failed to publish kanban task idle for #{task_id}: {exc}', 'error')
+
+
 def _notify_agent_followup(agent_id: str, task: dict, merged_content: str,
                            channel_type: str, sdk=None,
                            prior_content: str = None, comment_author: str = None) -> bool:
@@ -2044,6 +2135,9 @@ def on_tool_executed(event, sdk):
     if not agent_id:
         return
 
+    # Flash the title of the task this agent is working on (throttled inside).
+    _emit_task_activity(agent_id, tool_name)
+
     # ── kanban_add_comment: re-arm progress reminder ──────────────────────────
     if tool_name == 'kanban_add_comment':
         result = event.get('tool_result', {})
@@ -2076,6 +2170,8 @@ def on_tool_executed(event, sdk):
                     _active_tasks[agent_id] = str(task_id)
                     _task_state_since[agent_id] = time.time()
                 _progress_reminder_armed[agent_id] = False
+            # Flash the newly activated task on the board right away.
+            _emit_task_activity(agent_id, tool_name, task_id=task_id)
             _log(f'Guard cleared for agent {agent_id} — task activated', 'info', sdk)
 
         elif task_status == 'paused':
@@ -2121,6 +2217,22 @@ def on_tool_executed(event, sdk):
         if not event.get('has_error', False):
             with _state_lock:
                 _progress_reminder_armed[agent_id] = True
+
+
+def on_tool_call_started(event, sdk):
+    """Start the task-title flash on the board the moment a tool is invoked."""
+    agent_id = event.get('agent_id', '')
+    if not agent_id:
+        return
+    _emit_task_activity(agent_id, event.get('tool_name', ''))
+
+
+def on_turn_complete(event, sdk):
+    """End the task-title flash when the agent finishes its turn."""
+    agent_id = event.get('agent_id', '')
+    if not agent_id:
+        return
+    _emit_task_idle(agent_id)
 
 
 

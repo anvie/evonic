@@ -144,6 +144,7 @@ var RealtimeClient = (function () {
             'whatsapp_restriction_warning', 'session_clear', 'turn_split',
             'connector_connected', 'connector_disconnected', 'connector_paired',
             'workplace_status_changed',
+            'kanban_task_activity', 'kanban_task_idle',
             'ready', 'heartbeat', 'auth_expired', 'channel_disabled',
         ];
 
@@ -254,6 +255,10 @@ var RealtimeClient = (function () {
             evtName === 'whatsapp_restriction_warning' || evtName === 'session_clear' ||
             evtName === 'turn_split') {
             return 'chat';
+        }
+        // Kanban channel events
+        if (evtName === 'kanban_task_activity' || evtName === 'kanban_task_idle') {
+            return 'kanban';
         }
         // Workplace channel events
         if (evtName === 'connector_connected' || evtName === 'connector_disconnected' ||

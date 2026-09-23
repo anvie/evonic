@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- Kanban board: task title text now flashes solid yellow and fades back to its original color (5s default) every time the assigned agent calls a tool, driven by the durable `kanban` realtime (SSE) channel.
+
 ## [1.2.0] - 2026-08-14
 
 ### Features

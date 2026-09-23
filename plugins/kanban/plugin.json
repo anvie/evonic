@@ -5,7 +5,7 @@
   "description": "Kanban board plugin for task management with UI, API endpoints, and agent automation",
   "author": "Evonic",
   "enabled": true,
-  "events": ["tool_executed", "kanban_task_created", "kanban_task_updated", "schedule_fired"],
+  "events": ["tool_call_started", "tool_executed", "turn_complete", "kanban_task_created", "kanban_task_updated", "schedule_fired"],
   "nav_items": [
     {"label": "Kanban", "path": "/board/kanban"}
   ],
@@ -141,6 +141,20 @@
       "type": "boolean",
       "default": false,
       "description": "Record the full agent execution process (thinking steps, tool calls, final response) when a task finishes. Viewable in the Process tab of task detail."
+    },
+    {
+      "name": "TASK_FLASH_ENABLED",
+      "label": "Flash Task Title on Tool Calls",
+      "type": "boolean",
+      "default": true,
+      "description": "Flash the task title text on the Kanban board whenever an agent working that task invokes a tool. The title text turns solid yellow on each tool call and slowly shades back to its original color."
+    },
+    {
+      "name": "TASK_FLASH_DECAY_SECONDS",
+      "label": "Task Flash Decay (seconds)",
+      "type": "number",
+      "default": 5,
+      "description": "How long the yellow title text takes to fully shade back to the original color after a tool call. Default: 5 seconds."
     }
   ],
   "agent_settings": [

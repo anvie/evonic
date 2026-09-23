@@ -93,6 +93,31 @@ html.dark .skeleton-card {
 .skeleton-card .sk-actions { display: flex; gap: 0.25rem; margin-top: 0.25rem; border-top: 1px solid #f3f4f6; padding-top: 0.5rem; }
 html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
 .skeleton-card .sk-btn { height: 1.5rem; border-radius: 0.25rem; flex: 1; }
+/* Task title flash: the title TEXT turns solid yellow, then slowly shades
+   back to its original color. A new tool call snaps it back to yellow. */
+@keyframes kb-flash-fade {
+    from { color: var(--kb-flash); }
+    to   { color: var(--kb-orig); }
+}
+.kb-task-title {
+    /* Original title colors: text-gray-800 (light) / text-gray-100 (dark). */
+    --kb-orig: #1f2937;
+    --kb-flash: #eab308;
+    border-radius: 0.25rem;
+    padding: 0 0.15rem;
+    margin: 0 -0.15rem;
+}
+html.dark .kb-task-title {
+    --kb-orig: #f3f4f6;
+    --kb-flash: #fde047;
+}
+.kb-task-title.kb-flash {
+    animation: kb-flash-fade var(--kb-decay, 5s) linear forwards;
+    animation-delay: var(--kb-seek, 0ms);
+}
+@media (prefers-reduced-motion: reduce) {
+    .kb-task-title.kb-flash { animation: none; color: var(--kb-flash); }
+}
 </style>
 
 <!-- Board header -->
@@ -499,6 +524,8 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
 <script>
     const API = '/api/kanban';
     const SUPER_AGENT_ID = '{{ super_agent_id }}';
+    const TASK_FLASH_ENABLED = {{ 'true' if task_flash_enabled|default(true) else 'false' }};
+    const TASK_FLASH_DECAY_MS = {{ task_flash_decay_seconds|default(5) }} * 1000;
     let tasks = [];
     let currentDetailId = null;
     let _isEditing = false;  // true when editing existing task — prevents backdrop-click-close
@@ -748,7 +775,7 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
         const rocketBtn = task.status === 'todo' ? `<button class="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900/50 transition" title="Trigger agent" onclick="handleTrigger(${task.id}, ${hasAssignee}, event)">🚀</button>` : '';
         return `
         <div class="bg-white dark:bg-gray-700 rounded-lg p-3 shadow-sm hover:shadow-md dark:shadow-gray-900/30 transition border border-gray-200 dark:border-gray-700 cursor-grab active:cursor-grabbing" data-id="${task.id}" draggable="true" ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)">
-            <div class="text-xs font-semibold text-gray-800 dark:text-gray-100 mb-1 break-words cursor-pointer" onclick="openDetailModal(${task.id})"><span class="text-gray-500 dark:text-gray-400 font-semibold">#${task.id} &bull;</span> ${esc(decodeHtmlEntities(task.title))}</div>
+            <div class="kb-task-title text-xs font-semibold text-gray-800 dark:text-gray-100 mb-1 break-words cursor-pointer" data-task-id="${task.id}" onclick="openDetailModal(${task.id})"><span class="kb-task-title-prefix text-gray-500 dark:text-gray-400 font-semibold">#${task.id} &bull;</span> ${esc(decodeHtmlEntities(task.title))}</div>
             ${task.description ? `<div class="text-[11px] text-gray-500 dark:text-gray-400 mb-2 line-clamp-2 break-words cursor-pointer" onclick="openDetailModal(${task.id})">${esc(decodeHtmlEntities(stripMarkdown(task.description)))}</div>` : ''}
             ${(task.deps && task.deps.length > 0 && !task.deps_met) ? `<div class="text-[10px] text-amber-600 dark:text-amber-400 mb-1.5 flex items-center gap-1">&#128274; blocked by ${task.deps.map(d => '#' + d).join(', ')}</div>` : ''}
             <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
@@ -2266,6 +2293,106 @@ html.dark .skeleton-card .sk-actions { border-color: #4b5563; }
     $('#detail-task-assignee').on('change', function() {
         showAgentSkillWarning('#detail-task-assignee', '#detail-task-assignee-warning');
     });
+
+    // ── Task flash on tool calls (SSE channel: kanban) ─────────────────────
+    // A tool call turns the task title solid yellow, then the highlight
+    // slowly shades back to the original color. Every new tool call snaps
+    // it back to solid yellow and restarts the fade.
+    const TASK_FLASH_GRACE_MS = 3000;   // idle event: end the flash after this long
+    const TASK_FLASH_STALE_MS = 15000;  // ignore replayed events older than this
+    const _flashState = new Map();      // taskId -> {startedAt, decayMs, flashUntil}
+    let _flashTicker = null;
+    let _flashClientReady = false;
+
+    function _flashEls(taskId) {
+        // Cards are rendered as [data-id="<task id>"]; the title lives inside.
+        return document.querySelectorAll('[data-id="' + taskId + '"] .kb-task-title');
+    }
+
+    function _applyFlash(taskId, seekMs) {
+        const st = _flashState.get(String(taskId));
+        if (!st) return;
+        _flashEls(taskId).forEach(function(el) {
+            el.style.setProperty('--kb-decay', st.decayMs + 'ms');
+            const seek = Math.max(0, seekMs);
+            el.style.setProperty('--kb-seek', seek > 0 ? '-' + seek + 'ms' : '0ms');
+            el.classList.remove('kb-flash');
+            void el.offsetWidth;  // force reflow so the animation restarts
+            el.classList.add('kb-flash');
+        });
+    }
+
+    function _startFlash(taskId, decayMs) {
+        const id = String(taskId);
+        const now = Date.now();
+        _flashState.set(id, { startedAt: now, decayMs: decayMs, flashUntil: now + decayMs });
+        _applyFlash(id, 0);
+        _ensureFlashTicker();
+    }
+
+    function _endFlash(taskId, graceMs) {
+        const st = _flashState.get(String(taskId));
+        if (!st) return;
+        st.flashUntil = Math.min(st.flashUntil, Date.now() + Math.max(0, graceMs));
+        _ensureFlashTicker();
+    }
+
+    function _clearFlash(taskId) {
+        _flashState.delete(String(taskId));
+        _flashEls(taskId).forEach(function(el) {
+            el.classList.remove('kb-flash');
+            el.style.removeProperty('--kb-seek');
+        });
+    }
+
+    function _ensureFlashTicker() {
+        if (_flashTicker) return;
+        _flashTicker = setInterval(_tickFlash, 1000);
+    }
+
+    function _tickFlash() {
+        const now = Date.now();
+        let live = 0;
+        Array.from(_flashState.keys()).forEach(function(id) {
+            const st = _flashState.get(id);
+            if (!st) return;
+            if (st.flashUntil <= now) { _clearFlash(id); return; }
+            live++;
+            // Re-apply after a re-render, continuing (not restarting) the fade.
+            _flashEls(id).forEach(function(el) {
+                if (!el.classList.contains('kb-flash')) _applyFlash(id, now - st.startedAt);
+            });
+        });
+        if (!live && _flashTicker) { clearInterval(_flashTicker); _flashTicker = null; }
+    }
+
+    function _initTaskFlash() {
+        if (_flashClientReady || !TASK_FLASH_ENABLED) return;
+        if (typeof RealtimeClient === 'undefined') return;
+        _flashClientReady = true;
+        try {
+            const rt = new RealtimeClient({ channels: 'kanban' });
+            rt.on('kanban', 'kanban_task_activity', function(data) {
+                if (!data || !data.task_id) return;
+                if (data.timestamp && (Date.now() - data.timestamp) > TASK_FLASH_STALE_MS) return;
+                const secs = Number(data.decay_seconds) || (TASK_FLASH_DECAY_MS / 1000);
+                _startFlash(data.task_id, Math.max(1, secs) * 1000);
+            });
+            rt.on('kanban', 'kanban_task_idle', function(data) {
+                if (!data || !data.task_id) return;
+                if (data.timestamp && (Date.now() - data.timestamp) > TASK_FLASH_STALE_MS) return;
+                const grace = Number(data.grace_seconds) || (TASK_FLASH_GRACE_MS / 1000);
+                _endFlash(data.task_id, Math.max(0, grace) * 1000);
+            });
+            rt.start();
+        } catch (e) {
+            console.warn('[kanban] task flash unavailable', e);
+        }
+    }
+
+    // realtime.js is loaded with defer, so wait for it before connecting.
+    window.addEventListener('load', _initTaskFlash);
+    if (typeof RealtimeClient !== 'undefined') _initTaskFlash();
 
     fetchNotifierStatus();
     preloadAgentCache(function() {

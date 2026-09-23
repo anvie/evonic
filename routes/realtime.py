@@ -17,7 +17,7 @@ realtime_bp = Blueprint('realtime', __name__)
 
 HEARTBEAT_INTERVAL = 15
 SQLITE_MAX_ID = 2**63 - 1
-_ALLOWED_CHANNELS = {'chat', 'status', 'approvals', 'update', 'workplace'}
+_ALLOWED_CHANNELS = {'chat', 'status', 'approvals', 'update', 'workplace', 'kanban'}
 
 
 def _json_default(value):

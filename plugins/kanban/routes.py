@@ -47,6 +47,29 @@ def _get_super_agent_id():
     return cfg.get('SUPER_AGENT_ID', DEFAULT_SUPER_AGENT_ID) or DEFAULT_SUPER_AGENT_ID
 
 
+def _task_flash_enabled() -> bool:
+    """Whether the Kanban board flashes task titles when agents call tools."""
+    try:
+        from backend.plugin_manager import plugin_manager
+        value = plugin_manager.get_plugin_config('kanban').get('TASK_FLASH_ENABLED', True)
+    except Exception:
+        return True
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _task_flash_decay_seconds() -> int:
+    """Fade-out duration in seconds for the task title flash."""
+    try:
+        from backend.plugin_manager import plugin_manager
+        cfg = plugin_manager.get_plugin_config('kanban')
+        decay = int(float(cfg.get('TASK_FLASH_DECAY_SECONDS', 5) or 5))
+    except Exception:
+        decay = 5
+    return max(1, min(decay, 3600))
+
+
 def _get_request_agent_id():
     return request.headers.get('X-Agent-Id', '').strip() or None
 
@@ -262,7 +285,12 @@ def create_blueprint():
 
     @bp.route('/board/kanban')
     def kanban_page():
-        return render_template('kanban.html', super_agent_id=_get_super_agent_id())
+        return render_template(
+            'kanban.html',
+            super_agent_id=_get_super_agent_id(),
+            task_flash_enabled=_task_flash_enabled(),
+            task_flash_decay_seconds=_task_flash_decay_seconds(),
+        )
 
     @bp.route('/api/kanban/tasks', methods=['GET'])
     def kanban_api_get():

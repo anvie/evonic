@@ -41,7 +41,7 @@ PLUGINS_DIR = os.path.join(BASE_DIR, 'plugins')
 VALID_EVENTS = {
     'turn_complete', 'message_received', 'session_created', 'summary_updated',
     'processing_started', 'llm_thinking', 'llm_response_chunk',
-    'tool_executed', 'final_answer', 'message_sent',
+    'tool_call_started', 'tool_executed', 'final_answer', 'message_sent',
     'kanban_task_created', 'kanban_task_updated',
     'schedule_fired', 'schedule_created', 'schedule_cancelled',
     'state_transition', 'llm_usage',
