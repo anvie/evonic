@@ -14,6 +14,7 @@ from typing import Dict, Any, List, Optional
 from flask import Blueprint, render_template, jsonify, request, Response, session, stream_with_context, g, redirect
 from models.db import db
 from models.chatlog import chatlog_manager, _DISPLAY_TYPES
+from backend import agent_factory
 from backend.agent_portability import AgentPortabilityError, export_agent, import_agent, preflight_import
 from backend.audit_logger import audit
 from backend.tools import tool_registry
@@ -330,73 +331,76 @@ def api_import_agent():
 
 @agents_bp.route('/api/agents', methods=['POST'])
 def api_create_agent():
+    """Create an agent from a full spec.
+
+    Creation itself is delegated to :mod:`backend.agent_factory`, which owns
+    spec validation, the managed tool lock (``artifacts_enabled`` /
+    ``vision_enabled``), the default knowledge-base files and the atomic
+    database + filesystem write (see its docstring).
+
+    This route keeps only the request-shaped concerns the factory deliberately
+    knows nothing about: the super-agent precondition, the ``workplace_id`` /
+    ``primary_channel_id`` instantiation-time bindings (applied *after* the
+    agent exists, exactly like ``routes/templates.py``), the audit entry and the
+    legacy response envelope.
+
+    There is deliberately no up-front "does this agent already exist?" SELECT:
+    the factory inserts and lets the PRIMARY KEY decide (``if_exists='error'``),
+    so two concurrent creates of the same id can never both succeed.
+    """
     if not db.has_super_agent():
         return jsonify({'error': 'Super agent must be set up before creating other agents.', 'setup_required': True}), 400
-    data = request.get_json()
-    agent_id = data.get('id', '').strip().lower()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Request body must be a JSON object.'}), 400
+
+    raw_id = data.get('id', '')
+    agent_id = raw_id.strip().lower() if isinstance(raw_id, str) else ''
     if not agent_id or not SLUG_RE.match(agent_id):
         return jsonify({'error': 'Invalid ID. Use only lowercase alphanumeric characters and underscores (snake_case).'}), 400
     if SUBAGENT_ID_RE.search(agent_id):
         return jsonify({'error': 'Agent ID cannot end with a sub-agent pattern (e.g. _sub_1). This naming convention is reserved for internal use.'}), 400
-    if db.get_agent(agent_id):
-        return jsonify({'error': 'Agent ID already exists.'}), 400
     if len(data.get('name', '')) > 200:
         return jsonify({'error': 'Name too long (max 200 characters).'}), 400
     if len(data.get('description', '')) > 2000:
         return jsonify({'error': 'Description too long (max 2000 characters).'}), 400
     if len(data.get('system_prompt', '')) > 102400:
         return jsonify({'error': 'System prompt too long (max 100 KB).'}), 400
+
+    # ``workplace_id`` / ``primary_channel_id`` decide where an agent runs and
+    # which channel it owns: they are instantiation-time bindings, never spec
+    # fields, so they are stripped here and applied once the agent exists.
+    workplace_id = data.get('workplace_id')
+    channel_id = data.get('primary_channel_id')
+    spec = {
+        key: value for key, value in data.items()
+        if key not in ('workplace_id', 'primary_channel_id')
+    }
+    spec['id'] = agent_id
+
     try:
-        _apply_sandbox_workplace_policy(data, data.get('workplace_id'))
+        _apply_sandbox_workplace_policy(spec, workplace_id)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+
     try:
-        _ensure_kb_dir(agent_id)
-        # Set default workspace for regular agents to shared/agents/[agent-id]
-        if 'workspace' not in data or not data.get('workspace'):
-            data['workspace'] = os.path.join(WORKSPACE_DIR, agent_id)
-        db.create_agent(data)
-        # Create workspace directory if it does not already exist
-        os.makedirs(data['workspace'], exist_ok=True)
-        _write_system_prompt(agent_id, data.get('system_prompt', ''))
-        # Create artifacts directory
-        _artifacts_dir(agent_id)
-        # Add artifact tools for agents with artifacts enabled
-        artifacts_enabled = data.get('artifacts_enabled')
-        if artifacts_enabled is None or artifacts_enabled:
-            for tool_id in ARTIFACT_TOOLS:
-                db.add_agent_tool(agent_id, tool_id)
-        # Add vision tools for agents with vision enabled
-        vision_enabled = data.get('vision_enabled')
-        if vision_enabled is None or vision_enabled:
-            for tool_id in VISION_TOOLS:
-                db.add_agent_tool(agent_id, tool_id)
-
-        # Copy default knowledge base files from defaults/ directory
-        import shutil as _shutil
-        _defaults_dir = os.path.join(BASE_DIR, 'defaults')
-
-        # evonic.md (from super_agent_kb_evonic.md)
-        _src = os.path.join(_defaults_dir, 'super_agent_kb_evonic.md')
-        if os.path.isfile(_src):
-            _shutil.copy2(_src, os.path.join(_kb_dir(agent_id), 'evonic.md'))
-
-        # reminder-and-schedule-creation-rules.md (scheduler/reminder guide)
-        _src = os.path.join(_defaults_dir, 'reminder-and-schedule-creation-rules.md')
-        if os.path.isfile(_src):
-            _shutil.copy2(_src, os.path.join(_kb_dir(agent_id), 'reminder-and-schedule-creation-rules.md'))
-
-        # evonet.md (Evonet connector reference)
-        _src = os.path.join(_defaults_dir, 'evonet.md')
-        if os.path.isfile(_src):
-            _shutil.copy2(_src, os.path.join(_kb_dir(agent_id), 'evonet.md'))
-
-        agent = db.get_agent(agent_id)
-        agent['system_prompt'] = _read_system_prompt(agent_id, fallback=agent.get('system_prompt', ''))
-        audit.log_agent_crud(user_id='admin', agent_id=agent_id, action='create', ip=_audit_ip())
-        return jsonify({'success': True, 'agent': _sanitize_agent(agent)})
+        created_id = agent_factory.create_agent(spec, if_exists='error')
+        if workplace_id:
+            db.update_agent(created_id, {'workplace_id': workplace_id})
+        if channel_id:
+            db.set_primary_channel(created_id, channel_id)
+    except agent_factory.AgentAlreadyExistsError:
+        return jsonify({'error': 'Agent ID already exists.'}), 400
+    except agent_factory.SpecValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
+        logger.exception('Agent creation failed')
         return jsonify({'error': str(e)}), 500
+
+    agent = db.get_agent(created_id)
+    agent['system_prompt'] = _read_system_prompt(created_id, fallback=agent.get('system_prompt', ''))
+    audit.log_agent_crud(user_id='admin', agent_id=created_id, action='create', ip=_audit_ip())
+    return jsonify({'success': True, 'agent': _sanitize_agent(agent)})
 
 
 @agents_bp.route('/api/agents/<agent_id>', methods=['PUT'])

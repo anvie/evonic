@@ -5,9 +5,11 @@ import os
 import secrets
 import tempfile
 import zipfile
+from typing import Any, Dict
 from flask import Blueprint, render_template, jsonify, request, redirect, url_for, send_file, after_this_request
 from backend.skills_manager import skills_manager
-from backend.skillsets import list_skillsets, get_skillset, resolve_skillset, apply_skillset, update_skillset
+from backend import agent_factory, agent_templates
+from backend.skillsets import update_skillset
 from backend.audit_logger import audit
 from backend.zip_validator import validate_upload_zip, MAX_UPLOAD_BYTES
 
@@ -266,19 +268,50 @@ def api_export_skill(skill_id):
         return jsonify({'error': 'Failed to create export archive'}), 500
 
 
-# ==================== Skillset Routes ====================
+# ==================== Skillset Routes (legacy compatibility) ====================
+#
+# This surface predates the agent-template engine and must keep answering in the
+# exact legacy shape: templates/skills.html (list + resolve preview),
+# templates/agents.html (the "Create from Skillset" dropdown) and
+# templates/edit_skillset.html all consume it verbatim.
+#
+# Reads are delegated to backend.agent_templates — the module that owns both
+# template roots — and adapted back to the legacy shape by the explicit adapters
+# below; creation is delegated to backend.agent_factory like every other
+# creation path.  Only the legacy *file editor* (PUT, below) still writes through
+# backend.skillsets, because the template layer deliberately treats skillsets/ as
+# read-only.
+
+
+def _legacy_skillset_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Adapt a raw skillset payload to the legacy ``GET /api/skillsets`` entry.
+
+    Field-for-field what ``backend.skillsets.list_skillsets()`` produced;
+    unit_tests/test_skillset_compat_routes.py pins the parity against it.
+    """
+    return {
+        'id': payload.get('id', ''),
+        'name': payload.get('name', ''),
+        'description': payload.get('description', ''),
+        'tools_count': len(payload.get('tools', [])),
+        'skills_count': len(payload.get('skills', [])),
+    }
+
 
 @skills_bp.route('/api/skillsets')
 def api_list_skillsets():
-    """List all available skillsets."""
-    skillsets = list_skillsets()
+    """List all available skillsets (legacy response shape)."""
+    skillsets = [
+        _legacy_skillset_summary(payload)
+        for payload in agent_templates.legacy_skillsets()
+    ]
     return jsonify({'skillsets': skillsets})
 
 
 @skills_bp.route('/api/skillsets/<skill_id>')
 def api_get_skillset(skill_id):
-    """Get a single skillset's details."""
-    skillset = get_skillset(skill_id)
+    """Get a single skillset's raw details (legacy response shape)."""
+    skillset = agent_templates.get_legacy_skillset(skill_id)
     if not skillset:
         return jsonify({'error': 'Skillset not found'}), 404
     return jsonify(skillset)
@@ -287,7 +320,7 @@ def api_get_skillset(skill_id):
 @skills_bp.route('/api/skillsets/<skill_id>/resolve')
 def api_resolve_skillset(skill_id):
     """Resolve a skillset's tool names to actual available tool IDs."""
-    resolved = resolve_skillset(skill_id)
+    resolved = agent_templates.resolve_legacy_skillset(skill_id)
     if not resolved:
         return jsonify({'error': 'Skillset not found'}), 404
     return jsonify(resolved)
@@ -295,75 +328,65 @@ def api_resolve_skillset(skill_id):
 
 @skills_bp.route('/api/skillsets/<skill_id>/apply', methods=['POST'])
 def api_apply_skillset(skill_id):
-    """Apply a skillset template to create a new agent."""
-    from models.db import db
-    import shutil
+    """Apply a skillset template to create a new agent (legacy semantics).
 
-    agent_data = request.get_json() or {}
+    The skillset/request-body merge is the legacy one
+    (``agent_templates.build_legacy_skillset_spec``) and the actual creation is
+    delegated to :func:`backend.agent_factory.create_agent`.  Two legacy side
+    effects are preserved:
+
+    * every skillset ``skills`` entry is enabled globally
+      (``skills_manager.set_skill_enabled``);
+    * the same entries are assigned to the new agent (the factory writes them
+      through ``db.set_agent_skills``).
+
+    There is deliberately no "agent already exists?" pre-check: the factory
+    inserts and lets the PRIMARY KEY decide, so two concurrent applies with the
+    same id cannot both create an agent.
+    """
+    agent_data = request.get_json(silent=True)
+    if not isinstance(agent_data, dict):
+        return jsonify({'error': 'Agent ID is required.'}), 400
     if not agent_data.get('id'):
         return jsonify({'error': 'Agent ID is required.'}), 400
 
-    result = apply_skillset(skill_id, agent_data)
-    if 'error' in result:
-        return jsonify(result), 404
-
-    # Check if agent already exists
-    if db.get_agent(result['id']):
-        return jsonify({'error': f"Agent ID '{result['id']}' already exists."}), 409
-
-    # Create the agent
     try:
-        agents_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'agents')
-        agent_dir = os.path.join(agents_dir, result['id'])
-        kb_dir = os.path.join(agent_dir, 'kb')
-        os.makedirs(kb_dir, exist_ok=True)
+        spec = agent_templates.build_legacy_skillset_spec(skill_id, agent_data)
+    except agent_templates.TemplateNotFoundError:
+        return jsonify({'error': f"Skillset '{skill_id}' not found."}), 404
+    except (agent_templates.TemplateError, agent_factory.SpecValidationError) as exc:
+        return jsonify({'error': str(exc)}), 400
 
-        # Write system prompt
-        system_prompt_path = os.path.join(agent_dir, 'SYSTEM.md')
-        with open(system_prompt_path, 'w', encoding='utf-8') as f:
-            f.write(result.get('system_prompt', ''))
+    try:
+        agent_id = agent_factory.create_agent(spec, if_exists='error')
+    except agent_factory.AgentAlreadyExistsError:
+        return jsonify({'error': f"Agent ID '{spec.get('id')}' already exists."}), 409
+    except agent_factory.SpecValidationError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001 - keep the legacy 500 envelope
+        return jsonify({'error': str(exc)}), 500
 
-        # Create workspace directory at shared/agents/[agent-id]
-        workspace_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'shared', 'agents', result['id'])
-        os.makedirs(workspace_dir, exist_ok=True)
+    # Legacy semantics: a skillset's skills are switched on globally as well as
+    # assigned to the agent the factory just created.
+    for skill_name in spec.get('skills') or []:
+        skills_manager.set_skill_enabled(skill_name, True)
 
-        # Create agent in DB
-        db.create_agent({
-            'id': result['id'],
-            'name': result['name'],
-            'description': result.get('description', ''),
-            'system_prompt': result.get('system_prompt', ''),
-            'model': result.get('model'),
-            'workspace': workspace_dir,
-        })
-
-        # Assign tools
-        tools = result.get('tools', [])
-        if tools:
-            db.set_agent_tools(result['id'], tools)
-
-        # Apply skills
-        for skill_name in result.get('skills', []):
-            skills_manager.set_skill_enabled(skill_name, True)
-
-        # Copy KB files
-        for fname, content in result.get('kb_files', {}).items():
-            kb_file_path = os.path.join(kb_dir, fname)
-            with open(kb_file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-
-        return jsonify({
-            'success': True,
-            'agent_id': result['id'],
-            'message': f"Agent '{result['name']}' created from skillset '{skill_id}'."
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return jsonify({
+        'success': True,
+        'agent_id': agent_id,
+        'message': f"Agent '{spec.get('name') or ''}' created from skillset '{skill_id}'."
+    })
 
 
 @skills_bp.route('/api/skillsets/<skill_id>', methods=['PUT'])
 def api_update_skillset(skill_id):
-    """Update a skillset's configuration."""
+    """Update a skillset's configuration.
+
+    The write path stays on :func:`backend.skillsets.update_skillset` on
+    purpose: the template layer (``backend.agent_templates``) treats
+    ``skillsets/`` as a READ-ONLY legacy root, while this legacy editor keeps
+    editing the file in place, exactly as before.
+    """
     data = request.get_json()
     if not data:
         return jsonify({'error': 'No data provided'}), 400
@@ -377,8 +400,8 @@ def api_update_skillset(skill_id):
 
 @skills_bp.route('/skillset/<skill_id>')
 def edit_skillset_page(skill_id):
-    """Edit skillset page."""
-    skillset = get_skillset(skill_id)
+    """Edit skillset page (reads through the template layer's legacy view)."""
+    skillset = agent_templates.get_legacy_skillset(skill_id)
     if not skillset:
         return redirect('/skills')
     return render_template('edit_skillset.html', skillset=skillset)

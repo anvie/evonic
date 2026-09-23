@@ -507,7 +507,7 @@ class ApplySpecTests(AgentFactoryTestBase):
 
 
 class DriftTests(AgentFactoryTestBase):
-    """Guard the two intentional duplications against silent drift."""
+    """Guard the remaining intentional duplication against silent drift."""
 
     def test_update_agent_allowlist_is_a_superset_of_the_spec_surface(self):
         from models.mixins.agents import AgentMixin
@@ -546,12 +546,27 @@ class DriftTests(AgentFactoryTestBase):
         self.assertEqual(found.get("ARTIFACT_TOOLS"), set(ARTIFACT_TOOLS))
         self.assertEqual(found.get("VISION_TOOLS"), set(VISION_TOOLS))
 
-    def test_default_kb_sources_match_the_routes_module(self):
+    def test_create_route_delegates_creation_to_the_factory(self):
+        """The default-KB copy and the managed tool lock live in ONE place.
+
+        ``api_create_agent`` used to duplicate both; it now calls
+        :func:`backend.agent_factory.create_agent`, which makes the two
+        implementations unable to drift.  This guards the one-way dependency
+        instead of the duplication that used to need drift testing.
+        """
         with open(os.path.join(REPO_ROOT, "routes", "agents.py"), "r", encoding="utf-8") as handle:
             source = handle.read()
-        for target_name, source_name in DEFAULT_KB_FILES:
-            self.assertIn(target_name, source, "routes/agents.py no longer copies {}".format(target_name))
-            self.assertIn(source_name, source, "routes/agents.py no longer copies {}".format(source_name))
+        body = None
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.FunctionDef) and node.name == "api_create_agent":
+                body = ast.get_source_segment(source, node)
+        self.assertIsNotNone(body, "api_create_agent() is missing from routes/agents.py")
+        self.assertIn("agent_factory.create_agent(", body)
+        self.assertNotIn("db.create_agent(", body, "inline creation is back in routes/agents.py")
+        for _target_name, source_name in DEFAULT_KB_FILES:
+            self.assertNotIn(
+                source_name, source,
+                "routes/agents.py copied the default KB file {} again".format(source_name))
 
 
 class ModuleContractTests(AgentFactoryTestBase):

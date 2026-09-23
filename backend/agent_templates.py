@@ -92,6 +92,15 @@ Public API
 ``resolve_template(template_id, *, base_dir=None) -> dict``
 ``create_agent_from_template(template_id, params=None, overrides=None, *, ...) -> str``
 
+Legacy skillset compatibility views (consumed by ``routes/skills.py`` so that the
+``/api/skillsets*`` surface keeps its pre-template response shape while reading
+through this module):
+
+``legacy_skillsets(*, base_dir=None) -> list[dict]``
+``get_legacy_skillset(template_id, *, base_dir=None) -> dict | None``
+``resolve_legacy_skillset(template_id, *, base_dir=None) -> dict | None``
+``build_legacy_skillset_spec(template_id, agent_data, *, base_dir=None) -> dict``
+
 ``get_template`` returns the canonical template with a read-only ``_meta``
 block (``source``, ``legacy``, ``writable``, ``file``).  ``_meta`` is stripped
 on write, so a fetch → edit → ``update_template`` round-trip works unchanged.
@@ -161,6 +170,11 @@ __all__ = [
     # Resolution / instantiation
     "resolve_template",
     "create_agent_from_template",
+    # Legacy skillset compatibility views
+    "legacy_skillsets",
+    "get_legacy_skillset",
+    "resolve_legacy_skillset",
+    "build_legacy_skillset_spec",
 ]
 
 logger = logging.getLogger(__name__)
@@ -1997,3 +2011,143 @@ def create_agent_from_template(
         "agent_templates: created agent '%s' from template '%s'", agent_id, template["id"]
     )
     return agent_id
+
+
+# ---------------------------------------------------------------------------
+# Legacy skillset compatibility views
+#
+# ``routes/skills.py`` serves the pre-template ``/api/skillsets*`` surface.  It
+# reads through the functions below (this module owns the legacy root) and then
+# adapts the payloads back to the exact legacy response shape, so the old UI
+# (``templates/skills.html``, ``templates/agents.html``,
+# ``templates/edit_skillset.html``) keeps working unchanged.
+#
+# These views deliberately reproduce ``backend.skillsets`` semantics for the
+# legacy root only: they never look at ``agent_templates/`` and they never
+# write, move or validate the legacy files.
+# ---------------------------------------------------------------------------
+
+def legacy_skillsets(*, base_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return the raw payload of every legacy ``skillsets/*.json`` file.
+
+    Files are returned in legacy file order (``sorted(os.listdir())``) so the
+    adapter in ``routes/skills.py`` reproduces the legacy listing byte for byte.
+    A file that cannot be read as a JSON *object* (unparseable, not UTF-8, not
+    an object, or oversized) is skipped, exactly like the legacy loader skipped
+    the files it could not parse.  Legacy files are never modified.
+    """
+    _canonical_root, legacy_root = _roots(base_dir)
+    payloads: List[Dict[str, Any]] = []
+    for file_name in _scan_dir(legacy_root):
+        try:
+            payloads.append(_read_json_object(os.path.join(legacy_root, file_name)))
+        except TemplateError:
+            continue
+    return payloads
+
+
+def get_legacy_skillset(
+    template_id: str,
+    *,
+    base_dir: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return one raw legacy skillset payload, or ``None`` when absent.
+
+    Lookup matches the *declared* ``id`` field, which is what the legacy
+    ``backend.skillsets.get_skillset`` did (a file whose name and declared id
+    disagree is matched by its declared id, not by its file name).
+    """
+    if not isinstance(template_id, str) or not template_id:
+        return None
+    for payload in legacy_skillsets(base_dir=base_dir):
+        if payload.get("id") == template_id:
+            return payload
+    return None
+
+
+def resolve_legacy_skillset(
+    template_id: str,
+    *,
+    base_dir: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a raw legacy payload plus ``resolved_tools``/``unresolved_tools``.
+
+    Mirrors ``backend.skillsets.resolve_skillset``: declared tool names the
+    registry knows are reported as *resolved*, unknown ones as *unresolved*, and
+    when dependency checking is impossible (registry unavailable) every declared
+    name is reported as resolved rather than wrongly reported as missing.
+    """
+    payload = get_legacy_skillset(template_id, base_dir=base_dir)
+    if payload is None:
+        return None
+
+    declared = payload.get("tools") or []
+    if not isinstance(declared, (list, tuple)):
+        declared = []
+    names = [name for name in declared if isinstance(name, str) and name]
+
+    available = _available_tool_ids()
+    resolved = (
+        list(names) if available is None
+        else [name for name in names if name in available]
+    )
+    result = dict(payload)
+    result["resolved_tools"] = resolved
+    result["unresolved_tools"] = [name for name in names if name not in resolved]
+    return result
+
+
+def build_legacy_skillset_spec(
+    template_id: str,
+    agent_data: Optional[Mapping[str, Any]],
+    *,
+    base_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Merge a legacy skillset with ``agent_data`` into an agent-factory spec.
+
+    This is the legacy ``backend.skillsets.apply_skillset`` merge — ``agent_data``
+    wins over the skillset, the identity fields always come from ``agent_data`` —
+    expressed as a spec that :func:`backend.agent_factory.create_agent` accepts:
+
+    * the skillset's ``model`` (and a caller-supplied ``model``/``model_id``)
+      becomes the spec's ``model_id``, adapting the legacy key exactly like
+      :func:`_adapt_legacy` does for the canonical template path;
+    * ``kb_files`` (a ``{path: content}`` object) becomes ``knowledge_base`` and
+      goes through the same path validation as a template's KB files;
+    * keys the factory does not model are ignored, which is what the legacy
+      route did when it handed the merge result to ``Database.create_agent``.
+
+    Raises :class:`TemplateNotFoundError` when the skillset does not exist and
+    :class:`TemplateValidationError` when the merge produces an unusable spec.
+    """
+    payload = get_legacy_skillset(template_id, base_dir=base_dir)
+    if payload is None:
+        raise TemplateNotFoundError("Skillset '%s' was not found." % template_id)
+    if agent_data is None:
+        agent_data = {}
+    if not isinstance(agent_data, Mapping):
+        raise TemplateValidationError("Agent data must be a JSON object.")
+
+    def merged(key: str, default: Any) -> Any:
+        return agent_data[key] if key in agent_data else default
+
+    spec: Dict[str, Any] = {
+        "id": agent_data.get("id") or "",
+        "name": merged("name", payload.get("name") or "") or "",
+        "description": merged("description", payload.get("description") or "") or "",
+        "system_prompt": merged("system_prompt", payload.get("system_prompt") or "") or "",
+        "tools": merged("tools", payload.get("tools") or []),
+        "skills": merged("skills", payload.get("skills") or []),
+    }
+
+    model = agent_data.get(
+        "model", agent_data.get("model_id", payload.get("model") or "")
+    )
+    if isinstance(model, str) and model.strip():
+        spec["model_id"] = model.strip()
+
+    kb_files = _normalize_kb_files(merged("kb_files", payload.get("kb_files") or {}))
+    spec["knowledge_base"] = [
+        {"path": path, "content": content} for path, content in kb_files.items()
+    ]
+    return spec
