@@ -11,6 +11,7 @@ two things:
   EMPTY, and create-from-template produces a real agent.
 """
 
+import json
 import os
 
 import pytest
@@ -234,3 +235,62 @@ def test_new_template_link_opens_the_editor_in_create_mode(client, repo_root):
     assert '"report": null' in html
     # The editor must ignore the "new" sentinel when seeding the id field.
     assert 'BOOT.template_id !== "new"' in html
+
+
+# ---------------------------------------------------------------------------
+# 6. The gallery defaults to canonical templates; the banner is actionable-only
+# ---------------------------------------------------------------------------
+
+def test_templates_tab_defaults_to_canonical_and_the_banner_is_actionable_only(
+        client, repo_root):
+    """The amber banner used to nag about ``agent_templates/`` shadowing a legacy
+    skillset, which is the documented precedence and needs no action at all.
+    Canonical templates are the default grid; legacy skillsets are a toggle."""
+    login(client)
+    html = client.get("/agents").get_data(as_text=True)
+
+    # Legacy skillsets are opt-in, and the toggle is wired to the renderer.
+    assert 'id="template-show-legacy"' in html
+    assert 'id="template-legacy-count"' in html
+    assert 'onchange="filterTemplates()"' in html
+    assert "showLegacy || !t.legacy" in html
+    # The search box handler used to be referenced but never defined (dead input).
+    assert "function filterTemplates()" in html
+    # Shadowing is no longer surfaced as a warning ...
+    assert "canonical copy wins:" not in html
+    # ... only genuinely actionable states are.
+    assert "t.collision" in html
+    assert "Templates that need attention:" in html
+
+
+def test_shadowed_legacy_entry_is_reported_by_the_api_but_is_not_a_collision(
+        client, repo_root):
+    """The data contract the new filter keys off: a canonical template that
+    shadows a legacy skillset carries ``shadows``, not ``collision``."""
+    make_template(repo_root)
+    legacy_path = os.path.join(repo_root, "skillsets", TEMPLATE_ID + ".json")
+    with open(legacy_path, "w", encoding="utf-8") as handle:
+        json.dump({
+            "id": TEMPLATE_ID,
+            "name": "Tab Support Bot (legacy)",
+            "system_prompt": "legacy prompt",
+            "tools": [],
+            "skills": [],
+            "kb_files": {},
+        }, handle)
+    login(client)
+
+    body = client.get("/api/templates").get_json()
+    entries = {(e["id"], e["legacy"]): e for e in body["templates"]}
+    canonical = entries[(TEMPLATE_ID, False)]
+    legacy = entries[(TEMPLATE_ID, True)]
+
+    assert canonical["shadows"] is True
+    assert canonical["collision"] is False
+    assert canonical["valid"] is True
+    assert canonical["shadowed"] is False
+    assert legacy["shadowed"] is True
+    # The shadowing is still reported by the API (never silent) ...
+    assert [c["id"] for c in body["collisions"]] == [TEMPLATE_ID]
+    assert body["collisions"][0]["kind"] == "canonical_legacy"
+    # ... it simply is no longer treated as a problem by the UI.
