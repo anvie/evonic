@@ -1187,3 +1187,36 @@ html.dark .chat-img-skeleton {
     opacity: 0;
     transition: opacity 0.35s ease;
 }
+
+/* ==================== Chat Typography Hierarchy ====================
+   The chat mixes rem-based Tailwind utilities (the user's own message bubble
+   and the composer) with hard-coded px sizes on the agent reasoning/timeline
+   lines.  rem resolves against the ROOT font size — i.e. the browser's default
+   font-size setting, which is 16px only while it is left at "Medium" — while
+   the px sizes never change.  With a smaller default font size the message the
+   user typed shrank down to the size of the reasoning text, so the reasoning
+   block looked as large as (or larger than) the user's own text.
+
+   Pinning both tiers in rem keeps their ratio identical at any root font size:
+       primary   0.9375rem   user message + composer          (15px @ 16px root)
+       secondary 0.6875rem   collapsed reasoning/timeline lines (11px @ 16px)
+
+   These rules are intentionally unlayered: unlayered author CSS wins over
+   Tailwind's @layer utilities, so they hold without rebuilding Tailwind. */
+
+/* ── Primary: the user's own message and the composer ── */
+#chat-messages div[data-msg-role="user"] > div > div,
+#chat-input,
+#chat-editor-textarea {
+    font-size: 0.9375rem;
+}
+
+/* ── Secondary: the collapsed reasoning / tool-call summary lines ──
+   Only the summary span of a timeline row (always its last child, after the
+   chevron, emoji and optional status) and the live "Thinking..." row, so the
+   expanded detail, timer, chevrons, attachment names and artifact strip are
+   left untouched. */
+#chat-messages .timeline-entry > div:not(.tl-detail) > span:last-child,
+#chat-messages .tl-thinking-pending > span:last-child {
+    font-size: 0.6875rem;
+}
