@@ -40,6 +40,7 @@ from backend.event_stream import event_stream
 from backend.plugin_manager import get_busy_message
 from backend.slash_commands import parse_command, execute_command, COMMAND_SUPPRESSED
 from backend.agent_runtime.prefetch import TurnPrefetcher
+from backend.agent_runtime import simulation_spec as sim_spec
 import atexit
 import json
 import re
@@ -1660,6 +1661,8 @@ class AgentRuntime:
             if agent.get('is_explorer'):
                 from backend.agent_runtime import explorer as _explorer
                 model = _explorer.primary_model(agent) or db.get_agent_model(db_agent_id)
+            elif agent.get('is_simulation'):
+                model = sim_spec.model(agent, db_agent_id)
             else:
                 model = db.get_agent_model(db_agent_id)
             model_id = model.get('id') if model else None
@@ -2193,6 +2196,8 @@ class AgentRuntime:
             if agent.get('is_explorer'):
                 from backend.agent_runtime import explorer as _explorer
                 assigned_tool_ids = list(_explorer.tool_ids(agent))
+            elif agent.get('is_simulation'):
+                assigned_tool_ids = list(sim_spec.tools(agent, db_agent_id))
             else:
                 assigned_tool_ids = db.get_agent_tools(db_agent_id)
 
@@ -2208,7 +2213,7 @@ class AgentRuntime:
             # ensures the authorization guard allows execution of skill tools
             # that belong to skills explicitly assigned to the agent.
             # Skill tool IDs are namespaced: skill:<skill_id>:<fn_name>
-            assigned_skill_ids = set(db.get_agent_skills(db_agent_id))
+            assigned_skill_ids = set(sim_spec.skills(agent, db_agent_id))
             if assigned_skill_ids:
                 from backend.skills_manager import skills_manager
                 _existing = set(assigned_tool_ids)
@@ -2302,6 +2307,9 @@ class AgentRuntime:
                 'is_super': bool(agent.get('is_super')),
                 'is_subagent': bool(agent.get('is_subagent')),
                 'is_explorer': bool(agent.get('is_explorer')),
+                'is_simulation': bool(agent.get('is_simulation')),
+                'simulation_id': agent.get('simulation_id'),
+                'simulation_root': agent.get('simulation_root'),
                 'parent_id': agent.get('parent_id'),
                 '_sandbox_parent_session_id': agent.get('_sandbox_parent_session_id'),
                 '_sandbox_parent_workspace': agent.get('_sandbox_parent_workspace'),
@@ -2310,7 +2318,7 @@ class AgentRuntime:
                 'safety_checker_enabled': agent.get('safety_checker_enabled', 1),
                 'disable_parallel_tool_execution': agent.get('disable_parallel_tool_execution', 0),
                 'disable_turn_prefetch': agent.get('disable_turn_prefetch', 0),
-                'variables': db.get_agent_variables_dict(db_agent_id),
+                'variables': sim_spec.variable_dict(agent, db_agent_id),
                 'run_as_user': agent.get('run_as_user'),
                 'vision_model_id': agent.get('vision_model_id'),
                 'vision_enabled': agent.get('vision_enabled', 1),

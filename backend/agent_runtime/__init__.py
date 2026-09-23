@@ -281,4 +281,14 @@ except Exception:
     pass
 
 
+# Periodic orphan sweeper for abandoned agent-template simulations.  Runs once
+# at start (covering a crash since the previous boot) then on an interval,
+# reaping stray /tmp/evonic_agent_template_simulation/* trees.
+try:
+    from backend.agent_runtime.simulation_runtime import start_orphan_sweeper
+    start_orphan_sweeper()
+except Exception:
+    log.warning("simulation orphan sweeper failed to start", exc_info=True)
+
+
 __all__ = ['AgentRuntime', 'agent_runtime', 'DEFAULT_SUMMARIZE_PROMPT']

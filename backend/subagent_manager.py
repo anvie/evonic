@@ -176,6 +176,53 @@ class SubAgentManager:
 
         return explorer_id
 
+    def register_ephemeral(self, agent_id: str, config: Dict[str, Any],
+                           parent_id: Optional[str] = None) -> str:
+        """Register a purely in-memory, row-less agent under *agent_id*.
+
+        Unlike :meth:`spawn` / :meth:`spawn_explorer` this does NOT inherit from a
+        parent and does NOT enforce the per-parent cap: the caller supplies the
+        complete, already-resolved config.  The id is placed in the same
+        ``_subagents`` map so every consumer keeps working unchanged:
+
+        * ``get`` / the runtime's in-memory lookup fall back to it when
+          ``db.get_agent`` returns None (row-less lookup);
+        * ``is_subagent`` returns True, which routes the /tmp sidecar trees
+          (per-agent chat DB, chatlog, llm_trace) away from the live
+          ``agents/<id>/`` directory.
+
+        Callers that want *own-id* resource resolution (e.g. template simulations)
+        must simply omit ``is_subagent`` from *config*: the manager's registry
+        membership still drives the /tmp routing, while ``context._effective_id``
+        keeps returning the agent's own id.
+
+        Returns *agent_id*.  Raises ValueError if the id is already registered.
+        """
+        if not agent_id:
+            raise ValueError("agent_id is required")
+        with self._lock:
+            if agent_id in self._subagents:
+                raise ValueError(f"ephemeral agent already registered: {agent_id}")
+        sub = SubAgent(agent_id, parent_id or agent_id, config)
+        with self._lock:
+            self._subagents[agent_id] = sub
+        _logger.info("Ephemeral agent registered: %s", agent_id)
+        self._ensure_cleanup()
+        return agent_id
+
+    def deregister_ephemeral(self, agent_id: str) -> bool:
+        """Remove an ephemeral agent from the registry WITHOUT archiving.
+
+        Used by simulation teardown: the sim's own sessions live in a throwaway
+        /tmp chat DB that the caller deletes, so archiving into a (possibly
+        non-existent) parent would only leak rows into the live tree.
+        """
+        with self._lock:
+            removed = self._subagents.pop(agent_id, None)
+        if removed is not None:
+            _logger.info("Ephemeral agent deregistered: %s", agent_id)
+        return removed is not None
+
     def destroy(self, sub_agent_id: str) -> bool:
         """Destroy a sub-agent by ID.
 

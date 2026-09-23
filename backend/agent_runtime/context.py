@@ -34,6 +34,7 @@ from models.chat import is_human_facing_external_user_id
 from backend.tools import tool_registry
 from backend.tools.registry import BUILTIN_TOOL_IDS
 from backend.skills_manager import SkillsManager, skills_manager
+from backend.agent_runtime import simulation_spec as sim_spec
 from backend.agent_runtime.evomem_client import (
     get_evomem_db_mtime,
 )
@@ -71,6 +72,14 @@ def _effective_id(agent: Dict[str, Any]) -> str:
 
 def _system_prompt_path(agent_id: str) -> str:
     return os.path.join(_AGENTS_DIR, agent_id, 'SYSTEM.md')
+
+
+def _kb_dir(agent: Dict[str, Any], eid: str) -> str:
+    """KB directory for *agent*: under the simulation tree for sim agents."""
+    if sim_spec.is_simulation(agent):
+        from backend.tools.lib import simulation_scope as _sim_scope
+        return os.path.join(_sim_scope.agents_dir(agent), eid, 'kb')
+    return os.path.join(_AGENTS_DIR, eid, 'kb')
 
 
 def _get_mtime(path: str) -> float:
@@ -273,7 +282,7 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
             parts.append(f"\n## Language\n{_lang_text}")
 
     # Inject system_prompt from assigned tool definitions
-    assigned_ids = set(db.get_agent_tools(eid))
+    assigned_ids = set(sim_spec.tools(agent, eid))
 
     if assigned_ids:
         seen_fn_names = set()
@@ -387,7 +396,7 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
     # List available lazy skills so the agent knows what it can load. SYSTEM.md
     # is optional: a lazy skill can expose tools without additional instructions.
     skills_mgr = skills_manager
-    _allowed_skills = None if agent.get('is_super') else set(db.get_agent_skills(eid))
+    _allowed_skills = None if agent.get('is_super') else set(sim_spec.skills(agent, eid))
     lazy_skills = []
     skill_briefs = []
     for skill in skills_mgr.list_skills():
@@ -497,7 +506,7 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
 
     # List available agent variables (names only, never values) so the LLM
     # knows to reference $VAR_NAME in bash/runpy instead of literal secrets.
-    agent_vars = db.get_agent_variables(eid)
+    agent_vars = sim_spec.variables(agent, eid)
     if agent_vars:
         parts.append("\n## Environment Variables")
         parts.append(
@@ -523,7 +532,7 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
         return False
 
     # Check KB dir mtime
-    kb_dir = os.path.join(_AGENTS_DIR, eid, 'kb')
+    kb_dir = _kb_dir(agent, eid)
     if _get_mtime(kb_dir) != cache_entry['kb_mtime']:
         return False
 
@@ -532,7 +541,7 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
         return False
 
     # Check tools hash (assigned tool IDs)
-    assigned_ids = frozenset(db.get_agent_tools(eid))
+    assigned_ids = frozenset(sim_spec.tools(agent, eid))
     if str(sorted(assigned_ids)) != cache_entry['tools_hash']:
         return False
 
@@ -545,7 +554,7 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
         return False
 
     # Check agent variables hash (adding/removing/changing variables must invalidate)
-    current_vars = db.get_agent_variables(eid)
+    current_vars = sim_spec.variables(agent, eid)
     vars_key = str(sorted((v['key'], v.get('is_secret', False)) for v in current_vars))
     if hashlib.sha256(vars_key.encode()).hexdigest() != cache_entry.get('vars_hash', ''):
         return False
@@ -608,13 +617,13 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
 
         # Build mtime snapshot for cache validation
         sp_path = _system_prompt_path(eid)
-        kb_dir = os.path.join(_AGENTS_DIR, eid, 'kb')
+        kb_dir = _kb_dir(agent, eid)
         skills_hash = _get_skills_mtime_hash()
 
-        assigned_ids = frozenset(db.get_agent_tools(eid))
+        assigned_ids = frozenset(sim_spec.tools(agent, eid))
 
         # Compute variables hash for cache invalidation
-        current_vars = db.get_agent_variables(eid)
+        current_vars = sim_spec.variables(agent, eid)
         vars_key = str(sorted((v['key'], v.get('is_secret', False)) for v in current_vars))
         vars_hash = hashlib.sha256(vars_key.encode()).hexdigest()
 
@@ -888,7 +897,7 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     # sees only messaging tools the agent can actually execute. Sub-agents inherit
     # their parent's assignments.
     eid = _effective_id(agent)
-    assigned_ids = set(db.get_agent_tools(eid))
+    assigned_ids = set(sim_spec.tools(agent, eid))
 
     # Built-in tools (use_skill, set_mode, remember, recall, etc.)
     # Can be disabled per-agent via builtin_tools_enabled advanced setting.
@@ -987,7 +996,7 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     # This ensures that when an agent has a skill assigned in agent_skills and that skill
     # is eagerly loaded (no lazy_tools=true), the tools are available without manual
     # tool assignment in agent_tools.
-    assigned_skill_ids = set(db.get_agent_skills(eid))
+    assigned_skill_ids = set(sim_spec.skills(agent, eid))
     if assigned_skill_ids:
         for skill in skills_manager.list_skills():
             skill_id = skill.get('id', '')
