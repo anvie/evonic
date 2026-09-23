@@ -105,15 +105,10 @@
                 Refresh
             </button>
             <a href="/template/new" id="template-new-btn"
-               class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+               class="sm:ml-auto px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                 New template
             </a>
-            <label class="sm:ml-auto inline-flex items-center gap-2 pt-1 text-xs font-medium text-gray-600 dark:text-gray-300 select-none cursor-pointer">
-                <input type="checkbox" id="template-show-legacy" onchange="filterTemplates()"
-                       class="rounded border-gray-300 dark:border-gray-600 text-indigo-500 focus:ring-indigo-500/20">
-                Show legacy skillsets <span id="template-legacy-count" class="text-gray-400 dark:text-gray-500"></span>
-            </label>
         </div>
 
         <div id="templates-collisions" class="hidden mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></div>
@@ -960,7 +955,9 @@ async function loadTemplates(force) {
     const loading = document.getElementById('templates-loading');
     if (loading) loading.classList.remove('hidden');
     try {
-        const res = await fetch('/api/templates');
+        // Canonical templates only: the legacy skillsets/ root is not part of
+        // this tab, so it is never requested here (and never rendered).
+        const res = await fetch('/api/templates?include_legacy=0');
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         templates = data.templates || [];
@@ -990,31 +987,18 @@ function renderTemplates() {
     const grid = document.getElementById('templates-grid');
     const empty = document.getElementById('templates-empty');
     const collisionsEl = document.getElementById('templates-collisions');
-    const legacyToggle = document.getElementById('template-show-legacy');
-    const legacyCount = document.getElementById('template-legacy-count');
     if (!grid) return;
     const search = (document.getElementById('template-search').value || '').toLowerCase().trim();
-    const showLegacy = !!(legacyToggle && legacyToggle.checked);
-    // Canonical templates are the default view: agent_templates/ is the writable
-    // root while the legacy skillsets/ folder is kept only for compatibility, so
-    // legacy entries are listed behind the toggle instead of mixed into the
-    // gallery. Shadowed copies and invalid entries are never usable, either way.
-    const visible = templates.filter(
-        t => !t.shadowed && t.valid !== false && (showLegacy || !t.legacy)
-    );
+    // agent_templates/ is the only template source for this tab: the legacy
+    // skillsets/ root is never requested here (see loadTemplates) and so never
+    // listed. Shadowed copies and invalid entries are never usable, either way.
+    const visible = templates.filter(t => !t.shadowed && t.valid !== false);
     const filtered = search ? visible.filter(t => templateMatchesSearch(t, search)) : visible;
-
-    const hiddenLegacy = templates.filter(t => t.legacy && !t.shadowed && t.valid !== false).length;
-    if (legacyCount) legacyCount.textContent = hiddenLegacy ? '(' + hiddenLegacy + ')' : '';
-    if (legacyToggle) legacyToggle.disabled = hiddenLegacy === 0;
 
     if (collisionsEl) {
         // Only actionable states are surfaced: two entries inside agent_templates/
-        // claiming one id, or a canonical template that failed to load. A canonical
-        // template shadowing a read-only legacy skillset is the documented
-        // precedence (agent_templates/ always wins), so it stays quiet here and is
-        // logged to the console instead of nagging on every page load.
-        const problems = templates.filter(t => t.collision || (!t.legacy && t.valid === false));
+        // claiming one id, or a canonical template that failed to load.
+        const problems = templates.filter(t => t.valid === false);
         if (problems.length) {
             collisionsEl.textContent = 'Templates that need attention: ' + problems.map(
                 t => t.id + ' (' + (t.error || 'duplicate id inside agent_templates/') + ')'
@@ -1025,11 +1009,6 @@ function renderTemplates() {
             collisionsEl.textContent = '';
         }
     }
-    const shadowed = templates.filter(t => t.shadows);
-    if (shadowed.length) {
-        console.info('agent_templates/ shadows legacy skillsets (canonical wins):',
-            shadowed.map(t => t.id).join(', '));
-    }
 
     if (filtered.length === 0) {
         grid.innerHTML = '';
@@ -1038,9 +1017,7 @@ function renderTemplates() {
             const p = empty.querySelector('p:first-of-type');
             if (p) p.textContent = search ? 'No templates found' : 'No templates available';
             const hint = empty.querySelector('p:nth-of-type(2)');
-            if (hint) hint.textContent = (!search && hiddenLegacy && !showLegacy)
-                ? hiddenLegacy + ' legacy skillsets are hidden. Tick "Show legacy skillsets" to list them.'
-                : 'Templates let you create pre-configured agents in a few clicks.';
+            if (hint) hint.textContent = 'Templates let you create pre-configured agents in a few clicks.';
         }
         return;
     }
@@ -1054,9 +1031,6 @@ function templateCard(t) {
     const icon = t.icon || 'layout-template';
     const category = t.category
         ? `<span class="text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full">${esc(t.category)}</span>`
-        : '';
-    const legacy = t.legacy
-        ? `<span class="text-xs font-medium text-gray-500 bg-gray-100 dark:bg-gray-700/50 px-2 py-0.5 rounded-full" title="Legacy skillset (read-only)">legacy</span>`
         : '';
     const stats = [
         (t.parameter_count || 0) + ' parameter' + (t.parameter_count === 1 ? '' : 's'),
@@ -1072,7 +1046,7 @@ function templateCard(t) {
             <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
                     <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">${esc(t.name || t.id)}</h3>
-                    ${category}${legacy}
+                    ${category}
                 </div>
                 <p class="text-xs text-gray-400 dark:text-gray-500 font-mono truncate">${esc(t.id)}</p>
             </div>

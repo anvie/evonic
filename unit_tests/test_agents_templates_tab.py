@@ -108,7 +108,7 @@ def test_agents_page_ships_templates_tab(client, repo_root):
                "openTemplateCreate", "submitTemplateCreate",
                "renderTemplatePreview", "templateEditorHref"):
         assert "function " + fn in html, fn
-    assert "'/api/templates'" in html
+    assert "'/api/templates?include_legacy=0'" in html
     assert "'/render'" in html
     assert "'/instantiate'" in html
     # 'Edit template' links to the T9 editor page.
@@ -241,26 +241,59 @@ def test_new_template_link_opens_the_editor_in_create_mode(client, repo_root):
 # 6. The gallery defaults to canonical templates; the banner is actionable-only
 # ---------------------------------------------------------------------------
 
-def test_templates_tab_defaults_to_canonical_and_the_banner_is_actionable_only(
+def test_templates_tab_lists_canonical_only_and_the_banner_is_actionable_only(
         client, repo_root):
-    """The amber banner used to nag about ``agent_templates/`` shadowing a legacy
-    skillset, which is the documented precedence and needs no action at all.
-    Canonical templates are the default grid; legacy skillsets are a toggle."""
+    """The tab has no notion of legacy skillsets left: no toggle, no count, no
+    ``legacy`` badge, no shadowing notice. It asks the API for canonical
+    templates only, and the amber banner is reserved for actionable states (a
+    duplicate id, or a canonical template that failed to load)."""
     login(client)
     html = client.get("/agents").get_data(as_text=True)
 
-    # Legacy skillsets are opt-in, and the toggle is wired to the renderer.
-    assert 'id="template-show-legacy"' in html
-    assert 'id="template-legacy-count"' in html
-    assert 'onchange="filterTemplates()"' in html
-    assert "showLegacy || !t.legacy" in html
+    # The legacy skillset surface is gone from the page entirely.
+    assert "template-show-legacy" not in html
+    assert "template-legacy-count" not in html
+    assert "Show legacy skillsets" not in html
+    assert "Legacy skillset (read-only)" not in html
+    assert "showLegacy" not in html
+    assert "hiddenLegacy" not in html
+    assert "t.shadows" not in html
+    # ... and it asks the API for canonical templates only.
+    assert "'/api/templates?include_legacy=0'" in html
     # The search box handler used to be referenced but never defined (dead input).
     assert "function filterTemplates()" in html
-    # Shadowing is no longer surfaced as a warning ...
+    # The old shadowing notice is gone; only actionable states remain.
     assert "canonical copy wins:" not in html
-    # ... only genuinely actionable states are.
-    assert "t.collision" in html
     assert "Templates that need attention:" in html
+    assert "t.valid === false" in html
+
+
+def test_templates_tab_request_hides_legacy_skillsets_even_when_they_exist(
+        client, repo_root):
+    """``include_legacy=0`` (what the tab sends) hides the legacy root, while the
+    legacy ``/api/skillsets`` surface keeps working for everything else."""
+    make_template(repo_root)
+    for name in (TEMPLATE_ID, "legacy_only_bot"):
+        with open(os.path.join(repo_root, "skillsets", name + ".json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump({
+                "id": name,
+                "name": name + " (legacy)",
+                "system_prompt": "legacy prompt",
+                "tools": [],
+                "skills": [],
+                "kb_files": {},
+            }, handle)
+    login(client)
+
+    body = client.get("/api/templates?include_legacy=0").get_json()
+    assert [entry["id"] for entry in body["templates"]] == [TEMPLATE_ID]
+    assert all(entry["legacy"] is False for entry in body["templates"])
+    assert body["collisions"] == []
+
+    # Nothing was deleted: the legacy surface still lists both skillsets.
+    skillsets = client.get("/api/skillsets").get_json()["skillsets"]
+    assert {entry["id"] for entry in skillsets} >= {TEMPLATE_ID, "legacy_only_bot"}
 
 
 def test_shadowed_legacy_entry_is_reported_by_the_api_but_is_not_a_collision(
@@ -293,4 +326,5 @@ def test_shadowed_legacy_entry_is_reported_by_the_api_but_is_not_a_collision(
     # The shadowing is still reported by the API (never silent) ...
     assert [c["id"] for c in body["collisions"]] == [TEMPLATE_ID]
     assert body["collisions"][0]["kind"] == "canonical_legacy"
-    # ... it simply is no longer treated as a problem by the UI.
+    # ... and the tab never even asks for it (include_legacy=0), so the
+    # shadowing can no longer surface anywhere in the UI.
