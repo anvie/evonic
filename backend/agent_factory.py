@@ -41,7 +41,7 @@ Agent settings may be given either flat at the top level or nested inside a
         },
         "tools": ["web_search"],         # manual tools (managed ones added below)
         "skills": ["github"],
-        "variables": [{"key": "TOKEN", "value": "s3cret", "is_secret": True}],
+        "variables": [{"key": "TOKEN", "value": "<the-secret>", "is_secret": True}],
         "knowledge_base": [{"path": "guide/start.md", "content": "Hello"}],
     }
 
