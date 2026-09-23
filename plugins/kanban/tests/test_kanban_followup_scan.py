@@ -117,3 +117,52 @@ def test_comment_that_needs_no_followup_is_not_reclassified(scan, kanban_db):
 
     classifier, _notifier = scan(classify=False)
     classifier.assert_not_called()
+
+
+def test_classifier_failure_keeps_the_comment_retryable(scan, kanban_db):
+    """A failed LLM call is not a no: the comment must survive for a retry.
+
+    Regression: the classifier used to return False on any error, so a
+    rate-limited LLM call silently consumed the comment forever.
+    """
+    classifier, notifier = scan(classify=None)
+
+    assert classifier.call_count == 1
+    assert notifier.call_count == 0
+    kanban_db.update.assert_not_called()
+    assert COMMENT['id'] not in handler._classified_comments
+
+    # Once the classifier works again the same comment is picked up.
+    _classifier, notifier = scan()
+    assert notifier.call_count == 1
+    kanban_db.update.assert_called_once_with(
+        '7', {'status': 'in-progress', 'completed_at': None})
+
+
+class TestClassifyFollowupTriState:
+    """_classify_followup returns None when the LLM itself could not run."""
+
+    @staticmethod
+    def _result(success=True, content=None):
+        if not success:
+            return {'success': False, 'error_type': 'rate_limit_error',
+                    'response': {'error': 'quota exhausted'}}
+        message = {'content': content} if content is not None else {}
+        return {'success': True, 'response': {'choices': [{'message': message}]}}
+
+    def _classify(self, result):
+        with patch('backend.llm_client.llm_client') as client:
+            client.chat_completion.return_value = result
+            return handler._classify_followup('please fix the focus bug')
+
+    def test_failed_llm_call_returns_none(self):
+        assert self._classify(self._result(success=False)) is None
+
+    def test_empty_reply_returns_none(self):
+        assert self._classify(self._result(content='')) is None
+
+    def test_yes_returns_true(self):
+        assert self._classify(self._result(content='yes')) is True
+
+    def test_no_returns_false(self):
+        assert self._classify(self._result(content='no')) is False

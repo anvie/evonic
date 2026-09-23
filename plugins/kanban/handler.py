@@ -183,7 +183,7 @@ def _classify_approval(agent_message: str, user_message: str) -> bool:
         return False
 
 
-def _classify_followup(comment_content: str, prior_comment: str = None) -> bool:
+def _classify_followup(comment_content: str, prior_comment: str = None) -> Optional[bool]:
     """Use LLM as a yes/no classifier: does this comment require the agent to do follow-up work?
 
     Args:
@@ -194,7 +194,9 @@ def _classify_followup(comment_content: str, prior_comment: str = None) -> bool:
 
     Returns True if the comment asks the agent to fix, revise, correct, or do
     additional work on the task.  Returns False on any error (safe default — no
-    false re-opens).
+    false re-opens).  Returns None when the classifier itself could not run
+    (LLM failure or an empty reply), which tells the caller to retry the
+    comment on the next scan instead of treating it as a "no".
     """
     print(f'[kanban/followup-classifier] ENTER comment={comment_content!r:.80}')
     try:
@@ -223,6 +225,12 @@ def _classify_followup(comment_content: str, prior_comment: str = None) -> bool:
             max_tokens=4096,
             enable_thinking=False,
         )
+        if not result.get('success'):
+            print(
+                '[kanban/followup-classifier] LLM call failed '
+                f"({result.get('error_type')}), deferring classification"
+            )
+            return None
         text = ''
         choices = (result.get('response') or {}).get('choices') or []
         if choices:
@@ -237,13 +245,19 @@ def _classify_followup(comment_content: str, prior_comment: str = None) -> bool:
                     text = 'yes'
                 elif last_line.startswith('no'):
                     text = 'no'
+        if not text.strip():
+            print(
+                '[kanban/followup-classifier] empty LLM reply, '
+                'deferring classification'
+            )
+            return None
         needs_followup = text.strip().lower().startswith('yes')
         print(f'[kanban/followup-classifier] result={text!r} needs_followup={needs_followup}')
         return needs_followup
     except Exception as e:
         import traceback
         print(f'[kanban/followup-classifier] EXCEPTION: {e}\n{traceback.format_exc()}')
-        return False
+        return None
 
 
 # ━━━ Dashboard card handler ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1198,6 +1212,19 @@ def _scan_comments_for_followup(sdk=None):
             f'preview={merged_content[:60]!r}',
             'info', sdk,
         )
+
+        if needs_followup is None:
+            # The classifier could not run (LLM failure or an empty reply).
+            # That is not a "no": un-consume the comments so the next scan
+            # retries them instead of dropping the follow-up silently.
+            for comment_id in comment_ids:
+                _classified_comments.discard(comment_id)
+            _log(
+                f'Task {task_id}: follow-up classification unavailable '
+                f'({len(comment_ids)} comment(s)), will retry on the next scan',
+                'warning', sdk,
+            )
+            continue
 
         if not needs_followup:
             continue

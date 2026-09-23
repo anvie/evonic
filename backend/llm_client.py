@@ -288,7 +288,12 @@ class LLMClient:
     Supports llama.cpp, OpenAI, and other OpenAI-compatible backends.
     """
 
-    def __init__(self, model_config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        model_config: Optional[Dict[str, Any]] = None,
+        fallback_model_config: Optional[Dict[str, Any]] = None,
+        _allow_fallback: bool = True,
+    ):
         """Initialize LLMClient with optional model_config.
 
         Args:
@@ -296,6 +301,10 @@ class LLMClient:
                          thinking (bool), thinking_budget (int), max_tokens, temperature,
                          and optional service_tier.
                          If None, uses the default model from DB or config.py defaults.
+            fallback_model_config: Optional model config retried once when the
+                         primary call fails.  Explicitly passed by shared
+                         callers (classifiers, plugins); None means no implicit
+                         fallback unless this client uses the global default.
         """
         self.provider = None
         self.service_tier = model_config.get("service_tier") if model_config else None
@@ -357,6 +366,14 @@ class LLMClient:
                 self.api_format = "openai"
         self._cached_model_name = None
         self._codex_provider_id = self.provider or "codex"
+        # Fallback model support: retried once when the primary call fails.
+        # An explicit model_config means the caller chose this model, so no
+        # fallback is added implicitly; a client built with the global default
+        # (model_config=None) resolves `default_model_fallback_id` instead.
+        self._explicit_model_config = model_config
+        self._fallback_config = fallback_model_config
+        self._allow_fallback = _allow_fallback
+        self._fallback_client: Optional["LLMClient"] = None
         # Cache for global LLM settings (avoids repeated DB reads in hot path).
         # TTL-based, simple dict — intentionally lock-free (worst case: 1 extra DB read).
         # Optional per-call retry override. When set (not None), it takes
@@ -572,6 +589,95 @@ class LLMClient:
             return {"success": False, "error": str(e)}
 
     def chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        temperature: Optional[float] = None,
+        enable_thinking: bool = True,
+        max_tokens: Optional[int] = None,
+        log_file: Optional[str] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send a chat completion, retrying once on the fallback model.
+
+        Runs the primary model via :meth:`_chat_completion_once`.  When that
+        fails and a fallback model applies, the same request is retried once
+        on the fallback client.  This keeps callers that never touch the agent
+        runtime (classifiers, plugins, dashboards) failing over exactly like
+        agents do, instead of silently returning the primary error.
+
+        A successful fallback result is tagged with ``fallback_used``,
+        ``primary_model`` and ``primary_error_type``.  When the fallback also
+        fails, the primary result is returned so callers keep the original
+        error semantics.
+        """
+        result = self._chat_completion_once(
+            messages=messages,
+            tools=tools,
+            temperature=temperature,
+            enable_thinking=enable_thinking,
+            max_tokens=max_tokens,
+            log_file=log_file,
+            tool_choice=tool_choice,
+        )
+        if result.get("success") or not self._allow_fallback:
+            return result
+
+        fallback = self._get_fallback_client()
+        if fallback is None:
+            return result
+
+        fallback_result = fallback._chat_completion_once(
+            messages=messages,
+            tools=tools,
+            temperature=temperature,
+            enable_thinking=enable_thinking,
+            max_tokens=max_tokens,
+            log_file=log_file,
+            tool_choice=tool_choice,
+        )
+        if not fallback_result.get("success"):
+            return result
+
+        fallback_result["fallback_used"] = True
+        fallback_result["primary_model"] = self.model
+        fallback_result["primary_error_type"] = result.get("error_type")
+        return fallback_result
+
+    def _get_fallback_client(self) -> Optional["LLMClient"]:
+        """Return a client for the fallback model, or None when none applies.
+
+        An explicitly configured fallback wins.  A client created without an
+        explicit model config (the global default model) resolves the
+        ``default_model_fallback_id`` setting instead, so shared callers get
+        the same failover agents have.  A model identical to the primary is
+        skipped to avoid retrying the same endpoint.  Positive resolutions are
+        cached; the None case is recomputed so a later setting change applies.
+        """
+        if self._fallback_client is not None:
+            return self._fallback_client
+        try:
+            config = self._fallback_config
+            if config is None and self._explicit_model_config is None:
+                from models.db import db
+                fallback_id = db.get_setting("default_model_fallback_id", "")
+                config = db.get_model_by_id(fallback_id) if fallback_id else None
+            if not config or not config.get("enabled", True):
+                return None
+            same_target = (
+                config.get("model_name") == self.model
+                and (config.get("base_url") or "") == (self.base_url or "")
+            )
+            if same_target:
+                return None
+            self._fallback_client = LLMClient(
+                model_config=config, _allow_fallback=False)
+        except Exception as exc:
+            print(f"[llm_client] could not build fallback client: {exc}")
+            return None
+        return self._fallback_client
+
+    def _chat_completion_once(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,

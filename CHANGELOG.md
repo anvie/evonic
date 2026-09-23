@@ -6,6 +6,12 @@
 
 - Kanban board: task title text now flashes solid yellow and fades back to its original color (1s default) every time the assigned agent calls a tool, driven by the durable `kanban` realtime (SSE) channel.
 
+### Bug Fixes
+
+- LLM clients now retry once on their configured fallback model when the primary call fails. Shared callers (task and CMP classifiers, plugin helpers, dashboard enhancements) previously received the raw primary error whenever they did not run through the agent runtime.
+- Set the global default model fallback (`default_model_fallback_id`) to `deepseek/deepseek-v4-flash` so the default model has somewhere to fail over to.
+- Kanban comment follow-up: a failed classifier LLM call no longer counts as "no follow-up needed". The comment stays unconsumed and is retried on the next scan instead of being silently dropped, which used to lose user comments whenever the classifier model was unavailable.
+
 ## [1.2.0] - 2026-08-14
 
 ### Features
