@@ -1,0 +1,1304 @@
+{% extends "base.html" %}
+
+{#
+  Agent-template editor + simulation panel (task #30).
+
+  Served by ``routes.templates.template_editor_page`` at ``GET /template/<id>``
+  with:
+
+    * ``template_id`` — the id from the URL; an unknown id means "create new";
+    * ``template``    — the full ``resolve_template`` report, or ``None`` when
+      the id does not exist yet (the editor doubles as the create surface).
+
+  Everything below is client-side; the only server data is the bootstrap JSON
+  blob (``#tpl-bootstrap``) and the shared ``base.html`` chrome.  The main
+  script is wrapped in ``{% raw %}`` because it is full of ``{{ }}`` (the
+  template placeholder syntax itself) which must NOT be interpreted by Jinja.
+#}
+
+{% block content %}
+<div class="p-4 md:p-6 max-w-[1600px] mx-auto" id="tpl-editor">
+    <!-- Header -->
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+        <a href="/agents#templates" class="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors" title="Back to templates">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </a>
+        <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100" id="tpl-title">Template</h1>
+        <span id="tpl-mode-badge" class="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">edit</span>
+        <span id="tpl-id-chip" class="text-sm text-gray-400 dark:text-gray-500 font-mono"></span>
+        <span id="tpl-source-chip" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"></span>
+        <span id="tpl-dirty-chip" class="hidden text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">&bull; unsaved changes</span>
+        <div class="ml-auto flex items-center gap-2">
+            <button type="button" id="tpl-new-btn" class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">New template</button>
+            <button type="button" id="tpl-delete-btn" class="hidden px-3 py-1.5 border border-red-300 dark:border-red-700 rounded-md text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">Delete</button>
+            <button type="button" id="tpl-save-btn" class="px-4 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Save</button>
+        </div>
+    </div>
+
+    <!-- Issues / validation banner -->
+    <div id="tpl-issues" class="hidden mb-4 rounded-md border p-3 text-sm"></div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        <!-- ============================ Editor ============================ -->
+        <form id="tpl-form" class="space-y-5" onsubmit="return false;">
+            <!-- Identity -->
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Identity</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block mb-1 text-xs font-medium text-gray-600 dark:text-gray-400" for="tpl-field-id">Template ID</label>
+                        <input type="text" id="tpl-field-id" name="template_id" placeholder="my-template" autocomplete="off"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+                        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">Lowercase letters, digits, <code>-</code> and <code>_</code> (max 64). Immutable once created.</p>
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-xs font-medium text-gray-600 dark:text-gray-400" for="tpl-field-name">Name</label>
+                        <input type="text" id="tpl-field-name" name="template_name" placeholder="Support Bot" autocomplete="off"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block mb-1 text-xs font-medium text-gray-600 dark:text-gray-400" for="tpl-field-description">Description</label>
+                        <textarea id="tpl-field-description" name="template_description" rows="2"
+                                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-vertical"></textarea>
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-xs font-medium text-gray-600 dark:text-gray-400" for="tpl-field-category">Category</label>
+                        <input type="text" id="tpl-field-category" name="template_category" placeholder="general" autocomplete="off" list="tpl-category-options"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+                        <datalist id="tpl-category-options">
+                            <option value="general"></option><option value="support"></option><option value="engineering"></option>
+                            <option value="data"></option><option value="ops"></option><option value="sales"></option>
+                        </datalist>
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-xs font-medium text-gray-600 dark:text-gray-400" for="tpl-field-icon">Icon</label>
+                        <div class="flex items-center gap-2">
+                            <span id="tpl-icon-preview" class="flex items-center justify-center w-9 h-9 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 flex-shrink-0"><i data-lucide="layout-template" class="w-4 h-4"></i></span>
+                            <input type="text" id="tpl-field-icon" name="template_icon" placeholder="layout-template" autocomplete="off"
+                                   class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+                        </div>
+                        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">A <a href="https://lucide.dev/icons/" target="_blank" rel="noopener" class="underline">Lucide</a> icon name.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Parameters -->
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-1">
+                    <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Parameters</h2>
+                    <button type="button" id="tpl-param-add" class="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">+ Add parameter</button>
+                </div>
+                <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Each parameter becomes a <code>{{ '{{ name }}' }}</code> placeholder in the system prompt. Names must start with a letter/underscore.</p>
+                <div id="tpl-params-list" class="space-y-3"></div>
+            </section>
+
+            <!-- System prompt -->
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">System Prompt</h2>
+                <p class="text-xs text-gray-400 dark:text-gray-500 mb-2">Use <code>{{ '{{ parameter }}' }}</code> placeholders. A literal <code>{{ '{' }}{{ '{' }}</code> must be escaped as <code>\{{ '{' }}{{ '{' }}</code>.</p>
+                <div id="tpl-ph-chips" class="flex flex-wrap gap-1.5 mb-2"></div>
+                <textarea id="tpl-field-prompt" name="template_system_prompt" rows="14" spellcheck="false"
+                          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-vertical"></textarea>
+                <div id="tpl-ph-warning" class="hidden mt-2 rounded-md border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20 p-2 text-xs text-red-700 dark:text-red-300"></div>
+            </section>
+
+            <!-- Defaults -->
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Defaults</h2>
+                <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Agent settings the template seeds. Leave a field on <em>inherit</em> to use the platform default. Only allowlisted agent columns are shown.</p>
+                <div class="mb-3 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-2 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
+                    <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    <span>Fields marked <span class="font-semibold">&#128274; security-sensitive</span> are <strong>forced safe during simulation</strong>: the sandbox is always enabled, <code>run_as_user</code> is always unset, and all outbound messaging is intercepted. They still apply when a real agent is created from this template.</span>
+                </div>
+
+                <details open class="mb-2">
+                    <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Basic</summary>
+                    <div id="tpl-defaults-basic" class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 mt-2"></div>
+                </details>
+                <details class="mt-2">
+                    <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Advanced</summary>
+                    <div id="tpl-defaults-advanced" class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 mt-2"></div>
+                </details>
+            </section>
+
+            <!-- Tools -->
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Tools <span id="tpl-tools-count" class="ml-1 px-1.5 py-0.5 rounded-full text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 font-semibold hidden">0</span></h2>
+                    <button type="button" id="tpl-tools-clear" class="hidden text-xs text-gray-400 dark:text-gray-500 hover:text-red-500 transition-colors">Clear all</button>
+                </div>
+                <div id="tpl-tools-tags" class="flex flex-wrap gap-1.5 mb-2 empty:hidden"></div>
+                <div id="tpl-tools-wrapper" class="relative">
+                    <div class="flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus-within:ring-2 focus-within:ring-indigo-400">
+                        <svg class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0"/></svg>
+                        <input type="search" id="tpl-tools-input" name="template_tools_search_filter" class="flex-1 text-sm border-0 outline-none bg-transparent text-gray-900 dark:text-gray-200 placeholder-gray-400" placeholder="Search tools&hellip;" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
+                    </div>
+                    <div id="tpl-tools-dropdown" class="hidden absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl max-h-56 overflow-y-auto"></div>
+                </div>
+            </section>
+
+            <!-- Skills -->
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Skills <span id="tpl-skills-count" class="ml-1 px-1.5 py-0.5 rounded-full text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 font-semibold hidden">0</span></h2>
+                    <button type="button" id="tpl-skills-clear" class="hidden text-xs text-gray-400 dark:text-gray-500 hover:text-red-500 transition-colors">Clear all</button>
+                </div>
+                <div id="tpl-skills-tags" class="flex flex-wrap gap-1.5 mb-2 empty:hidden"></div>
+                <div id="tpl-skills-wrapper" class="relative">
+                    <div class="flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus-within:ring-2 focus-within:ring-emerald-400">
+                        <svg class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0"/></svg>
+                        <input type="search" id="tpl-skills-input" name="template_skills_search_filter" class="flex-1 text-sm border-0 outline-none bg-transparent text-gray-900 dark:text-gray-200 placeholder-gray-400" placeholder="Search skills&hellip;" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
+                    </div>
+                    <div id="tpl-skills-dropdown" class="hidden absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl max-h-56 overflow-y-auto"></div>
+                </div>
+            </section>
+
+            <!-- Variables -->
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-1">
+                    <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Variables</h2>
+                    <button type="button" id="tpl-var-add" class="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">+ Add variable</button>
+                </div>
+                <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Declarations only &mdash; values are supplied at instantiate time. Secret variables must not embed a default.</p>
+                <div id="tpl-vars-list" class="space-y-3"></div>
+            </section>
+
+            <!-- KB files -->
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-1">
+                    <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Knowledge Base files</h2>
+                    <button type="button" id="tpl-kb-add" class="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">+ Add file</button>
+                </div>
+                <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Relative paths copied into the new agent's <code>kb/</code> folder.</p>
+                <div id="tpl-kb-list" class="space-y-3"></div>
+            </section>
+
+            <div class="flex items-center gap-2 pb-2">
+                <button type="button" id="tpl-save-btn-2" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Save template</button>
+                <span id="tpl-save-status" class="text-xs text-gray-400 dark:text-gray-500"></span>
+            </div>
+        </form>
+
+        <!-- ============================ Test it ============================ -->
+        <div class="xl:sticky xl:top-4 self-start">
+            <section class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                    <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Test it</h2>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">ephemeral</span>
+                    <span id="tpl-sim-ephemeral" class="hidden text-xs text-gray-400 dark:text-gray-500"></span>
+                </div>
+                <div class="p-4">
+                    <!-- Gate: create/dirty -->
+                    <div id="tpl-sim-gate" class="hidden rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 text-sm text-amber-800 dark:text-amber-200 mb-4">
+                        <p id="tpl-sim-gate-msg" class="mb-2">Save the template to test it.</p>
+                        <button type="button" id="tpl-sim-save-btn" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-md text-xs font-medium transition-colors">Save &amp; load test panel</button>
+                    </div>
+
+                    <div id="tpl-sim-body">
+                        <div class="mb-3 rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-2 text-xs text-emerald-800 dark:text-emerald-200">
+                            Nothing is durable &mdash; a simulation runs the real runtime against a throwaway sandbox: no agent row, no files, and every outbound call (schedules, messages, memory, remote calls) is intercepted and shown in the <em>simulated outbox</em> below.
+                        </div>
+
+                        <!-- Parameter form -->
+                        <div class="mb-4">
+                            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Parameter values</h3>
+                            <div id="tpl-sim-params" class="space-y-2"></div>
+                        </div>
+
+                        <div class="flex flex-wrap items-center gap-2 mb-3">
+                            <button type="button" id="tpl-render-btn" class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Render preview</button>
+                            <span id="tpl-render-status" class="text-xs text-gray-400 dark:text-gray-500"></span>
+                        </div>
+
+                        <!-- Prompt preview -->
+                        <div id="tpl-preview-wrap" class="hidden mb-4">
+                            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Rendered system prompt</h3>
+                            <pre id="tpl-preview-prompt" class="text-xs whitespace-pre-wrap break-words font-mono bg-gray-50 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-700 rounded-md p-3 max-h-56 overflow-auto text-gray-800 dark:text-gray-200"></pre>
+                            <p id="tpl-preview-meta" class="mt-1 text-xs text-gray-400 dark:text-gray-500"></p>
+                        </div>
+
+                        <!-- Resolved config summary -->
+                        <div id="tpl-resolved-wrap" class="hidden mb-4">
+                            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Resolved configuration</h3>
+                            <div id="tpl-resolved" class="text-xs space-y-1"></div>
+                        </div>
+
+                        <!-- Test conversation -->
+                        <div class="border-t border-gray-200 dark:border-gray-700 pt-3">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Test conversation</h3>
+                                <button type="button" id="tpl-conv-reset" class="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">Reset</button>
+                            </div>
+                            <div id="tpl-conv" class="space-y-2 max-h-80 overflow-y-auto mb-2 pr-1"></div>
+                            <div class="flex items-start gap-2">
+                                <textarea id="tpl-sim-message" name="template_simulation_message" rows="2" placeholder="Send a test message&hellip;"
+                                          class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-vertical"></textarea>
+                                <button type="button" id="tpl-sim-send" class="px-3 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Send</button>
+                            </div>
+                            <p id="tpl-sim-status" class="mt-2 text-xs text-gray-400 dark:text-gray-500"></p>
+
+                            <!-- Simulated outbox -->
+                            <div class="mt-3">
+                                <h4 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Simulated outbox <span class="font-normal normal-case text-gray-400">(intercepted outbound calls &mdash; nothing was really sent)</span></h4>
+                                <div id="tpl-outbox" class="text-xs space-y-2"></div>
+                            </div>
+
+                            <!-- Activity -->
+                            <details id="tpl-activity-wrap" class="hidden mt-3">
+                                <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Activity trace</summary>
+                                <div id="tpl-activity" class="mt-2 text-xs space-y-2"></div>
+                            </details>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<div id="tpl-toast" class="hidden fixed bottom-4 right-4 px-4 py-3 rounded-md text-sm font-medium shadow-lg z-50"></div>
+
+<script id="tpl-bootstrap" type="application/json">{"template_id": {{ template_id | tojson }}, "report": {{ template | tojson }}}</script>
+
+{% raw %}
+<script>
+(function () {
+    "use strict";
+
+    // ── Bootstrap ────────────────────────────────────────────────────────────
+    const BOOT = JSON.parse(document.getElementById("tpl-bootstrap").textContent || "{}");
+    let REPORT = BOOT.report || null;                // resolve_template report
+    let SAVED = REPORT ? (REPORT.template || null) : null;   // canonical template
+    let MODE = SAVED ? "edit" : "create";
+
+    // Canonical platform defaults (mirrors backend agent_factory.DEFAULTS) so
+    // an "inherit" field can show what it actually resolves to.
+    const PLATFORM_DEFAULTS = {
+        name: "", description: "", avatar_path: null,
+        enabled: 1, vision_enabled: 1, summarize_threshold: 3, summarize_tail: 5,
+        summarize_prompt: null, message_buffer_seconds: 2, inject_agent_id: 1,
+        inject_datetime: 1, send_intermediate_responses: 1, outbound_buffer_seconds: 1.5,
+        enable_agent_state: 1, sandbox_enabled: 0, attachments_enabled: 0,
+        attachment_max_size_mb: 20, artifacts_enabled: 1, safety_checker_enabled: 1,
+        disable_parallel_tool_execution: 0, disable_turn_prefetch: 0,
+        agent_messaging_enabled: 1, tool_compression_enabled: 1, message_wrapper_enabled: 1,
+        fallback_model_id: null, model_id: null, vision_model_id: null,
+        audio_enabled: 0, video_enabled: 0, run_as_user: null, bash_exec_enabled: 0,
+        inter_agent_clear_context: 0, builtin_tools_enabled: 1, messaging_acl: null,
+        messaging_acl_mode: "whitelist", memory_engine: null, kb_organizer_mode: null,
+        enable_atg: 0, enable_cmp: 0, always_execute: 0,
+    };
+
+    // Security-sensitive defaults: force-safe during simulation.
+    const SECURITY_KEYS = ["sandbox_enabled", "run_as_user", "messaging_acl", "messaging_acl_mode"];
+
+    // Field metadata for the defaults editor (all allowlisted agent columns).
+    // kind: bool | int | float | text | select | acl
+    const FIELD_SPEC = [
+        { key: "name", label: "Agent name", kind: "text", group: "basic" },
+        { key: "description", label: "Agent description", kind: "text", group: "basic" },
+        { key: "avatar_path", label: "Avatar path", kind: "text", group: "basic" },
+        { key: "enabled", label: "Enabled", kind: "bool", group: "basic" },
+        { key: "model_id", label: "Model", kind: "text", group: "basic" },
+        { key: "fallback_model_id", label: "Fallback model", kind: "text", group: "basic" },
+        { key: "vision_model_id", label: "Vision model", kind: "text", group: "basic" },
+        { key: "vision_enabled", label: "Vision enabled", kind: "bool", group: "basic" },
+        { key: "sandbox_enabled", label: "Sandbox enabled", kind: "bool", group: "basic" },
+        { key: "run_as_user", label: "Run as user", kind: "text", group: "basic" },
+        { key: "messaging_acl", label: "Messaging ACL", kind: "acl", group: "basic" },
+        { key: "messaging_acl_mode", label: "Messaging ACL mode", kind: "select", group: "basic", options: ["whitelist", "blacklist"] },
+        { key: "agent_messaging_enabled", label: "Agent messaging", kind: "bool", group: "basic" },
+        { key: "builtin_tools_enabled", label: "Built-in tools", kind: "bool", group: "basic" },
+        { key: "artifacts_enabled", label: "Artifacts", kind: "bool", group: "basic" },
+        { key: "attachments_enabled", label: "Attachments", kind: "bool", group: "basic" },
+        { key: "safety_checker_enabled", label: "Safety checker", kind: "bool", group: "basic" },
+        { key: "summarize_threshold", label: "Summarize threshold", kind: "int", group: "advanced" },
+        { key: "summarize_tail", label: "Summarize tail", kind: "int", group: "advanced" },
+        { key: "summarize_prompt", label: "Summarize prompt", kind: "text", group: "advanced" },
+        { key: "message_buffer_seconds", label: "Message buffer (s)", kind: "float", group: "advanced" },
+        { key: "outbound_buffer_seconds", label: "Outbound buffer (s)", kind: "float", group: "advanced" },
+        { key: "inject_agent_id", label: "Inject agent id", kind: "bool", group: "advanced" },
+        { key: "inject_datetime", label: "Inject datetime", kind: "bool", group: "advanced" },
+        { key: "send_intermediate_responses", label: "Send intermediate responses", kind: "bool", group: "advanced" },
+        { key: "enable_agent_state", label: "Agent state", kind: "bool", group: "advanced" },
+        { key: "attachment_max_size_mb", label: "Attachment max size (MB)", kind: "int", group: "advanced" },
+        { key: "disable_parallel_tool_execution", label: "Disable parallel tools", kind: "bool", group: "advanced" },
+        { key: "disable_turn_prefetch", label: "Disable turn prefetch", kind: "bool", group: "advanced" },
+        { key: "tool_compression_enabled", label: "Tool compression", kind: "bool", group: "advanced" },
+        { key: "message_wrapper_enabled", label: "Message wrapper", kind: "bool", group: "advanced" },
+        { key: "audio_enabled", label: "Audio", kind: "bool", group: "advanced" },
+        { key: "video_enabled", label: "Video", kind: "bool", group: "advanced" },
+        { key: "bash_exec_enabled", label: "Bash exec", kind: "bool", group: "advanced" },
+        { key: "inter_agent_clear_context", label: "Inter-agent clear context", kind: "bool", group: "advanced" },
+        { key: "memory_engine", label: "Memory engine", kind: "select", group: "advanced", options: ["evomem", "fts5"] },
+        { key: "kb_organizer_mode", label: "KB organizer mode", kind: "select", group: "advanced", options: ["agentic", "non-agentic", "sefton", "off"] },
+        { key: "enable_atg", label: "Enable ATG", kind: "bool", group: "advanced" },
+        { key: "enable_cmp", label: "Enable CMP", kind: "bool", group: "advanced" },
+        { key: "always_execute", label: "Always execute", kind: "bool", group: "advanced" },
+    ];
+
+    const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    const PARAM_TYPES = ["text", "number", "boolean", "select"];
+
+    let availableTools = [];
+    let availableSkills = [];
+    let toolFocusIdx = -1;
+    let skillFocusIdx = -1;
+    let baseline = "";
+    let simParams = {};
+    let transcript = [];
+    let lastOutbox = [];
+    let renderTimer = null;
+
+    // ── Utilities ────────────────────────────────────────────────────────────
+    function $(id) { return document.getElementById(id); }
+    function clone(v) { return v === undefined ? v : JSON.parse(JSON.stringify(v)); }
+    function esc(s) {
+        const d = document.createElement("div");
+        d.textContent = s === null || s === undefined ? "" : String(s);
+        return d.innerHTML;
+    }
+    function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
+    function debounce(fn, ms) { clearTimeout(renderTimer); renderTimer = setTimeout(fn, ms); }
+
+    function toast(message, type) {
+        const el = $("tpl-toast");
+        el.textContent = message;
+        el.className = "fixed bottom-4 right-4 px-4 py-3 rounded-md text-sm font-medium shadow-lg z-50 " +
+            (type === "error" ? "bg-red-500 text-white" : type === "warn" ? "bg-amber-500 text-white" : "bg-green-500 text-white");
+        setTimeout(function () { el.className = "hidden"; }, 3500);
+    }
+
+    async function api(method, url, body) {
+        const res = await fetch(url, {
+            method: method,
+            headers: body ? { "Content-Type": "application/json" } : undefined,
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        let payload = null;
+        try { payload = await res.json(); } catch (e) { payload = null; }
+        if (!res.ok) {
+            const err = new Error((payload && (payload.message || payload.error)) || ("HTTP " + res.status));
+            err.status = res.status;
+            err.payload = payload;
+            throw err;
+        }
+        return payload;
+    }
+
+    // ── Editor state ─────────────────────────────────────────────────────────
+    const state = {
+        id: SAVED ? SAVED.id : (BOOT.template_id || ""),
+        name: SAVED ? SAVED.name : "",
+        description: SAVED ? SAVED.description : "",
+        category: SAVED ? SAVED.category : "general",
+        icon: SAVED ? SAVED.icon : "",
+        parameters: SAVED ? clone(SAVED.parameters) : [],
+        system_prompt: SAVED ? SAVED.system_prompt : "",
+        defaults: SAVED ? clone(SAVED.defaults) : {},
+        tools: SAVED ? SAVED.tools.slice() : [],
+        skills: SAVED ? SAVED.skills.slice() : [],
+        variables: SAVED ? clone(SAVED.variables) : [],
+        kb_files: SAVED ? Object.keys(SAVED.kb_files).map(function (k) { return { name: k, content: SAVED.kb_files[k] }; }) : [],
+    };
+
+    // ── Payload build / validation ───────────────────────────────────────────
+    function defaultControlValue(key) {
+        const spec = FIELD_SPEC.find(function (f) { return f.key === key; });
+        const raw = state.defaults[key];
+        if (raw === undefined || raw === null) return "";
+        if (spec && spec.kind === "bool") return (raw === 1 || raw === true || raw === "1" || raw === "true") ? "1" : "0";
+        return String(raw);
+    }
+
+    function collectDefaults() {
+        const out = {};
+        FIELD_SPEC.forEach(function (f) {
+            const el = document.getElementById("tpl-def-" + f.key);
+            if (!el) return;
+            const v = (el.value || "").trim();
+            if (v === "") return;
+            if (f.kind === "bool") out[f.key] = v === "1" ? 1 : 0;
+            else if (f.kind === "int") out[f.key] = parseInt(v, 10);
+            else if (f.kind === "float") out[f.key] = parseFloat(v);
+            else if (f.kind === "acl") {
+                const list = v.split(/[\n,]/).map(function (x) { return x.trim(); }).filter(Boolean);
+                out[f.key] = list;
+            } else out[f.key] = v;
+        });
+        return out;
+    }
+
+    function cleanParam(p) {
+        const out = { name: (p.name || "").trim(), type: p.type || "text", required: !!p.required };
+        const label = (p.label || "").trim();
+        if (label) out.label = label;   // omit so the server defaults it to the name
+        const def = (p.default === undefined || p.default === null) ? "" : String(p.default);
+        if (out.type === "select") {
+            out.options = (p.options || []).map(function (o) { return String(o).trim(); }).filter(Boolean);
+            if (def !== "") out.default = def;
+        } else if (out.type === "number") {
+            if (def !== "") out.default = String(def).trim();
+            if (p.min !== undefined && p.min !== null && String(p.min).trim() !== "") out.min = Number(p.min);
+            if (p.max !== undefined && p.max !== null && String(p.max).trim() !== "") out.max = Number(p.max);
+            if (p.integer) out.integer = true;
+        } else if (out.type === "boolean") {
+            if (def !== "") out.default = (def === "true" || def === true || def === "1");
+        } else if (def !== "") out.default = def;
+        if (p.description && String(p.description).trim()) out.description = String(p.description).trim();
+        if (p.placeholder && String(p.placeholder).trim()) out.placeholder = String(p.placeholder).trim();
+        return out;
+    }
+
+    function buildPayload() {
+        const kb = {};
+        state.kb_files.forEach(function (f) { if ((f.name || "").trim()) kb[f.name.trim()] = f.content || ""; });
+        return {
+            id: (state.id || "").trim(),
+            name: (state.name || "").trim(),
+            description: state.description || "",
+            category: (state.category || "").trim() || "general",
+            icon: (state.icon || "").trim() || "",
+            parameters: state.parameters.map(cleanParam).filter(function (p) { return p.name; }),
+            system_prompt: state.system_prompt || "",
+            defaults: collectDefaults(),
+            tools: state.tools.slice(),
+            skills: state.skills.slice(),
+            variables: state.variables.map(function (v) {
+                const out = { key: (v.key || "").trim(), is_secret: !!v.is_secret, required: !!v.required };
+                if (v.description) out.description = String(v.description).trim();
+                if (!v.is_secret && v.default !== undefined && v.default !== null && String(v.default) !== "") out.default = String(v.default);
+                return out;
+            }).filter(function (v) { return v.key; }),
+            kb_files: kb,
+        };
+    }
+
+    // Placeholder names referenced by a prompt (mirrors backend PLACEHOLDER_RE,
+    // honoring the \{{ escape).
+    function placeholderNames(src) {
+        const text = String(src || "");
+        const names = [];
+        let i = 0;
+        while (i < text.length) {
+            if (text.substr(i, 3) === "\\{{") { i += 3; continue; }
+            if (text.substr(i, 2) === "{{") {
+                const m = /^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/.exec(text.slice(i));
+                if (m) { if (names.indexOf(m[1]) === -1) names.push(m[1]); i += m[0].length; continue; }
+            }
+            i += 1;
+        }
+        return names;
+    }
+
+    function validatePayload(payload) {
+        const errors = [];
+        if (!SLUG_RE.test(payload.id)) errors.push("Template ID must be a lowercase slug (letters, digits, - and _, starting with a letter or digit).");
+        if (!payload.name) errors.push("Name is required.");
+        const declared = {};
+        payload.parameters.forEach(function (p) {
+            if (!NAME_RE.test(p.name)) errors.push("Parameter name '" + p.name + "' must start with a letter/underscore and contain only letters, digits and underscores.");
+            if (declared[p.name]) errors.push("Duplicate parameter name '" + p.name + "'.");
+            declared[p.name] = true;
+            if (p.type === "select" && (!p.options || !p.options.length)) errors.push("Select parameter '" + p.name + "' needs at least one option.");
+            if (p.type === "select" && p.default !== undefined && p.default !== "" && (p.options || []).indexOf(String(p.default)) === -1) errors.push("Select parameter '" + p.name + "' default must be one of its options.");
+        });
+        const vkeys = {};
+        payload.variables.forEach(function (v) {
+            if (!NAME_RE.test(v.key)) errors.push("Variable key '" + v.key + "' must start with a letter/underscore.");
+            if (vkeys[v.key]) errors.push("Duplicate variable '" + v.key + "'.");
+            vkeys[v.key] = true;
+            if (v.is_secret && v.default) errors.push("Secret variable '" + v.key + "' must not embed a default.");
+        });
+        const unknown = placeholderNames(payload.system_prompt).filter(function (n) { return !declared[n]; });
+        if (unknown.length) errors.push("System prompt uses undeclared placeholder(s): " + unknown.join(", ") + ".");
+        // The server audits identity defaults too (validate_template), so mirror it.
+        ["name", "description"].forEach(function (k) {
+            const v = payload.defaults[k];
+            if (typeof v !== "string") return;
+            const bad = placeholderNames(v).filter(function (n) { return !declared[n]; });
+            if (bad.length) errors.push("defaults." + k + " uses undeclared placeholder(s): " + bad.join(", ") + ".");
+        });
+        return errors;
+    }
+
+    // ── Header / issues ──────────────────────────────────────────────────────
+    function renderHeader() {
+        $("tpl-title").textContent = state.name || (MODE === "create" ? "New template" : state.id);
+        const badge = $("tpl-mode-badge");
+        badge.textContent = MODE;
+        badge.className = "text-xs px-2 py-0.5 rounded-full font-medium " + (MODE === "create"
+            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+            : "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300");
+        $("tpl-id-chip").textContent = state.id ? (MODE === "edit" ? "<" + state.id + ">" : "") : "";
+        const src = $("tpl-source-chip");
+        if (SAVED && SAVED._meta && SAVED._meta.source) {
+            src.textContent = SAVED._meta.legacy ? ("legacy: " + SAVED._meta.source + " (read-only)") : SAVED._meta.source;
+            src.classList.remove("hidden");
+        } else { src.classList.add("hidden"); }
+        $("tpl-delete-btn").classList.toggle("hidden", !(MODE === "edit" && SAVED && (!SAVED._meta || SAVED._meta.writable)));
+        const idField = $("tpl-field-id");
+        idField.readOnly = MODE === "edit";
+        idField.classList.toggle("opacity-60", MODE === "edit");
+    }
+
+    function showIssues(messages, kind) {
+        const el = $("tpl-issues");
+        if (!messages || !messages.length) { el.classList.add("hidden"); return; }
+        el.className = "mb-4 rounded-md border p-3 text-sm " + (kind === "ok"
+            ? "border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200"
+            : "border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300");
+        el.innerHTML = messages.map(esc).join("<br>");
+    }
+
+    // ── Parameters ───────────────────────────────────────────────────────────
+    function usedPlaceholders() {
+        const set = {};
+        placeholderNames(state.system_prompt).forEach(function (n) { set[n] = true; });
+        placeholderNames(state.defaults.name || "").forEach(function (n) { set[n] = true; });
+        placeholderNames(state.defaults.description || "").forEach(function (n) { set[n] = true; });
+        return set;
+    }
+
+    function renderParameters() {
+        const list = $("tpl-params-list");
+        if (!state.parameters.length) {
+            list.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500">No parameters declared.</p>';
+            return;
+        }
+        const used = usedPlaceholders();
+        list.innerHTML = state.parameters.map(function (p, i) {
+            const typeOpts = PARAM_TYPES.map(function (t) { return '<option value="' + t + '"' + (p.type === t ? " selected" : "") + ">" + t + "</option>"; }).join("");
+            const row = function (label, inner) { return '<div><label class="block mb-0.5 text-xs text-gray-500 dark:text-gray-400">' + label + "</label>" + inner + "</div>"; };
+            const inputCls = "w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500";
+            let extras = "";
+            if (p.type === "select") {
+                extras = row("Options (comma separated)", '<input data-p="' + i + '" data-f="options" value="' + escAttr((p.options || []).join(", ")) + '" placeholder="formal, friendly" class="' + inputCls + '">');
+            } else if (p.type === "number") {
+                extras = '<div class="grid grid-cols-3 gap-2">' +
+                    row("Min", '<input type="number" step="any" data-p="' + i + '" data-f="min" value="' + escAttr(p.min) + '" class="' + inputCls + '">') +
+                    row("Max", '<input type="number" step="any" data-p="' + i + '" data-f="max" value="' + escAttr(p.max) + '" class="' + inputCls + '">') +
+                    row("Integer", '<label class="flex items-center gap-1 mt-1 text-sm text-gray-600 dark:text-gray-300"><input type="checkbox" data-p="' + i + '" data-f="integer"' + (p.integer ? " checked" : "") + '> int</label>') +
+                    "</div>";
+            }
+            const defaultInput = p.type === "boolean"
+                ? '<select data-p="' + i + '" data-f="default" class="' + inputCls + '"><option value=""' + (p.default === undefined || p.default === "" ? " selected" : "") + '>(none)</option><option value="true"' + (p.default === true || p.default === "true" ? " selected" : "") + '>true</option><option value="false"' + (p.default === false || p.default === "false" ? " selected" : "") + '>false</option></select>'
+                : p.type === "select"
+                    ? '<select data-p="' + i + '" data-f="default" class="' + inputCls + '"><option value="">(none)</option>' + (p.options || []).map(function (o) { return '<option value="' + escAttr(o) + '"' + (String(p.default) === String(o) ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select>"
+                    : '<input type="' + (p.type === "number" ? "number" : "text") + '"' + (p.type === "number" ? ' step="any"' : "") + ' data-p="' + i + '" data-f="default" value="' + escAttr(p.default) + '" class="' + inputCls + '">';
+
+            const unused = p.name && !used[p.name];
+            return '<div class="rounded-md border border-gray-200 dark:border-gray-700 p-3">' +
+                '<div class="flex items-center justify-between mb-2">' +
+                    '<div class="flex items-center gap-2"><span class="text-xs font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">' + esc(p.name || "?") + "</span>" +
+                    (unused ? '<span class="text-xs text-amber-600 dark:text-amber-400" title="Not referenced by the prompt or identity defaults">unused</span>' : "") + "</div>" +
+                    '<button type="button" data-remove-param="' + i + '" class="text-xs text-gray-400 hover:text-red-500">Remove</button>' +
+                "</div>" +
+                '<div class="grid grid-cols-1 md:grid-cols-2 gap-2">' +
+                    row("Name", '<input data-p="' + i + '" data-f="name" value="' + escAttr(p.name) + '" class="' + inputCls + ' font-mono">') +
+                    row("Label", '<input data-p="' + i + '" data-f="label" value="' + escAttr(p.label) + '" class="' + inputCls + '">') +
+                    row("Type", '<select data-p="' + i + '" data-f="type" class="' + inputCls + '">' + typeOpts + "</select>") +
+                    row("Default", defaultInput) +
+                    row("Description", '<input data-p="' + i + '" data-f="description" value="' + escAttr(p.description) + '" class="' + inputCls + '">') +
+                    row("Placeholder", '<input data-p="' + i + '" data-f="placeholder" value="' + escAttr(p.placeholder) + '" class="' + inputCls + '">') +
+                    extras +
+                "</div>" +
+                '<label class="flex items-center gap-2 mt-2 text-sm text-gray-600 dark:text-gray-300"><input type="checkbox" data-p="' + i + '" data-f="required"' + (p.required ? " checked" : "") + '> Required</label>' +
+            "</div>";
+        }).join("");
+    }
+
+    function renderPlaceholderChips() {
+        const el = $("tpl-ph-chips");
+        const names = state.parameters.map(function (p) { return (p.name || "").trim(); }).filter(Boolean);
+        if (!names.length) { el.innerHTML = '<span class="text-xs text-gray-400 dark:text-gray-500">Declare parameters to get placeholders.</span>'; return; }
+        el.innerHTML = names.map(function (n) {
+            return '<button type="button" data-insert-ph="' + escAttr(n) + '" class="text-xs font-mono px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100">' + esc("{{ " + n + " }}") + "</button>";
+        }).join("");
+    }
+
+    function validatePrompt() {
+        const declared = {};
+        state.parameters.forEach(function (p) { if (p.name) declared[p.name] = true; });
+        const unknown = placeholderNames(state.system_prompt).filter(function (n) { return !declared[n]; });
+        const el = $("tpl-ph-warning");
+        if (unknown.length) {
+            el.innerHTML = "Undeclared placeholder(s) must be declared as parameters before saving: <span class=\"font-semibold\">" + unknown.map(esc).join(", ") + "</span>";
+            el.classList.remove("hidden");
+        } else { el.classList.add("hidden"); }
+    }
+
+    // ── Defaults ─────────────────────────────────────────────────────────────
+    function renderDefaults() {
+        FIELD_SPEC.forEach(function (f) {
+            const host = $("tpl-defaults-" + f.group);
+            const cur = defaultControlValue(f.key);
+            const plat = PLATFORM_DEFAULTS[f.key];
+            const platTxt = plat === null || plat === undefined ? "(none)" : String(plat);
+            const sec = SECURITY_KEYS.indexOf(f.key) !== -1;
+            const cls = "w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500";
+            let control;
+            if (f.kind === "bool") {
+                control = '<select id="tpl-def-' + f.key + '" class="' + cls + '"><option value=""' + (cur === "" ? " selected" : "") + '>inherit (' + platTxt + ')</option><option value="1"' + (cur === "1" ? " selected" : "") + '>On</option><option value="0"' + (cur === "0" ? " selected" : "") + '>Off</option></select>';
+            } else if (f.kind === "select") {
+                control = '<select id="tpl-def-' + f.key + '" class="' + cls + '"><option value=""' + (cur === "" ? " selected" : "") + '>inherit (' + platTxt + ')</option>' + f.options.map(function (o) { return '<option value="' + escAttr(o) + '"' + (cur === o ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select>";
+            } else if (f.kind === "acl") {
+                control = '<input id="tpl-def-' + f.key + '" value="' + escAttr(cur) + '" placeholder="alice, bob (or JSON array)" class="' + cls + '">';
+            } else {
+                const inputType = f.kind === "int" || f.kind === "float" ? "number" : "text";
+                control = '<input type="' + inputType + '"' + (f.kind === "float" ? ' step="any"' : f.kind === "int" ? ' step="1"' : "") + ' id="tpl-def-' + f.key + '" value="' + escAttr(cur) + '" placeholder="inherit (' + escAttr(platTxt) + ')" class="' + cls + '">';
+            }
+            host.insertAdjacentHTML("beforeend",
+                '<div><label class="flex items-center gap-1 mb-0.5 text-xs text-gray-500 dark:text-gray-400" for="tpl-def-' + f.key + '">' + esc(f.label) +
+                (sec ? ' <span title="Security-sensitive: forced safe during simulation" class="text-amber-600 dark:text-amber-400">&#128274;</span>' : "") +
+                "</label>" + control + "</div>");
+        });
+    }
+
+    // ── Tools / skills pickers ───────────────────────────────────────────────
+    function toolFn(t) {
+        if (t.function && t.function.name) return String(t.function.name);
+        if (t.id && t.id.indexOf("builtin:") !== 0) return String(t.id);
+        if (t.id) return String(t.id.split(":").pop());
+        return String(t.name || t.id || "");
+    }
+    function toolName(t) { return String(t.name || toolFn(t) || ""); }
+    function toolDesc(t) { return (t.function && t.function.description) || t.description || ""; }
+
+    async function loadTools() {
+        try {
+            const res = await fetch("/api/settings/tools");
+            const data = await res.json();
+            availableTools = (data.tools || []).filter(function (t) { return !t.id || (t.id.indexOf("skill:") !== 0 && t.id.indexOf("builtin:") !== 0); });
+            renderToolTags();
+        } catch (e) { console.error("load tools failed", e); }
+    }
+
+    function renderToolTags() {
+        const c = $("tpl-tools-tags");
+        c.innerHTML = state.tools.map(function (fn) {
+            const t = availableTools.find(function (x) { return toolFn(x) === fn; });
+            const label = t ? toolName(t) : fn;
+            return '<span class="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">' + esc(label) +
+                '<button type="button" data-remove-tool="' + escAttr(fn) + '" class="flex items-center justify-center w-4 h-4 rounded-full hover:bg-indigo-200 dark:hover:bg-indigo-800 text-indigo-400 ml-0.5" title="Remove">&times;</button></span>';
+        }).join("");
+        const badge = $("tpl-tools-count"), clear = $("tpl-tools-clear");
+        badge.textContent = state.tools.length;
+        badge.classList.toggle("hidden", !state.tools.length);
+        clear.classList.toggle("hidden", !state.tools.length);
+    }
+
+    function filterTools(q) {
+        q = (q || "").toLowerCase();
+        return availableTools.filter(function (t) { return !q || toolName(t).toLowerCase().indexOf(q) !== -1 || toolFn(t).toLowerCase().indexOf(q) !== -1; });
+    }
+    function showTools(q) {
+        const dd = $("tpl-tools-dropdown");
+        const items = filterTools(q);
+        toolFocusIdx = -1;
+        dd.innerHTML = items.length ? items.map(function (t) {
+            const fn = toolFn(t), already = state.tools.indexOf(fn) !== -1, desc = toolDesc(t);
+            return '<div class="tpl-dd-item flex items-center gap-3 px-4 py-2.5 ' + (already ? "opacity-50" : "cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/20") + '" data-kind="tool" data-val="' + escAttr(fn) + '" data-already="' + already + '">' +
+                '<div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">' + esc(toolName(t)) + "</div>" +
+                (desc ? '<div class="text-xs text-gray-400 truncate">' + esc(desc) + "</div>" : "") + "</div>" +
+                (already ? '<span class="text-indigo-400">&#10003;</span>' : "") + "</div>";
+        }).join("") : '<div class="px-4 py-3 text-xs text-gray-400 text-center">No tools found</div>';
+        dd.classList.remove("hidden");
+    }
+
+    function renderSkillTags() {
+        const c = $("tpl-skills-tags");
+        c.innerHTML = state.skills.map(function (id) {
+            const s = availableSkills.find(function (x) { return String(x.id || x) === id; });
+            const label = s ? (s.name || id) : id;
+            return '<span class="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">' + esc(label) +
+                '<button type="button" data-remove-skill="' + escAttr(id) + '" class="flex items-center justify-center w-4 h-4 rounded-full hover:bg-emerald-200 dark:hover:bg-emerald-800 text-emerald-400 ml-0.5" title="Remove">&times;</button></span>';
+        }).join("");
+        const badge = $("tpl-skills-count"), clear = $("tpl-skills-clear");
+        badge.textContent = state.skills.length;
+        badge.classList.toggle("hidden", !state.skills.length);
+        clear.classList.toggle("hidden", !state.skills.length);
+    }
+
+    async function loadSkills() {
+        try {
+            const res = await fetch("/api/skills");
+            const data = await res.json();
+            availableSkills = data.skills || [];
+            renderSkillTags();
+        } catch (e) { console.error("load skills failed", e); }
+    }
+
+    function filterSkills(q) {
+        q = (q || "").toLowerCase();
+        return availableSkills.filter(function (s) {
+            const name = String(s.id || s);
+            return !q || name.toLowerCase().indexOf(q) !== -1 || String(s.name || "").toLowerCase().indexOf(q) !== -1;
+        });
+    }
+    function showSkills(q) {
+        const dd = $("tpl-skills-dropdown");
+        const items = filterSkills(q);
+        skillFocusIdx = -1;
+        dd.innerHTML = items.length ? items.map(function (s) {
+            const name = s.id || s, already = state.skills.indexOf(name) !== -1, desc = s.description || "";
+            return '<div class="tpl-dd-item flex items-center gap-3 px-4 py-2.5 ' + (already ? "opacity-50" : "cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20") + '" data-kind="skill" data-val="' + escAttr(name) + '" data-already="' + already + '">' +
+                '<div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">' + esc(s.name || name) + "</div>" +
+                (desc ? '<div class="text-xs text-gray-400 truncate">' + esc(desc) + "</div>" : "") + "</div>" +
+                (already ? '<span class="text-emerald-400">&#10003;</span>' : "") + "</div>";
+        }).join("") : '<div class="px-4 py-3 text-xs text-gray-400 text-center">No skills found</div>';
+        dd.classList.remove("hidden");
+    }
+    function hideDropdown(id) { $(id).classList.add("hidden"); }
+
+    // ── Variables / KB ───────────────────────────────────────────────────────
+    function renderVariables() {
+        const list = $("tpl-vars-list");
+        if (!state.variables.length) { list.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500">No variables declared.</p>'; return; }
+        const inputCls = "w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500";
+        list.innerHTML = state.variables.map(function (v, i) {
+            return '<div class="rounded-md border border-gray-200 dark:border-gray-700 p-3"><div class="flex items-center justify-between mb-2">' +
+                '<span class="text-xs font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">' + esc(v.key || "?") + "</span>" +
+                '<button type="button" data-remove-var="' + i + '" class="text-xs text-gray-400 hover:text-red-500">Remove</button></div>' +
+                '<div class="grid grid-cols-1 md:grid-cols-2 gap-2">' +
+                '<div><label class="block mb-0.5 text-xs text-gray-500 dark:text-gray-400">Key</label><input data-v="' + i + '" data-f="key" value="' + escAttr(v.key) + '" class="' + inputCls + ' font-mono"></div>' +
+                '<div><label class="block mb-0.5 text-xs text-gray-500 dark:text-gray-400">Default' + (v.is_secret ? " (secret: not allowed)" : "") + '</label><input data-v="' + i + '" data-f="default" value="' + escAttr(v.default) + '"' + (v.is_secret ? " disabled" : "") + ' class="' + inputCls + (v.is_secret ? " opacity-50" : "") + '"></div>' +
+                '<div class="md:col-span-2"><label class="block mb-0.5 text-xs text-gray-500 dark:text-gray-400">Description</label><input data-v="' + i + '" data-f="description" value="' + escAttr(v.description) + '" class="' + inputCls + '"></div>' +
+                "</div>" +
+                '<div class="flex items-center gap-4 mt-2 text-sm text-gray-600 dark:text-gray-300">' +
+                '<label class="flex items-center gap-2"><input type="checkbox" data-v="' + i + '" data-f="required"' + (v.required ? " checked" : "") + "> Required</label>" +
+                '<label class="flex items-center gap-2"><input type="checkbox" data-v="' + i + '" data-f="is_secret"' + (v.is_secret ? " checked" : "") + "> Secret</label>" +
+                "</div></div>";
+        }).join("");
+    }
+
+    function renderKb() {
+        const list = $("tpl-kb-list");
+        if (!state.kb_files.length) { list.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500">No KB files.</p>'; return; }
+        const inputCls = "w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500";
+        list.innerHTML = state.kb_files.map(function (f, i) {
+            return '<div class="rounded-md border border-gray-200 dark:border-gray-700 p-3"><div class="flex items-center justify-between mb-2">' +
+                '<span class="text-xs text-gray-500 dark:text-gray-400">File ' + (i + 1) + "</span>" +
+                '<button type="button" data-remove-kb="' + i + '" class="text-xs text-gray-400 hover:text-red-500">Remove</button></div>' +
+                '<input data-kb="' + i + '" data-f="name" value="' + escAttr(f.name) + '" placeholder="notes.md" class="' + inputCls + ' font-mono mb-2">' +
+                '<textarea data-kb="' + i + '" data-f="content" rows="4" placeholder="file contents&hellip;" class="' + inputCls + ' font-mono resize-vertical">' + esc(f.content) + "</textarea>" +
+                "</div>";
+        }).join("");
+    }
+
+    // ── Dirty tracking / save ────────────────────────────────────────────────
+    function currentSignature() { return JSON.stringify(buildPayload()); }
+    function isDirty() { return baseline !== "" && currentSignature() !== baseline; }
+
+    function markDirty() {
+        renderHeader();
+        $("tpl-dirty-chip").classList.toggle("hidden", !isDirty());
+    }
+
+    function refreshDerived() {
+        renderPlaceholderChips();
+        validatePrompt();
+        renderParameters();
+        markDirty();
+        updateSimGate();
+    }
+
+    async function save() {
+        const payload = buildPayload();
+        const errors = validatePayload(payload);
+        if (errors.length) { showIssues(errors, "error"); toast("Fix validation errors", "error"); return null; }
+        const btn = $("tpl-save-btn"), btn2 = $("tpl-save-btn-2");
+        btn.disabled = btn2.disabled = true;
+        const prev = btn.textContent;
+        btn.textContent = "Saving…";
+        try {
+            if (MODE === "create") {
+                const data = await api("POST", "/api/templates", payload);
+                SAVED = data.template;
+                MODE = "edit";
+                baseline = JSON.stringify(buildPayload());
+                showIssues(["Template '" + payload.id + "' created."], "ok");
+                toast("Template created");
+                applyReport();
+                window.history.replaceState({}, "", "/template/" + encodeURIComponent(payload.id));
+                return payload.id;
+            }
+            await api("PUT", "/api/templates/" + encodeURIComponent(payload.id), payload);
+            const report = await api("GET", "/api/templates/" + encodeURIComponent(payload.id));
+            SAVED = report.template;
+            applyReport(report);
+            baseline = JSON.stringify(buildPayload());
+            showIssues(["Template saved."], "ok");
+            toast("Template saved");
+            return payload.id;
+        } catch (e) {
+            const msgs = [e.message];
+            if (e.status === 409) msgs.push("A template with that ID already exists — choose another ID, or open it to edit.");
+            if (e.status === 403) msgs.push("You do not have permission to write templates.");
+            if (e.payload && e.payload.report) msgs.push(JSON.stringify(e.payload.report));
+            showIssues(msgs, "error");
+            toast(e.message, "error");
+            return null;
+        } finally {
+            btn.disabled = btn2.disabled = false;
+            btn.textContent = prev;
+            markDirty();
+        }
+    }
+
+    async function removeTemplate() {
+        if (MODE !== "edit") return;
+        if (!window.confirm("Delete template '" + state.id + "'? This cannot be undone.")) return;
+        try {
+            await api("DELETE", "/api/templates/" + encodeURIComponent(state.id));
+            toast("Template deleted");
+            window.location.href = "/agents#templates";
+        } catch (e) { toast(e.message, "error"); }
+    }
+
+    function newTemplate() {
+        if (isDirty() && !window.confirm("Discard unsaved changes and start a new template?")) return;
+        MODE = "create";
+        state.id = ""; state.name = ""; state.description = ""; state.category = "general"; state.icon = "";
+        state.parameters = []; state.system_prompt = ""; state.defaults = {}; state.tools = []; state.skills = [];
+        state.variables = []; state.kb_files = [];
+        SAVED = null;
+        baseline = "";
+        renderAll();
+        window.history.replaceState({}, "", "/template/new");
+        $("tpl-field-id").focus();
+    }
+
+    // ── Simulation: gate ─────────────────────────────────────────────────────
+    function updateSimGate() {
+        const dirty = isDirty();
+        const blocked = MODE === "create" || dirty;
+        $("tpl-sim-gate").classList.toggle("hidden", !blocked);
+        $("tpl-sim-body").classList.toggle("opacity-40", blocked);
+        $("tpl-sim-body").classList.toggle("pointer-events-none", blocked);
+        $("tpl-sim-gate-msg").textContent = MODE === "create"
+            ? "This template is not saved yet. Save it to render and simulate it."
+            : "You have unsaved changes — preview and simulation use the last saved version. Save to test your edits.";
+    }
+
+    // ── Simulation: parameter form + render ──────────────────────────────────
+    function simParamControl(p) {
+        const cls = "w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500";
+        const val = simParams[p.name] !== undefined ? simParams[p.name] : (p.default === undefined || p.default === null ? "" : p.default);
+        if (p.type === "boolean") {
+            return '<select data-sp="' + escAttr(p.name) + '" class="' + cls + '"><option value=""' + (String(val) === "" ? " selected" : "") + '>(unset)</option><option value="true"' + (val === true || String(val) === "true" ? " selected" : "") + '>true</option><option value="false"' + (val === false || String(val) === "false" ? " selected" : "") + '>false</option></select>';
+        }
+        if (p.type === "select") {
+            return '<select data-sp="' + escAttr(p.name) + '" class="' + cls + '"><option value=""' + (String(val) === "" ? " selected" : "") + '>(choose)</option>' + (p.options || []).map(function (o) { return '<option value="' + escAttr(o) + '"' + (String(val) === String(o) ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select>";
+        }
+        return '<input type="' + (p.type === "number" ? "number" : "text") + '"' + (p.type === "number" ? ' step="any"' : "") + ' data-sp="' + escAttr(p.name) + '" value="' + escAttr(val) + '" class="' + cls + '">';
+    }
+
+    function renderSimParams() {
+        const host = $("tpl-sim-params");
+        const params = (SAVED && SAVED.parameters) || [];
+        if (!params.length) { host.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500">This template declares no parameters.</p>'; return; }
+        host.innerHTML = params.map(function (p) {
+            return '<div><label class="block mb-0.5 text-xs text-gray-500 dark:text-gray-400">' + esc(p.label || p.name) + (p.required ? ' <span class="text-red-500">*</span>' : "") + "</label>" + simParamControl(p) + "</div>";
+        }).join("");
+    }
+
+    function collectSimParams() {
+        const params = (SAVED && SAVED.parameters) || [];
+        const out = {};
+        params.forEach(function (p) {
+            // An explicit value (even when cleared to "") wins over the default.
+            let v = Object.prototype.hasOwnProperty.call(simParams, p.name)
+                ? simParams[p.name]
+                : ((p.default === undefined || p.default === null) ? "" : p.default);
+            if (v === "" || v === undefined || v === null) return;
+            if (p.type === "number") out[p.name] = Number(v);
+            else if (p.type === "boolean") out[p.name] = (v === true || v === "true");
+            else out[p.name] = v;
+        });
+        return out;
+    }
+
+    async function doRender() {
+        if (MODE === "create" || isDirty()) { updateSimGate(); return; }
+        const status = $("tpl-render-status");
+        status.textContent = "Rendering…";
+        try {
+            const data = await api("POST", "/api/templates/" + encodeURIComponent(SAVED.id) + "/render", { params: collectSimParams() });
+            $("tpl-preview-wrap").classList.remove("hidden");
+            $("tpl-preview-prompt").textContent = data.system_prompt || "";
+            $("tpl-preview-meta").textContent = (data.system_prompt_length || 0) + " characters · " +
+                (data.persisted === false ? "preview only (nothing saved)" : "");
+            renderResolved(data);
+            showIssues((data.warnings || []), "warn");
+            status.textContent = "Rendered.";
+        } catch (e) {
+            status.textContent = "";
+            showIssues(["Render failed: " + e.message], "error");
+        }
+    }
+
+    function chips(items, cls) {
+        if (!items || !items.length) return '<span class="text-gray-400">none</span>';
+        return items.map(function (x) { return '<span class="px-1.5 py-0.5 rounded ' + cls + ' font-mono">' + esc(x) + "</span>"; }).join(" ");
+    }
+
+    function renderResolved(data) {
+        const r = data.resolution || {};
+        const tools = r.tools || {}, skills = r.skills || {}, vars = r.variables || {}, pars = r.parameters || {};
+        const spec = data.spec_preview || {};
+        const wrap = $("tpl-resolved-wrap");
+        wrap.classList.remove("hidden");
+        const line = function (label, html) { return '<div class="flex flex-wrap items-center gap-1"><span class="text-gray-500 dark:text-gray-400 w-32 flex-shrink-0">' + label + "</span>" + html + "</div>"; };
+        const nameRow = spec.name !== undefined ? line("Agent name", '<span class="text-gray-700 dark:text-gray-300">' + esc(spec.name) + "</span>") : "";
+        $("tpl-resolved").innerHTML =
+            nameRow +
+            line("Status", (r.ok ? '<span class="text-emerald-600 dark:text-emerald-400">resolved</span>' : '<span class="text-red-600 dark:text-red-400">errors</span>')) +
+            line("Tools", chips((tools.resolved || []), "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300") +
+                ((tools.missing || []).length ? ' <span class="text-red-500">missing: ' + esc(tools.missing.join(", ")) + "</span>" : "")) +
+            line("Skills", chips((skills.resolved || []), "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300") +
+                ((skills.missing || []).length ? ' <span class="text-red-500">missing: ' + esc(skills.missing.join(", ")) + "</span>" : "")) +
+            line("Parameters", chips((pars.declared || []), "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300") +
+                ((pars.required_without_value || []).length ? ' <span class="text-amber-600 dark:text-amber-400">need value: ' + esc(pars.required_without_value.join(", ")) + "</span>" : "")) +
+            line("Variables", chips((vars.declared || []), "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300") +
+                ((vars.unresolved || []).length ? ' <span class="text-amber-600 dark:text-amber-400">need value: ' + esc(vars.unresolved.join(", ")) + "</span>" : ""));
+    }
+
+    // ── Simulation: conversation ─────────────────────────────────────────────
+    function renderTranscript() {
+        const host = $("tpl-conv");
+        if (!transcript.length) { host.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500">No messages yet.</p>'; return; }
+        host.innerHTML = transcript.map(function (m) {
+            const isUser = m.role === "user";
+            return '<div class="flex ' + (isUser ? "justify-end" : "justify-start") + '"><div class="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words ' +
+                (isUser ? "bg-indigo-500 text-white" : m.error ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800" : "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200") +
+                '">' + esc(m.content) + "</div></div>";
+        }).join("");
+        host.scrollTop = host.scrollHeight;
+    }
+
+    function renderOutbox() {
+        const host = $("tpl-outbox");
+        if (!lastOutbox.length) { host.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500">No outbound calls were intercepted.</p>'; return; }
+        host.innerHTML = lastOutbox.map(function (e) {
+            return '<div class="rounded-md border border-gray-200 dark:border-gray-700 p-2">' +
+                '<div class="flex items-center gap-2"><span class="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 font-mono">' + esc(e.tool) + "</span>" +
+                '<span class="text-gray-400 text-xs">' + esc(e.timestamp || "") + "</span></div>" +
+                (e.summary ? '<div class="mt-1 text-gray-600 dark:text-gray-300">' + esc(e.summary) + "</div>" : "") +
+                (e.args ? '<pre class="mt-1 text-[11px] whitespace-pre-wrap break-words text-gray-400 dark:text-gray-500">' + esc(JSON.stringify(e.args)) + "</pre>" : "") +
+                "</div>";
+        }).join("");
+    }
+
+    function renderActivity(toolTrace, timeline) {
+        const wrap = $("tpl-activity-wrap");
+        const items = (toolTrace || []).concat(timeline || []);
+        if (!items.length) { wrap.classList.add("hidden"); return; }
+        wrap.classList.remove("hidden");
+        $("tpl-activity").innerHTML = items.map(function (t) {
+            return '<pre class="whitespace-pre-wrap break-words bg-gray-50 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-700 rounded p-2 text-gray-700 dark:text-gray-300">' + esc(JSON.stringify(t, null, 2)) + "</pre>";
+        }).join("");
+    }
+
+    async function sendSimulation() {
+        const box = $("tpl-sim-message");
+        const text = (box.value || "").trim();
+        if (!text) return;
+        if (MODE === "create" || isDirty()) { updateSimGate(); toast("Save the template first", "warn"); return; }
+        transcript.push({ role: "user", content: text });
+        box.value = "";
+        renderTranscript();
+        const status = $("tpl-sim-status");
+        const sendBtn = $("tpl-sim-send");
+        sendBtn.disabled = true;
+        status.textContent = "Running simulation… (throwaway sandbox)";
+        try {
+            const data = await postSimulate({ params: collectSimParams(), messages: transcript.map(function (m) { return { role: m.role, content: m.content }; }) });
+            if (data.error) {
+                transcript.push({ role: "assistant", content: data.error_message || "Simulation failed.", error: true });
+            } else {
+                transcript.push({ role: "assistant", content: data.response || "(empty response)" });
+            }
+            lastOutbox = data.outbox || [];
+            renderTranscript();
+            renderOutbox();
+            renderActivity(data.tool_trace, data.timeline);
+            const rl = data.rate_limit || {};
+            status.textContent = "sim " + (data.simulation_id || "") +
+                (rl.limit ? " · rate limit " + rl.remaining + "/" + rl.limit + " per " + rl.window + "s" : "") +
+                (data.truncated ? " · output truncated (" + (data.truncated_fields || []).join(", ") + ")" : "");
+        } catch (e) {
+            transcript.push({ role: "assistant", content: e.message, error: true });
+            renderTranscript();
+            if (e.status === 429) status.textContent = "Rate limit reached — wait a moment and try again.";
+            else if (e.status === 503) status.textContent = "Simulation runtime is not available in this deployment.";
+            else status.textContent = "Simulation failed: " + e.message;
+        } finally {
+            sendBtn.disabled = false;
+        }
+    }
+
+    // POST /simulate, reading the response body progressively so the caller can
+    // surface that a run is streaming in, then parse the JSON once complete.
+    async function postSimulate(body) {
+        const res = await fetch("/api/templates/" + encodeURIComponent(SAVED.id) + "/simulate", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            let payload = null;
+            try { payload = await res.json(); } catch (e) { payload = null; }
+            const err = new Error((payload && (payload.message || payload.error)) || ("HTTP " + res.status));
+            err.status = res.status; err.payload = payload; throw err;
+        }
+        if (!res.body || !res.body.getReader) return await res.json();
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        const status = $("tpl-sim-status");
+        for (;;) {
+            const step = await reader.read();
+            if (step.done) break;
+            buf += dec.decode(step.value, { stream: true });
+            status.textContent = "Receiving simulation response… (" + buf.length + " bytes)";
+        }
+        buf += dec.decode();
+        return JSON.parse(buf);
+    }
+
+    // ── Report application (post-save refresh) ──────────────────────────────
+    function applyReport(report) {
+        if (report) { REPORT = report; SAVED = report.template || SAVED; }
+        simParams = {};
+        transcript = [];
+        lastOutbox = [];
+        $("tpl-preview-wrap").classList.add("hidden");
+        $("tpl-resolved-wrap").classList.add("hidden");
+        $("tpl-activity-wrap").classList.add("hidden");
+        renderTranscript();
+        renderOutbox();
+        renderSimParams();
+        renderHeader();
+        updateSimGate();
+        const rep = REPORT || {};
+        const issues = (rep.errors || []).concat(rep.warnings || []);
+        $("tpl-sim-ephemeral").classList.remove("hidden");
+        $("tpl-sim-ephemeral").textContent = rep.ok === false ? "resolver reported errors" : "";
+        if (issues.length && isDirty() === false) {
+            // Show the save-time resolver report only when it is meaningful.
+            showIssues(issues, (rep.errors || []).length ? "error" : "warn");
+        }
+    }
+
+    // ── Initial render ───────────────────────────────────────────────────────
+    function renderAll() {
+        $("tpl-field-id").value = state.id || "";
+        $("tpl-field-name").value = state.name || "";
+        $("tpl-field-description").value = state.description || "";
+        $("tpl-field-category").value = state.category || "general";
+        $("tpl-field-icon").value = state.icon || "";
+        $("tpl-field-prompt").value = state.system_prompt || "";
+        $("tpl-defaults-basic").innerHTML = "";
+        $("tpl-defaults-advanced").innerHTML = "";
+        renderDefaults();
+        renderToolTags();
+        renderSkillTags();
+        renderVariables();
+        renderKb();
+        renderParameters();
+        renderPlaceholderChips();
+        validatePrompt();
+        renderHeader();
+        updateIconPreview();
+        baseline = currentSignature();
+        $("tpl-dirty-chip").classList.add("hidden");
+        updateSimGate();
+    }
+
+    function updateIconPreview() {
+        const name = (state.icon || "").trim() || "layout-template";
+        $("tpl-icon-preview").innerHTML = '<i data-lucide="' + escAttr(name) + '" class="w-4 h-4"></i>';
+        if (window.lucide && lucide.createIcons) lucide.createIcons();
+    }
+
+    // ── Event wiring ─────────────────────────────────────────────────────────
+    function bind() {
+        $("tpl-field-id").addEventListener("input", function () { state.id = this.value; markDirty(); });
+        $("tpl-field-name").addEventListener("input", function () { state.name = this.value; renderHeader(); markDirty(); });
+        $("tpl-field-description").addEventListener("input", function () { state.description = this.value; markDirty(); });
+        $("tpl-field-category").addEventListener("input", function () { state.category = this.value; markDirty(); });
+        $("tpl-field-icon").addEventListener("input", function () { state.icon = this.value; updateIconPreview(); markDirty(); });
+        $("tpl-field-prompt").addEventListener("input", function () { state.system_prompt = this.value; validatePrompt(); renderPlaceholderChips(); markDirty(); });
+
+        // Defaults (delegated)
+        ["tpl-defaults-basic", "tpl-defaults-advanced"].forEach(function (id) {
+            $(id).addEventListener("change", function () { markDirty(); });
+            $(id).addEventListener("input", function () { markDirty(); });
+        });
+
+        // Parameters (delegated)
+        $("tpl-params-list").addEventListener("input", onParamEdit);
+        $("tpl-params-list").addEventListener("change", onParamEdit);
+        $("tpl-params-list").addEventListener("click", function (e) {
+            const rm = e.target.closest("[data-remove-param]");
+            if (rm) { state.parameters.splice(Number(rm.dataset.removeParam), 1); renderParameters(); renderPlaceholderChips(); validatePrompt(); markDirty(); }
+        });
+        $("tpl-param-add").addEventListener("click", function () {
+            state.parameters.push({ name: "", label: "", type: "text", required: false, default: "", options: [], min: null, max: null, integer: false, description: "", placeholder: "" });
+            renderParameters();
+        });
+
+        // Variables (delegated)
+        $("tpl-vars-list").addEventListener("input", onVarEdit);
+        $("tpl-vars-list").addEventListener("change", onVarEdit);
+        $("tpl-vars-list").addEventListener("click", function (e) {
+            const rm = e.target.closest("[data-remove-var]");
+            if (rm) { state.variables.splice(Number(rm.dataset.removeVar), 1); renderVariables(); markDirty(); }
+        });
+        $("tpl-var-add").addEventListener("click", function () {
+            state.variables.push({ key: "", is_secret: false, required: false, description: "", default: "" });
+            renderVariables();
+        });
+
+        // KB (delegated)
+        $("tpl-kb-list").addEventListener("input", onKbEdit);
+        $("tpl-kb-list").addEventListener("click", function (e) {
+            const rm = e.target.closest("[data-remove-kb]");
+            if (rm) { state.kb_files.splice(Number(rm.dataset.removeKb), 1); renderKb(); markDirty(); }
+        });
+        $("tpl-kb-add").addEventListener("click", function () {
+            state.kb_files.push({ name: "", content: "" });
+            renderKb();
+        });
+
+        // Placeholder chips
+        $("tpl-ph-chips").addEventListener("click", function (e) {
+            const b = e.target.closest("[data-insert-ph]");
+            if (!b) return;
+            const ta = $("tpl-field-prompt");
+            const token = "{{ " + b.dataset.insertPh + " }}";
+            const start = ta.selectionStart || 0, end = ta.selectionEnd || 0;
+            ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
+            state.system_prompt = ta.value;
+            ta.selectionStart = ta.selectionEnd = start + token.length;
+            ta.focus();
+            validatePrompt(); markDirty();
+        });
+
+        // Tools / skills
+        $("tpl-tools-input").addEventListener("focus", function () { showTools(this.value); });
+        $("tpl-tools-input").addEventListener("input", function () { showTools(this.value); });
+        $("tpl-tools-dropdown").addEventListener("click", function (e) {
+            const it = e.target.closest(".tpl-dd-item");
+            if (it && it.dataset.already !== "true" && state.tools.indexOf(it.dataset.val) === -1) {
+                state.tools.push(it.dataset.val);
+            }
+            if (it) { renderToolTags(); markDirty(); hideDropdown("tpl-tools-dropdown"); $("tpl-tools-input").value = ""; }
+        });
+        $("tpl-tools-clear").addEventListener("click", function () { state.tools = []; renderToolTags(); markDirty(); hideDropdown("tpl-tools-dropdown"); });
+        $("tpl-tools-tags").addEventListener("click", function (e) {
+            const rm = e.target.closest("[data-remove-tool]");
+            if (rm) { state.tools = state.tools.filter(function (x) { return x !== rm.dataset.removeTool; }); renderToolTags(); markDirty(); }
+        });
+
+        $("tpl-skills-input").addEventListener("focus", function () { showSkills(this.value); });
+        $("tpl-skills-input").addEventListener("input", function () { showSkills(this.value); });
+        $("tpl-skills-dropdown").addEventListener("click", function (e) {
+            const it = e.target.closest(".tpl-dd-item");
+            if (it && it.dataset.already !== "true" && state.skills.indexOf(it.dataset.val) === -1) {
+                state.skills.push(it.dataset.val);
+            }
+            if (it) { renderSkillTags(); markDirty(); hideDropdown("tpl-skills-dropdown"); $("tpl-skills-input").value = ""; }
+        });
+        $("tpl-skills-clear").addEventListener("click", function () { state.skills = []; renderSkillTags(); markDirty(); hideDropdown("tpl-skills-dropdown"); });
+        $("tpl-skills-tags").addEventListener("click", function (e) {
+            const rm = e.target.closest("[data-remove-skill]");
+            if (rm) { state.skills = state.skills.filter(function (x) { return x !== rm.dataset.removeSkill; }); renderSkillTags(); markDirty(); }
+        });
+
+        document.addEventListener("click", function (e) {
+            if (!e.target.closest("#tpl-tools-wrapper")) hideDropdown("tpl-tools-dropdown");
+            if (!e.target.closest("#tpl-skills-wrapper")) hideDropdown("tpl-skills-dropdown");
+        });
+
+        // Save / new / delete
+        $("tpl-save-btn").addEventListener("click", save);
+        $("tpl-save-btn-2").addEventListener("click", save);
+        $("tpl-new-btn").addEventListener("click", newTemplate);
+        $("tpl-delete-btn").addEventListener("click", removeTemplate);
+        $("tpl-sim-save-btn").addEventListener("click", save);
+
+        // Sim panel
+        $("tpl-render-btn").addEventListener("click", doRender);
+        // Simulation parameter form: record the value, then re-render (debounced)
+        // so the prompt preview + resolved-config summary track the form live.
+        $("tpl-sim-params").addEventListener("input", onSimParamEdit);
+        $("tpl-sim-params").addEventListener("change", onSimParamEdit);
+        $("tpl-sim-send").addEventListener("click", sendSimulation);
+        $("tpl-sim-message").addEventListener("keydown", function (e) {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendSimulation(); }
+        });
+        $("tpl-conv-reset").addEventListener("click", function () {
+            transcript = []; lastOutbox = []; renderTranscript(); renderOutbox();
+            $("tpl-activity-wrap").classList.add("hidden");
+            $("tpl-sim-status").textContent = "";
+        });
+    }
+
+    function onParamEdit(e) {
+        const el = e.target;
+        if (!el.dataset || el.dataset.p === undefined || !el.dataset.f) return;
+        const i = Number(el.dataset.p), f = el.dataset.f, p = state.parameters[i];
+        if (!p) return;
+        let v;
+        if (el.type === "checkbox") v = el.checked;
+        else v = el.value;
+        if (f === "options") { p.options = String(v).split(",").map(function (x) { return x.trim(); }).filter(Boolean); renderParameters(); }
+        else if (f === "type") { p.type = v; renderParameters(); }
+        else if (f === "name") { const was = p.name; p.name = v; renderPlaceholderChips(); if (was !== v) { renderParameters(); } }
+        else p[f] = v;
+        validatePrompt();
+        markDirty();
+    }
+
+    function onVarEdit(e) {
+        const el = e.target;
+        if (!el.dataset || el.dataset.v === undefined || !el.dataset.f) return;
+        const v = state.variables[Number(el.dataset.v)]; if (!v) return;
+        const f = el.dataset.f;
+        v[f] = el.type === "checkbox" ? el.checked : el.value;
+        if (f === "is_secret") renderVariables();
+        markDirty();
+    }
+
+    function onKbEdit(e) {
+        const el = e.target;
+        if (!el.dataset || el.dataset.kb === undefined || !el.dataset.f) return;
+        const f = state.kb_files[Number(el.dataset.kb)]; if (!f) return;
+        f[el.dataset.f] = el.value;
+        markDirty();
+    }
+
+    // Simulation parameter form (data-sp=<param name>): live-preview on change.
+    function onSimParamEdit(e) {
+        const el = e.target;
+        if (!el.dataset || !el.dataset.sp) return;
+        simParams[el.dataset.sp] = el.value;
+        debounce(doRender, 600);
+    }
+
+    // ── Start ────────────────────────────────────────────────────────────────
+    renderAll();
+    bind();
+    if (MODE === "edit") {
+        applyReport(REPORT);
+    } else {
+        $("tpl-sim-gate").classList.remove("hidden");
+        updateSimGate();
+    }
+    loadTools();
+    loadSkills();
+})();
+</script>
+{% endraw %}
+{% endblock %}
