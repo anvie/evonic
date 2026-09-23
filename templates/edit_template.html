@@ -591,8 +591,8 @@
             const unused = p.name && !used[p.name];
             return '<div class="rounded-md border border-gray-200 dark:border-gray-700 p-3">' +
                 '<div class="flex items-center justify-between mb-2">' +
-                    '<div class="flex items-center gap-2"><span class="text-xs font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">' + esc(p.name || "?") + "</span>" +
-                    (unused ? '<span class="text-xs text-amber-600 dark:text-amber-400" title="Not referenced by the prompt or identity defaults">unused</span>' : "") + "</div>" +
+                    '<div class="flex items-center gap-2"><span data-name-chip="' + i + '" class="text-xs font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">' + esc(p.name || "?") + "</span>" +
+                    '<span data-unused-chip="' + i + '" class="text-xs text-amber-600 dark:text-amber-400" title="Not referenced by the prompt or identity defaults"' + (unused ? "" : " hidden") + ">unused</span>" + "</div>" +
                     '<button type="button" data-remove-param="' + i + '" class="text-xs text-gray-400 hover:text-red-500">Remove</button>' +
                 "</div>" +
                 '<div class="grid grid-cols-1 md:grid-cols-2 gap-2">' +
@@ -1273,18 +1273,52 @@
         if (snap.start !== null) { try { el.setSelectionRange(snap.start, snap.end); } catch (err) { /* ignore */ } }
     }
 
-    function rerenderParameters() {
-        const container = $("tpl-params-list");
-        const snap = captureListFocus(container);
-        renderParameters();
-        restoreListFocus(container, snap);
+    // Swapping a list's innerHTML removes the focused input, which fires blur and
+    // (for a text field whose value changed) change *synchronously*, right in the
+    // middle of the swap. Because the handler is bound to "change" as well, the
+    // re-render used to re-enter while the outer innerHTML assignment was still
+    // removing nodes, so the browser aborted the swap with:
+    //   NotFoundError: Failed to set the 'innerHTML' property on 'Element': The node
+    //   to be removed is no longer a child of this node. Perhaps it was moved in a
+    //   'blur' event handler?   (at renderParameters <- rerenderParameters <- onParamEdit)
+    // That aborted swap is precisely what discarded focus/caret on every keystroke.
+    // The flag makes a swap atomic: a re-entrant render caused by the swap is a no-op.
+    let listReRendering = false;
+
+    function rerenderList(containerId, render) {
+        if (listReRendering) return;
+        listReRendering = true;
+        try {
+            const container = $(containerId);
+            const snap = captureListFocus(container);
+            render();
+            restoreListFocus(container, snap);
+        } finally { listReRendering = false; }
     }
 
-    function rerenderVariables() {
-        const container = $("tpl-vars-list");
-        const snap = captureListFocus(container);
-        renderVariables();
-        restoreListFocus(container, snap);
+    function rerenderParameters() { rerenderList("tpl-params-list", renderParameters); }
+    function rerenderVariables() { rerenderList("tpl-vars-list", renderVariables); }
+
+    // Typing in a Name/Options field must not rebuild the list at all — that is
+    // what removed the focused input and started the whole blur->change cascade.
+    // Patch only the bits that derive from the edited value, in place, so the
+    // field being typed in is never touched.
+    function updateParamNameCell(i) {
+        const p = state.parameters[i]; if (!p) return;
+        const chip = document.querySelector('#tpl-params-list [data-name-chip="' + i + '"]');
+        if (chip) chip.textContent = p.name || "?";
+        const badge = document.querySelector('#tpl-params-list [data-unused-chip="' + i + '"]');
+        if (badge) { const used = usedPlaceholders(); badge.classList.toggle("hidden", !(p.name && !used[p.name])); }
+    }
+
+    function updateParamDefaultOptions(i) {
+        const p = state.parameters[i]; if (!p || p.type !== "select") return;
+        const sel = document.querySelector('#tpl-params-list select[data-p="' + i + '"][data-f="default"]');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">(none)</option>' + (p.options || []).map(function (o) {
+            return '<option value="' + escAttr(o) + '">' + esc(o) + "</option>";
+        }).join("");
+        sel.value = (p.default === undefined || p.default === null || p.default === "") ? "" : String(p.default);
     }
 
     function onParamEdit(e) {
@@ -1295,9 +1329,9 @@
         let v;
         if (el.type === "checkbox") v = el.checked;
         else v = el.value;
-        if (f === "options") { p.options = String(v).split(",").map(function (x) { return x.trim(); }).filter(Boolean); rerenderParameters(); }
+        if (f === "options") { p.options = String(v).split(",").map(function (x) { return x.trim(); }).filter(Boolean); updateParamDefaultOptions(i); }
         else if (f === "type") { p.type = v; rerenderParameters(); }
-        else if (f === "name") { p.name = v; renderPlaceholderChips(); rerenderParameters(); }
+        else if (f === "name") { p.name = v; renderPlaceholderChips(); updateParamNameCell(i); }
         else p[f] = v;
         validatePrompt();
         markDirty();

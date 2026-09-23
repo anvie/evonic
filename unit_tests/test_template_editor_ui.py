@@ -425,6 +425,7 @@ const container = {
 function $(id) { return container; }
 function renderParameters() { NEW = makeInput(0, "name", "ab"); }
 const document = { get activeElement() { return ACTIVE; } };
+let listReRendering = false;   // mirrors the guard declared in the page
 
 __FNS__
 
@@ -449,10 +450,113 @@ def test_focus_and_caret_survive_a_repeater_re_render(repo_root, tmp_path):
     source = PAGE_PATH.read_text(encoding="utf-8")
     functions = "\n\n".join(
         _extract_js_function(source, name)
-        for name in ("datasetKey", "captureListFocus", "restoreListFocus", "rerenderParameters"))
+        for name in ("datasetKey", "captureListFocus", "restoreListFocus",
+                     "rerenderList", "rerenderParameters"))
     script = tmp_path / "focus_harness.js"
     script.write_text(FOCUS_HARNESS_JS.replace("__FNS__", functions), encoding="utf-8")
 
     result = subprocess.run([NODE, str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "focus+caret preserved" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# 7. The real cause was an exception, not a bare focus loss (2nd follow-up)
+#
+# Replacing ``#tpl-params-list``'s innerHTML removes the focused input, which
+# fires ``blur`` and then ``change`` *synchronously*.  Because ``onParamEdit`` is
+# bound to ``change`` too, the re-render re-entered itself in the middle of the
+# swap, and the browser aborted it with
+#   Uncaught NotFoundError: Failed to set the 'innerHTML' property on 'Element':
+#   The node to be removed is no longer a child of this node.  Perhaps it was
+#   moved in a 'blur' event handler?
+#   at renderParameters <- rerenderParameters <- HTMLDivElement.onParamEdit
+# The aborted swap is what discarded focus/caret on every keystroke.  Fix:
+# (a) Name/Options edits patch the affected row in place, and (b) any swap is
+# guarded so a re-entrant render triggered by the swap becomes a no-op.
+# ---------------------------------------------------------------------------
+
+def test_name_and_options_edits_patch_the_row_in_place(repo_root):
+    """Typing in Name/Options must not swap the list (that started the cascade)."""
+    source = PAGE_PATH.read_text(encoding="utf-8")
+
+    for helper in ("updateParamNameCell", "updateParamDefaultOptions"):
+        assert "function " + helper + "(" in source, helper
+
+    on_param = _extract_js_function(source, "onParamEdit")
+    assert "updateParamNameCell(i)" in on_param
+    assert "updateParamDefaultOptions(i)" in on_param
+
+    # The Name branch is the field Robin typed in: it must not re-render.
+    name_line = [ln for ln in on_param.splitlines() if 'f === "name"' in ln][0]
+    assert "rerenderParameters" not in name_line
+    options_line = [ln for ln in on_param.splitlines() if 'f === "options"' in ln][0]
+    assert "rerenderParameters" not in options_line
+
+    # ...and the in-place helpers must target the row markers the render emits.
+    assert 'data-name-chip="' in source
+    assert 'data-unused-chip="' in source
+
+
+def test_list_swap_is_guarded_against_re_entrant_renders(repo_root):
+    source = PAGE_PATH.read_text(encoding="utf-8")
+    assert "let listReRendering = false;" in source
+    assert "if (listReRendering) return;" in _extract_js_function(source, "rerenderList")
+
+
+# The stub renderParameters re-invokes rerenderParameters() in the middle of the
+# call, exactly like the synchronous blur->change handler did during the innerHTML
+# swap.  The guard must make that nested render a no-op: one render, not two.
+REENTRANCY_HARNESS_JS = r"""
+let ACTIVE = null;
+function makeInput(p, f, val) {
+  const el = {
+    dataset: { p: String(p), f: f },
+    value: val,
+    selectionStart: 0,
+    selectionEnd: 0,
+    focus: function () { ACTIVE = el; },
+    setSelectionRange: function (a, b) { el.selectionStart = a; el.selectionEnd = b; },
+  };
+  return el;
+}
+const OLD = makeInput(0, "name", "ab");
+const container = {
+  contains: function () { return true; },
+  querySelectorAll: function () { return [OLD]; },
+};
+function $(id) { return container; }
+const document = { get activeElement() { return ACTIVE; } };
+let listReRendering = false;
+
+let renderCalls = 0;
+let reentered = false;
+function renderParameters() {
+  renderCalls++;
+  if (!reentered) { reentered = true; rerenderParameters(); }  // the blur->change re-entry
+}
+
+__FNS__
+
+// A keystroke swaps the list; the swap synchronously re-enters the handler.
+rerenderParameters();
+
+if (renderCalls !== 1) { console.error("swap re-entered: renderParameters ran " + renderCalls + "x"); process.exit(1); }
+console.log("re-entrant render suppressed");
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for the DOM harness")
+def test_re_entrant_render_during_a_swap_is_a_no_op(repo_root, tmp_path):
+    """The exact crash: a blur->change re-entry during the swap must be ignored."""
+    source = PAGE_PATH.read_text(encoding="utf-8")
+    functions = "\n\n".join(
+        _extract_js_function(source, name)
+        for name in ("datasetKey", "captureListFocus", "restoreListFocus",
+                     "rerenderList", "rerenderParameters"))
+    script = tmp_path / "reentrancy_harness.js"
+    script.write_text(REENTRANCY_HARNESS_JS.replace("__FNS__", functions), encoding="utf-8")
+
+    result = subprocess.run([NODE, str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "re-entrant render suppressed" in result.stdout
