@@ -109,6 +109,11 @@
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                 New template
             </a>
+            <label class="sm:ml-auto inline-flex items-center gap-2 pt-1 text-xs font-medium text-gray-600 dark:text-gray-300 select-none cursor-pointer">
+                <input type="checkbox" id="template-show-legacy" onchange="filterTemplates()"
+                       class="rounded border-gray-300 dark:border-gray-600 text-indigo-500 focus:ring-indigo-500/20">
+                Show legacy skillsets <span id="template-legacy-count" class="text-gray-400 dark:text-gray-500"></span>
+            </label>
         </div>
 
         <div id="templates-collisions" class="hidden mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></div>
@@ -977,26 +982,53 @@ function templateMatchesSearch(t, search) {
            (t.category || '').toLowerCase().includes(search);
 }
 
+function filterTemplates() {
+    renderTemplates();
+}
+
 function renderTemplates() {
     const grid = document.getElementById('templates-grid');
     const empty = document.getElementById('templates-empty');
     const collisionsEl = document.getElementById('templates-collisions');
+    const legacyToggle = document.getElementById('template-show-legacy');
+    const legacyCount = document.getElementById('template-legacy-count');
     if (!grid) return;
     const search = (document.getElementById('template-search').value || '').toLowerCase().trim();
-    // Only usable templates: skip shadowed legacy copies and invalid ones.
-    const visible = templates.filter(t => !t.shadowed && t.valid !== false);
+    const showLegacy = !!(legacyToggle && legacyToggle.checked);
+    // Canonical templates are the default view: agent_templates/ is the writable
+    // root while the legacy skillsets/ folder is kept only for compatibility, so
+    // legacy entries are listed behind the toggle instead of mixed into the
+    // gallery. Shadowed copies and invalid entries are never usable, either way.
+    const visible = templates.filter(
+        t => !t.shadowed && t.valid !== false && (showLegacy || !t.legacy)
+    );
     const filtered = search ? visible.filter(t => templateMatchesSearch(t, search)) : visible;
 
+    const hiddenLegacy = templates.filter(t => t.legacy && !t.shadowed && t.valid !== false).length;
+    if (legacyCount) legacyCount.textContent = hiddenLegacy ? '(' + hiddenLegacy + ')' : '';
+    if (legacyToggle) legacyToggle.disabled = hiddenLegacy === 0;
+
     if (collisionsEl) {
-        const shadows = templates.filter(t => t.shadows);
-        if (shadows.length) {
-            collisionsEl.textContent = 'Some ids exist in both agent_templates/ and the legacy skillsets/ folder; the canonical copy wins: ' +
-                shadows.map(t => t.id).join(', ');
+        // Only actionable states are surfaced: two entries inside agent_templates/
+        // claiming one id, or a canonical template that failed to load. A canonical
+        // template shadowing a read-only legacy skillset is the documented
+        // precedence (agent_templates/ always wins), so it stays quiet here and is
+        // logged to the console instead of nagging on every page load.
+        const problems = templates.filter(t => t.collision || (!t.legacy && t.valid === false));
+        if (problems.length) {
+            collisionsEl.textContent = 'Templates that need attention: ' + problems.map(
+                t => t.id + ' (' + (t.error || 'duplicate id inside agent_templates/') + ')'
+            ).join('; ');
             collisionsEl.classList.remove('hidden');
         } else {
             collisionsEl.classList.add('hidden');
             collisionsEl.textContent = '';
         }
+    }
+    const shadowed = templates.filter(t => t.shadows);
+    if (shadowed.length) {
+        console.info('agent_templates/ shadows legacy skillsets (canonical wins):',
+            shadowed.map(t => t.id).join(', '));
     }
 
     if (filtered.length === 0) {
@@ -1005,6 +1037,10 @@ function renderTemplates() {
             empty.classList.remove('hidden');
             const p = empty.querySelector('p:first-of-type');
             if (p) p.textContent = search ? 'No templates found' : 'No templates available';
+            const hint = empty.querySelector('p:nth-of-type(2)');
+            if (hint) hint.textContent = (!search && hiddenLegacy && !showLegacy)
+                ? hiddenLegacy + ' legacy skillsets are hidden. Tick "Show legacy skillsets" to list them.'
+                : 'Templates let you create pre-configured agents in a few clicks.';
         }
         return;
     }
