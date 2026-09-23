@@ -533,9 +533,10 @@ def api_clone_agent(agent_id):
                 import shutil
                 shutil.copy2(src_path, dst_path)
 
-    # Create workspace directory for the clone
+    # Create a dedicated workspace directory for the clone and point the clone at it
     clone_ws = os.path.join(WORKSPACE_DIR, cloned_id)
     os.makedirs(clone_ws, exist_ok=True)
+    db.update_agent(cloned_id, {'workspace': clone_ws})
 
     agent = db.get_agent(cloned_id)
     agent['system_prompt'] = _read_system_prompt(cloned_id, fallback=agent.get('system_prompt', ''))
