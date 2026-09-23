@@ -1,0 +1,82 @@
+# Dependencies
+node_modules/
+vendor/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+target/
+out/
+*.tsbuildinfo
+.astro/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service-account.json
+*.pfx
+*.p12
+
+# IDE & editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Cache
+.cache/
+__pycache__/
+*.pyc
+*.pyo
+*.lockb
+
+# Large data files
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.iso
+*.dmg
+
+# Claude (AI assistant)
+.claude/
+.refs/
+
+# Keys (project-level)
+/.keys
+/keys
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# Data
+.venv/
+venv/
+.virtualenv/
+virtualenv/
+

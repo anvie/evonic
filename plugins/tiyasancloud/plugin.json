@@ -1,0 +1,75 @@
+{
+  "id": "tiyasancloud",
+  "name": "TiyasanCloud",
+  "version": "3.0.0",
+  "description": "Registers TiyasanCloud customer agents (confined, with a one-tap WhatsApp link on the shared number) and enforces their monthly token quota.",
+  "author": "Evonic",
+  "enabled": true,
+  "events": [],
+  "variables": [
+    {
+      "name": "ACCESS_TOKEN",
+      "label": "Access token",
+      "type": "string",
+      "secret": true,
+      "default": "",
+      "description": "Shared secret the TiyasanCloud console sends as 'Authorization: Bearer <token>' or 'X-Access-Token'. Also signs outgoing callbacks."
+    },
+    {
+      "name": "SHARED_CHANNEL_ID",
+      "label": "Shared WhatsApp channel (optional)",
+      "type": "string",
+      "default": "",
+      "description": "Leave empty to use the first connected whatsapp_shared channel. Set it to pin one channel. The plugin never creates channels; an operator connects the number once."
+    },
+    {
+      "name": "SHARED_NUMBER",
+      "label": "Shared number override (optional)",
+      "type": "string",
+      "default": "",
+      "description": "Leave empty: the number is read from the channel's WhatsApp session. E.164 without '+'."
+    },
+    {
+      "name": "MAX_LINKED_PER_AGENT",
+      "label": "WhatsApp numbers per agent",
+      "type": "number",
+      "default": 1,
+      "description": "How many WhatsApp numbers may chat with one customer agent (TiyasanCloud: 1)."
+    },
+    {
+      "name": "PAIR_CODE_TTL_MINUTES",
+      "label": "WhatsApp link lifetime (minutes)",
+      "type": "number",
+      "default": 10,
+      "description": "How long a 'chat on WhatsApp' link stays valid."
+    },
+    {
+      "name": "AGENT_ID_PREFIX",
+      "label": "Managed agent id prefix",
+      "type": "string",
+      "default": "tc_,id_",
+      "description": "Comma-separated prefixes of the agents this plugin manages (tc_<user> for new agents, id_<slug> for older ones). Evonic's own agents are never touched."
+    },
+    {
+      "name": "ENFORCE_QUOTA",
+      "label": "Enforce token quota",
+      "type": "boolean",
+      "default": true,
+      "description": "Off = record and report usage but never block a turn (shadow mode)."
+    },
+    {
+      "name": "ALLOWED_TOOLS",
+      "label": "Allowed tools",
+      "type": "string",
+      "default": "bash,read_file,write_file,str_replace,patch,runpy,calculator",
+      "description": "Comma-separated. Only tools that run through the workplace (inside the customer's instance). Host tools such as sshc or send_file must never be listed."
+    },
+    {
+      "name": "PAIRING_POLL_SECONDS",
+      "label": "Pairing poll interval",
+      "type": "number",
+      "default": 3,
+      "description": "How often the worker checks the shared-channel inbox for incoming pairing codes."
+    }
+  ]
+}
