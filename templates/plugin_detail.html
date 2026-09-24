@@ -80,8 +80,22 @@
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">HTTP/API Endpoints <span id="endpoint-count" class="text-sm font-normal text-gray-400"></span></h3>
                     </div>
+                    <div id="endpoints-search-wrap" class="hidden mb-3">
+                        <div class="relative">
+                            <svg class="absolute left-2.5 top-2.5 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z"/></svg>
+                            <input id="endpoints-search" type="text" autocomplete="off" placeholder="Search endpoints..."
+                                   class="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                    </div>
                     <div id="endpoints-list" class="space-y-2">
                         <p class="text-sm text-gray-400">Loading...</p>
+                    </div>
+                    <div id="endpoints-pagination" class="hidden items-center justify-between mt-4 pt-3 border-t border-gray-100 dark:border-gray-600">
+                        <span id="endpoints-page-info" class="text-xs text-gray-400"></span>
+                        <div class="flex gap-2">
+                            <button id="endpoints-prev" type="button" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+                            <button id="endpoints-next" type="button" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -306,17 +320,69 @@ function renderEvents(events) {
     `).join('');
 }
 
+// ==================== HTTP/API Endpoints ====================
+// Endpoint list with client-side search + Previous/Next-only pagination.
+
+const ENDPOINTS_PER_PAGE = 10;
+let allEndpoints = [];
+let endpointsQuery = '';
+let endpointsPage = 1;
+
 function renderEndpoints(endpoints) {
+    allEndpoints = endpoints || [];
+    endpointsQuery = '';
+    endpointsPage = 1;
+
+    const searchWrap = document.getElementById('endpoints-search-wrap');
+    const searchInput = document.getElementById('endpoints-search');
+    if (searchInput) searchInput.value = '';
+    // Search box is only useful once there is something to search.
+    if (searchWrap) searchWrap.classList.toggle('hidden', allEndpoints.length === 0);
+
+    renderEndpointsPage();
+}
+
+function filteredEndpoints() {
+    const q = endpointsQuery.trim().toLowerCase();
+    if (!q) return allEndpoints;
+    return allEndpoints.filter(item => {
+        const haystack = [item.path, item.endpoint, ...(item.methods || [])]
+            .filter(Boolean).join(' ').toLowerCase();
+        return haystack.includes(q);
+    });
+}
+
+function renderEndpointsPage() {
     const list = document.getElementById('endpoints-list');
     const count = document.getElementById('endpoint-count');
+    const pager = document.getElementById('endpoints-pagination');
+    const info = document.getElementById('endpoints-page-info');
+    const prevBtn = document.getElementById('endpoints-prev');
+    const nextBtn = document.getElementById('endpoints-next');
 
-    count.textContent = `(${endpoints.length})`;
-    if (endpoints.length === 0) {
+    const filtered = filteredEndpoints();
+    const totalPages = Math.max(1, Math.ceil(filtered.length / ENDPOINTS_PER_PAGE));
+    endpointsPage = Math.min(Math.max(1, endpointsPage), totalPages);
+
+    count.textContent = endpointsQuery.trim()
+        ? `(${filtered.length}/${allEndpoints.length})`
+        : `(${allEndpoints.length})`;
+
+    const hidePager = () => { pager.classList.add('hidden'); pager.classList.remove('flex'); };
+
+    if (allEndpoints.length === 0) {
         list.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No HTTP/API endpoints registered</p>';
+        hidePager();
+        return;
+    }
+    if (filtered.length === 0) {
+        list.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No endpoints match your search</p>';
+        hidePager();
         return;
     }
 
-    list.innerHTML = endpoints.map(item => `
+    const start = (endpointsPage - 1) * ENDPOINTS_PER_PAGE;
+    list.innerHTML = filtered.slice(start, start + ENDPOINTS_PER_PAGE).map(item => `
         <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg dark:bg-gray-600">
             <div class="flex-shrink-0 w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center mt-0.5">
                 <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m2.656-2.656l1.5-1.5a4 4 0 115.656 5.656l-1.5 1.5M8 16l8-8"/></svg>
@@ -330,7 +396,35 @@ function renderEndpoints(endpoints) {
             </div>
         </div>
     `).join('');
+
+    // Previous / Next only — no numbered page navigation.
+    if (totalPages > 1) {
+        pager.classList.remove('hidden');
+        pager.classList.add('flex');
+        info.textContent = `Page ${endpointsPage} of ${totalPages}`;
+        prevBtn.disabled = endpointsPage <= 1;
+        nextBtn.disabled = endpointsPage >= totalPages;
+    } else {
+        hidePager();
+    }
 }
+
+function setupEndpointsControls() {
+    const searchInput = document.getElementById('endpoints-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            endpointsQuery = searchInput.value;
+            endpointsPage = 1;
+            renderEndpointsPage();
+        });
+    }
+    const prevBtn = document.getElementById('endpoints-prev');
+    if (prevBtn) prevBtn.addEventListener('click', () => { endpointsPage -= 1; renderEndpointsPage(); });
+    const nextBtn = document.getElementById('endpoints-next');
+    if (nextBtn) nextBtn.addEventListener('click', () => { endpointsPage += 1; renderEndpointsPage(); });
+}
+
+setupEndpointsControls();
 
 // ==================== About / README ====================
 
