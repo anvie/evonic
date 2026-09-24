@@ -1,0 +1,75 @@
+[
+    {
+        "type": "function",
+        "name": "Ask User Question",
+        "description": "Ask the user multiple-choice questions and wait for the answer.",
+        "function": {
+            "name": "ask_user_question",
+            "description": "Ask the user 1-4 multiple-choice questions during your turn and wait for their answer. Use it when you are blocked on a decision only the user can make: an ambiguous requirement, a choice between approaches, or a preference. Do NOT use it for things you can decide yourself or look up. The questions appear as an interactive card in the web chat; your turn pauses until the user answers, then the answers come back as this tool's result. The user can always pick 'Other' and type a free-form answer, so do not add an 'Other' option yourself. If one option is your recommendation, put it first and set recommended: true on it; the card shows a 'Recommended' badge. Recommending is optional; leave it out when you have no preference. The user may also close the card without answering (status 'dismissed'): do not assume answers then. Only works in the Evonic web chat; on other channels it returns status 'unavailable' and you should ask in plain text instead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "description": "Questions to ask (1-4).",
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "question": {
+                                    "type": "string",
+                                    "description": "The complete question, ending with a question mark."
+                                },
+                                "header": {
+                                    "type": "string",
+                                    "description": "Very short label shown as a chip (max 12 chars), e.g. 'Database'."
+                                },
+                                "multiSelect": {
+                                    "type": "boolean",
+                                    "description": "Allow selecting more than one option. Default false."
+                                },
+                                "options": {
+                                    "type": "array",
+                                    "description": "2-4 distinct choices. Do not include an 'Other' option; it is added automatically.",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {
+                                                "type": "string",
+                                                "description": "Short display text for the choice (1-5 words)."
+                                            },
+                                            "description": {
+                                                "type": "string",
+                                                "description": "What this choice means or its trade-offs."
+                                            },
+                                            "recommended": {
+                                                "type": "boolean",
+                                                "description": "Optional. true marks this option as your recommendation (at most one per single-choice question). Do not write '(Recommended)' in the label."
+                                            }
+                                        },
+                                        "required": [
+                                            "label"
+                                        ]
+                                    }
+                                }
+                            },
+                            "required": [
+                                "question",
+                                "header",
+                                "options"
+                            ]
+                        }
+                    }
+                },
+                "required": [
+                    "questions"
+                ]
+            }
+        },
+        "mock_response": "{\"status\":\"answered\",\"answers\":[{\"header\":\"Database\",\"question\":\"Which database should we use?\",\"answer\":\"SQLite\",\"selected\":[\"SQLite\"],\"other\":null}],\"message\":\"The user answered your questions: \\\"Which database should we use?\\\" = \\\"SQLite\\\". Continue with these answers in mind.\"}",
+        "mock_response_type": "json"
+    }
+]

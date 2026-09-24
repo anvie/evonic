@@ -1,0 +1,11 @@
+{
+  "id": "ask_user",
+  "name": "Ask User Question",
+  "version": "1.0.0",
+  "description": "Lets agents pause mid-turn and ask the user multiple-choice questions. The question renders as an interactive card in the web chat and the answer is returned to the agent as the tool result.",
+  "author": "Evonic",
+  "enabled": true,
+  "events": [],
+  "tools_file": "tools.json",
+  "variables": []
+}
