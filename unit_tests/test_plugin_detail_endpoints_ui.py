@@ -100,6 +100,10 @@ def test_endpoints_section_ships_search_and_pager(client, monkeypatch):
     assert 'aria-label="Previous page"' in html
     assert 'aria-label="Next page"' in html
 
+    # Hover affordance: icon-only arrow buttons show a pointer cursor.
+    assert re.search(r'id="endpoints-prev"[^>]*\bcursor-pointer\b', html)
+    assert re.search(r'id="endpoints-next"[^>]*\bcursor-pointer\b', html)
+
     # Renderer wiring present.
     for marker in (
         "function renderEndpoints(",
