@@ -85,13 +85,20 @@ def test_endpoints_section_ships_search_and_pager(client, monkeypatch):
     assert 'id="endpoints-search"' in html
     assert 'id="endpoints-search-wrap"' in html
 
-    # Pagination surface: Previous + Next buttons and a page indicator.
+    # Pagination surface: Previous + Next controls and a page indicator.
     assert 'id="endpoints-pagination"' in html
     assert 'id="endpoints-prev"' in html
     assert 'id="endpoints-next"' in html
     assert 'id="endpoints-page-info"' in html
-    assert ">Previous<" in html
-    assert ">Next<" in html
+
+    # The controls are icon-only (Lucide chevrons) \u2014 no "Previous"/"Next" text.
+    assert re.search(r'id="endpoints-prev"[^>]*>\s*<i data-lucide="chevron-left"', html)
+    assert re.search(r'id="endpoints-next"[^>]*>\s*<i data-lucide="chevron-right"', html)
+    assert ">Previous<" not in html
+    assert ">Next<" not in html
+    # Icon-only buttons still carry accessible labels.
+    assert 'aria-label="Previous page"' in html
+    assert 'aria-label="Next page"' in html
 
     # Renderer wiring present.
     for marker in (
