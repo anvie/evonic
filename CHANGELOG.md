@@ -5,6 +5,7 @@
 ### Features
 
 - Kanban board: task title text now flashes solid yellow and fades back to its original color (1s default) every time the assigned agent calls a tool, driven by the durable `kanban` realtime (SSE) channel.
+- Plugin detail pages now turn every `<slug>_tab.html` a plugin ships in its `templates/` directory into an extra tab (label = the humanised slug) and call `window.tabInit_<slug>()` when the tab is opened, so plugins can add an admin page to their own detail view without a navbar entry or a core change. Used by the tiyasancloud *Manage* tab.
 
 ### Bug Fixes
 

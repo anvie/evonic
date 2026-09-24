@@ -35,6 +35,9 @@
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600" onclick="showTab('settings')" data-tab="settings">Settings</button>
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('about')" data-tab="about">About</button>
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('logs')" data-tab="logs">Logs</button>
+        {% for tab in tabs %}
+        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('{{ tab.id }}')" data-tab="{{ tab.id }}">{{ tab.label }}</button>
+        {% endfor %}
     </div>
 
     <!-- Tab: Settings -->
@@ -122,6 +125,12 @@ function showTab(name) {
         startLogPolling();
     } else {
         stopLogPolling();
+    }
+
+    // Plugin tabs (from *_tab.html) may register a lazy initialiser, run once
+    // on every visit to their tab: window.tabInit_<id>().
+    if (typeof window['tabInit_' + name] === 'function') {
+        try { window['tabInit_' + name](); } catch (e) { console.error('tabInit_' + name, e); }
     }
 }
 
@@ -587,6 +596,13 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
         {% include widget %}
         {% endfor %}
     </div>
+
+    {% for tab in tabs %}
+    <!-- Tab: {{ tab.label }} (auto-loaded from {{ tab.file }}) -->
+    <div id="tab-{{ tab.id }}" class="tab-content hidden">
+        {% include tab.file %}
+    </div>
+    {% endfor %}
 
     <!-- Tab: About -->
     <div id="tab-about" class="tab-content hidden">

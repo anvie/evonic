@@ -40,6 +40,22 @@ def plugin_detail_page(plugin_id):
         return redirect('/plugins')
     plugin_template_dir = Path(PLUGINS_DIR) / plugin_id / 'templates'
     widget_files = sorted([f.name for f in plugin_template_dir.glob('*_widget.html')]) if plugin_template_dir.exists() else []
+    # Plugin-provided extra tabs: any `<slug>_tab.html` becomes a tab whose id
+    # is the slug and whose label is the slug in Title Case
+    # (e.g. `manage_tab.html` -> id "manage", label "Manage"). The partial is
+    # included into the detail page's tab area; it may lazily initialise itself
+    # by defining `window.tabInit_<slug>()`.
+    tab_files = []
+    if plugin_template_dir.exists():
+        for path in sorted(plugin_template_dir.glob('*_tab.html')):
+            slug = path.name[: -len('_tab.html')]
+            if not re.fullmatch(r'[a-z0-9_-]+', slug):
+                continue
+            tab_files.append({
+                'id': slug,
+                'label': slug.replace('_', ' ').replace('-', ' ').title(),
+                'file': path.name,
+            })
 
     # Compute model_agent_map for agentapi plugin token widget
     # Embed server-side so the widget JS doesn't need an async fetch
@@ -55,6 +71,7 @@ def plugin_detail_page(plugin_id):
     return render_template('plugin_detail.html',
                            plugin_id=plugin_id,
                            widgets=widget_files,
+                           tabs=tab_files,
                            model_agent_map=model_agent_map)
 
 
