@@ -51,7 +51,14 @@ VALID_EVENTS = {
 class PluginManager:
     MAX_LOG_ENTRIES = 500
 
-    def __init__(self):
+    def __init__(self, load_plugins: bool = True):
+        """Create a plugin manager.
+
+        Pass load_plugins=False for metadata-only callers (CLI plugin list,
+        requirements checks): importing a plugin handler executes its module
+        level code, which in a short-lived process can mutate shared state
+        the live server owns.
+        """
         os.makedirs(PLUGINS_DIR, exist_ok=True)
         self._handlers: Dict[str, List[Tuple[str, Callable]]] = {}  # event -> [(plugin_id, fn)]
         self._modules: Dict[str, Any] = {}  # plugin_id -> loaded module
@@ -65,7 +72,8 @@ class PluginManager:
         # Parsed-JSON cache keyed by path with mtime invalidation (tool-def
         # files are read on every agent context build via get_all_plugin_tool_defs).
         self._json_file_cache: Dict[str, tuple] = {}
-        self._load_all()
+        if load_plugins:
+            self._load_all()
 
     def _is_plugin_enabled(self, plugin_id: str) -> bool:
         """Check if a plugin is enabled. DB is authoritative; absent = disabled."""

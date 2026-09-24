@@ -848,8 +848,11 @@ def main():
     plugin_cli_commands = {}
     plugin_cli_parsers = {}  # cmd_name -> parser (for help printing)
     try:
-        from backend.plugin_manager import plugin_manager
-        plugin_cli_commands = plugin_manager.get_cli_commands()
+        # Metadata-only discovery: never execute plugin handler modules here
+        # (a short-lived CLI process importing handlers can mutate shared state
+        # the live server owns, e.g. the kanban scanner schedules).
+        from backend.plugin_lifecycle import PluginManager
+        plugin_cli_commands = PluginManager(load_plugins=False).get_cli_commands()
         for cmd_name, cmd_info in plugin_cli_commands.items():
             sub = subparsers.add_parser(
                 cmd_name,

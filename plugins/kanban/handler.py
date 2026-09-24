@@ -1267,56 +1267,152 @@ def _scan_comments_for_followup(sdk=None):
                 _classified_comments.discard(comment_id)
 
 
-def _setup_scheduler():
+_scheduler_setup_lock = threading.Lock()
+_scheduler_setup_done = False
+
+
+def _scheduler_is_running(scheduler) -> bool:
+    """True only when the host APScheduler instance is actually running."""
+    try:
+        if not getattr(scheduler, '_started', False):
+            return False
+        from apscheduler.schedulers.base import STATE_RUNNING
+        return getattr(scheduler._scheduler, 'state', None) == STATE_RUNNING
+    except Exception:
+        return False
+
+
+def _interval_seconds(trigger_config) -> 'int | None':
+    """Extract the interval in seconds from a persisted trigger config."""
+    try:
+        if isinstance(trigger_config, dict):
+            return int(trigger_config.get('seconds'))
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _ensure_schedule(name: str, interval: int, event_name: str, sdk=None):
+    """Register or refresh one plugin schedule without disturbing live jobs.
+
+    Safety rules:
+
+    * non-destructive -- an existing schedule row is never cancelled/deleted;
+    * idempotent -- a row that already has the right interval is reused as-is,
+      so its id, run_count and schedule_logs are preserved;
+    * running-only -- rows are only mutated when the host scheduler is running,
+      so a short-lived process cannot disarm the live server.
+
+    Returns the schedule id, or None when nothing could be resolved.
+    """
+    try:
+        from backend.scheduler import scheduler
+    except Exception as exc:
+        _log(f'Scheduler unavailable, skipping {name} setup: {exc}', 'warn', sdk)
+        return None
+
+    running = _scheduler_is_running(scheduler)
+
+    existing = None
+    try:
+        for s in scheduler.list_schedules(owner_type='plugin', owner_id=PLUGIN_ID):
+            if s.get('name') == name:
+                existing = s
+                break
+    except Exception as exc:
+        _log(f'Failed to list schedules for {name}: {exc}', 'error', sdk)
+        return None
+
+    if existing is not None:
+        schedule_id = existing['id']
+        current = _interval_seconds(existing.get('trigger_config'))
+        if current != interval:
+            if running:
+                # In-place update: keeps the schedule id, run_count and logs.
+                scheduler.update_schedule(schedule_id, trigger_config={'seconds': interval})
+            else:
+                # Not our scheduler to drive: persist the new interval only, so
+                # the next start picks it up from the DB. Never touch live jobs.
+                from models.db import db as _db
+                _db.update_schedule(schedule_id, trigger_config={'seconds': interval})
+            _log(
+                f'Schedule {name} interval updated ({current}s -> {interval}s, id: {schedule_id})',
+                'info', sdk,
+            )
+        elif not running:
+            _log(
+                f'Scheduler not running -- leaving schedule {name} ({schedule_id}) untouched',
+                'info', sdk,
+            )
+        if running and not existing.get('enabled'):
+            scheduler.toggle_schedule(schedule_id)
+            _log(f'Schedule {name} re-enabled (id: {schedule_id})', 'info', sdk)
+    else:
+        sched = scheduler.create_schedule(
+            name=name,
+            owner_type='plugin',
+            owner_id=PLUGIN_ID,
+            trigger_type='interval',
+            trigger_config={'seconds': interval},
+            action_type='emit_event',
+            action_config={'event_name': event_name, 'payload': {}},
+        )
+        schedule_id = sched['id']
+        _log(f'Scheduler job registered (interval: {interval}s, id: {schedule_id})', 'info', sdk)
+
+    if running:
+        # Verify the job really landed in the live scheduler instead of
+        # silently no-oping (the failure mode this guard exists to prevent).
+        try:
+            if scheduler._scheduler.get_job(schedule_id) is None:
+                _log(
+                    f'Schedule {name} ({schedule_id}) is missing from the running scheduler',
+                    'error', sdk,
+                )
+        except Exception:
+            pass
+    return schedule_id
+
+
+def _setup_scheduler(sdk=None):
+    """Ensure the periodic todo-task scanner schedule exists."""
     global _scanner_schedule_id
-    try:
-        from backend.scheduler import scheduler
-        config = _load_config()
-        interval = int(config.get('SCAN_INTERVAL_SECONDS', 300))
-
-        for s in scheduler.list_schedules(owner_type='plugin', owner_id=PLUGIN_ID):
-            if s['name'] == _SCHEDULE_NAME:
-                scheduler.cancel_schedule(s['id'])
-
-        sched = scheduler.create_schedule(
-            name=_SCHEDULE_NAME,
-            owner_type='plugin',
-            owner_id=PLUGIN_ID,
-            trigger_type='interval',
-            trigger_config={'seconds': interval},
-            action_type='emit_event',
-            action_config={'event_name': 'kanban_scan', 'payload': {}},
-        )
-        _scanner_schedule_id = sched['id']
-        _log(f'Scheduler job registered (interval: {interval}s, id: {_scanner_schedule_id})')
-    except Exception as e:
-        _log(f'Failed to set up scheduler: {e}', 'error')
+    config = _load_config()
+    interval = int(config.get('SCAN_INTERVAL_SECONDS', 300))
+    schedule_id = _ensure_schedule(_SCHEDULE_NAME, interval, 'kanban_scan', sdk)
+    if schedule_id:
+        _scanner_schedule_id = schedule_id
 
 
-def _setup_stale_scheduler():
+def _setup_stale_scheduler(sdk=None):
+    """Ensure the stale in-progress task scanner schedule exists."""
     global _stale_scanner_schedule_id
+    config = _load_config()
+    interval = int(config.get('STALE_SCAN_INTERVAL_SECONDS', 60))
+    schedule_id = _ensure_schedule(_STALE_SCHEDULE_NAME, interval, 'kanban_stale_scan', sdk)
+    if schedule_id:
+        _stale_scanner_schedule_id = schedule_id
+
+
+def on_enable(sdk=None):
+    """Lifecycle hook: register the scanner schedules once the host app is up.
+
+    Deliberately NOT executed at import time. Most processes that construct a
+    PluginManager (including read-only CLI commands) import this handler, and a
+    module-level cancel+recreate used to delete the schedule rows tracked by the
+    live server: its APScheduler kept firing jobs for the deleted ids, every
+    call was a no-op, and the auto-trigger stayed dead until the next restart.
+    """
+    global _scheduler_setup_done
+    with _scheduler_setup_lock:
+        if _scheduler_setup_done:
+            return
+        _scheduler_setup_done = True
     try:
-        from backend.scheduler import scheduler
-        config = _load_config()
-        interval = int(config.get('STALE_SCAN_INTERVAL_SECONDS', 60))
-
-        for s in scheduler.list_schedules(owner_type='plugin', owner_id=PLUGIN_ID):
-            if s['name'] == _STALE_SCHEDULE_NAME:
-                scheduler.cancel_schedule(s['id'])
-
-        sched = scheduler.create_schedule(
-            name=_STALE_SCHEDULE_NAME,
-            owner_type='plugin',
-            owner_id=PLUGIN_ID,
-            trigger_type='interval',
-            trigger_config={'seconds': interval},
-            action_type='emit_event',
-            action_config={'event_name': 'kanban_stale_scan', 'payload': {}},
-        )
-        _stale_scanner_schedule_id = sched['id']
-        _log(f'Stale scheduler registered (interval: {interval}s, id: {_stale_scanner_schedule_id})')
-    except Exception as e:
-        _log(f'Failed to set up stale scheduler: {e}', 'error')
+        _setup_scheduler(sdk)
+        _setup_stale_scheduler(sdk)
+    except Exception as exc:
+        _log(f'Failed to set up kanban schedules: {exc}', 'error', sdk)
 
 
 # ─── Autopilot slash command ──────────────────────────────────────────────────
@@ -2364,8 +2460,8 @@ except Exception:
     pass
 
 # ─── Register scheduler jobs when module is loaded ───────────────────────────
-_setup_scheduler()
-_setup_stale_scheduler()
+# Scheduler jobs are registered from the on_enable() lifecycle hook below,
+# never at import time (see the safety note on _ensure_schedule).
 
 # ─── CLI Command Handlers ──────────────────────────────────────────────────────
 

@@ -394,16 +394,21 @@ def restart_server():
 # ─── Plugin Management ────────────────────────────────────────────────────────
 
 
-def _get_plugin_manager():
-    """Lazily create a PluginManager instance."""
+def _get_plugin_manager(load_plugins: bool = True):
+    """Lazily create a PluginManager instance.
+
+    Metadata-only commands pass load_plugins=False: it skips executing
+    plugin handler modules, whose module-level code can mutate state the
+    live server owns (e.g. the kanban scanner schedules).
+    """
     from backend.plugin_manager import PluginManager
 
-    return PluginManager()
+    return PluginManager(load_plugins=load_plugins)
 
 
 def plugin_list():
     """List all installed plugins in a table format."""
-    pm = _get_plugin_manager()
+    pm = _get_plugin_manager(load_plugins=False)
     plugins = pm.list_plugins()
 
     if not plugins:

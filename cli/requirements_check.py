@@ -100,7 +100,7 @@ def gather_requirements() -> List[Dict[str, Any]]:
 
     try:
         from backend.plugin_manager import PluginManager
-        _collect(PluginManager().list_plugins(), "plugin")
+        _collect(PluginManager(load_plugins=False).list_plugins(), "plugin")
     except Exception:  # noqa: BLE001 — best-effort
         pass
 
