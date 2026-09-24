@@ -603,7 +603,7 @@ class TestApiErrorOrphanRecovery(unittest.TestCase):
         with patch.object(_llm_loop_mod, 'db', mock_db), \
              patch.object(_llm_loop_mod, 'tool_registry', mock_tr), \
              patch.object(_es_mod, 'event_stream', MagicMock()) as mock_es, \
-             patch.object(_llm_loop_mod, 'LLMClient', side_effect=clients), \
+             patch.object(_llm_loop_mod, 'LLMClient', side_effect=clients) as client_factory, \
              patch.object(_llm_loop_mod, 'llm_client', llm):
             result = run_tool_loop(
                 agent=self._make_agent(),
@@ -617,6 +617,9 @@ class TestApiErrorOrphanRecovery(unittest.TestCase):
                 session_skill_tools={},
                 llm_log_path=None,
             )
+            if fallback_model:
+                self.assertEqual(client_factory.call_args.kwargs['model_config']['reasoning_effort'],
+                                 fallback_model.get('reasoning_effort'))
             if return_db:
                 return (result, mock_db), mock_es
             return result, mock_es
@@ -799,13 +802,13 @@ class TestEffectiveRequestIntegration(TestApiErrorOrphanRecovery):
         self.assertEqual(messages, canonical_snapshot)
 
     def test_fallback_reuses_projected_messages_and_tools(self):
-        primary = MagicMock(provider='primary-provider', model='primary-model')
+        primary = MagicMock(provider='primary-provider', model='primary-model', reasoning_effort='low')
         primary.chat_completion.return_value = _tc_err('primary rejected request')
         fallback = MagicMock(provider='fallback-provider', model='fallback-model')
         fallback.chat_completion.return_value = _ok('Fallback done.')
         fallback_model = {
             'id': 'fallback-id', 'name': 'Fallback', 'provider': 'fallback-provider',
-            'model_name': 'fallback-model', 'vision_supported': True,
+            'model_name': 'fallback-model', 'vision_supported': True, 'reasoning_effort': 'high',
         }
         messages = self._long_tool_loop()
         tools = [{"type": "function", "function": {"name": "read_file",

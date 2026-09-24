@@ -4,6 +4,9 @@ import requests
 from flask import Blueprint, jsonify, request
 
 from models.db import db
+from backend.reasoning_capabilities import REASONING_CATALOG
+from backend.reasoning_effort_error import ReasoningEffortError
+import httpx
 
 providers_bp = Blueprint("providers", __name__)
 
@@ -25,7 +28,7 @@ def api_list_providers():
     for p in providers:
         _sanitize(p)
         p["model_count"] = len(db.get_models_by_provider(p["id"]))
-    return jsonify({"providers": providers})
+    return jsonify({"providers": providers, "reasoning_catalog": REASONING_CATALOG})
 
 
 @providers_bp.route("/api/providers/<provider_id>", methods=["GET"])
@@ -129,11 +132,11 @@ def api_fetch_provider_models(provider_id):
 
     params = {}
     if api_format == "codex":
-        params["client_version"] = "0.1.0"
+        params["client_version"] = "0.153.4"
 
     if api_format == "codex":
         from backend.provider.oauth_codex import extract_account_id
-        headers["User-Agent"] = "codex_cli_rs/0.0.0"
+        headers["User-Agent"] = "codex_cli_rs/0.153.4"
         headers["originator"] = "codex_cli_rs"
         acct = extract_account_id(headers.get("Authorization", "").replace("Bearer ", ""))
         if acct:
@@ -141,7 +144,6 @@ def api_fetch_provider_models(provider_id):
 
     try:
         if api_format == "codex":
-            import httpx
             resp = httpx.get(models_url, headers=headers, params=params, timeout=15)
         else:
             resp = requests.get(models_url, headers=headers, params=params, timeout=15)
@@ -168,6 +170,7 @@ def api_fetch_provider_models(provider_id):
                         models.append({"id": mid, "name": mid})
             else:
                 models = [
+                    {"id": "gpt-6-astra", "name": "GPT-6 Astra"},
                     {"id": "gpt-5.6-sol", "name": "GPT-5.6 Sol"},
                     {"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra"},
                     {"id": "gpt-5.6-luna", "name": "GPT-5.6 Luna"},
@@ -186,9 +189,9 @@ def api_fetch_provider_models(provider_id):
 
         return jsonify({"success": True, "models": models, "total": len(models)})
 
-    except requests.exceptions.Timeout:
+    except (requests.exceptions.Timeout, httpx.TimeoutException):
         return jsonify({"success": False, "error": "Connection timed out"}), 408
-    except requests.exceptions.ConnectionError as e:
+    except (requests.exceptions.ConnectionError, httpx.ConnectError) as e:
         return jsonify({"success": False, "error": f"Connection error: {str(e)[:200]}"}), 400
     except Exception as e:
         return jsonify({"success": False, "error": f"Error: {str(e)[:200]}"}), 500
@@ -231,11 +234,11 @@ def api_test_provider(provider_id):
 
     params = {}
     if api_format == "codex":
-        params["client_version"] = "0.1.0"
+        params["client_version"] = "0.153.4"
 
     if api_format == "codex":
         from backend.provider.oauth_codex import extract_account_id
-        headers["User-Agent"] = "codex_cli_rs/0.0.0"
+        headers["User-Agent"] = "codex_cli_rs/0.153.4"
         headers["originator"] = "codex_cli_rs"
         acct = extract_account_id(headers.get("Authorization", "").replace("Bearer ", ""))
         if acct:
@@ -243,7 +246,6 @@ def api_test_provider(provider_id):
 
     try:
         if api_format == "codex":
-            import httpx
             resp = httpx.get(url, headers=headers, params=params, timeout=10)
         else:
             resp = requests.get(url, headers=headers, params=params, timeout=10)
@@ -264,9 +266,9 @@ def api_test_provider(provider_id):
                 "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
                 "status_code": resp.status_code,
             })
-    except requests.exceptions.Timeout:
+    except (requests.exceptions.Timeout, httpx.TimeoutException):
         return jsonify({"success": False, "error": "Connection timed out"}), 408
-    except requests.exceptions.ConnectionError as e:
+    except (requests.exceptions.ConnectionError, httpx.ConnectError) as e:
         return jsonify({"success": False, "error": f"Connection error: {str(e)[:200]}"}), 400
     except Exception as e:
         return jsonify({"success": False, "error": f"Error: {str(e)[:200]}"}), 500
@@ -297,12 +299,15 @@ def api_add_model_from_provider(provider_id):
         "timeout": data.get("timeout", 60),
         "thinking": data.get("thinking", 0),
         "thinking_budget": data.get("thinking_budget", 0),
+        "reasoning_effort": data.get("reasoning_effort"),
         "enabled": 1,
         "api_format": provider.get("api_format", "openai"),
     }
 
     try:
         new_id = db.create_model(model_data)
+    except ReasoningEffortError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 409
 

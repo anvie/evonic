@@ -291,6 +291,7 @@
                 >
                 <select
                     id="model-provider"
+                    onchange="settingsModels.changeModelProvider()"
                     class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
                 >
                     <!-- Populated dynamically from providers API -->
@@ -306,6 +307,7 @@
                 <input
                     type="url"
                     id="model-base-url"
+                    oninput="settingsModels.updateReasoningOptions()"
                     class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
                     placeholder="Leave empty to use provider's URL"
                 />
@@ -319,6 +321,7 @@
                 >
                 <select
                     id="model-api-format"
+                    onchange="settingsModels.updateReasoningOptions()"
                     class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
                 >
                     <option value="openai">OpenAI</option>
@@ -351,6 +354,7 @@
                 <input
                     type="text"
                     id="model-name-param"
+                    oninput="settingsModels.updateReasoningOptions()"
                     required
                     placeholder="anthropic/claude-3.5-sonnet"
                     class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
@@ -457,6 +461,35 @@
                 <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
                     Leave empty for server default.
                 </p>
+            </div>
+
+            <div class="mb-4" id="reasoning-effort-group" style="display: none">
+                <label
+                    id="reasoning-effort-label"
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                    for="model-reasoning-effort"
+                >Reasoning Effort</label>
+                <select
+                    id="model-reasoning-effort"
+                    aria-describedby="reasoning-effort-hint"
+                    onchange="settingsModels.changeReasoningEffort()"
+                    class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
+                >
+                    <option value="">Default (provider)</option>
+                </select>
+                <input
+                    id="model-reasoning-effort-manual"
+                    type="text"
+                    maxlength="32"
+                    pattern="[a-z][a-z0-9_]{0,31}"
+                    placeholder="Leave empty for provider default"
+                    aria-describedby="reasoning-effort-hint"
+                    oninput="settingsModels.changeReasoningEffort()"
+                    style="display: none"
+                    disabled
+                    class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
+                />
+                <p id="reasoning-effort-hint" aria-live="polite" class="text-xs text-gray-400 dark:text-gray-500 mt-1"></p>
             </div>
 
             <div class="mb-4">

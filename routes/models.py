@@ -6,6 +6,7 @@ import requests
 from flask import Blueprint, jsonify, request
 
 from models.db import db
+from backend.reasoning_effort_error import ReasoningEffortError
 
 _logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ _SENSITIVE_MODEL_KEYS = frozenset({"api_key"})
 
 def _sanitize_model(model: Dict[str, Any]) -> Dict[str, Any]:
     """Strip sensitive fields (api_key) from a model dict before API response."""
+    model["reasoning_capabilities"] = db.get_model_reasoning_capabilities(model)
     for key in _SENSITIVE_MODEL_KEYS:
         model.pop(key, None)
     return model
@@ -86,6 +88,8 @@ def api_create_model():
                 "timeout": data.get("timeout", 60),
                 "thinking": data.get("thinking", 0),
                 "thinking_budget": data.get("thinking_budget", 0),
+                "reasoning_effort": data.get("reasoning_effort"),
+                "api_format": data.get("api_format", provider.get("api_format", "openai")),
                 "temperature": data.get("temperature"),
                 "enabled": data.get("enabled", 1),
                 "is_default": data.get("is_default", 0),
@@ -94,6 +98,8 @@ def api_create_model():
                 "context_window": data.get("context_window", 0),
             }
         )
+    except ReasoningEffortError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 409
 
@@ -127,6 +133,11 @@ def api_update_model(model_id):
     if "api_key" in data and not data["api_key"]:
         del data["api_key"]
 
+    try:
+        db.validate_model_reasoning({**model, **data})
+    except ReasoningEffortError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
     # If setting as default, unset other defaults
     if data.get("is_default"):
         with db._connect() as conn:
@@ -136,7 +147,10 @@ def api_update_model(model_id):
             )
             conn.commit()
 
-    success = db.update_model(model_id, data)
+    try:
+        success = db.update_model(model_id, data)
+    except ReasoningEffortError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
     if not success:
         return jsonify(
             {"success": False, "error": "Model not found or no changes made"}
@@ -182,6 +196,7 @@ def api_clone_model(model_id):
         "timeout": source.get("timeout", 60),
         "thinking": source.get("thinking", 0),
         "thinking_budget": source.get("thinking_budget", 0),
+        "reasoning_effort": source.get("reasoning_effort"),
         "temperature": source.get("temperature"),
         "enabled": source.get("enabled", 1),
         "is_default": 0,
@@ -189,7 +204,10 @@ def api_clone_model(model_id):
         "api_format": source.get("api_format", "openai"),
         "vision_supported": source.get("vision_supported", 0),
     }
-    new_id = db.create_model(clone_data)
+    try:
+        new_id = db.create_model(clone_data)
+    except ReasoningEffortError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
     return jsonify({"success": True, "model_id": new_id})
 
 
