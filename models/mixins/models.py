@@ -10,7 +10,7 @@ class ModelsMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models ORDER BY name LIMIT 1000")
+            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models ORDER BY name LIMIT 1000")
             return [dict(row) for row in cursor.fetchall()]
 
     def get_enabled_llm_models(self) -> List[Dict[str, Any]]:
@@ -18,11 +18,14 @@ class ModelsMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models WHERE enabled = 1 ORDER BY name LIMIT 1000")
+            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models WHERE enabled = 1 ORDER BY name LIMIT 1000")
             return [dict(row) for row in cursor.fetchall()]
 
     def save_llm_models(self, models_list: List[Dict[str, Any]]) -> None:
         """Persist models to llm_models table."""
+        # Validate before deleting anything; an invalid import must preserve the old rows.
+        models_list = [{**m, 'reasoning_effort': self.validate_model_reasoning(m)}
+                       for m in models_list]
         with self._connect() as conn:
             cursor = conn.cursor()
             # Clear existing models
@@ -32,8 +35,8 @@ class ModelsMixin:
                     INSERT INTO llm_models (id, name, type, provider, base_url, api_key,
                         model_name, max_tokens, timeout, thinking, thinking_budget,
                         temperature, enabled, is_default, model_max_concurrent, api_format,
-                        vision_supported, legacy_id, shortcode, context_window)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        vision_supported, legacy_id, shortcode, context_window, reasoning_effort)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     m.get('id'),
                     m.get('name'),
@@ -55,6 +58,7 @@ class ModelsMixin:
                     m.get('legacy_id'),
                     m.get('shortcode'),
                     m.get('context_window', 0),
+                    m.get('reasoning_effort'),
                 ))
             conn.commit()
 
@@ -63,7 +67,7 @@ class ModelsMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models WHERE is_default = 1 LIMIT 1")
+            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models WHERE is_default = 1 LIMIT 1")
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -72,10 +76,10 @@ class ModelsMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models WHERE id = ?", (model_id,))
+            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models WHERE id = ?", (model_id,))
             row = cursor.fetchone()
             if not row:
-                cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models WHERE legacy_id = ? LIMIT 1", (model_id,))
+                cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models WHERE legacy_id = ? LIMIT 1", (model_id,))
                 row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -103,7 +107,7 @@ class ModelsMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models WHERE model_name = ? LIMIT 1", (model_name,))
+            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models WHERE model_name = ? LIMIT 1", (model_name,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -116,12 +120,12 @@ class ModelsMixin:
             cursor.execute("SELECT model_id FROM agents WHERE id = ?", (agent_id,))
             row = cursor.fetchone()
             if row and row['model_id']:
-                cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models WHERE id = ?", (row['model_id'],))
+                cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models WHERE id = ?", (row['model_id'],))
                 model_row = cursor.fetchone()
                 if model_row:
                     return dict(model_row)
             # Fallback to global default
-            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models WHERE is_default = 1 LIMIT 1")
+            cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models WHERE is_default = 1 LIMIT 1")
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -161,7 +165,7 @@ class ModelsMixin:
             cursor.execute("SELECT fallback_model_id FROM agents WHERE id = ?", (agent_id,))
             row = cursor.fetchone()
             if row and row["fallback_model_id"]:
-                cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window FROM llm_models WHERE id = ?", (row["fallback_model_id"],))
+                cursor.execute("SELECT id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort FROM llm_models WHERE id = ?", (row["fallback_model_id"],))
                 model_row = cursor.fetchone()
                 if model_row:
                     return dict(model_row)
@@ -189,6 +193,8 @@ class ModelsMixin:
         Without an explicit id, generates 'provider/model_name'.
         Raises ValueError if an explicit id is already taken.
         """
+        model_data = dict(model_data)
+        model_data['reasoning_effort'] = self.validate_model_reasoning(model_data)
         model_id = model_data.get('id')
         if model_id:
             if self._model_id_exists(model_id):
@@ -206,8 +212,8 @@ class ModelsMixin:
                 INSERT INTO llm_models (id, name, type, provider, base_url, api_key,
                     model_name, max_tokens, timeout, thinking, thinking_budget,
                     temperature, enabled, is_default, model_max_concurrent, api_format,
-                    vision_supported, shortcode, context_window)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    vision_supported, shortcode, context_window, reasoning_effort)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 model_id,
                 model_data.get('name'),
@@ -228,6 +234,7 @@ class ModelsMixin:
                 model_data.get('vision_supported', 0),
                 next_code,
                 model_data.get('context_window', 0),
+                model_data.get('reasoning_effort'),
             ))
             conn.commit()
         return model_id
@@ -236,8 +243,15 @@ class ModelsMixin:
         """Update an existing model."""
         allowed = {'name', 'type', 'provider', 'base_url', 'api_key', 'model_name',
                    'max_tokens', 'timeout', 'thinking', 'thinking_budget', 'temperature', 'enabled', 'is_default',
-                   'model_max_concurrent', 'api_format', 'vision_supported', 'context_window'}
+                   'model_max_concurrent', 'api_format', 'vision_supported', 'context_window', 'reasoning_effort'}
         updates = {k: v for k, v in model_data.items() if k in allowed}
+        current = self.get_model_by_id(model_id)
+        if not current:
+            return False
+        if updates:
+            effort = self.validate_model_reasoning({**current, **updates})
+            if 'reasoning_effort' in updates:
+                updates['reasoning_effort'] = effort
         if not updates:
             return False
         set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -267,7 +281,7 @@ class ModelsMixin:
                 "SELECT id, name, type, provider, base_url, api_key, model_name, "
                 "max_tokens, timeout, thinking, thinking_budget, temperature, "
                 "enabled, is_default, created_at, updated_at, model_max_concurrent, "
-                "api_format, vision_supported, legacy_id, shortcode, context_window "
+                "api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort "
                 "FROM llm_models WHERE shortcode = ?",
                 (shortcode,),
             )

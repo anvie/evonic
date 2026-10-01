@@ -117,6 +117,7 @@ class CodexClient:
         timeout: int = 120,
         tool_choice: Optional[str] = None,
         service_tier: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a request to the Codex Responses API."""
         payload: Dict[str, Any] = {
@@ -127,6 +128,8 @@ class CodexClient:
         }
         if reasoning:
             payload["reasoning"] = {"summary": "auto"}
+        if reasoning_effort is not None:
+            payload.setdefault("reasoning", {})["effort"] = reasoning_effort
         if service_tier == "priority" and model_supports_fast_mode(model):
             payload["service_tier"] = "priority"
         # Cap the output so a reasoning model can't spend the whole budget
@@ -429,6 +432,7 @@ class CodexClient:
         reasoning: bool = False,
         timeout: int = 120,
         service_tier: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         """Yield SSE delta chunks for real-time streaming to the frontend."""
         payload: Dict[str, Any] = {
@@ -439,6 +443,8 @@ class CodexClient:
         }
         if reasoning:
             payload["reasoning"] = {"summary": "auto"}
+        if reasoning_effort is not None:
+            payload.setdefault("reasoning", {})["effort"] = reasoning_effort
         if service_tier == "priority" and model_supports_fast_mode(model):
             payload["service_tier"] = "priority"
         if tools:
