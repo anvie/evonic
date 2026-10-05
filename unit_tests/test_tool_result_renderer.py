@@ -45,3 +45,17 @@ def test_tool_result_summary_limits_scalar_array_output():
     result = {"reason_code": ["ONE", "TWO", "THREE", "FOUR", "FIVE"]}
 
     assert _evaluate_summary(MODULE, result) == "reason_code: ONE, TWO, THREE, FOUR, …"
+
+
+def test_tool_result_summary_prefers_nested_error_message():
+    result = {
+        "status": "error",
+        "error": {
+            "code": "provider_error",
+            "message": "The image provider rejected the request.",
+        },
+    }
+    expected = "error: provider_error: The image provider rejected the request."
+
+    assert _evaluate_summary(MODULE, result) == expected
+    assert _evaluate_summary(BUNDLE, result) == expected

@@ -1036,6 +1036,33 @@ function highlightDiff(patch) {
 
 // ── Tool result rendering helpers ─────────────────────────────────────────────
 
+function _truncateToolResultText(value, maxLength = 240) {
+    const text = String(value);
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function _serializeToolResult(value) {
+    try {
+        return _truncateToolResultText(JSON.stringify(value));
+    } catch (error) {
+        return '[Unserializable tool result]';
+    }
+}
+
+function _extractToolError(result) {
+    if (!result || typeof result !== 'object') return null;
+    const error = result.error;
+    if (typeof error === 'string' && error.trim()) return error.trim();
+    if (!error || typeof error !== 'object') return null;
+
+    const message = typeof error.message === 'string' && error.message.trim() ? error.message.trim() : null;
+    const code = error.code === null || error.code === undefined ? null : _truncateToolResultText(error.code, 80);
+    if (message && code) return `${code}: ${message}`;
+    if (message) return message;
+    if (code) return code;
+    return _serializeToolResult(error);
+}
+
 function _summarizeToolResultValue(value) {
     // Preserve concise scalar arrays (such as validation reason_code) while
     // continuing to suppress nested objects and potentially verbose payloads.
@@ -1055,6 +1082,12 @@ function summarizeToolResult(result) {
     if (typeof result === 'object') {
         const keys = Object.keys(result);
         if (!keys.length) return 'OK';
+
+        const error = _extractToolError(result);
+        if (error) {
+            const status = result.status === null || result.status === undefined ? null : _truncateToolResultText(result.status, 80);
+            return status ? `${status}: ${error}` : error;
+        }
         if ('status' in result) {
             const s = String(result.status);
             return ('message' in result && String(result.message).length < 100)
@@ -1068,10 +1101,9 @@ function summarizeToolResult(result) {
             if (summary !== null) parts.push(`${k}: ${summary}`);
         }
         if (parts.length) return parts.join(' · ');
-        return `${keys.length} field${keys.length !== 1 ? 's' : ''}`;
+        return _serializeToolResult(result);
     }
-    const s = String(result);
-    return s.length > 120 ? s.slice(0, 117) + '...' : s;
+    return _truncateToolResultText(result, 120);
 }
 
 function _renderRunpyResult(r) {
