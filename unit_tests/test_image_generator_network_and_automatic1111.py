@@ -89,6 +89,23 @@ def test_automatic1111_uses_only_fixed_request_schema(monkeypatch):
     assert result.artifacts[0].data == png
 
 
+def test_automatic1111_sends_portrait_dimensions(monkeypatch):
+    provider = Automatic1111Provider()
+    captured = {}
+    png = b"\x89PNG\r\n\x1a\nvalid"
+
+    class Client:
+        def json(self, method, path, payload=None):
+            captured.update(method=method, path=path, payload=payload)
+            return {"images": [base64.b64encode(png).decode()]}
+
+    monkeypatch.setattr(provider, "_client", lambda _config: Client())
+    provider.generate(ImageGenerationRequest(prompt="a lighthouse at night", size="768x1344"), _config())
+
+    assert captured["payload"]["width"] == 768
+    assert captured["payload"]["height"] == 1344
+
+
 def test_automatic1111_rejects_invalid_image_payload(monkeypatch):
     provider = Automatic1111Provider()
 

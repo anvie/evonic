@@ -2,7 +2,7 @@
   "id": "image-generator",
   "name": "Image Generator",
   "version": "1.0.0",
-  "description": "Generates image artifacts through configured cloud or approved local providers. Provider selection is explicit or uses the configured default.",
+  "description": "Generates image artifacts through configured cloud or approved local providers. Provider selection is explicit or uses the configured default. Supports square, portrait (768x1024, 768x1344, 832x1248), and landscape (1024x768, 1344x768, 1248x832) sizes.",
   "brief": "Use the `image-generator` skill only after an administrator enables it and configures an approved provider. The `generate_image` tool accepts an explicit provider or uses the configured default provider.",
   "author": "Evonic",
   "tools_file": "tools.json",

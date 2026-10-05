@@ -75,6 +75,32 @@ def test_google_provider_translates_only_the_fixed_google_request(monkeypatch):
     assert result.artifacts[0].data == _PNG
 
 
+@pytest.mark.parametrize("size,aspect_ratio", [
+    ("768x1024", "3:4"),
+    ("768x1344", "9:16"),
+    ("832x1248", "2:3"),
+    ("1024x768", "4:3"),
+    ("1344x768", "16:9"),
+    ("1248x832", "3:2"),
+])
+def test_google_provider_sends_native_aspect_ratio_for_portrait_and_landscape_sizes(monkeypatch, size, aspect_ratio):
+    provider = GoogleGeminiProvider()
+    captured = {}
+
+    class Client:
+        def json(self, method, path, payload=None, *, headers=None):
+            captured.update(method=method, path=path, payload=payload, headers=headers)
+            return _response()
+
+    monkeypatch.setattr(provider, "_client", lambda _config: Client())
+    provider.generate(ImageGenerationRequest(prompt="A portrait subject", size=size), _config())
+
+    assert captured["payload"]["generationConfig"] == {
+        "responseModalities": ["TEXT", "IMAGE"],
+        "imageConfig": {"aspectRatio": aspect_ratio},
+    }
+
+
 def test_google_provider_requires_administrator_credential_before_request(monkeypatch):
     provider = GoogleGeminiProvider()
     monkeypatch.setattr(provider, "_client", lambda _config: pytest.fail("request must not be attempted"))

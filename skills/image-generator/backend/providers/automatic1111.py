@@ -29,7 +29,17 @@ class Automatic1111Provider(ImageProvider):
     display_name = "AUTOMATIC1111-compatible local API"
     is_local = True
     capabilities = ProviderCapabilities(
-        supported_sizes=("512x512", "768x768", "1024x1024"),
+        supported_sizes=(
+            "512x512",
+            "768x768",
+            "1024x1024",
+            "768x1024",
+            "768x1344",
+            "832x1248",
+            "1024x768",
+            "1344x768",
+            "1248x832",
+        ),
         max_images_per_request=4,
         supported_output_formats=("png",),
         supports_negative_prompt=True,

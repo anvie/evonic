@@ -115,3 +115,9 @@ def test_registry_rejects_unsafe_artifact_output():
     with pytest.raises(ImageGenerationError) as error:
         registry.generate(ImageGenerationRequest(prompt="test"), {}, default_provider_id="unsafe")
     assert error.value.code is SafeErrorCode.ARTIFACT_INVALID
+
+
+def test_all_providers_share_the_common_portrait_and_landscape_sizes():
+    common_sizes = ("768x1024", "768x1344", "832x1248", "1024x768", "1344x768", "1248x832")
+    for provider in provider_registry.list():
+        assert all(size in provider.capabilities.supported_sizes for size in common_sizes), provider.id

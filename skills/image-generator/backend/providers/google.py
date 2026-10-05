@@ -26,6 +26,17 @@ _GOOGLE_IMAGE_MODEL = "gemini-2.5-flash-image"
 _GOOGLE_GEMINI_31_IMAGE_MODEL = "gemini-3.1-flash-image"
 _SUPPORTED_MODELS = (_GOOGLE_IMAGE_MODEL, _GOOGLE_GEMINI_31_IMAGE_MODEL)
 
+# Registry-validated sizes that map to a native Gemini aspectRatio. Gemini decides
+# the pixel dimensions; these sizes only select the model's native ratio.
+_ASPECT_RATIO_BY_SIZE = {
+    "768x1024": "3:4",
+    "768x1344": "9:16",
+    "832x1248": "2:3",
+    "1024x768": "4:3",
+    "1344x768": "16:9",
+    "1248x832": "3:2",
+}
+
 
 class GoogleGeminiProvider(ImageProvider):
     """Generate a single PNG image using Google's approved Gemini model."""
@@ -33,7 +44,17 @@ class GoogleGeminiProvider(ImageProvider):
     id = "google-gemini"
     display_name = "Google Gemini image generation"
     capabilities = ProviderCapabilities(
-        supported_sizes=("512x512", "768x768", "1024x1024"),
+        supported_sizes=(
+            "512x512",
+            "768x768",
+            "1024x1024",
+            "768x1024",
+            "768x1344",
+            "832x1248",
+            "1024x768",
+            "1344x768",
+            "1248x832",
+        ),
         max_images_per_request=1,
         supported_output_formats=("png", "jpeg"),
         supported_models=_SUPPORTED_MODELS,
@@ -133,6 +154,11 @@ class GoogleGeminiProvider(ImageProvider):
             "contents": [{"role": "user", "parts": [{"text": request.prompt}]}],
             "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
         }
+        aspect_ratio = _ASPECT_RATIO_BY_SIZE.get(request.size)
+        if aspect_ratio is not None:
+            # Non-square sizes select a native Gemini aspect ratio; the model still
+            # decides the pixel dimensions.
+            payload["generationConfig"]["imageConfig"] = {"aspectRatio": aspect_ratio}
         response = self._client(config).json(
             "POST", f"/models/{model}:generateContent", payload, headers=self._headers(credential),
         )

@@ -82,6 +82,25 @@ def test_generate_image_persists_validated_compact_artifact(image_tool, tmp_path
     assert persisted.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_generate_image_mock_provider_supports_portrait_size(image_tool):
+    result = image_tool.execute(
+        {"id": "image-tool-test-agent"},
+        {
+            "prompt": "A tall lighthouse at night",
+            "size": "768x1344",
+            "count": 1,
+            "output_format": "png",
+            "model": "deterministic-mock-v1",
+        },
+    )
+
+    assert result["status"] == "success"
+    assert result["provider"] == "mock"
+    assert len(result["artifacts"]) == 1
+    assert result["artifacts"][0]["filename"].startswith("generated-1-mock-")
+    assert result["artifacts"][0]["mime_type"] == "image/png"
+
+
 def test_generate_image_uses_no_implicit_provider_fallback(image_tool, monkeypatch):
     monkeypatch.setattr(
         "backend.skills_manager.skills_manager.get_skill_config",

@@ -21,7 +21,7 @@
           },
           "size": {
             "type": "string",
-            "description": "Optional image size in WIDTHxHEIGHT notation, such as 1024x1024. Supported values depend on the selected provider."
+            "description": "Optional image size in WIDTHxHEIGHT notation. Square: 512x512, 768x768, 1024x1024. Portrait: 768x1024, 768x1344, 832x1248. Landscape: 1024x768, 1344x768, 1248x832. Supported values depend on the selected provider."
           },
           "aspect_ratio": {
             "type": "string",
