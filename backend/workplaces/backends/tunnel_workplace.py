@@ -38,6 +38,10 @@ _logger = logging.getLogger(__name__)
 # exactly once. Only applies to clients that advertise idempotent-replay support.
 DISCONNECT_GRACE = 90
 
+# Base64 expands data by roughly one third. This conservative raw chunk size keeps
+# the complete JSON-RPC request well below Evonet's 512 KiB WebSocket read limit.
+WRITE_FILE_BYTES_CHUNK_SIZE = 256 * 1024
+
 
 class TunnelWorkplaceBackend(ExecutionBackend):
     """Executes commands via JSON-RPC over the Evonet WebSocket connection."""
@@ -274,15 +278,31 @@ class TunnelWorkplaceBackend(ExecutionBackend):
         return {'ok': True}
 
     def write_file_bytes(self, path: str, data: bytes, create_dirs: bool = True) -> dict:
-        """Write raw bytes to a file on the remote Evonet via RPC.
+        """Write raw bytes to a file on the remote Evonet via bounded RPC chunks.
 
-        Uses the existing write_file_b64 RPC for binary-safe transfer.
+        Base64-encoding an entire artifact can exceed Evonet's WebSocket read
+        limit. Chunks are encoded independently and written at byte offsets.
         """
-        import base64
         if create_dirs:
-            self.make_dirs(os.path.dirname(path) or '.')
-        encoded = base64.b64encode(data).decode('ascii')
-        return self.write_file_b64(path, encoded)
+            make_dirs_result = self.make_dirs(os.path.dirname(path) or '.')
+            if 'error' in make_dirs_result:
+                return make_dirs_result
+
+        if not data:
+            return self.write_file_b64(path, '', offset=0, is_last=True)
+
+        for offset in range(0, len(data), WRITE_FILE_BYTES_CHUNK_SIZE):
+            chunk = data[offset:offset + WRITE_FILE_BYTES_CHUNK_SIZE]
+            encoded = base64.b64encode(chunk).decode('ascii')
+            result = self.write_file_b64(
+                path,
+                encoded,
+                offset=offset,
+                is_last=offset + len(chunk) == len(data),
+            )
+            if 'error' in result:
+                return result
+        return {'ok': True}
 
     def make_dirs(self, path: str) -> dict:
         r = self.run_bash(f'mkdir -p {shlex.quote(path)}', 10, {})
