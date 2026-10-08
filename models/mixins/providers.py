@@ -91,15 +91,15 @@ class ProvidersMixin:
                 "SELECT id, name, type, provider, base_url, api_key, model_name, "
                 "max_tokens, timeout, thinking, thinking_budget, temperature, "
                 "enabled, is_default, created_at, updated_at, model_max_concurrent, "
-                "api_format, vision_supported, legacy_id, shortcode, context_window "
+                "api_format, vision_supported, legacy_id, shortcode, context_window, reasoning_effort "
                 "FROM llm_models WHERE provider = ? ORDER BY name",
                 (provider_id,),
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def resolve_model_config(self, model: Dict[str, Any]) -> Dict[str, Any]:
+    def resolve_model_config(self, model: Dict[str, Any], provider=None) -> Dict[str, Any]:
         """Fill in base_url/api_key/api_format from the provider if the model's own are empty."""
-        provider = self.get_provider(model.get("provider", ""))
+        provider = provider or self.get_provider(model.get("provider", ""))
         if not provider:
             return model
         result = dict(model)
@@ -112,3 +112,15 @@ class ProvidersMixin:
             if pf and pf != "openai":
                 result["api_format"] = pf
         return result
+
+    def get_model_reasoning_capabilities(self, model, provider=None):
+        """Use the static catalog for the effective endpoint and model."""
+        from backend.reasoning_capabilities import model_reasoning_capabilities
+        return model_reasoning_capabilities(self.resolve_model_config(model, provider))
+
+    def validate_model_reasoning(self, model):
+        from backend.reasoning_capabilities import validate_reasoning_effort
+        effort = model.get('reasoning_effort')
+        if effort is None or effort == '':
+            return None
+        return validate_reasoning_effort(effort, self.get_model_reasoning_capabilities(model))

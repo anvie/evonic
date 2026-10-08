@@ -844,6 +844,12 @@ class SchemaMixin:
                 )
             """)
 
+            # Provider-default reasoning is preserved for existing models.
+            try:
+                cursor.execute("ALTER TABLE llm_models ADD COLUMN reasoning_effort TEXT DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
+
             # Migration: add temperature column to llm_models if missing
             try:
                 cursor.execute("ALTER TABLE llm_models ADD COLUMN temperature REAL DEFAULT NULL")
