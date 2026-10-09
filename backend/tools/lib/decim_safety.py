@@ -99,6 +99,10 @@ class DecimDecision:
     policy_version: str
     correlation_id: str | None
     latency_ms: int
+    # Optional provider-supplied explanation of the choice.  The provider is
+    # untrusted, so consumers must treat this as data (bound + sanitize before
+    # display); ``None`` when the response carries no explanation.
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -356,10 +360,23 @@ def _conservative_confidence(reported: Any, probabilities: Any, choice: str,
     return min(candidates)
 
 
-def _parse_decision_answer(data: Any) -> tuple[str, float, str | None]:
+# Upper bound for a provider-supplied reason captured at parse time.  The API
+# layer sanitizes and re-bounds it before anything reaches the browser.
+MAX_REASON_CHARS = 500
+
+
+def _parse_reason(answer: dict[str, Any]) -> str | None:
+    """Extract an optional provider explanation, or ``None`` when absent."""
+    reason = answer.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return None
+    return reason.strip()[:MAX_REASON_CHARS]
+
+
+def _parse_decision_answer(data: Any) -> tuple[str, float, str | None, str | None]:
     """Parse a SystemOne/Nimble-style typed choice response.
 
-    Returns ``(choice, confidence, model_id)`` or raises
+    Returns ``(choice, confidence, model_id, reason)`` or raises
     :class:`DecimProviderError` with a non-sensitive category.
     """
     if not isinstance(data, dict):
@@ -384,7 +401,7 @@ def _parse_decision_answer(data: Any) -> tuple[str, float, str | None]:
     model_id = data.get("model_id")
     if not isinstance(model_id, str) or not model_id:
         model_id = None
-    return choice, confidence, model_id
+    return choice, confidence, model_id, _parse_reason(answer)
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +491,7 @@ class SystemOneDecisionProvider:
             data = json.loads(raw)
         except (ValueError, json.JSONDecodeError):
             raise DecimProviderError("invalid_response") from None
-        choice, confidence, model_id = _parse_decision_answer(data)
+        choice, confidence, model_id, reason = _parse_decision_answer(data)
         return DecimDecision(
             decision=choice,
             confidence=confidence,
@@ -483,6 +500,7 @@ class SystemOneDecisionProvider:
             policy_version=POLICY_VERSION,
             correlation_id=packet.get("correlation_id"),
             latency_ms=int((time.monotonic() - started) * 1000),
+            reason=reason,
         )
 
 

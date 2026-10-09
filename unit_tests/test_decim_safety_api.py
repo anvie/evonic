@@ -1,5 +1,6 @@
 """HTTP-surface tests for Decim Safety settings and the admin telemetry API."""
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,16 @@ def _clear_settings_cache():
     db.invalidate_settings_cache()
     yield
     db.invalidate_settings_cache()
+
+
+@pytest.fixture(autouse=True)
+def _clear_tester_rate_limit():
+    """Give every tester test a fresh rate-limit window."""
+    from routes import decim_safety
+
+    decim_safety._reset_tester_rate_limit()
+    yield
+    decim_safety._reset_tester_rate_limit()
 
 
 def _client():
@@ -290,5 +301,194 @@ def test_health_exposes_aggregate_latency_not_endpoint_secret():
     client.put("/api/settings/decim-safety", json={"provider_endpoint": secret})
     body = client.get("/api/admin/decim-safety/health").get_json()
     assert body["latency_ms"] == {"count": 0, "p50": None, "p95": None, "max": None}
+    assert secret not in str(body)
+    assert "internal.example" not in str(body)
+
+
+# ---------------------------------------------------------------------------
+# Bounded diagnostic tester (task #839)
+# ---------------------------------------------------------------------------
+
+
+def _fake_provider_class(calls, decision="allow", confidence=0.99, reason=None):
+    """A drop-in provider class for the process-wide resolver default."""
+    from backend.tools.lib.decim_safety import DecimDecision, POLICY_VERSION
+
+    class FakeProvider:
+        key = "systemone"
+
+        def decide(self, packet, settings):
+            calls.append(packet)
+            return DecimDecision(
+                decision=decision, confidence=confidence, model_id="m-1",
+                provider_key="systemone", policy_version=POLICY_VERSION,
+                correlation_id=packet.get("correlation_id"), latency_ms=12,
+                reason=reason,
+            )
+
+    return FakeProvider
+
+
+def test_tester_returns_provider_decision_with_timing():
+    client = _client()
+    calls = []
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class(calls)):
+        response = client.post("/api/admin/decim-safety/test",
+                               json={"payload": "echo hello", "tool_type": "bash"})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["success"] is True
+    assert body["diagnostic"] is True
+    assert body["decision"] == "allow"
+    assert body["confidence"] == 0.99
+    assert body["provider"] == "systemone"
+    assert body["model"] == "m-1"
+    assert body["latency_ms"] == 12
+    assert body["fallback_reason"] is None
+    assert body["payload_chars"] == len("echo hello")
+    assert body["tool_type"] == "bash"
+    # Default settings are disabled: the probe still reaches the provider,
+    # and the response says production is not using DMSS.
+    assert body["dmss_active"] is False
+    assert body["mode"] == "off"
+    assert body["circuit_state"] in ("closed", "open")
+    # The payload travelled as data inside the policy packet.
+    assert calls and calls[0]["requested_code"] == "echo hello"
+    assert calls[0]["tool_type"] == "bash"
+
+
+def test_tester_low_confidence_flags_hmads_fallback():
+    client = _client()
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class([], confidence=0.40)):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "echo hello"}).get_json()
+    # The raw provider decision is still reported for diagnostics...
+    assert body["decision"] == "allow"
+    assert body["confidence"] == 0.40
+    # ...but production would reject it as unusable (below the 0.90 minimum).
+    assert body["fallback_reason"] == "low_confidence"
+    assert "minimum" in body["reason"]
+
+
+def test_tester_payload_bounded_by_max_payload_chars():
+    client = _client()
+    client.put("/api/settings/decim-safety", json={"max_payload_chars": 10})
+    calls = []
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class(calls)):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "x" * 20}).get_json()
+    assert body["decision"] is None
+    assert body["fallback_reason"] == "payload_too_large"
+    assert "10" in body["reason"]
+    assert calls == []  # never sent to the provider
+
+
+def test_tester_sensitive_payload_not_sent_to_provider():
+    client = _client()
+    calls = []
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class(calls)):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "export api_key=sk_abcdefghijklmnop"}).get_json()
+    assert body["decision"] is None
+    assert body["fallback_reason"] == "sensitive_payload"
+    assert calls == []
+
+
+def test_tester_sanitizes_provider_reason_paths():
+    client = _client()
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class([], reason="wrote to /home/user/secrets.txt")):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "echo hello"}).get_json()
+    assert body["reason"] == "wrote to [path]"
+    assert "/home" not in body["reason"]
+
+
+def test_tester_redacts_reason_containing_secrets():
+    client = _client()
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class([], reason="found api_key=sk_abcdefghijklmnop in output")):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "echo hello"}).get_json()
+    assert "redacted" in body["reason"].lower()
+    assert "sk_abcdefghijklmnop" not in body["reason"]
+
+
+def test_tester_rate_limited_per_session():
+    client = _client()
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class([])):
+        for _ in range(10):
+            assert client.post("/api/admin/decim-safety/test",
+                               json={"payload": "echo hi"}).status_code == 200
+        response = client.post("/api/admin/decim-safety/test",
+                               json={"payload": "echo hi"})
+    assert response.status_code == 429
+    assert response.get_json()["retry_after"] > 0
+    assert response.headers.get("Retry-After")
+
+
+def test_tester_requires_payload_and_valid_tool():
+    client = _client()
+    assert client.post("/api/admin/decim-safety/test", json={}).status_code == 400
+    assert client.post("/api/admin/decim-safety/test", json={"payload": "   "}).status_code == 400
+    assert client.post("/api/admin/decim-safety/test", json={"payload": 5}).status_code == 400
+    assert client.post("/api/admin/decim-safety/test",
+                       json={"payload": "x", "tool_type": "java"}).status_code == 400
+
+
+def test_tester_unconfigured_provider_reports_fallback():
+    client = _client()
+    with patch.dict(os.environ, {"DECIM_SAFETY_SYSTEMONE_ENDPOINT": ""}):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "echo hi"}).get_json()
+    assert body["success"] is True
+    assert body["decision"] is None
+    assert body["fallback_reason"] == "provider_unconfigured"
+
+
+def test_tester_does_not_pollute_telemetry():
+    from backend.services import decim_safety_telemetry
+
+    client = _client()
+    before = decim_safety_telemetry.get_state()["total_recorded"]
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class([])):
+        client.post("/api/admin/decim-safety/test", json={"payload": "echo hi"})
+    assert decim_safety_telemetry.get_state()["total_recorded"] == before
+    assert decim_safety_telemetry.list_events(limit=200)["events"] == []
+
+
+def test_tester_does_not_trip_production_circuit_breaker():
+    from backend.tools.lib.decim_safety import DecimProviderError, get_decim_safety_resolver
+
+    class FailingProvider:
+        key = "systemone"
+
+        def decide(self, packet, settings):
+            raise DecimProviderError("transport_error")
+
+    client = _client()
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", FailingProvider):
+        for _ in range(5):  # more than the default 3-failure breaker threshold
+            body = client.post("/api/admin/decim-safety/test",
+                               json={"payload": "echo hi"}).get_json()
+            assert body["fallback_reason"] == "transport_error"
+    # The probe uses an isolated resolver, so production decisions are untouched.
+    assert get_decim_safety_resolver().breaker.state() == "closed"
+
+
+def test_tester_response_never_leaks_endpoint_secret():
+    client = _client()
+    secret = "https://provider.internal.example:9443/decision/very-secret"
+    client.put("/api/settings/decim-safety", json={"provider_endpoint": secret})
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
+               _fake_provider_class([])):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "echo hi"}).get_json()
     assert secret not in str(body)
     assert "internal.example" not in str(body)

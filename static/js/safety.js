@@ -666,20 +666,147 @@
         },
     };
 
-    /* ==================== Diagnostic tester placeholder (task #839) ====================
-     * Entry point only: the bounded provider test endpoint lands in #839. */
+    /* ==================== Diagnostic tester (task #839) ====================
+     * Bounded probe of the DMSS provider: POST /api/admin/decim-safety/test.
+     * The payload is data, not code — the server never executes it. Results
+     * render inline (decision + confidence + reason + timing) with explicit
+     * "diagnostic only" semantics. */
 
     window.safetyTester = {
+        _running: false,
+
         init() {
             var run = qs("#dmss-tester-run");
             if (!run) return;
-            run.addEventListener("click", function () {
-                var out = qs("#dmss-tester-out");
-                if (out) {
-                    out.className = "sf-tester-out";
-                    out.textContent = "Tester endpoint lands with task #839 — this entry point is wired and ready.";
+            var payload = qs("#dmss-tester-payload");
+            if (payload) {
+                payload.addEventListener("input", function () { window.safetyTester._updateCount(); });
+                // Ctrl/Cmd+Enter runs the probe without leaving the textarea.
+                payload.addEventListener("keydown", function (e) {
+                    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                        e.preventDefault();
+                        window.safetyTester.run();
+                    }
+                });
+            }
+            run.addEventListener("click", function () { window.safetyTester.run(); });
+            this._updateCount();
+        },
+
+        _updateCount() {
+            var payload = qs("#dmss-tester-payload");
+            var count = qs("#dmss-tester-count");
+            if (!payload || !count) return;
+            var len = payload.value.length;
+            var max = (window.safetyDmss && window.safetyDmss._config &&
+                       window.safetyDmss._config.max_payload_chars) || null;
+            count.textContent = len.toLocaleString() +
+                (max ? " / " + Number(max).toLocaleString() : "") + " chars";
+            count.classList.toggle("is-over", max != null && len > Number(max));
+        },
+
+        run() {
+            if (this._running) return;
+            var payloadEl = qs("#dmss-tester-payload");
+            var toolEl = qs("#dmss-tester-tool");
+            var out = qs("#dmss-tester-out");
+            var run = qs("#dmss-tester-run");
+            var payload = payloadEl ? payloadEl.value : "";
+            if (!payload.trim()) {
+                this._renderError(out, "Paste a sample payload first.");
+                return;
+            }
+            this._running = true;
+            if (run) run.disabled = true;
+            this._renderPending(out);
+
+            fetch("/api/admin/decim-safety/test", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ payload: payload, tool_type: toolEl ? toolEl.value : "bash" }),
+            }).then(function (r) {
+                return r.json().then(function (d) { return { ok: r.ok, status: r.status, data: d }; });
+            }).then(function (res) {
+                window.safetyTester._running = false;
+                if (run) run.disabled = false;
+                if (!res.ok) {
+                    if (res.status === 429) {
+                        var secs = (res.data && res.data.retry_after) || "a moment";
+                        window.safetyTester._renderError(out,
+                            "Rate limit exceeded — try again in " + secs + " s (max 10 tests/min).");
+                    } else {
+                        window.safetyTester._renderError(out,
+                            (res.data && res.data.error) || "Test failed (HTTP " + res.status + ").");
+                    }
+                    return;
                 }
+                window.safetyTester._renderResult(out, res.data);
+            }).catch(function (e) {
+                console.error("DMSS diagnostic test failed:", e);
+                window.safetyTester._running = false;
+                if (run) run.disabled = false;
+                window.safetyTester._renderError(out, "Network error — could not reach the server.");
             });
+        },
+
+        _renderPending(out) {
+            if (!out) return;
+            out.hidden = false;
+            out.className = "sf-tester-out";
+            out.innerHTML = '<div class="sf-tester-pending"><div class="spinner"></div><span>Calling DMSS provider…</span></div>';
+        },
+
+        _renderError(out, message) {
+            if (!out) return;
+            out.hidden = false;
+            out.className = "sf-tester-out sf-tester-out-err";
+            out.innerHTML =
+                '<div class="sf-tester-line"><span class="sf-tester-verdict sf-tester-verdict-none">no decision</span>' +
+                '<span class="sf-tester-msg">' + esc(message) + "</span></div>";
+        },
+
+        _renderResult(out, d) {
+            if (!out) return;
+            out.hidden = false;
+            var decision = d.decision; // "allow" | "review" | "block" | null
+            var cls = decision === "allow" ? "sf-tester-verdict-allow"
+                : decision === "review" ? "sf-tester-verdict-review"
+                : decision === "block" ? "sf-tester-verdict-block"
+                : "sf-tester-verdict-none";
+            var label = decision ? decision.toUpperCase() : "NO DECISION";
+
+            var rows = "";
+            function row(key, value) {
+                if (value === null || value === undefined || value === "") return;
+                rows += '<div class="sf-tester-kv"><span class="sf-tester-k">' + key +
+                    '</span><span class="sf-tester-v">' + esc(value) + "</span></div>";
+            }
+            row("confidence", d.confidence == null ? "—" : (Math.round(d.confidence * 1000) / 10) + "%");
+            row("latency", d.latency_ms == null ? "—" : d.latency_ms + " ms");
+            row("provider", d.provider || "—");
+            row("model", d.model || "—");
+            row("payload", (d.payload_chars != null ? d.payload_chars : 0) + " chars · " + (d.tool_type || "bash"));
+
+            var notes = [];
+            if (d.fallback_reason === "low_confidence") {
+                notes.push("Production would fall back to HMADS (confidence below the configured minimum).");
+            } else if (d.fallback_reason) {
+                notes.push("Fallback reason: " + d.fallback_reason + ".");
+            }
+            if (d.dmss_active === false) {
+                notes.push("DMSS is currently disabled — production decides with HMADS only; this probe is diagnostic.");
+            }
+
+            out.className = "sf-tester-out";
+            out.innerHTML =
+                '<div class="sf-tester-line"><span class="sf-tester-verdict ' + cls + '">' + label + "</span>" +
+                '<span class="sf-tester-msg">' + esc(d.reason || "") + "</span></div>" +
+                (rows ? '<div class="sf-tester-rows">' + rows + "</div>" : "") +
+                (notes.length
+                    ? '<div class="sf-tester-notes">' + notes.map(function (n) {
+                        return "<span>• " + esc(n) + "</span>";
+                    }).join("") + "</div>"
+                    : "");
         },
     };
 

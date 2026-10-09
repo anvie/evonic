@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Features
+
+- Safety > DMSS tab: added a bounded **diagnostic tester** for troubleshooting the decision-model provider. Paste a sample payload (bash or python), hit *Test*, and the backend probes the configured DMSS provider end-to-end via `POST /api/admin/decim-safety/test`, returning the decision (allow/review/block), confidence, a sanitized provider reason, latency, and the provider/model used. The probe is explicitly *diagnostic only*: the payload is treated as data (never executed), production decisions are untouched, and the production telemetry store is not polluted. Guardrails: 10 probes/min per session (429 + Retry-After), payload size bounded by the configured `max_payload_chars`, provider timeout bounded by `request_timeout_ms`, a 128 KB request-body cap, and a fresh resolver per probe so test failures cannot trip the production circuit breaker (whose state is reported read-only). Provider reasons are sanitized before display (internal file paths replaced, secret-bearing text redacted).
+
 ## [1.3.0] - 2026-10-05
 
 ### Features

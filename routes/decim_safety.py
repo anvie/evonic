@@ -19,8 +19,11 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import re
+import threading
+import time
 
-from flask import Blueprint, jsonify, redirect, request
+from flask import Blueprint, jsonify, redirect, request, session
 
 logger = logging.getLogger(__name__)
 
@@ -178,3 +181,209 @@ def api_decim_safety_clear():
     result = decim_safety_telemetry.clear(actor="admin")
     status = 200 if result.get("success") else 500
     return jsonify(result), status
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic tester (task #839)
+#
+# A bounded, *diagnostic only* probe of the configured DMSS provider: the
+# pasted payload is treated as data (never executed), the probe does not alter
+# production decisions, and it does not write to the telemetry store.  The
+# probe runs through a fresh resolver so its failures cannot trip the
+# production circuit breaker; the production breaker state is reported
+# read-only for context.
+# ---------------------------------------------------------------------------
+
+# The probe costs a real provider round-trip, so it carries its own stricter
+# budget on top of the global API rate-limit tier.
+_TESTER_MAX_BODY_BYTES = 128 * 1024
+_TESTER_MAX_REQUESTS = 10
+_TESTER_WINDOW_SECONDS = 60
+_TESTER_REASON_MAX = 300
+
+# In-memory sliding window per session: key -> [monotonic timestamps].
+_tester_windows: dict[str, list[float]] = {}
+_tester_windows_lock = threading.Lock()
+
+# Internal absolute paths that must not reach the browser in a provider reason.
+_TESTER_PATH_PATTERN = re.compile(r"(?:(?:/[A-Za-z0-9._-]+){2,}|[A-Za-z]:\\[^\s]*)")
+# Secret-bearing markers (mirrors the library payload check): if present in the
+# provider's own explanation, redact the whole reason rather than risk leaking
+# a credential fragment.
+_TESTER_SECRETISH_PATTERN = re.compile(
+    r"(?ix)(?:\b(?:api[_-]?key|token|password|secret|authorization)\b\s*(?:=|:)\s*|"
+    r"\b(?:sk|ghp|github_pat)_[a-z0-9_-]{12,}|-----BEGIN [A-Z ]+PRIVATE KEY-----)"
+)
+
+# Human-readable descriptions of typed fallback categories (provider-neutral).
+_TESTER_FALLBACK_TEXT = {
+    "payload_too_large": "Payload exceeds the configured maximum size and was not sent to the provider.",
+    "sensitive_payload": "Payload looks like it contains a secret (API key/token/private key) and was not sent to the provider.",
+    "provider_unconfigured": "No provider endpoint is configured.",
+    "transport_error": "Provider unreachable or the request timed out.",
+    "http_error": "Provider returned a non-2xx HTTP status.",
+    "invalid_response": "Provider returned a malformed or unexpected response.",
+    "low_confidence": "Provider confidence is below the configured minimum.",
+    "redirect_rejected": "Provider redirected the request (redirects are rejected).",
+    "response_too_large": "Provider response exceeded the size limit.",
+    "provider_error": "Unexpected provider failure.",
+}
+
+
+def _tester_rate_limit_key() -> str:
+    """Session identity for the tester budget (user when authenticated, else IP)."""
+    if session.get("authenticated"):
+        return f"user:{session.get('_user_id', 'admin')}"
+    return f"ip:{request.remote_addr or '0.0.0.0'}"
+
+
+def _tester_rate_limit() -> int | None:
+    """Record one probe; return seconds to wait when the budget is exhausted."""
+    now = time.monotonic()
+    key = _tester_rate_limit_key()
+    with _tester_windows_lock:
+        window = [t for t in _tester_windows.get(key, []) if now - t < _TESTER_WINDOW_SECONDS]
+        if len(window) >= _TESTER_MAX_REQUESTS:
+            _tester_windows[key] = window
+            return max(1, int(window[0] + _TESTER_WINDOW_SECONDS - now) + 1)
+        window.append(now)
+        _tester_windows[key] = window
+        return None
+
+
+def _reset_tester_rate_limit() -> None:
+    """Clear the in-memory tester budget (used by tests)."""
+    with _tester_windows_lock:
+        _tester_windows.clear()
+
+
+def _sanitize_tester_reason(text: str) -> str:
+    """Bound and scrub a provider reason: no secrets, no internal paths."""
+    collapsed = " ".join(str(text).split())
+    if _TESTER_SECRETISH_PATTERN.search(collapsed):
+        return "Provider reason redacted (possible secret)."
+    collapsed = _TESTER_PATH_PATTERN.sub("[path]", collapsed)
+    return collapsed[:_TESTER_REASON_MAX]
+
+
+def _tester_result(settings, decision, fallback_reason, payload, tool_type) -> dict:
+    """Assemble the diagnostic response (provider-neutral, bounded)."""
+    from backend.tools.lib.decim_safety import get_decim_safety_resolver
+
+    circuit_state = "closed"
+    try:
+        circuit_state = get_decim_safety_resolver().breaker.state()
+    except Exception:
+        logger.exception("Unable to read Decim Safety circuit state for tester")
+
+    dmss_active = bool(settings.enabled) and settings.mode != "off"
+    if decision is not None:
+        if fallback_reason == "low_confidence":
+            reason = (
+                f"Provider returned '{decision.decision}' at {decision.confidence:.2f} confidence, "
+                f"below the configured minimum ({settings.minimum_confidence}) — "
+                f"production would fall back to HMADS."
+            )
+        elif decision.reason:
+            reason = _sanitize_tester_reason(decision.reason)
+        else:
+            reason = (
+                f"Provider classified the payload as '{decision.decision}' "
+                f"with {decision.confidence:.2f} confidence."
+            )
+        body = {
+            "decision": decision.decision,
+            "confidence": decision.confidence,
+            "model": decision.model_id,
+            "latency_ms": decision.latency_ms,
+            "correlation_id": decision.correlation_id,
+        }
+    else:
+        if fallback_reason == "payload_too_large":
+            reason = _TESTER_FALLBACK_TEXT[fallback_reason] + f" (max {settings.max_payload_chars} chars)"
+        else:
+            reason = _TESTER_FALLBACK_TEXT.get(fallback_reason, "Provider probe failed.")
+        body = {
+            "decision": None,
+            "confidence": None,
+            "model": None,
+            "latency_ms": None,
+            "correlation_id": None,
+        }
+
+    return {
+        "success": True,
+        "diagnostic": True,
+        "provider": settings.provider,
+        "mode": settings.mode,
+        "dmss_active": dmss_active,
+        "circuit_state": circuit_state,
+        "payload_chars": len(payload),
+        "tool_type": tool_type,
+        "fallback_reason": fallback_reason,
+        "reason": reason,
+        **body,
+    }
+
+
+@decim_safety_bp.route("/api/admin/decim-safety/test", methods=["POST"])
+def api_decim_safety_test():
+    """Bounded diagnostic probe of the configured DMSS provider.
+
+    Request: ``{"payload": "<sample text>", "tool_type": "bash"|"python"}``.
+    The payload is bounded by ``max_payload_chars``, the provider call by
+    ``request_timeout_ms``, and the endpoint by a per-session 10 req/min
+    budget.  The response carries decision, confidence, a sanitized reason,
+    latency and the provider/model used.  Success means the probe was
+    processed; a provider failure is itself a diagnostic outcome
+    (``decision: null`` + ``fallback_reason``).
+    """
+    from backend.tools.lib.decim_safety import (
+        DecimProviderError, DecimSafetyResolver, SCOPED_TOOL_TYPES,
+        build_policy_packet, load_decim_settings,
+    )
+
+    if (request.content_length or 0) > _TESTER_MAX_BODY_BYTES:
+        return jsonify({"success": False, "error": "payload too large for a diagnostic probe"}), 413
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "expected a JSON object"}), 400
+    payload = data.get("payload")
+    if not isinstance(payload, str) or not payload.strip():
+        return jsonify({"success": False, "error": "payload must be a non-empty string"}), 400
+    tool_type = data.get("tool_type", "bash")
+    if tool_type not in SCOPED_TOOL_TYPES:
+        return jsonify({"success": False, "error": "tool_type must be bash or python"}), 400
+
+    retry_after = _tester_rate_limit()
+    if retry_after is not None:
+        resp = jsonify({"success": False, "error": "rate limit exceeded", "retry_after": retry_after})
+        resp.headers["Retry-After"] = str(retry_after)
+        return resp, 429
+
+    settings = load_decim_settings()
+    # Fresh resolver: probe failures must not trip the production breaker.
+    resolver = DecimSafetyResolver()
+    provider = resolver.providers.get(settings.provider)
+    if provider is None:
+        return jsonify(_tester_result(settings, None, "provider_unconfigured", payload, tool_type)), 200
+
+    decision = None
+    fallback_reason = None
+    try:
+        # Bounded by settings.max_payload_chars; secret-looking payloads stay local.
+        packet = build_policy_packet(payload, tool_type, "sandboxed_docker",
+                                     settings.max_payload_chars)
+        # decide() enforces settings.request_timeout_ms for the provider call.
+        decision = provider.decide(packet, settings)
+    except DecimProviderError as exc:
+        fallback_reason = exc.category
+    except Exception:
+        logger.exception("Decim diagnostic probe failed unexpectedly")
+        fallback_reason = "provider_error"
+
+    if decision is not None and decision.confidence < settings.minimum_confidence:
+        fallback_reason = "low_confidence"
+
+    return jsonify(_tester_result(settings, decision, fallback_reason, payload, tool_type)), 200

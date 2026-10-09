@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=8">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=2">
 
 <div class="safety-page">
     <div class="safety-header">
@@ -304,26 +304,38 @@
             <div id="dmss-pager" class="sf-pager"></div>
         </div>
 
-        <!-- Diagnostic tester placeholder (entry point for task #839) -->
+        <!-- Diagnostic tester (task #839) -->
         <div class="sf-tester sf-mt">
             <i data-lucide="flask-conical"></i>
             <div class="sf-tester-body">
                 <div class="sf-tester-title">Diagnostic tester <span class="sf-tester-note">diagnostic only</span></div>
                 <p class="sf-tester-desc">
                     Paste a sample payload and call the DMSS provider end-to-end to debug a
-                    decision. The tester does not execute commands, does not alter production
-                    decisions, and does not pollute telemetry. The entry point lands with the
-                    tester endpoint (task #839).
+                    decision. The payload is treated as data &mdash; it is never executed, production
+                    decisions are not altered, and telemetry is not polluted.
                 </p>
                 <div class="sf-tester-box">
-                    <textarea id="dmss-tester-payload" rows="3"
-                              placeholder="Sample payload (e.g. a bash command)…" disabled></textarea>
-                    <button type="button" class="sf-btn" id="dmss-tester-run" disabled>Test</button>
+                    <div class="sf-tester-input">
+                        <textarea id="dmss-tester-payload" rows="3"
+                                  placeholder="Sample payload (e.g. a bash command)…"
+                                  aria-label="Sample payload"></textarea>
+                        <div class="sf-tester-meta">
+                            <select id="dmss-tester-tool" class="sf-select sf-select-sm" aria-label="Tool type">
+                                <option value="bash">bash</option>
+                                <option value="python">python</option>
+                            </select>
+                            <span id="dmss-tester-count" class="sf-tester-count">0 chars</span>
+                        </div>
+                    </div>
+                    <button type="button" class="sf-btn sf-btn-primary" id="dmss-tester-run">
+                        <i data-lucide="flask-conical"></i>Test
+                    </button>
                 </div>
+                <div id="dmss-tester-out" class="sf-tester-out" role="status" aria-live="polite" hidden></div>
             </div>
         </div>
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/safety.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='js/safety.js') }}?v=2"></script>
 {% endblock %}
