@@ -95,13 +95,19 @@
     };
 
     /* ==================== General pane: policy + live status ====================
-     * Explains the "HMADS only" vs "DMSS enabled" choice and shows the live
-     * operational state (settings + health). Policy *controls* (persistence
-     * UI) land with task #837 — here the status is read-only. */
+     * Explains the "HMADS only" vs "DMSS enabled" choice, offers the policy
+     * controls (segmented selector + synced enable switch, persisted via
+     * PUT /api/settings/decim-safety — task #837), and shows the live
+     * operational state (settings + health). */
 
     window.safetyGeneral = {
         _initialized: false,
         _timer: null,
+        _loaded: null,          // last settings object returned by the API
+        _lastHealth: null,      // last health object (reused after a save)
+        _pending: { policy: null }, // policy currently selected in the UI
+        _dirty: false,          // _pending differs from the loaded policy
+        _saving: false,
 
         init() {
             if (this._initialized) return;
@@ -110,11 +116,176 @@
             if (retry) retry.addEventListener("click", function () { window.safetyGeneral.load(); });
             var refresh = qs("#sg-refresh");
             if (refresh) refresh.addEventListener("click", function () { window.safetyGeneral.load(); });
+
+            // Policy selector + enable toggle + save (task #837).
+            var self = this;
+            document.querySelectorAll('input[name="sg-policy"]').forEach(function (r) {
+                r.addEventListener("change", function () { self._onPolicyChange(r.value); });
+            });
+            var toggle = qs("#sg-enabled-toggle");
+            if (toggle) toggle.addEventListener("change", function () { self._onToggleChange(); });
+            var save = qs("#sg-save");
+            if (save) save.addEventListener("click", function () { self.save(); });
+
             this.load();
             // Keep the status card fresh while the page is open.
             this._timer = setInterval(function () {
                 if (!document.hidden) window.safetyGeneral.load(true);
             }, 30000);
+        },
+
+        /* ---------- Policy <-> settings mapping ----------
+         * "HMADS only"  => enabled=false, mode="off"   (resolver never calls the provider)
+         * "DMSS enabled"=> enabled=true,  mode=shadow|enforce (deterministic HMADS fallback) */
+        _policyFromSettings(s) {
+            return (!s || !s.enabled || s.mode === "off") ? "hmads-only" : "dmss";
+        },
+
+        _payloadFromPolicy(policy) {
+            if (policy === "dmss") {
+                var mode = (this._loaded && (this._loaded.mode === "shadow" || this._loaded.mode === "enforce"))
+                    ? this._loaded.mode : "shadow";
+                return { enabled: true, mode: mode };
+            }
+            return { enabled: false, mode: "off" };
+        },
+
+        _applyPolicyToControls(policy) {
+            var radio = qs("#sg-radio-" + (policy === "dmss" ? "dmss" : "hmads"));
+            if (radio) radio.checked = true;
+            var on = policy === "dmss";
+            var toggle = qs("#sg-enabled-toggle");
+            if (toggle) toggle.checked = on;
+            var text = qs("#sg-enabled-text");
+            if (text) text.textContent = on ? "On" : "Off";
+        },
+
+        _markDirty() {
+            var loadedPolicy = this._policyFromSettings(this._loaded);
+            var dirty = !!(this._pending.policy && this._pending.policy !== loadedPolicy);
+            this._dirty = dirty;
+            var badge = qs("#sg-dirty");
+            if (badge) badge.hidden = !dirty;
+        },
+
+        _onPolicyChange(value) {
+            this._pending.policy = value;
+            this._applyPolicyToControls(value);
+            this._clearFieldErrors();
+            this._markDirty();
+        },
+
+        _onToggleChange() {
+            var toggle = qs("#sg-enabled-toggle");
+            var on = !!(toggle && toggle.checked);
+            var policy = on ? "dmss" : "hmads-only";
+            this._pending.policy = policy;
+            var radio = qs("#sg-radio-" + (on ? "dmss" : "hmads"));
+            if (radio) radio.checked = true;
+            var text = qs("#sg-enabled-text");
+            if (text) text.textContent = on ? "On" : "Off";
+            this._clearFieldErrors();
+            this._markDirty();
+        },
+
+        /* Reflect server state into the controls. Skips the overwrite while the
+         * user has unsaved edits so a background refresh doesn't clobber them. */
+        syncControls(settings) {
+            this._loaded = settings || {};
+            if (!this._dirty) {
+                this._pending.policy = this._policyFromSettings(this._loaded);
+                this._applyPolicyToControls(this._pending.policy);
+            }
+            this._markDirty();
+        },
+
+        /* ---------- Field-level validation + persistence ---------- */
+        _validate() {
+            var errors = {};
+            var policy = this._pending ? this._pending.policy : null;
+            if (policy !== "hmads-only" && policy !== "dmss") {
+                errors.policy = "Choose a policy: HMADS only or DMSS enabled.";
+                return { ok: false, errors: errors };
+            }
+            var payload = this._payloadFromPolicy(policy);
+            if (typeof payload.enabled !== "boolean") errors.enabled = "Enabled must be a boolean.";
+            if (["off", "shadow", "enforce"].indexOf(payload.mode) === -1) {
+                errors.enabled = "Mode must be one of: off, shadow, enforce.";
+            }
+            return { ok: Object.keys(errors).length === 0, errors: errors };
+        },
+
+        _setFieldError(sel, msg) {
+            var el = qs(sel);
+            if (!el) return;
+            if (msg) { el.textContent = msg; el.hidden = false; }
+            else { el.hidden = true; }
+        },
+
+        _showFieldErrors(errors) {
+            this._setFieldError("#sg-err-policy", errors.policy);
+            this._setFieldError("#sg-err-enabled", errors.enabled || errors.mode);
+        },
+
+        _clearFieldErrors() {
+            this._setFieldError("#sg-err-policy", null);
+            this._setFieldError("#sg-err-enabled", null);
+        },
+
+        save() {
+            var self = this;
+            if (this._saving) return;
+            var errors = this._validate();
+            if (!errors.ok) { this._showFieldErrors(errors.errors); return; }
+            this._clearFieldErrors();
+
+            var payload = this._payloadFromPolicy(this._pending.policy);
+            this._saving = true;
+            var saveBtn = qs("#sg-save");
+            var status = qs("#sg-save-status");
+            var errBox = qs("#sg-save-error");
+            if (saveBtn) saveBtn.disabled = true;
+            if (status) status.textContent = "Saving\u2026";
+            if (errBox) errBox.hidden = true;
+
+            fetch("/api/settings/decim-safety", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            }).then(function (r) {
+                return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+            }).then(function (res) {
+                self._saving = false;
+                if (saveBtn) saveBtn.disabled = false;
+                if (status) status.textContent = "";
+                if (res.ok && res.data && res.data.success) {
+                    if (window.toast) toast.success("Safety policy saved");
+                    else if (window.evToast) evToast("Safety policy saved", "success");
+                    // Re-render from the authoritative server state (keeps health fresh).
+                    self.render((res.data && res.data.settings) || self._loaded, self._lastHealth);
+                } else {
+                    var msg = (res.data && res.data.error) || "Save failed.";
+                    if (errBox) {
+                        var em = qs("#sg-save-error-msg");
+                        if (em) em.textContent = msg;
+                        errBox.hidden = false;
+                    }
+                    if (window.toast) toast.error(msg);
+                    else if (window.evToast) evToast(msg, "error");
+                }
+            }).catch(function (e) {
+                self._saving = false;
+                if (saveBtn) saveBtn.disabled = false;
+                if (status) status.textContent = "";
+                console.error("Failed to save safety policy:", e);
+                if (errBox) {
+                    var em2 = qs("#sg-save-error-msg");
+                    if (em2) em2.textContent = "Network error \u2014 could not reach the server.";
+                    errBox.hidden = false;
+                }
+                if (window.toast) toast.error("Failed to save safety policy");
+                else if (window.evToast) evToast("Failed to save safety policy", "error");
+            });
         },
 
         load(silent) {
@@ -144,10 +315,11 @@
             var body = qs("#sg-status");
             if (loading) loading.hidden = true;
             if (body) body.hidden = false;
+            this._lastHealth = health || {};
 
             var dmssOn = !!settings.enabled;
 
-            // Highlight the active policy card.
+            // Highlight the active policy card (badge on the HMADS card, pill on the DMSS card).
             document.querySelectorAll(".sf-policy").forEach(function (card) {
                 var policy = card.dataset.policy;
                 var active = (policy === "dmss") === dmssOn;
@@ -157,6 +329,8 @@
                     badge.textContent = active ? "Active" : "Inactive";
                     badge.className = "sf-policy-badge " + (active ? "sf-badge sf-badge-accent" : "sf-badge sf-badge-muted");
                 }
+                var pill = card.querySelector(".sf-policy-active-pill");
+                if (pill) pill.hidden = !active;
             });
 
             // Mode label: off / shadow / enforce (with the human meaning).
@@ -165,7 +339,6 @@
             this._set("#sg-mode", modeText);
             this._set("#sg-enabled", dmssOn ? "On" : "Off");
             this._set("#sg-provider", dmssOn ? (settings.provider || "—") : "— (disabled)");
-            this._set("#sg-circuit", health.circuit_state || "—");
             this._set("#sg-fallback",
                 (health.fallback_rate_24h === null || health.fallback_rate_24h === undefined)
                     ? "—" : (Math.round(health.fallback_rate_24h * 1000) / 10) + "%");
@@ -185,6 +358,9 @@
                 cb.className = "sf-badge " + (state === "open" ? "sf-badge-err" : (state === "half-open" ? "sf-badge-warn" : "sf-badge-ok"));
                 cb.textContent = state;
             }
+
+            // Keep the policy controls in sync with the server state.
+            this.syncControls(settings);
         },
 
         _set(sel, value) {

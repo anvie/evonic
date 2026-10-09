@@ -244,6 +244,155 @@ html.dark {
     color: var(--text-primary);
 }
 
+/* ---------- Policy controls (General tab, task #837) ---------- */
+.sf-field { margin-bottom: 18px; }
+.sf-field:last-of-type { margin-bottom: 0; }
+.sf-field-label {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+.sf-field-err {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--sf-err);
+}
+.sf-field-err[hidden] { display: none; }
+.sf-field-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+/* Segmented policy selector */
+.sf-segmented {
+    display: inline-flex;
+    gap: 3px;
+    padding: 3px;
+    background: var(--bg-controls);
+    border: 1px solid var(--border-input);
+    border-radius: 10px;
+    max-width: 100%;
+    overflow-x: auto;
+}
+.sf-seg { position: relative; cursor: pointer; flex: 0 0 auto; }
+.sf-seg input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.sf-seg span {
+    display: inline-block;
+    padding: 7px 18px;
+    border-radius: 7px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.sf-seg:hover span { color: var(--text-heading); }
+.sf-seg input:checked + span {
+    background: var(--sf-accent);
+    color: #fff;
+}
+html.dark .sf-seg input:checked + span { color: #1e1b4b; }
+.sf-seg input:focus-visible + span {
+    outline: 2px solid var(--sf-accent);
+    outline-offset: 1px;
+}
+
+/* Enable switch */
+.sf-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+}
+.sf-switch input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.sf-switch-track {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    border-radius: 999px;
+    background: var(--bg-controls);
+    border: 1px solid var(--border-input);
+    flex-shrink: 0;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.sf-switch-track::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: transform 0.15s ease, background-color 0.15s ease;
+}
+.sf-switch input:checked + .sf-switch-track {
+    background: var(--sf-accent);
+    border-color: var(--sf-accent);
+}
+.sf-switch input:checked + .sf-switch-track::after {
+    transform: translateX(20px);
+    background: #fff;
+}
+html.dark .sf-switch input:checked + .sf-switch-track::after { background: #1e1b4b; }
+.sf-switch input:focus-visible + .sf-switch-track {
+    outline: 2px solid var(--sf-accent);
+    outline-offset: 2px;
+}
+.sf-switch-text {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+/* Save row */
+.sf-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+}
+.sf-save-status {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+#sg-save-error {
+    margin-top: 12px;
+    padding: 10px 12px;
+    text-align: left;
+    font-size: 0.78rem;
+}
+
+/* Primary button variant */
+.sf-btn-primary {
+    background: var(--sf-accent-strong);
+    border-color: var(--sf-accent-strong);
+    color: #fff;
+}
+.sf-btn-primary:hover { filter: brightness(1.08); }
+html.dark .sf-btn-primary { color: #1e1b4b; }
+.sf-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; filter: none; }
+
 /* ---------- Status KPIs ---------- */
 .sf-status-grid {
     display: grid;

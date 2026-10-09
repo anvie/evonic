@@ -119,16 +119,56 @@
             </div>
         </div>
 
-        <!-- Policy controls placeholder (persistence lands with task #837) -->
-        <div class="sf-tester sf-mt">
-            <i data-lucide="sliders-horizontal"></i>
-            <div class="sf-tester-body">
-                <div class="sf-tester-title">Policy controls <span class="sf-tester-note">coming soon</span></div>
-                <p class="sf-tester-desc">
-                    The switch between <em>HMADS only</em> and <em>DMSS enabled</em> (mode, provider,
-                    guardrail tuning) lands here with the General settings work (task #837). Until
-                    then, the status above is read-only.
-                </p>
+        <!-- Policy controls (persistence: task #837) -->
+        <div class="sf-card sf-mt" id="sg-controls">
+            <div class="sf-card-head">
+                <h3>Policy</h3>
+                <span id="sg-dirty" class="sf-badge sf-badge-warn" hidden>Unsaved changes</span>
+            </div>
+            <p class="sf-card-desc">
+                Choose how agent commands are scored. <strong>HMADS only</strong> uses the
+                deterministic heuristic rules exclusively &mdash; the DMSS provider is never called.
+                <strong>DMSS enabled</strong> adds the decision model, with the deterministic HMADS
+                decision as the exact fallback.
+            </p>
+
+            <!-- Policy selector -->
+            <div class="sf-field">
+                <span class="sf-field-label" id="sg-policy-label">Policy</span>
+                <div class="sf-segmented" role="radiogroup" aria-labelledby="sg-policy-label" id="sg-policy-group">
+                    <label class="sf-seg">
+                        <input type="radio" name="sg-policy" value="hmads-only" id="sg-radio-hmads">
+                        <span>HMADS only</span>
+                    </label>
+                    <label class="sf-seg">
+                        <input type="radio" name="sg-policy" value="dmss" id="sg-radio-dmss">
+                        <span>DMSS enabled</span>
+                    </label>
+                </div>
+                <span class="sf-field-err" id="sg-err-policy" hidden></span>
+            </div>
+
+            <!-- Enable toggle (kept in sync with the policy selector) -->
+            <div class="sf-field">
+                <span class="sf-field-label" id="sg-enabled-label">Safety decision layer</span>
+                <label class="sf-switch">
+                    <input type="checkbox" id="sg-enabled-toggle" role="switch" aria-labelledby="sg-enabled-label">
+                    <span class="sf-switch-track" aria-hidden="true"></span>
+                    <span class="sf-switch-text" id="sg-enabled-text">Off</span>
+                </label>
+                <span class="sf-field-hint">On = DMSS enabled &middot; Off = HMADS only</span>
+                <span class="sf-field-err" id="sg-err-enabled" hidden></span>
+            </div>
+
+            <!-- Save -->
+            <div class="sf-actions">
+                <button type="button" class="sf-btn sf-btn-primary" id="sg-save">
+                    <i data-lucide="save"></i>Save policy
+                </button>
+                <span id="sg-save-status" class="sf-save-status" role="status" aria-live="polite"></span>
+            </div>
+            <div id="sg-save-error" class="sf-state sf-state-err" hidden>
+                <span id="sg-save-error-msg"></span>
             </div>
         </div>
     </div>
