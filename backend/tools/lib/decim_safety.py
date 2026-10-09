@@ -53,6 +53,7 @@ __all__ = [
     "DecimSettings",
     "DecimDecision",
     "DecimResolution",
+    "mask_secret",
     "DecimSafetyProvider",
     "DecimProviderError",
     "SystemOneDecisionProvider",
@@ -75,6 +76,9 @@ class DecimSettings:
     enabled: bool = False
     mode: Literal["off", "shadow", "enforce"] = "off"
     provider: str = "systemone"
+    # Provider decision endpoint (the sensitive deployment secret).  Empty means
+    # "not configured here" — the adapter falls back to its environment value.
+    provider_endpoint: str = ""
     request_timeout_ms: int = 1500
     minimum_confidence: float = 0.90
     max_payload_chars: int = 12000
@@ -132,6 +136,23 @@ class DecimProviderError(RuntimeError):
 # Settings loading / validation
 # ---------------------------------------------------------------------------
 
+def mask_secret(value: Any) -> str:
+    """Return a redacted form of a secret value (never the full value).
+
+    Short values are fully masked; longer values keep a short prefix and the
+    last four characters so the field is recognisable without leaking the
+    secret (e.g. ``https://internal:8080/decide`` -> ``htt…cide``).
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if not text:
+        return ""
+    if len(text) <= 8:
+        return "\u2022" * len(text)
+    return text[:3] + "\u2026" + text[-4:]
+
+
 def _as_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -179,13 +200,20 @@ def _parse_settings(values: dict[str, Any], *, strict: bool) -> DecimSettings:
     enabled = _as_bool(values.get("enabled", defaults.enabled), defaults.enabled)
     record_events = _as_bool(values.get("record_enforce_events", defaults.record_enforce_events),
                              defaults.record_enforce_events)
+    provider_endpoint = str(values.get("provider_endpoint", defaults.provider_endpoint) or "")
     if strict:
         for name, raw in (("enabled", values.get("enabled", enabled)),
                           ("record_enforce_events", values.get("record_enforce_events", record_events))):
             if not isinstance(raw, (bool, str)):
                 raise ValueError(f"{name} must be a boolean")
+        if not isinstance(values.get("provider_endpoint", provider_endpoint), str):
+            raise ValueError("provider_endpoint must be a string")
+        if provider_endpoint:
+            parsed_endpoint = urlparse(provider_endpoint)
+            if parsed_endpoint.scheme not in {"http", "https"} or not parsed_endpoint.netloc:
+                raise ValueError("provider_endpoint must be an absolute http(s) URL")
     return DecimSettings(
-        enabled=enabled, mode=mode, provider=provider,
+        enabled=enabled, mode=mode, provider=provider, provider_endpoint=provider_endpoint,
         request_timeout_ms=timeout, minimum_confidence=confidence,
         max_payload_chars=payload, circuit_breaker_failures=failures,
         circuit_breaker_cooldown_seconds=cooldown, retention_days=retention,
@@ -197,13 +225,14 @@ def load_decim_settings() -> DecimSettings:
     """Load and validate public Decim operational settings.
 
     Invalid persisted values safely disable model calls rather than causing an
-    execution-path failure.  Provider endpoint and credentials are intentionally
-    *not* stored in ordinary system settings.
+    execution-path failure. The provider endpoint is a protected secret: only
+    the settings serializer/API layer may expose its redacted form.
     """
     raw = {
         "enabled": _setting("decim_safety.enabled", "0"),
         "mode": _setting("decim_safety.mode", "off"),
         "provider": _setting("decim_safety.provider", "systemone"),
+        "provider_endpoint": _setting("decim_safety.provider_endpoint", ""),
         "request_timeout_ms": _setting("decim_safety.request_timeout_ms", "1500"),
         "minimum_confidence": _setting("decim_safety.minimum_confidence", "0.90"),
         "max_payload_chars": _setting("decim_safety.max_payload_chars", "12000"),
@@ -228,6 +257,7 @@ _PERSISTED_SETTING_KEYS = (
     ("enabled", lambda s: "1" if s.enabled else "0"),
     ("mode", lambda s: s.mode),
     ("provider", lambda s: s.provider),
+    ("provider_endpoint", lambda s: s.provider_endpoint),
     ("request_timeout_ms", lambda s: str(s.request_timeout_ms)),
     ("minimum_confidence", lambda s: str(s.minimum_confidence)),
     ("max_payload_chars", lambda s: str(s.max_payload_chars)),
@@ -388,7 +418,7 @@ class SystemOneDecisionProvider:
             return self._endpoint_override
         return os.getenv("DECIM_SAFETY_SYSTEMONE_ENDPOINT", "")
 
-    def _build_request(self, packet: dict[str, Any]) -> Request:
+    def _build_request(self, packet: dict[str, Any], endpoint: str) -> Request:
         body = json.dumps({
             "state": packet["requested_code"],
             "context": {
@@ -409,7 +439,7 @@ class SystemOneDecisionProvider:
                 }
             },
         }, separators=(",", ":")).encode()
-        return Request(self.endpoint, data=body,
+        return Request(endpoint, data=body,
                        headers={"Content-Type": "application/json", "Accept": "application/json"},
                        method="POST")
 
@@ -430,11 +460,14 @@ class SystemOneDecisionProvider:
             raise DecimProviderError("provider_error") from None
 
     def decide(self, packet: dict[str, Any], settings: DecimSettings) -> DecimDecision:
-        parsed = urlparse(self.endpoint)
+        # The admin-configured endpoint (stored secret) wins; fall back to the
+        # deployment environment value when none is configured in settings.
+        endpoint = (getattr(settings, "provider_endpoint", "") or "").strip() or self.endpoint
+        parsed = urlparse(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise DecimProviderError("provider_unconfigured")
         started = time.monotonic()
-        raw = self._read_response(self._build_request(packet), settings)
+        raw = self._read_response(self._build_request(packet, endpoint), settings)
         if len(raw) > MAX_RESPONSE_BYTES:
             raise DecimProviderError("response_too_large")
         try:

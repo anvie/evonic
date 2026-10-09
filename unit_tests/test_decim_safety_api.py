@@ -237,3 +237,58 @@ def test_resolver_low_confidence_falls_back_to_hmads():
     assert result.decision is None
     assert result.fallback_reason == "low_confidence"
     assert calls == [1]
+
+# ---------------------------------------------------------------------------
+# Secure DMSS provider configuration (task #838)
+# ---------------------------------------------------------------------------
+
+
+def test_provider_endpoint_is_redacted_in_get_and_put_response():
+    """The endpoint is persistable, but no API response may expose it verbatim."""
+    client = _client()
+    secret = "https://provider.internal.example:9443/decision/very-secret"
+    response = client.put("/api/settings/decim-safety", json={"provider_endpoint": secret})
+    assert response.status_code == 200
+    returned = response.get_json()["settings"]["provider_endpoint"]
+    assert returned != secret
+    assert secret not in returned
+    assert "…" in returned
+
+    body = client.get("/api/settings/decim-safety").get_json()["settings"]
+    assert body["provider_endpoint"] == returned
+    assert secret not in str(body)
+    # The stored setting remains the original secret, never the masked value.
+    assert db.get_setting("decim_safety.provider_endpoint") == secret
+
+
+def test_masked_provider_endpoint_put_preserves_stored_secret():
+    """Echoing the GET mask back through PUT must never overwrite the secret."""
+    client = _client()
+    secret = "https://provider.internal.example:9443/decision/very-secret"
+    client.put("/api/settings/decim-safety", json={"provider_endpoint": secret})
+    masked = client.get("/api/settings/decim-safety").get_json()["settings"]["provider_endpoint"]
+
+    response = client.put("/api/settings/decim-safety", json={
+        "provider_endpoint": masked,
+        "request_timeout_ms": 2400,
+    })
+    assert response.status_code == 200
+    assert db.get_setting("decim_safety.provider_endpoint") == secret
+    assert db.get_setting("decim_safety.request_timeout_ms") == "2400"
+
+
+def test_provider_endpoint_rejects_non_http_url():
+    client = _client()
+    response = client.put("/api/settings/decim-safety", json={"provider_endpoint": "file:///etc/passwd"})
+    assert response.status_code == 400
+    assert "absolute http(s) URL" in response.get_json()["error"]
+
+
+def test_health_exposes_aggregate_latency_not_endpoint_secret():
+    client = _client()
+    secret = "https://provider.internal.example:9443/decision/very-secret"
+    client.put("/api/settings/decim-safety", json={"provider_endpoint": secret})
+    body = client.get("/api/admin/decim-safety/health").get_json()
+    assert body["latency_ms"] == {"count": 0, "p50": None, "p95": None, "max": None}
+    assert secret not in str(body)
+    assert "internal.example" not in str(body)

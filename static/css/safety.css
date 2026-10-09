@@ -393,6 +393,49 @@ html.dark .sf-switch input:checked + .sf-switch-track::after { background: #1e1b
 html.dark .sf-btn-primary { color: #1e1b4b; }
 .sf-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; filter: none; }
 
+/* ---------- DMSS configuration (task #838) ---------- */
+.sf-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 16px;
+}
+.sf-config-field {
+    display: block;
+    min-width: 0;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.sf-config-field:has(#dc-endpoint) { grid-column: 1 / -1; }
+.sf-input {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-input);
+    border-radius: 8px;
+    background: var(--bg-controls);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 0.82rem;
+    letter-spacing: normal;
+    text-transform: none;
+}
+.sf-input:focus, .sf-select:focus {
+    outline: 2px solid var(--sf-accent);
+    outline-offset: 1px;
+    border-color: var(--sf-accent);
+}
+#dc-error {
+    margin-top: 12px;
+    padding: 10px 12px;
+    text-align: left;
+    font-size: 0.78rem;
+}
+
 /* ---------- Status KPIs ---------- */
 .sf-status-grid {
     display: grid;

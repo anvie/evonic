@@ -83,6 +83,8 @@ def api_decim_safety_health():
             settings.mode == "enforce" and settings.record_enforce_events
         ),
         "last_decision_at": state.get("last_decision_at"),
+        # Aggregate timing only; never expose transport endpoint/hostname.
+        "latency_ms": (summary.get("latency_ms") or {}).copy(),
         "fallback_rate_24h": summary.get("fallback_rate"),
         "total_recorded": state.get("total_recorded"),
         "telemetry_epoch": state.get("telemetry_epoch"),

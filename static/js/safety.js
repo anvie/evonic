@@ -378,6 +378,9 @@
         API: "/api/admin/decim-safety",
         _initialized: false,
         _timer: null,
+        _config: null,
+        _configDirty: false,
+        _savingConfig: false,
         state: { limit: 50, offset: 0, total: 0 },
 
         init() {
@@ -397,11 +400,95 @@
                     window.safetyDmss.refresh();
                 });
             });
+            var form = qs("#dmss-config");
+            if (form) form.addEventListener("submit", function (e) {
+                e.preventDefault(); window.safetyDmss.saveConfig();
+            });
+            ["#dc-provider", "#dc-endpoint", "#dc-timeout", "#dc-confidence", "#dc-payload", "#dc-failures", "#dc-cooldown"].forEach(function (sel) {
+                var input = qs(sel);
+                if (input) input.addEventListener("input", function () { window.safetyDmss._markConfigDirty(); });
+            });
 
+            this.loadConfig();
             this.refresh();
             this._timer = setInterval(function () {
                 if (!document.hidden) window.safetyDmss.loadHealth();
             }, 30000);
+        },
+
+        _field(sel) { return qs(sel); },
+
+        _configPayload() {
+            function value(sel) { var el = qs(sel); return el ? el.value.trim() : ""; }
+            return {
+                provider: value("#dc-provider"),
+                provider_endpoint: value("#dc-endpoint"),
+                request_timeout_ms: Number(value("#dc-timeout")),
+                minimum_confidence: Number(value("#dc-confidence")),
+                max_payload_chars: Number(value("#dc-payload")),
+                circuit_breaker_failures: Number(value("#dc-failures")),
+                circuit_breaker_cooldown_seconds: Number(value("#dc-cooldown")),
+            };
+        },
+
+        _setConfigError(field, message) {
+            var el = qs("#dc-err-" + field);
+            if (!el) return;
+            el.hidden = !message;
+            el.textContent = message || "";
+        },
+
+        _clearConfigErrors() {
+            ["provider", "endpoint", "timeout", "confidence", "payload", "failures", "cooldown"].forEach(function (name) {
+                window.safetyDmss._setConfigError(name, "");
+            });
+            var box = qs("#dc-error"); if (box) box.hidden = true;
+        },
+
+        _validateConfig(payload) {
+            var ok = true;
+            this._clearConfigErrors();
+            function error(name, message) { window.safetyDmss._setConfigError(name, message); ok = false; }
+            if (payload.provider !== "systemone") error("provider", "Choose a registered provider.");
+            // An existing masked secret is valid; a newly entered endpoint must be HTTPS/HTTP.
+            if (payload.provider_endpoint && payload.provider_endpoint.indexOf("…") < 0 && payload.provider_endpoint.charAt(0) !== "•" && !/^https?:\/\/[^/]+/i.test(payload.provider_endpoint)) error("endpoint", "Enter an absolute http(s) URL.");
+            if (!Number.isInteger(payload.request_timeout_ms) || payload.request_timeout_ms < 100 || payload.request_timeout_ms > 10000) error("timeout", "Use 100–10,000 ms.");
+            if (!Number.isFinite(payload.minimum_confidence) || payload.minimum_confidence < 0 || payload.minimum_confidence > 1) error("confidence", "Use a value from 0 to 1.");
+            if (!Number.isInteger(payload.max_payload_chars) || payload.max_payload_chars < 1 || payload.max_payload_chars > 120000) error("payload", "Use 1–120,000 characters.");
+            if (!Number.isInteger(payload.circuit_breaker_failures) || payload.circuit_breaker_failures < 1 || payload.circuit_breaker_failures > 20) error("failures", "Use 1–20 failures.");
+            if (!Number.isInteger(payload.circuit_breaker_cooldown_seconds) || payload.circuit_breaker_cooldown_seconds < 1 || payload.circuit_breaker_cooldown_seconds > 3600) error("cooldown", "Use 1–3,600 seconds.");
+            return ok;
+        },
+
+        _markConfigDirty() {
+            this._configDirty = true;
+            var badge = qs("#dmss-config-dirty"); if (badge) badge.hidden = false;
+        },
+
+        loadConfig() {
+            var self = this;
+            fetch("/api/settings/decim-safety").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (data) {
+                var s = data.settings || {};
+                self._config = s;
+                if (self._configDirty) return;
+                var values = { "#dc-provider": s.provider, "#dc-endpoint": s.provider_endpoint || "", "#dc-timeout": s.request_timeout_ms, "#dc-confidence": s.minimum_confidence, "#dc-payload": s.max_payload_chars, "#dc-failures": s.circuit_breaker_failures, "#dc-cooldown": s.circuit_breaker_cooldown_seconds };
+                Object.keys(values).forEach(function (sel) { var el = qs(sel); if (el) el.value = values[sel]; });
+                var badge = qs("#dmss-config-dirty"); if (badge) badge.hidden = true;
+            }).catch(function () { window.safetyDmss._setError(true, "Failed to load DMSS configuration."); });
+        },
+
+        saveConfig() {
+            if (this._savingConfig) return;
+            var self = this, payload = this._configPayload();
+            if (!this._validateConfig(payload)) return;
+            this._savingConfig = true;
+            var btn = qs("#dc-save"), status = qs("#dc-status"); if (btn) btn.disabled = true; if (status) status.textContent = "Saving…";
+            fetch("/api/settings/decim-safety", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); }).then(function (res) {
+                self._savingConfig = false; if (btn) btn.disabled = false; if (status) status.textContent = "";
+                if (!res.ok || !res.data.success) throw new Error((res.data && res.data.error) || "Could not save configuration.");
+                self._configDirty = false; self._config = res.data.settings || {}; self.loadConfig(); self.loadHealth();
+                if (window.evToast) evToast("DMSS configuration saved", "success");
+            }).catch(function (err) { self._savingConfig = false; if (btn) btn.disabled = false; if (status) status.textContent = ""; var box = qs("#dc-error"), msg = qs("#dc-error-msg"); if (msg) msg.textContent = err.message; if (box) box.hidden = false; if (window.evToast) evToast("Failed to save DMSS configuration", "error"); });
         },
 
         _filters() {
@@ -444,6 +531,9 @@
                 text("#kpi-mode", d.enabled ? (d.mode || "off") : "off");
                 text("#kpi-provider", d.provider || "—");
                 text("#kpi-circuit", "circuit " + (d.circuit_state || "closed"));
+                var latency = d.latency_ms || {};
+                text("#kpi-latency", latency.p50 == null ? "—" : (latency.p50 + " ms p50"));
+                text("#kpi-last-call", "last successful call " + (d.last_decision_at || "—"));
                 text("#kpi-fallback",
                     (d.fallback_rate_24h === null || d.fallback_rate_24h === undefined)
                         ? "—" : (Math.round(d.fallback_rate_24h * 1000) / 10) + "%");

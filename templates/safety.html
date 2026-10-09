@@ -196,6 +196,23 @@
             <button type="button" class="sf-btn" id="dmss-retry">Retry</button>
         </div>
 
+        <!-- Provider configuration (task #838) -->
+        <form class="sf-card sf-mt" id="dmss-config" novalidate>
+            <div class="sf-card-head"><h3>Provider configuration</h3><span id="dmss-config-dirty" class="sf-badge sf-badge-warn" hidden>Unsaved changes</span></div>
+            <p class="sf-card-desc">The endpoint is stored as a secret. It is always redacted after saving; leave its masked value unchanged to retain it.</p>
+            <div class="sf-config-grid">
+                <label class="sf-config-field">Provider<select id="dc-provider" class="sf-select"><option value="systemone">SystemOne</option></select><span class="sf-field-err" id="dc-err-provider" hidden></span></label>
+                <label class="sf-config-field">Provider endpoint <input id="dc-endpoint" class="sf-input" type="password" autocomplete="off" placeholder="https://…"><span class="sf-field-hint">A secret deployment URL; never returned in full.</span><span class="sf-field-err" id="dc-err-endpoint" hidden></span></label>
+                <label class="sf-config-field">Timeout (ms)<input id="dc-timeout" class="sf-input" type="number" min="100" max="10000"><span class="sf-field-err" id="dc-err-timeout" hidden></span></label>
+                <label class="sf-config-field">Minimum confidence<input id="dc-confidence" class="sf-input" type="number" min="0" max="1" step="0.01"><span class="sf-field-err" id="dc-err-confidence" hidden></span></label>
+                <label class="sf-config-field">Maximum payload (chars)<input id="dc-payload" class="sf-input" type="number" min="1" max="120000"><span class="sf-field-err" id="dc-err-payload" hidden></span></label>
+                <label class="sf-config-field">Circuit failures<input id="dc-failures" class="sf-input" type="number" min="1" max="20"><span class="sf-field-err" id="dc-err-failures" hidden></span></label>
+                <label class="sf-config-field">Circuit cooldown (seconds)<input id="dc-cooldown" class="sf-input" type="number" min="1" max="3600"><span class="sf-field-err" id="dc-err-cooldown" hidden></span></label>
+            </div>
+            <div class="sf-actions"><button class="sf-btn sf-btn-primary" type="submit" id="dc-save"><i data-lucide="save"></i>Save configuration</button><span id="dc-status" class="sf-save-status" role="status"></span></div>
+            <div id="dc-error" class="sf-state sf-state-err" hidden><span id="dc-error-msg"></span></div>
+        </form>
+
         <!-- KPIs -->
         <div class="sf-dmss-grid">
             <div class="sf-kpi">
@@ -217,6 +234,11 @@
                 <div class="sf-kpi-label">Fallback rate</div>
                 <div class="sf-kpi-value" id="kpi-fallback">—</div>
                 <div class="sf-kpi-sub" id="kpi-unsafe">—</div>
+            </div>
+            <div class="sf-kpi">
+                <div class="sf-kpi-label">Provider timing</div>
+                <div class="sf-kpi-value" id="kpi-latency">—</div>
+                <div class="sf-kpi-sub" id="kpi-last-call">last successful call —</div>
             </div>
         </div>
 
