@@ -48,7 +48,10 @@ def execute(agent: dict, args: dict) -> dict:
     cmd.append(pattern)
     cmd.append(search_path)
 
-    result = backend.run_bash(' '.join(shlex.quote(part) for part in cmd), 30, {})
+    # Use `command` to bypass any shell function or alias named `rg`.  Execution
+    # backends may initialize shell helpers, and a helper that appends arguments
+    # can widen this search beyond the confined workspace.
+    result = backend.run_bash('command ' + ' '.join(shlex.quote(part) for part in cmd), 30, {})
     if result.get('error'):
         message = result['error']
         if 'timed out' in message.lower():
