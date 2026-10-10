@@ -9,25 +9,11 @@
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-16x16.png') }}?v=1" sizes="16x16">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon/apple-touch-icon.png') }}?v=1" sizes="180x180">
     <link rel="manifest" href="{{ url_for('static', filename='favicon/site.webmanifest') }}?v=1">
+    <script src="{{ url_for('static', filename='js/theme-presets.js') }}?v=4"></script>
     <script>
-    // Anti-flash: apply theme + page background before first paint (synchronous, render-blocking)
-    (function() {
-        var t = localStorage.getItem('evonic-theme') || 'system';
-        var isDark = t === 'dark' || (t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        if (isDark) {
-            document.documentElement.classList.add('dark');
-        }
-        // Set html background color inline so it paints instantly — prevents black/white flash
-        // between page navigations. style.css provides a fallback for dynamic theme toggling.
-        document.documentElement.style.backgroundColor = isDark ? '#0a0f1c' : '#f5f5f5';
-        // Listen for system color scheme changes when theme is 'system'
-        if (t === 'system' && window.matchMedia) {
-            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-                document.documentElement.classList.toggle('dark', e.matches);
-                document.documentElement.style.backgroundColor = e.matches ? '#0a0f1c' : '#f5f5f5';
-            });
-        }
-    })();
+    // Anti-flash: apply theme mode + preset and the page background before first paint (synchronous, render-blocking).
+    // Non-default presets re-tint the stylesheets once they have loaded (see static/js/theme-presets.js).
+    EvTheme.boot();
     </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}?v=8">
     <script src="{{ url_for('static', filename='js/ui-toggle.js') }}?v=1" defer></script>
@@ -71,7 +57,7 @@
         }
     }
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=47">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=50">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/recap-prose.css') }}?v=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/hljs-chat.css') }}?v=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/agent-sidebar.css') }}?v=23">

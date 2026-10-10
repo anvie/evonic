@@ -12,7 +12,7 @@ html {
 
 /* ==================== Theme Variables ==================== */
 :root {
-    --bg-page: #f5f5f5;
+    --bg-page: #f1f2f4;
     --bg-card: #ffffff;
     --bg-header: #ffffff;
     --bg-hover: #f9fafb;
@@ -44,7 +44,7 @@ html.dark {
     --color-gray-900: #0a0f1c;
     --bg-page: #0a0f1c;
     --bg-card: #111827;
-    --bg-header: #111827;
+    --bg-header: #172136;
     --bg-hover: #334155;
     --bg-controls: #1e293b;
     --bg-secondary: #0f1626;
@@ -269,9 +269,9 @@ header {
     z-index: 50;
     background: var(--bg-header);
     /* no bottom border: it would stop dead where the corners curve; the colour step to the page is the edge */
-    box-shadow: 0 1px 2px rgb(0 0 0 / .06);
+    box-shadow: 0 1px 0 rgb(15 23 42 / .09), 0 8px 18px -10px rgb(15 23 42 / .25);
 }
-html.dark header { box-shadow: none; }
+html.dark header { box-shadow: 0 1px 0 rgb(255 255 255 / .06), 0 8px 18px -10px rgb(0 0 0 / .7); }
 /* Inverted corners: the navbar colour flows down into the two lower corners of the page, so the content
    below looks like it has rounded top corners (quarter-circle cut out of a square filled with the navbar colour). */
 header::before,
@@ -1581,6 +1581,8 @@ html.dark .ev-kbd { color: #94a3b8; }
 input:focus + .ev-kbd-field, input:not(:placeholder-shown) + .ev-kbd-field { display: none; }
 .ev-kbd-btn { margin-left: .125rem; border-color: rgb(255 255 255 / .35); background: rgb(255 255 255 / .16); color: inherit; opacity: .85; }
 .ag-btn-ghost .ev-kbd-btn, .ev-btn:not(.ev-btn-primary) .ev-kbd-btn { border-color: rgb(148 163 184 / .4); background: rgb(148 163 184 / .12); }
+/* shortcut key on a filled (primary) button: white key cap on the coloured fill — the dark-mode grey from .ev-kbd made it unreadable */
+.ev-btn-primary .ev-kbd-btn, .ag-btn-primary .ev-kbd-btn, html.dark .ev-btn-primary .ev-kbd-btn, html.dark .ag-btn-primary .ev-kbd-btn { color: #fff; opacity: 1; background: rgb(255 255 255 / .22); border-color: rgb(255 255 255 / .5); text-shadow: 0 1px 0 rgb(0 0 0 / .18); }
 @media (max-width: 767.98px), (hover: none) { .ev-kbd { display: none !important; } }
 .ev-keys { position: fixed; right: 1rem; bottom: 1rem; z-index: 10002; width: min(22rem, calc(100vw - 2rem)); padding: 1rem 1.125rem; border: 1px solid rgb(148 163 184 / .3); border-radius: 1rem; background: rgb(255 255 255 / .96); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: 0 18px 44px -14px rgb(15 23 42 / .45); }
 html.dark .ev-keys { background: rgb(30 41 59 / .96); }

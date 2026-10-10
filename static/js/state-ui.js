@@ -24,6 +24,7 @@
         check:  I('<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>'),
         circle: I('<circle cx="12" cy="12" r="10"/>'),
         spin:   I('<path d="M21 12a9 9 0 1 1-6.219-8.56"/>').replace('<svg ', '<svg class="state-spin" '),
+        folder: I('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
         chev:   I('<path d="m9 18 6-6-6-6"/>'),
         undo:   I('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'),
         refresh:I('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>')
@@ -94,20 +95,71 @@
         return '<div class="st-sec"><div class="st-sec-h">' + ICON.gauge + '<span>Context</span><span class="st-sec-r">' + label + '</span></div>' + bar + '</div>';
     }
 
+    function planTreeHtml(pf) {
+        var parts = String(pf).split('/').filter(Boolean);
+        var file = parts.pop();
+        var h = '<button type="button" class="st-plan" onclick="openPlanModal(\'' + esc(pf) + '\')" title="' + esc(pf) + ' — click to open plan">' + ICON.file + '<span class="st-plan-name">' + esc(file) + '</span></button>';
+        h = '<ul><li>' + h + '</li></ul>';
+        for (var i = parts.length - 1; i >= 0; i--) {
+            h = '<li><div class="st-tree-dir">' + ICON.folder + '<span>' + esc(parts[i]) + '</span></div>' + h + '</li>';
+            if (i > 0) h = '<ul>' + h + '</ul>';
+        }
+        return '<div class="st-tree">' + (parts.length ? '<ul>' + h + '</ul>' : h) + '</div>';
+    }
+
+    /** Plan file tree only — the mode (plan / execute) lives in the card header, see setModeChip(). */
     function planHtml(d) {
-        if (!d.mode && !d.plan_file) return '';
-        var h = '<div class="st-sec"><div class="st-sec-h">' + ICON.plan + '<span>Plan</span>';
-        if (d.mode) {
-            var cls = d.mode === 'execute' ? 'green' : 'amber';
-            h += '<span class="st-sec-r"><span class="st-chip ' + cls + '"><span class="st-dot ' + cls + '"></span>' + esc(d.mode) + '</span></span>';
-        }
-        h += '</div>';
-        if (d.plan_file) {
-            var pf = String(d.plan_file), cut = pf.lastIndexOf('/');
-            var dir = cut >= 0 ? pf.slice(0, cut + 1) : '', name = cut >= 0 ? pf.slice(cut + 1) : pf;
-            h += '<button type="button" class="st-plan" onclick="openPlanModal(\'' + esc(pf) + '\')" title="' + esc(pf) + ' — click to open plan">' + ICON.file + '<span class="st-plan-dir">' + esc(dir) + '</span><span class="st-plan-name">' + esc(name) + '</span></button>';
-        }
-        return h + '</div>';
+        if (!d.plan_file) return '';
+        return '<div class="st-sec">' + planTreeHtml(d.plan_file) + '</div>';
+    }
+
+    function modeChipHtml(d) {
+        if (!d || !d.mode) return '';
+        var c = d.mode === 'execute' ? 'green' : 'amber';
+        return '<span class="st-chip st-mode ' + c + '" title="Session mode"><span class="st-dot ' + c + '"></span>' + esc(d.mode) + ' Mode</span>';
+    }
+
+    /** Fill every .st-mode-slot (desktop + mobile card headers) with the current mode chip. When the mode changes
+     *  the new chip slides in from the left and stacks over the old one, which is removed once it has landed. */
+    function setModeChip(d) {
+        var mode = (d && d.mode) || '';
+        var html = modeChipHtml(d);
+        document.querySelectorAll('.st-mode-slot').forEach(function (slot) {
+            var prev = slot.dataset.mode || '';
+            if (prev === mode) return;                                   // unchanged: leave the DOM (and any animation) alone
+            slot.dataset.mode = mode;
+            var stage = slot.querySelector('.st-mode-stage');
+            if (!mode || !stage || !prev) {
+                slot.innerHTML = mode ? '<span class="st-mode-stage">' + html + '</span>' : '';
+                return;
+            }
+            var tmp = document.createElement('div');
+            tmp.innerHTML = html;
+            var chip = tmp.firstChild;
+            // Freeze the stage at its current width, then ease it to the new chip's natural width, so the segments to the
+            // right glide instead of snapping when the two chips differ in width ("Execute Mode" vs "Plan Mode").
+            var from = stage.getBoundingClientRect().width;
+            stage.style.width = from + 'px';
+            // The old chip keeps its own rounded shape and eases to the new width with the stage (no clipping, so no square corners).
+            var olds = [].slice.call(stage.querySelectorAll('.st-chip.st-mode'));
+            olds.forEach(function (c) { c.style.width = c.getBoundingClientRect().width + 'px'; c.style.overflow = 'hidden'; c.style.whiteSpace = 'nowrap'; });
+            chip.classList.add('st-mode-enter');
+            stage.appendChild(chip);
+            var to = chip.getBoundingClientRect().width;
+            var ease = 'width .45s cubic-bezier(.2, .8, .2, 1)';
+            requestAnimationFrame(function () {
+                stage.style.transition = ease;
+                stage.style.width = to + 'px';
+                olds.forEach(function (c) { c.style.transition = ease; c.style.width = to + 'px'; });
+            });
+            var settle = function () {
+                olds.forEach(function (c) { c.remove(); });
+                chip.classList.remove('st-mode-enter');
+                stage.style.width = stage.style.transition = '';
+            };
+            chip.addEventListener('animationend', settle, { once: true });
+            setTimeout(settle, 800);                                     // reduced motion / no animationend
+        });
     }
 
     /** opts.taskText(task) -> HTML for the task label (default: escaped text). */
@@ -129,13 +181,13 @@
             var badge = isStale ? '<span class="st-chip amber" style="padding:0 .375rem;font-size:.625rem" title="This task has been in progress for a while">stale</span>' : '';
             return '<li class="st-task ' + kind + '">' + icon + '<span class="' + (active ? 'task-active-text' : '') + '" style="min-width:0;flex:1">' + textOf(t) + '</span>' + badge + '</li>';
         };
-        var h = '<div class="st-sec"><div class="st-sec-h">' + ICON.tasks + '<span>Tasks</span><span class="st-sec-r">' + done.length + '/' + d.tasks.length + '</span></div>';
+        var h = '<div class="st-sec"><div class="st-sec-h">' + ICON.tasks + '<span>Tasks</span><span class="st-sec-r" title="' + done.length + ' of ' + d.tasks.length + ' done">' + pct + '%</span></div>';
         h += '<div class="st-tasks-progress"><div class="st-meter"><div style="width:' + pct + '%;background:#22c55e"></div></div></div>';
-        if (open.length) h += '<ul>' + open.map(row).join('') + '</ul>';
         if (done.length) {
-            h += '<details class="st-done" ' + ((global._stTasksDoneOpen || !open.length) ? 'open' : '') + ' ontoggle="_stTasksDoneOpen = this.open">'
+            h += '<details class="st-done" ' + (global._stTasksDoneOpen ? 'open' : '') + ' ontoggle="_stTasksDoneOpen = this.open">'
                + '<summary class="st-done-toggle">' + ICON.chev + '<span>Completed (' + done.length + ')</span></summary><ul>' + done.map(row).join('') + '</ul></details>';
         }
+        if (open.length) h += '<ul>' + open.map(row).join('') + '</ul>';
         return h + '</div>';
     }
 
@@ -158,8 +210,21 @@
     }
 
     function summaryHtml(markdownHtml) {
-        return '<div class="st-summary"><div class="st-sec-h">' + ICON.text + '<span>Summary</span></div><div class="recap-prose">' + markdownHtml + '</div></div>';
+        return '<div class="st-summary"><div class="st-sec-h">' + ICON.text + '<span>Summary</span></div><div class="recap-prose">' + String(markdownHtml).replace(/^\s*<h[1-3][^>]*>\s*summary\s*<\/h[1-3]>\s*/i, '') + '</div></div>';
     }
 
-    global.StateUI = { ICON: ICON, agentRows: agentRows, renderAgentState: renderAgentState, sessionSections: sessionSections, summaryHtml: summaryHtml };
+    /** Spin a refresh button's icon while fn() runs (at least 600ms so the click visibly registers). */
+    function spinRefresh(btn, fn) {
+        if (btn.disabled) return Promise.resolve();
+        var svg = btn.querySelector('svg');
+        btn.disabled = true;
+        if (svg) svg.classList.add('state-spin');
+        return Promise.all([Promise.resolve().then(fn), new Promise(function (r) { setTimeout(r, 600); })]).catch(function () {}).then(function () {
+            if (svg) svg.classList.remove('state-spin');
+            btn.disabled = false;
+        });
+    }
+
+    global.spinRefresh = global.spinRefresh || spinRefresh;
+    global.StateUI = { setModeChip: setModeChip, modeChipHtml: modeChipHtml, ICON: ICON, agentRows: agentRows, renderAgentState: renderAgentState, sessionSections: sessionSections, summaryHtml: summaryHtml };
 })(window);

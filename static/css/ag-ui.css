@@ -145,3 +145,43 @@ html.dark .ev-seg-btn.is-active { background: rgb(99 102 241 / .28); color: #e0e
 .ev-x:hover { background: rgb(148 163 184 / .16); color: #475569; }
 html.dark .ev-x:hover { color: #e2e8f0; }
 .ev-modal textarea { font-size: .75rem; }
+
+/* ── List view: WhatsApp-style contact list (avatar · name + description · status + actions, inset hairlines) ── */
+.ag-view { display: inline-flex; align-self: flex-start; gap: .125rem; padding: .1875rem; height: 2.5rem; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: .75rem; background: #fff; }
+html.dark .ag-view { border-color: #374151; background: rgb(15 23 42 / .6); }
+.ag-view-btn { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; border: 0; border-radius: .5625rem; background: transparent; color: #94a3b8; cursor: pointer; transition: background-color .15s, color .15s; }
+.ag-view-btn:hover { color: #4f46e5; }
+.ag-view-btn.is-active { color: #4338ca; background: rgb(99 102 241 / .14); }
+html.dark .ag-view-btn.is-active { color: #c7d2fe; background: rgb(129 140 248 / .2); }
+.ag-view-btn svg { width: 18px; height: 18px; }
+.ag-list { display: flex; flex-direction: column; border: 1px solid #e5e7eb; border-radius: 1rem; background: #fff; overflow: hidden; }
+.ag-list.hidden { display: none; }   /* the collapsed Disabled Agents list must stay collapsed (display:flex above would win over Tailwind's .hidden) */
+html.dark .ag-list { border-color: rgb(148 163 184 / .16); background: #1e2939; }
+.ag-row { position: relative; display: flex; align-items: center; gap: 1rem; padding: .75rem 1.25rem; cursor: pointer; transition: background-color .12s; }
+.ag-row:hover, .ag-row:focus-visible { background: rgb(148 163 184 / .1); outline: none; }
+.ag-row-avatar { width: 3.25rem; height: 3.25rem; flex: none; border-radius: 9999px; object-fit: cover; background: rgb(99 102 241 / .14); }
+.ag-row.is-off .ag-row-avatar { filter: grayscale(1); }
+.ag-row.is-off { opacity: .72; }
+.ag-row.is-off:hover { opacity: 1; }
+.ag-row-main { position: relative; flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .125rem; padding: .125rem 0; }
+/* hairline starts at the text column, like the chat list */
+.ag-row-main::after { content: ''; position: absolute; left: 0; right: -1.25rem; bottom: -.8125rem; border-bottom: 1px solid rgb(148 163 184 / .2); }
+.ag-row:last-child .ag-row-main::after { display: none; }
+.ag-row-top, .ag-row-bottom { display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-width: 0; }
+.ag-row-name { margin: 0; display: flex; align-items: center; gap: .375rem; min-width: 0; font-size: 1.0625rem; font-weight: 600; line-height: 1.4; color: #111827; }
+.ag-row-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.dark .ag-row-name { color: #f1f5f9; }
+.ag-row.is-super .ag-row-name { color: #dc2626; }
+html.dark .ag-row.is-super .ag-row-name { color: #f87171; }
+.ag-row-meta { flex: none; font-size: .8125rem; color: #94a3b8; }
+.ag-row-meta.is-on { color: #22c55e; }
+.ag-row-desc { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9375rem; line-height: 1.4; color: #64748b; }
+html.dark .ag-row-desc { color: #94a3b8; }
+.ag-row-right { display: flex; align-items: center; gap: .5rem; flex: none; }
+.ag-row-badges { display: flex; align-items: center; gap: .375rem; }
+.ag-row-badges:empty { display: none; }
+.ag-row .ag-actions { gap: .25rem; }
+.ag-row .ag-icon-btn { width: 1.75rem; height: 1.75rem; opacity: 0; transition: opacity .12s, color .15s, background-color .15s; }
+.ag-row:hover .ag-icon-btn, .ag-row:focus-within .ag-icon-btn { opacity: 1; }
+@media (hover: none) { .ag-row .ag-icon-btn { opacity: 1; } }
+@media (max-width: 639.98px) { .ag-row { padding: .625rem .875rem; gap: .75rem; } .ag-row-avatar { width: 2.75rem; height: 2.75rem; } .ag-row-main::after { right: -.875rem; } }

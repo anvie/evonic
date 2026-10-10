@@ -3,6 +3,49 @@
    One palette with meaning: neutral surfaces; green = ok/active, indigo = plan/context, amber = attention. */
 .st-sec + .st-sec { margin-top: 1.25rem; }
 .st-sec-h { display: flex; align-items: center; gap: .5rem; min-height: 1.5rem; margin-bottom: .5rem; font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #64748b; }
+.st-sec-h:last-child { margin-bottom: 0; }
+.st-stack > :empty { display: none; }
+.st-title-row { display: flex; align-items: center; gap: .625rem; min-width: 0; }
+.st-mode-slot:empty { display: none; }
+.st-mode { padding: .125rem .5rem; font-size: .6875rem; letter-spacing: 0; text-transform: none; font-weight: 600; }
+
+/* Session State header: a full-width bar flush with the card; title · mode · (recap) · refresh sit inside it as
+   overlapping layers whose inner corners are rounded (outer edges stay square so the bar merges into the card). */
+:root { --st-bar-bg: #e4e9f1; --st-seg-1: #ffffff; --st-seg-2: #e4e9f1; --st-seg-line: #dde3ec; --st-seg-text: #1f2937; --st-seg-shadow: rgb(15 23 42 / .22); }
+html.dark { --st-bar-bg: #1c2331; --st-seg-1: #262e3d; --st-seg-2: #1c2331; --st-seg-line: #2a3242; --st-seg-text: #f1f5f9; --st-seg-shadow: rgb(0 0 0 / .5); }
+.st-head { display: block; padding: 0; border-bottom: 1px solid var(--st-seg-line); background: var(--st-bar-bg); }
+.st-bar { display: flex; align-items: stretch; width: 100%; min-width: 0; isolation: isolate; }
+.st-bar .st-mode-slot { display: contents; }
+.st-seg { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; align-self: stretch; min-height: 2.75rem; margin: 0; border: 0; color: var(--st-seg-text); background: var(--st-seg-1); box-shadow: 3px 0 6px -3px var(--st-seg-shadow); }
+.st-seg-title { z-index: 4; flex: 0 0 auto; justify-content: flex-start; padding: 0 1.25rem 0 1rem; border-radius: 0 .875rem .875rem 0; font-size: .875rem; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+.st-chip.st-mode, html.dark .st-chip.st-mode { position: relative; z-index: 3; flex: none; align-self: stretch; min-height: 2.75rem; height: auto; margin: 0 0 0 -.875rem; padding: 0 1.125rem 0 1.75rem; gap: 0; border: 0; border-radius: 0 .875rem .875rem 0; font-size: .75rem; white-space: nowrap; font-weight: 800; letter-spacing: .02em; text-transform: capitalize; box-shadow: 3px 0 6px -3px var(--st-seg-shadow); }
+/* mode chip stage: old and new chips share one grid cell so a change stacks the new chip over the old one */
+.st-mode-stage { position: relative; z-index: 3; display: grid; flex: none; align-self: stretch; margin-left: -.875rem; }
+.st-bar-compact .st-mode-stage { margin-left: -1rem; }
+.st-mode-stage > .st-chip.st-mode, html.dark .st-mode-stage > .st-chip.st-mode { grid-area: 1 / 1; justify-self: start; margin: 0; z-index: 1; }
+.st-mode-stage > .st-mode-enter { z-index: 2 !important; animation: st-mode-slide .5s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes st-mode-slide { from { transform: translateX(-105%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .st-mode-stage > .st-mode-enter { animation: none; } }
+.st-seg-btn { z-index: 2; margin-left: -.875rem; padding: 0 .875rem 0 1.5rem; background: var(--st-seg-2); border-radius: .875rem; cursor: pointer; font-size: .8125rem; font-weight: 600; gap: .375rem; transition: filter .15s; }
+.st-seg-btn:last-child { z-index: 1; flex: 1 1 auto; min-width: 3.75rem; justify-content: center; border-radius: 0; padding: 0 0 0 .875rem; box-shadow: none; }
+.st-seg-btn:hover:not(:disabled) { filter: brightness(1.2); }
+.st-seg-btn:disabled { cursor: default; opacity: .8; }
+.st-seg-btn svg { width: 1rem; height: 1rem; flex: none; }
+.st-bar-compact .st-seg, .st-bar-compact .st-chip.st-mode { min-height: 2.5rem; }
+.st-bar-compact .st-seg-title { padding: 0 1.25rem 0 .875rem; font-size: .6875rem; text-transform: uppercase; letter-spacing: .06em; }
+.st-bar-compact .st-seg-title { padding: 0 .875rem 0 .75rem; }
+.st-bar-compact .st-chip.st-mode { padding: 0 .875rem 0 1.75rem; font-size: .75rem; }
+.st-bar-compact .st-seg-btn { padding: 0 .5rem 0 1.25rem; }
+.st-bar-compact .st-seg-btn:last-child { flex: 1 1 0; min-width: 2.5rem; padding: 0 0 0 .625rem; }
+.st-bar-compact .st-seg-wide span { display: none; }
+.st-seg-btn.st-seg-wide { border-radius: 0; box-shadow: none; }
+.st-bar-compact .st-seg-btn.st-seg-wide { flex: 1 1 0; width: auto; min-width: 2.5rem; padding: 0 0 0 .875rem; }
+.st-chip.st-mode.green, html.dark .st-chip.st-mode.green { color: #052e16; text-shadow: 0 1px 0 rgb(255 255 255 / .35); background: linear-gradient(180deg, #6ee7b7, #34d399); }
+.st-chip.st-mode.amber, html.dark .st-chip.st-mode.amber { color: #451a03; text-shadow: 0 1px 0 rgb(255 255 255 / .4); background: linear-gradient(180deg, #fde68a, #fbbf24); }
+.st-chip.st-mode .st-dot { display: none; }
+.mstate-h.st-head { padding: 0; }
+.st-card-body-pad { padding-top: 1rem; }
+
 .st-sec-h svg { width: 14px; height: 14px; flex: none; }
 .st-sec-h .st-chip { padding: .125rem .5rem; font-size: .6875rem; letter-spacing: 0; text-transform: none; }
 .st-sec-h .st-sec-r { margin-left: auto; letter-spacing: 0; text-transform: none; font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -37,12 +80,27 @@ html.dark .st-chip.amber { background: rgb(245 158 11 / .16); color: #fcd34d; bo
 .st-meter { height: .375rem; border-radius: 9999px; background: rgb(148 163 184 / .25); overflow: hidden; }
 .st-meter > div { height: 100%; border-radius: 9999px; transition: width .3s ease; }
 /* plan file */
-.st-plan { display: flex; align-items: flex-start; gap: .5rem; width: 100%; margin-top: .5rem; padding: .5rem .625rem; border: 1px solid rgb(99 102 241 / .28); border-radius: 10px;
-    background: rgb(99 102 241 / .08); color: #4338ca; font-size: .75rem; text-align: left; cursor: pointer; transition: background-color .15s; }
-.st-plan:hover { background: rgb(99 102 241 / .16); }
-html.dark .st-plan { color: #c7d2fe; border-color: rgb(129 140 248 / .32); background: rgb(129 140 248 / .10); }
-.st-plan svg { width: 14px; height: 14px; flex: none; margin-top: 2px; }
-.st-plan-dir { opacity: .6; flex: none; line-height: 1.25rem; }
+/* plan file tree */
+.st-plan-sec { position: relative; }
+.st-plan-sec .st-tree { margin-top: 0; }
+/* the mode chip floats in the top-right corner; only the first row leaves room for it, so long file names get the full width below */
+.st-plan-mode { position: absolute; top: 0; right: 0; padding: .125rem .5rem; font-size: .6875rem; }
+.st-plan-sec .st-tree > ul > li > .st-tree-dir { padding-right: 6.5rem; }
+.st-plan-sec .st-tree > ul > li > .st-plan { padding-right: 6.5rem; }
+.st-tree, .st-tree ul { list-style: none; margin: 0; padding: 0; }
+.st-tree { margin-top: .25rem; font-size: .75rem; }
+.st-tree ul { margin-left: .5rem; padding-left: .75rem; border-left: 1px solid rgb(148 163 184 / .35); }
+.st-tree li { position: relative; padding: .125rem 0; }
+.st-tree ul > li::before { content: ''; position: absolute; left: -.75rem; top: .875rem; width: .625rem; border-top: 1px solid rgb(148 163 184 / .35); }
+.st-tree-dir { display: flex; align-items: center; gap: .375rem; color: #64748b; line-height: 1.25rem; }
+html.dark .st-tree-dir { color: #94a3b8; }
+.st-tree-dir svg { width: 14px; height: 14px; flex: none; }
+.st-tree > ul { margin-left: 0; padding-left: 0; border-left: 0; }
+.st-tree > ul > li::before { display: none; }
+.st-plan { display: flex; align-items: flex-start; gap: .375rem; width: 100%; padding: 0; border: 0; background: transparent; color: #4338ca; font-size: .75rem; text-align: left; cursor: pointer; }
+.st-plan:hover .st-plan-name { text-decoration: underline; }
+html.dark .st-plan { color: #c7d2fe; }
+.st-plan svg { width: 14px; height: 14px; flex: none; margin-top: 3px; }
 .st-plan-name { min-width: 0; overflow-wrap: anywhere; font-weight: 500; line-height: 1.25rem; }
 /* tasks */
 .st-tasks-progress { display: flex; align-items: center; gap: .5rem; margin-bottom: .5rem; }

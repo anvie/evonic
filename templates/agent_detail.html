@@ -2,7 +2,7 @@
 {% from 'partials/toggle.html' import toggle, toggle_widget %}
 
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/state-ui.css') }}?v=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/state-ui.css') }}?v=17">
 <!-- Toast Container -->
 <style>
 footer { display: none; }
@@ -1105,6 +1105,96 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
     .agent-tab { width: 100%; }
     .agent-tab-sep { display: block; flex: none; height: 0; margin: .375rem .75rem; border: 0; border-top: 1px solid rgb(148 163 184 / .2); }
 }
+
+/* ── General tab, /system style: left rail of pages, big page title, flat fields (title → description → control) ── */
+#tab-general { --gs-line: #d5dbe4; --gs-surface: #f8fafc; --gs-title: #111827; --gs-text: #64748b; --gs-accent: #4338ca; --gs-accent-bg: rgb(99 102 241 / .12); }
+html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(148 163 184 / .05); --gs-title: #f1f5f9; --gs-text: #94a3b8; --gs-accent: #c7d2fe; --gs-accent-bg: rgb(99 102 241 / .22); }
+#tab-general:not(.hidden) { display: block; }
+#tab-general .gs-body { display: grid; grid-template-columns: 12rem minmax(0, 1fr); column-gap: 1.5rem; align-items: start; align-content: start; }
+#tab-general .gtabs { grid-column: 1; position: sticky; top: 4.25rem; flex-direction: column; gap: .25rem; width: auto; max-width: none; margin: 0; padding: 0; overflow: visible; background: transparent; border-radius: 0; }
+#tab-general .gtab { justify-content: flex-start; width: 100%; padding: .5rem .875rem; border-radius: 9999px; font-size: .875rem; }   /* same fully-rounded pill as the agent menu on the left */
+#tab-general .gtab.is-active, html.dark #tab-general .gtab.is-active { background: var(--gs-accent-bg); color: var(--gs-accent); font-weight: 600; box-shadow: none; }
+#tab-general .gpanel { grid-column: 2; min-width: 0; }
+#tab-general .gp-head { margin: 0 0 1.25rem; }
+#tab-general .gp-head h2 { margin: 0 0 .375rem; font-size: 1.75rem; line-height: 1.2; font-weight: 700; letter-spacing: -.02em; color: var(--gs-title); }
+#tab-general .gp-head p { margin: 0; font-size: .9375rem; line-height: 1.6; color: var(--gs-text); }
+#tab-general .gpanel > .grid { grid-template-columns: minmax(0, 1fr) !important; gap: 1.5rem; }
+@media (max-width: 1023.98px) {
+  #tab-general .gs-body { display: block; }
+  #tab-general .gtabs { position: static; flex-direction: row; overflow-x: auto; margin-bottom: 1rem; }
+  #tab-general .gtab { width: auto; }
+}
+
+/* cards that hold plain fields become one bordered group with hairline-divided rows */
+#tab-general .gcard { border-radius: .875rem; border-color: var(--gs-line); }
+#tab-general .gcard:has(> .mb-4), #tab-general .gcard:has(> .prof) { padding: 0 !important; background: var(--gs-surface); overflow: hidden; }
+#tab-general .gcard-h { gap: .625rem; margin: 0; padding: 1rem 1.25rem; border-bottom: 1px solid var(--gs-line); }
+#tab-general .gcard:not(:has(> .mb-4)):not(:has(> .prof)) .gcard-h { margin-bottom: 1.25rem; padding: 0 0 1rem; }
+#tab-general .gcard-h h3 { font-size: 1.0625rem; font-weight: 700; color: var(--gs-title); }
+#tab-general .gcard > .prof { padding: 1.25rem; }
+#tab-general .gcard > .mb-4 { display: flex; flex-direction: column; margin: 0 !important; padding: 1.125rem 1.25rem; border-bottom: 1px solid var(--gs-line); transition: background-color .15s; }
+#tab-general .gcard > .mb-4:last-child { border-bottom: 0; }
+#tab-general .gcard > .mb-4:hover { background: rgb(148 163 184 / .08); }
+#tab-general .gcard > .mb-4 > * { order: 2; }
+#tab-general .gcard > .mb-4 > label.block { order: 0; margin: 0 0 .25rem; font-size: 1rem; font-weight: 600; letter-spacing: 0; color: var(--gs-title); }
+#tab-general .gcard > .mb-4 > p { order: 1; margin: 0 0 .75rem !important; font-size: .875rem; line-height: 1.6; color: var(--gs-text); }
+#tab-general .gcard > .mb-4 > a { order: 3; align-self: flex-start; margin-top: .5rem; }
+#tab-general .gcard > .mb-4 > .ev-cb, #tab-general .gcard > .mb-4 > select, #tab-general .gcard > .mb-4 > input[type="text"], #tab-general .gcard > .mb-4 > input[type="number"], #tab-general .gcard > .mb-4 > .flex { width: 100%; max-width: 40rem; }
+#tab-general .gcard > .mb-4 > textarea { width: 100%; max-width: 60rem; }
+/* toggles: title and description first, the switch underneath */
+#tab-general .gcard label.flex.items-center.gap-3.cursor-pointer,
+#tab-general .gcard label.flex.items-center.gap-3.cursor-pointer:hover { flex-direction: column-reverse; align-items: flex-start; justify-content: flex-start; gap: .75rem; padding: 0; border: 0; border-radius: 0; background: transparent; }
+#tab-general .gcard label.flex.items-center.gap-3.cursor-pointer > div { flex: none; width: 100%; }
+#tab-general .gcard label.flex.items-center.gap-3.cursor-pointer > div > span { display: block; font-size: 1rem; font-weight: 600; color: var(--gs-title); }
+#tab-general .gcard label.flex.items-center.gap-3.cursor-pointer > div > p { margin: .25rem 0 0; font-size: .875rem; line-height: 1.6; color: var(--gs-text); }
+
+/* Settings search (only inside the Settings tab) + keep the page above the tab-area blur band */
+#tab-general > * { position: relative; z-index: 20; }
+#tab-general .gs-search { position: sticky; top: 0; z-index: 40; width: 100%; max-width: none; margin: 0 0 .75rem; padding: .5rem 0 .75rem; background: var(--bg-page, #0a0f1c); }
+/* the tinted blur strip that sits behind the old floating tab header is not needed on Settings and showed up as a stray band behind the page title */
+#agent-tab-area:has(#tab-general:not(.hidden)) > .mfb-blur { display: none !important; }
+#tab-general .gs-search-ico { position: absolute; left: 1rem; top: 1.75rem; width: 1rem; height: 1rem; transform: translateY(-50%); color: #94a3b8; pointer-events: none; }
+#tab-general .gs-input { width: 100%; height: 2.5rem; padding: 0 2.75rem 0 2.5rem; font-size: .9rem; color: inherit; background: var(--gs-field-bg, rgb(148 163 184 / .08)); border: 1px solid var(--gs-line); border-radius: 9999px; }
+#tab-general .gs-input:focus { outline: none; border-color: #818cf8; box-shadow: 0 0 0 3px rgb(99 102 241 / .16); }
+#tab-general .gs-results { position: absolute; top: calc(100% - .25rem); left: 0; right: 0; max-height: min(26rem, 70vh); overflow-y: auto; background: var(--bg-card, #fff); border: 1px solid var(--gs-line); border-radius: 1rem; box-shadow: 0 18px 44px -14px rgb(15 23 42 / .45); }
+#tab-general .gs-results.hidden { display: none; }
+#tab-general .gs-result { display: block; width: 100%; padding: .625rem .875rem; text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--gs-line); cursor: pointer; color: inherit; }
+#tab-general .gs-result:last-child { border-bottom: 0; }
+#tab-general .gs-result.selected, #tab-general .gs-result:hover { background: var(--gs-accent-bg); }
+#tab-general .gs-r-path { font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--gs-text); }
+#tab-general .gs-r-title { font-size: .875rem; font-weight: 600; color: var(--gs-title); }
+#tab-general .gs-r-desc { margin-top: 2px; font-size: .75rem; line-height: 1.35; color: var(--gs-text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#tab-general .gs-empty { padding: .875rem; font-size: .8125rem; text-align: center; color: var(--gs-text); }
+#tab-general .gs-found { outline: 2px solid #6366f1; outline-offset: -2px; border-radius: .625rem; }
+
+/* ── Advanced page: same look as Behavior — each group is its own card, rows are title → description → control ── */
+#tab-general .adv-static { background: transparent !important; border: 0 !important; border-radius: 0 !important; overflow: visible; box-shadow: none; }
+#tab-general .adv-static > .adv-head { display: none; }            /* the outer "Advanced Settings" header + collapse arrow: the page title already says it */
+#tab-general #advanced-section { padding: 0 !important; gap: 1.5rem; }
+#tab-general .adv-search { display: none; }                         /* the search at the top of Settings covers every page */
+#tab-general .adv-sec { padding: 0; border: 1px solid var(--gs-line); border-radius: 1.5rem; background: var(--gs-surface); overflow: hidden; }
+#tab-general .adv-sec-t { margin: 0; padding: 1rem 1.25rem; border-bottom: 1px solid var(--gs-line); font-size: 1.0625rem; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--gs-title); }
+#tab-general .adv-sec .adv-grid > .adv-item:first-child { padding-top: 1.125rem; }
+#tab-general .adv-item { padding: 1.125rem 1.25rem; border-top: 1px solid var(--gs-line); transition: background-color .15s; }
+#tab-general .adv-grid > .adv-item:first-child { border-top: 0; }
+#tab-general .adv-item:hover { background: rgb(148 163 184 / .08); }
+#tab-general .adv-row > div, #tab-general .adv-toggle > div { display: flex; flex-direction: column; align-items: flex-start; }   /* the old grid rule centered the controls */
+#tab-general .adv-row > div > * { order: 2; }
+#tab-general .adv-row > div > label { order: 0; align-self: flex-start; margin: 0 0 .25rem !important; font-size: 1rem; font-weight: 600; letter-spacing: 0; color: var(--gs-title); }
+#tab-general .adv-row > div > p { order: 1; align-self: stretch; margin: 0 0 .75rem !important; font-size: .875rem; line-height: 1.6; color: var(--gs-text); }
+#tab-general .adv-row > div > :not(label):not(p) { grid-column: auto; grid-row: auto; width: 100%; max-width: 40rem; min-width: 0; }
+#tab-general .adv-row > div > input[type="number"] { max-width: 25rem; }
+#tab-general .adv-stack textarea { max-width: 60rem; }
+#tab-general .adv-stack label { font-size: 1rem; font-weight: 600; color: var(--gs-title); }
+#tab-general .adv-stack > div > p { margin: .5rem 0 0; font-size: .875rem; line-height: 1.6; color: var(--gs-text); }
+/* toggles inside Advanced: title + description first, the switch underneath (same as Behavior) */
+#tab-general .adv-sec label.flex.items-center.gap-3.cursor-pointer,
+#tab-general .adv-sec label.flex.items-center.gap-3.cursor-pointer:hover { flex-direction: column-reverse; align-items: flex-start; justify-content: flex-start; gap: .75rem; padding: 0; border: 0; border-radius: 0; background: transparent; }
+#tab-general .adv-sec label.flex.items-center.gap-3.cursor-pointer > div { flex: none; width: 100%; }
+#tab-general .adv-sec label.flex.items-center.gap-3.cursor-pointer > div > span { display: block; font-size: 1rem; font-weight: 600; color: var(--gs-title); }
+#tab-general .adv-sec label.flex.items-center.gap-3.cursor-pointer > div > p { margin: .25rem 0 0; font-size: .875rem; line-height: 1.6; color: var(--gs-text); }
+/* autosave check/spinner of a toggle: sit right next to the switch (it used to float over the description in the stacked layout) */
+#tab-general label.flex.items-center.gap-3.cursor-pointer > .as-status { right: auto; left: 3.5rem; top: auto; bottom: .25rem; transform: none; }
 </style>
 <div id="agent-page-root" class="px-2 py-1 md:py-4 flex-1 min-h-0 flex flex-col h-[calc(100dvh-var(--header-h,56px))]">
     {% if workspace_invalid %}
@@ -1205,6 +1295,15 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
 
     <!-- Settings Tab -->
     <div id="tab-general" class="tab-content hidden flex-1 min-h-0 overflow-y-auto">
+        <!-- Search across every Settings page (General / Behavior / Advanced / Variables). Only exists inside this tab. -->
+        <div class="gs-search" role="search">
+            <svg class="gs-search-ico" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <label for="gs-search-input" class="sr-only">Search all settings</label>
+            <input type="search" id="gs-search-input" class="gs-input" data-shortcut="/,mod+k" data-shortcut-label="Search settings"
+                   placeholder="Search anything in settings…" autocomplete="off" aria-controls="gs-search-results">
+            <div id="gs-search-results" class="gs-results hidden" role="listbox"></div>
+        </div>
+        <div class="gs-body">
         <div class="gtabs" role="tablist" aria-label="Settings sections">
             <button type="button" role="tab" class="gtab is-active" data-gp="general" aria-selected="true" onclick="switchGeneralTab('general')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>General</span></button>
             <button type="button" role="tab" class="gtab" data-gp="behavior" aria-selected="false" onclick="switchGeneralTab('behavior')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg><span>Behavior</span></button>
@@ -1212,6 +1311,7 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
             <button type="button" role="tab" class="gtab" data-gp="variables" aria-selected="false" onclick="switchGeneralTab('variables')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21s-4-3-4-9 4-9 4-9"/><path d="M16 3s4 3 4 9-4 9-4 9"/></svg><span>Variables</span></button>
         </div>
         <div class="gpanel" data-gp="general" role="tabpanel">
+        <div class="gp-head"><h2>General</h2><p>Name, avatar, model and where this agent runs.</p></div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         <div class="gcard bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
             <div class="gcard-h"><span class="gcard-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><div><h3>Profile</h3><p>Name, identity and avatar</p></div></div>
@@ -1297,6 +1397,7 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
         </div>
         </div>
         <div class="gpanel hidden" data-gp="behavior" role="tabpanel">
+        <div class="gp-head"><h2>Behavior</h2><p>System prompt, safety rules and what the agent can perceive.</p></div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         <div class="gcard bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
             <div class="gcard-h"><span class="gcard-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span><div><h3>Prompt &amp; Safety</h3><p>Persona and the rules that guard it</p></div></div>
@@ -1380,6 +1481,7 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
         </div>
         </div>
         <div class="gpanel hidden" data-gp="advanced" role="tabpanel">
+        <div class="gp-head"><h2>Advanced</h2><p>Memory, conversation, planning and safety tuning for this agent.</p></div>
         <div class="grid grid-cols-1 gap-6 items-start">
             <!-- Advanced Settings -->
             <div class="adv-static bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
@@ -1689,6 +1791,7 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
         </div>
         </div>
         <div class="gpanel hidden" data-gp="variables" role="tabpanel">
+        <div class="gp-head"><h2>Variables</h2><p>Environment variables available to this agent's tools.</p></div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start gpanel-vars">
             <!-- Variables Card -->
             <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
@@ -1754,6 +1857,7 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
             </div>
         </div>
         </div>
+        </div><!-- /gs-body -->
     </div>
 
     <!-- Knowledge Tab -->
@@ -2316,9 +2420,8 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
                 {% endif %}
                 <!-- Session State Card -->
                 <div id="summary-card" class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 flex flex-col flex-1 min-h-0 overflow-hidden">
-                    <div class="flex justify-between items-center px-4 pt-4 pb-2 flex-shrink-0">
-                        <h3 class="font-semibold text-gray-800 dark:text-gray-100">Session State</h3>
-                        <button onclick="refreshSessionState()" class="state-btn" title="Reload session state" aria-label="Reload session state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+                    <div class="st-head flex-shrink-0">
+                        <div class="st-bar"><h3 class="st-seg st-seg-title ">Session State</h3><span class="st-mode-slot"></span><button type="button" onclick="spinRefresh(this, _refreshSessionStateImpl)" class="st-seg st-seg-btn" title="Reload session state" aria-label="Reload session state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button></div>
                     </div>
                     <div id="summary-content" class="flex-1 overflow-y-auto overflow-x-hidden p-4 min-h-0 break-words">
                         <p class="text-sm text-gray-400 italic">No summary yet. Start chatting to generate one.</p>
@@ -2357,9 +2460,8 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
             {% endif %}
             <!-- Mobile Session State Card -->
             <div class="mstate-card">
-                <div class="mstate-h">
-                    <h3>Session State</h3>
-                    <button onclick="refreshSessionState()" class="state-btn" title="Reload session state" aria-label="Reload session state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+                <div class="mstate-h st-head">
+                    <div class="st-bar"><h3 class="st-seg st-seg-title ">Session State</h3><span class="st-mode-slot"></span><button type="button" onclick="spinRefresh(this, _refreshSessionStateImpl)" class="st-seg st-seg-btn" title="Reload session state" aria-label="Reload session state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button></div>
                 </div>
                 <div id="mobile-summary-content" class="mstate-body">
                     <p class="text-sm text-gray-400 italic">No summary yet. Start chatting to generate one.</p>
@@ -2849,7 +2951,7 @@ html.dark .agent-tab.tab-btn.active:hover { background: rgb(129 140 248 / .22); 
 
 <script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=69" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=6" defer></script>
-<script src="{{ url_for('static', filename='js/state-ui.js') }}?v=1" defer></script>
+<script src="{{ url_for('static', filename='js/state-ui.js') }}?v=13" defer></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 // AGENT_ID/ENABLE_AGENT_STATE are mutable: softSwitchAgent() retargets the page
@@ -3181,6 +3283,157 @@ function switchGeneralTab(k, persist) {
     if (persist !== false) { try { localStorage.setItem('agentGeneralTab', k); } catch (_) {} }
 }
 document.addEventListener('DOMContentLoaded', () => { let k = 'general'; try { k = localStorage.getItem('agentGeneralTab') || 'general'; } catch (_) {} switchGeneralTab(k, false); });
+
+// ---- Settings search: every page of the Settings tab (General / Behavior / Advanced / Variables) ----
+const GeneralSearch = (function () {
+    const PAGES = { general: 'General', behavior: 'Behavior', advanced: 'Advanced', variables: 'Variables' };
+    let items = [], sel = -1, markTimer = null, input = null, box = null;
+    const clean = t => (t || '').replace(/\s+/g, ' ').trim();
+    const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const rx = terms => new RegExp('(' + terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+    const highlight = (text, terms) => !terms.length ? esc(text) : text.split(rx(terms)).map((p, i) => i % 2 ? '<mark class="tbl-hl">' + esc(p) + '</mark>' : esc(p)).join('');
+
+    function build() {
+        const root = document.getElementById('tab-general');
+        const out = [], seen = new Set();
+        const add = (page, title, desc, el, isPage) => {
+            title = clean(title);
+            if (!title || title.length > 120) return;
+            const key = page + '|' + title.toLowerCase() + '|' + clean(desc).slice(0, 40);
+            if (seen.has(key)) return;
+            seen.add(key);
+            out.push({ page, title, desc: clean(desc), el, isPage: !!isPage });
+        };
+        Object.keys(PAGES).forEach(k => add(k, PAGES[k], '', null, true));
+        root.querySelectorAll('.gpanel').forEach(panel => {
+            const page = panel.dataset.gp;
+            panel.querySelectorAll('.gcard-h').forEach(h => { const t = h.querySelector('h3'), p = h.querySelector('p'); if (t) add(page, t.textContent, p ? p.textContent : '', h); });
+            panel.querySelectorAll('.adv-sec-t').forEach(h => { const t = h.querySelector('span'); if (t) add(page, t.textContent, '', h); });
+            panel.querySelectorAll('.mb-4, [data-adv-item]').forEach(el => {
+                if (el.closest('.modal, [role=dialog]')) return;
+                const toggleText = el.querySelector('label.flex > div > span');
+                const label = el.querySelector('label.block, label[for]');
+                const title = toggleText ? toggleText.textContent : (label ? label.textContent : '');
+                const p = toggleText ? el.querySelector('label.flex > div > p') : el.querySelector('p');
+                add(page, title, p ? p.textContent : '', el);
+            });
+        });
+        return out;
+    }
+
+    function score(it, terms) {
+        const title = it.title.toLowerCase(), desc = it.desc.toLowerCase();
+        let sc = 0;
+        for (const t of terms) {
+            if (title.startsWith(t)) sc += 4; else if (title.includes(t)) sc += 3; else if (desc.includes(t)) sc += 1; else return 0;
+        }
+        return sc + (it.isPage ? 2 : 0);
+    }
+
+    function snippet(desc, terms) {
+        if (!desc) return '';
+        const low = desc.toLowerCase();
+        let at = -1;
+        for (const t of terms) { const i = low.indexOf(t); if (i >= 0 && (at < 0 || i < at)) at = i; }
+        if (at < 0) return desc.length > 110 ? desc.slice(0, 110) + '…' : desc;
+        const start = Math.max(0, at - 30), end = Math.min(desc.length, start + 120);
+        return (start > 0 ? '…' : '') + desc.slice(start, end) + (end < desc.length ? '…' : '');
+    }
+
+    function select(i) {
+        sel = i;
+        const btns = box.querySelectorAll('.gs-result');
+        btns.forEach((b, j) => b.classList.toggle('selected', j === i));
+        if (btns[i]) btns[i].scrollIntoView({ block: 'nearest' });
+    }
+
+    function query(q) {
+        const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+        clearMarks();
+        if (!terms.length) { box.classList.add('hidden'); box.innerHTML = ''; items = []; sel = -1; return; }
+        const matches = build().map(it => ({ it, sc: score(it, terms) })).filter(m => m.sc > 0).sort((a, b) => b.sc - a.sc).map(m => m.it);
+        items = matches.slice(0, 12);
+        sel = items.length ? 0 : -1;
+        if (!items.length) {
+            box.innerHTML = '<div class="gs-empty">No settings match “' + esc(q.trim()) + '”</div>';
+        } else {
+            box.innerHTML = '';
+            items.forEach((m, i) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'gs-result' + (i === 0 ? ' selected' : '');
+                b.setAttribute('role', 'option');
+                const sn = snippet(m.desc, terms);
+                b.innerHTML = '<div class="gs-r-path">Settings › ' + esc(PAGES[m.page]) + (m.isPage ? ' · page' : '') + '</div>' +
+                    '<div class="gs-r-title">' + highlight(m.title, terms) + '</div>' + (sn ? '<div class="gs-r-desc">' + highlight(sn, terms) + '</div>' : '');
+                b.addEventListener('mousedown', e => e.preventDefault());
+                b.addEventListener('click', () => jump(m, terms));
+                b.addEventListener('mousemove', () => select(i));
+                box.appendChild(b);
+            });
+            if (matches.length > items.length) {
+                const more = document.createElement('div');
+                more.className = 'gs-empty';
+                more.textContent = '+' + (matches.length - items.length) + ' more — keep typing to narrow down';
+                box.appendChild(more);
+            }
+        }
+        box.classList.remove('hidden');
+    }
+
+    function clearMarks() {
+        clearTimeout(markTimer);
+        const root = document.getElementById('tab-general');
+        if (root) { _advClearMarks(root); root.querySelectorAll('.gs-found').forEach(e => e.classList.remove('gs-found')); }
+        document.removeEventListener('pointerdown', onAway, true);
+    }
+    function onAway() { clearMarks(); }
+
+    function jump(m, terms) {
+        box.classList.add('hidden');
+        input.value = '';
+        input.blur();
+        switchGeneralTab(m.page);
+        const el = m.el;
+        if (!el) return;
+        const adv = document.getElementById('advanced-section');
+        if (adv && adv.contains(el)) {
+            if (adv.classList.contains('hidden')) toggleAdvanced();
+            el.classList.remove('adv-hide');
+            const grp = el.closest('[data-adv-group]');
+            if (grp) grp.classList.remove('adv-hide');
+        }
+        requestAnimationFrame(() => {
+            el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            el.classList.add('gs-found');
+            if (!m.isPage) _advMark(el, new RegExp(rx(terms).source, 'gi'));
+            setTimeout(() => document.addEventListener('pointerdown', onAway, true), 400);
+            markTimer = setTimeout(clearMarks, 15000);
+        });
+    }
+
+    function init() {
+        input = document.getElementById('gs-search-input');
+        box = document.getElementById('gs-search-results');
+        if (!input) return;
+        input.addEventListener('input', () => query(input.value));
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Escape') { input.value = ''; query(''); }
+            else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                if (!items.length) return;
+                e.preventDefault();
+                select((sel + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length);
+            } else if (e.key === 'Enter') {
+                const m = items[sel >= 0 ? sel : 0];
+                if (m) { e.preventDefault(); jump(m, input.value.toLowerCase().split(/\s+/).filter(Boolean)); }
+            }
+        });
+        input.addEventListener('blur', () => setTimeout(() => box.classList.add('hidden'), 150));
+        input.addEventListener('focus', () => { if (input.value.trim()) query(input.value); });
+    }
+    return { init };
+})();
+document.addEventListener('DOMContentLoaded', () => GeneralSearch.init());
 
 // ---- Advanced Settings search: filter settings by keyword, open everything that matches, highlight the hit ----
 function _advText(node) {
@@ -8375,6 +8628,7 @@ const _refreshSessionStateImpl = async function() {
         }
 
         // Session State: Context / Plan / Tasks / Background / Skills, then the summary
+        StateUI.setModeChip(stateData);
         const sectionsHtml = StateUI.sessionSections(stateData, {
             taskText: t => marked.parseInline(t.text),
             bgHtml: buildBgProcessesHtml(stateData.background_processes)

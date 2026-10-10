@@ -1320,49 +1320,149 @@ def api_batch_save():
 
 @settings_bp.route('/api/settings/users', methods=['GET'])
 def api_list_users():
-    """List all users with optional status filter.
+    """List users with search, status filter, sort, status counts and per-user contacts/agents/tags.
 
     Query params:
         filter: all | approved | blocked | pending  (default: all)
-        limit: int (default: 50)
+        q: free-text search over name, id, notes and contact values
+        sort: active | name | newest  (default: active)
+        limit: int (default: 50, max 200)
         offset: int (default: 0)
     """
     status_filter = request.args.get('filter', 'all')
-    limit = min(int(request.args.get('limit', 50)), 200)
+    query = (request.args.get('q') or '').strip()
+    sort = request.args.get('sort', 'active')
+    limit = max(1, min(int(request.args.get('limit', 50)), 200))
     offset = max(int(request.args.get('offset', 0)), 0)
+
+    order_by = {
+        'active': 'u.last_active_at DESC NULLS LAST',
+        'name': 'u.name COLLATE NOCASE ASC',
+        'newest': 'u.created_at DESC',
+    }.get(sort, 'u.last_active_at DESC NULLS LAST')
+
+    base_conditions = ['u.deleted_at IS NULL']
+    base_params = []
+    if query:
+        like = '%' + query + '%'
+        base_conditions.append(
+            "(u.name LIKE ? OR u.id LIKE ? OR u.notes LIKE ? OR EXISTS ("
+            "SELECT 1 FROM user_contacts c WHERE c.user_id = u.id AND c.deleted_at IS NULL "
+            "AND (c.value LIKE ? OR c.external_user_id LIKE ?)))")
+        base_params.extend([like] * 5)
+
+    conditions = list(base_conditions)
+    if status_filter == 'approved':
+        conditions.append('u.is_approved = 1 AND u.blocked_at IS NULL')
+    elif status_filter == 'blocked':
+        conditions.append('u.is_approved = 2')
+    elif status_filter == 'pending':
+        conditions.append('(u.is_approved = 0 OR u.is_approved IS NULL)')
+
+    where = ' AND '.join(conditions)
+    base_where = ' AND '.join(base_conditions)
 
     with db._connect() as conn:
         conn.row_factory = db._row_factory
         cursor = conn.cursor()
-
-        conditions = ['u.deleted_at IS NULL']
-        params = []
-
-        if status_filter == 'approved':
-            conditions.append('u.is_approved = 1 AND u.blocked_at IS NULL')
-        elif status_filter == 'blocked':
-            conditions.append('u.is_approved = 2')
-        elif status_filter == 'pending':
-            conditions.append('(u.is_approved = 0 OR u.is_approved IS NULL)')
-
-        where = ' AND '.join(conditions)
 
         cursor.execute(f"""
             SELECT u.*,
                    (SELECT COUNT(*) FROM user_audit_log WHERE user_id = u.id AND action IN ('blocked', 'unblocked')) as audit_count
             FROM users u
             WHERE {where}
-            ORDER BY u.last_active_at DESC NULLS LAST
+            ORDER BY {order_by}
             LIMIT ? OFFSET ?
-        """, params + [limit, offset])
-
+        """, base_params + [limit, offset])
         users = [dict(r) for r in cursor.fetchall()]
 
-        # Count total for pagination
-        cursor.execute(f'SELECT COUNT(*) FROM users u WHERE {where}', params)
+        cursor.execute(f'SELECT COUNT(*) FROM users u WHERE {where}', base_params)
         total = cursor.fetchone()[0]
 
-    return jsonify({'users': users, 'total': total, 'limit': limit, 'offset': offset})
+        # Counts per status for the filter chips (same search, ignoring the status filter)
+        cursor.execute(f"""
+            SELECT COUNT(*) AS all_count,
+                   COALESCE(SUM(CASE WHEN u.is_approved = 1 AND u.blocked_at IS NULL THEN 1 ELSE 0 END), 0) AS approved,
+                   COALESCE(SUM(CASE WHEN u.is_approved = 0 OR u.is_approved IS NULL THEN 1 ELSE 0 END), 0) AS pending,
+                   COALESCE(SUM(CASE WHEN u.is_approved = 2 THEN 1 ELSE 0 END), 0) AS blocked
+            FROM users u WHERE {base_where}
+        """, base_params)
+        row = cursor.fetchone()
+        counts = {'all': row['all_count'], 'approved': row['approved'],
+                  'pending': row['pending'], 'blocked': row['blocked']}
+
+        # Enrich this page with contacts / agents / tags (three small queries, not N+1)
+        for u in users:
+            u['contacts'], u['agents'], u['tags'] = [], [], []
+        if users:
+            by_id = {u['id']: u for u in users}
+            marks = ','.join('?' for _ in users)
+            ids = list(by_id)
+            cursor.execute(
+                "SELECT user_id, channel_type, value, external_user_id, is_primary FROM user_contacts "
+                "WHERE deleted_at IS NULL AND user_id IN (" + marks + ") ORDER BY is_primary DESC, id ASC", ids)
+            for r in cursor.fetchall():
+                by_id[r['user_id']]['contacts'].append({
+                    'channel_type': r['channel_type'], 'value': r['value'],
+                    'external_user_id': r['external_user_id'], 'is_primary': bool(r['is_primary'])})
+            cursor.execute(
+                "SELECT ua.user_id, ua.agent_id, a.name AS agent_name FROM user_agents ua "
+                "LEFT JOIN agents a ON a.id = ua.agent_id "
+                "WHERE ua.removed_at IS NULL AND ua.user_id IN (" + marks + ")", ids)
+            for r in cursor.fetchall():
+                by_id[r['user_id']]['agents'].append({'id': r['agent_id'], 'name': r['agent_name'] or r['agent_id']})
+            cursor.execute(
+                "SELECT user_id, tag FROM user_tags WHERE removed_at IS NULL AND user_id IN (" + marks + ")", ids)
+            for r in cursor.fetchall():
+                by_id[r['user_id']]['tags'].append(r['tag'])
+
+    return jsonify({'users': users, 'total': total, 'counts': counts, 'limit': limit, 'offset': offset})
+
+
+@settings_bp.route('/api/settings/users/<user_id>/approve', methods=['POST'])
+def api_approve_user(user_id):
+    """Approve a pending user (a blocked user is unblocked instead)."""
+    user = db.get_user(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    if user.get('is_approved') == 2:
+        ok = db.unblock_user(user_id, actor_type='admin', actor_id='web_admin')
+    else:
+        ok = db.update_user(user_id, {'is_approved': 1}, actor_type='admin', actor_id='web_admin')
+    if ok:
+        audit.log_user_management(user_id='admin', target_user=user_id, action='approve', ip=request.remote_addr or '')
+        return jsonify({'success': True, 'user_id': user_id})
+    return jsonify({'error': 'Could not approve user'}), 400
+
+
+@settings_bp.route('/api/settings/users/<user_id>', methods=['PUT'])
+def api_update_user(user_id):
+    """Edit a user's display name and notes."""
+    data = request.get_json() or {}
+    updates = {}
+    if 'name' in data:
+        name = str(data.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'Name cannot be empty'}), 400
+        updates['name'] = name[:200]
+    if 'notes' in data:
+        updates['notes'] = str(data.get('notes') or '')[:5000]
+    if not updates:
+        return jsonify({'error': 'Nothing to update'}), 400
+    if not db.get_user(user_id):
+        return jsonify({'error': 'User not found'}), 404
+    if db.update_user(user_id, updates, actor_type='admin', actor_id='web_admin'):
+        return jsonify({'success': True, 'user_id': user_id})
+    return jsonify({'error': 'Could not update user'}), 400
+
+
+@settings_bp.route('/api/settings/users/<user_id>', methods=['DELETE'])
+def api_delete_user(user_id):
+    """Soft-delete a user (hidden from the list; history kept)."""
+    if db.soft_delete_user(user_id, actor_type='admin', actor_id='web_admin'):
+        audit.log_user_management(user_id='admin', target_user=user_id, action='delete', ip=request.remote_addr or '')
+        return jsonify({'success': True, 'user_id': user_id})
+    return jsonify({'error': 'User not found'}), 404
 
 
 @settings_bp.route('/api/admin/blocked-users', methods=['GET'])

@@ -290,8 +290,8 @@ html.dark .sess-hdr .chat-header-pill { background: rgb(10 15 28 / .62); border-
 /* State cards: same look as the agent page's Agent State / Session State cards */
 #agent-state-panel, #summary-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 1.25rem; overflow: hidden; }
 html.dark #agent-state-panel, html.dark #summary-panel { background: var(--color-gray-800, #1e2939); border-color: var(--color-gray-600, #4a5565); }
-#AgentState, #SessionRecap { padding: 1rem 1.25rem; border-bottom: 0; }
-#AgentState h4, #SessionRecap h4 { font-size: 1rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
+#AgentState { padding: 1rem 1.25rem; border-bottom: 0; }
+#AgentState h4 { font-size: 1rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
 #agent-state-content, #SessionStateContent { padding-left: 1.25rem; padding-right: 1.25rem; }
 #summary-meta { padding-left: 1.25rem; padding-right: 1.25rem; }
 #chat-room > #side-panels-wrapper { align-self: stretch; }
@@ -337,6 +337,62 @@ html.dark #tab-settings .hdr-icon-btn:hover { background: rgb(148 163 184 / .2);
 #SessionStateContent, #mobile-SessionStateContent { display: flex; flex-direction: column; gap: 1.25rem; }
 #SessionStateContent, #agent-state-content { padding-top: .25rem; }
 .st-sec-h { display: flex; align-items: center; gap: .5rem; min-height: 1.5rem; margin-bottom: .5rem; font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #64748b; }
+.st-sec-h:last-child { margin-bottom: 0; }
+.st-stack > :empty { display: none; }
+.st-title-row { display: flex; align-items: center; gap: .625rem; min-width: 0; }
+.st-mode-slot:empty { display: none; }
+.st-mode { padding: .125rem .5rem; font-size: .6875rem; letter-spacing: 0; text-transform: none; font-weight: 600; }
+
+/* Session State header: a full-width bar flush with the card; title · mode · (recap) · refresh sit inside it as
+   overlapping layers whose inner corners are rounded (outer edges stay square so the bar merges into the card). */
+:root { --st-bar-bg: #e4e9f1; --st-seg-1: #ffffff; --st-seg-2: #e4e9f1; --st-seg-line: #dde3ec; --st-seg-text: #1f2937; --st-seg-shadow: rgb(15 23 42 / .22); }
+html.dark { --st-bar-bg: #1c2331; --st-seg-1: #262e3d; --st-seg-2: #1c2331; --st-seg-line: #2a3242; --st-seg-text: #f1f5f9; --st-seg-shadow: rgb(0 0 0 / .5); }
+.st-head { display: block; padding: 0; border-bottom: 1px solid var(--st-seg-line); background: var(--st-bar-bg); }
+.st-bar { display: flex; align-items: stretch; width: 100%; min-width: 0; isolation: isolate; }
+.st-bar .st-mode-slot { display: contents; }
+.st-seg { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; align-self: stretch; min-height: 2.75rem; margin: 0; border: 0; color: var(--st-seg-text); background: var(--st-seg-1); box-shadow: 3px 0 6px -3px var(--st-seg-shadow); }
+.st-seg-title { z-index: 4; flex: 0 0 auto; justify-content: flex-start; padding: 0 1.25rem 0 1rem; border-radius: 0 .875rem .875rem 0; font-size: .875rem; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+.st-chip.st-mode, html.dark .st-chip.st-mode { position: relative; z-index: 3; flex: none; align-self: stretch; min-height: 2.75rem; height: auto; margin: 0 0 0 -.875rem; padding: 0 1.125rem 0 1.75rem; gap: 0; border: 0; border-radius: 0 .875rem .875rem 0; font-size: .75rem; white-space: nowrap; font-weight: 800; letter-spacing: .02em; text-transform: capitalize; box-shadow: 3px 0 6px -3px var(--st-seg-shadow); }
+/* mode chip stage: old and new chips share one grid cell so a change stacks the new chip over the old one */
+.st-mode-stage { position: relative; z-index: 3; display: grid; flex: none; align-self: stretch; margin-left: -.875rem; }
+.st-bar-compact .st-mode-stage { margin-left: -1rem; }
+.st-mode-stage > .st-chip.st-mode, html.dark .st-mode-stage > .st-chip.st-mode { grid-area: 1 / 1; justify-self: start; margin: 0; z-index: 1; }
+.st-mode-stage > .st-mode-enter { z-index: 2 !important; animation: st-mode-slide .5s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes st-mode-slide { from { transform: translateX(-105%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .st-mode-stage > .st-mode-enter { animation: none; } }
+.st-seg-btn { z-index: 2; margin-left: -.875rem; padding: 0 .875rem 0 1.5rem; background: var(--st-seg-2); border-radius: .875rem; cursor: pointer; font-size: .8125rem; font-weight: 600; gap: .375rem; transition: filter .15s; }
+.st-seg-btn:last-child { z-index: 1; flex: 1 1 auto; min-width: 3.75rem; justify-content: center; border-radius: 0; padding: 0 0 0 .875rem; box-shadow: none; }
+.st-seg-btn:hover:not(:disabled) { filter: brightness(1.2); }
+.st-seg-btn:disabled { cursor: default; opacity: .8; }
+.st-seg-btn svg { width: 1rem; height: 1rem; flex: none; }
+.st-bar-compact .st-seg, .st-bar-compact .st-chip.st-mode { min-height: 2.5rem; }
+.st-bar-compact .st-seg-title { padding: 0 1.25rem 0 .875rem; font-size: .6875rem; text-transform: uppercase; letter-spacing: .06em; }
+.st-bar-compact .st-seg-title { padding: 0 .875rem 0 .75rem; }
+.st-bar-compact .st-chip.st-mode { padding: 0 .875rem 0 1.75rem; font-size: .75rem; }
+.st-bar-compact .st-seg-btn { padding: 0 .5rem 0 1.25rem; }
+.st-bar-compact .st-seg-btn:last-child { flex: 1 1 0; min-width: 2.5rem; padding: 0 0 0 .625rem; }
+.st-bar-compact .st-seg-wide span { display: none; }
+.st-seg-btn.st-seg-wide { border-radius: 0; box-shadow: none; }
+.st-bar-compact .st-seg-btn.st-seg-wide { flex: 1 1 0; width: auto; min-width: 2.5rem; padding: 0 0 0 .875rem; }
+.st-chip.st-mode.green, html.dark .st-chip.st-mode.green { color: #052e16; text-shadow: 0 1px 0 rgb(255 255 255 / .35); background: linear-gradient(180deg, #6ee7b7, #34d399); }
+.st-chip.st-mode.amber, html.dark .st-chip.st-mode.amber { color: #451a03; text-shadow: 0 1px 0 rgb(255 255 255 / .4); background: linear-gradient(180deg, #fde68a, #fbbf24); }
+.st-chip.st-mode .st-dot { display: none; }
+/* Loading skeletons for the state panels (same boxes as the real content, so switching sessions causes no layout shift) */
+.sk { display: block; flex: none; height: .75rem; border-radius: .375rem; background: linear-gradient(90deg, rgb(148 163 184 / .12) 25%, rgb(148 163 184 / .26) 37%, rgb(148 163 184 / .12) 63%); background-size: 400% 100%; animation: sk-shimmer 1.4s ease infinite; }
+@keyframes sk-shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+.sk-ic { width: 14px; height: 14px; border-radius: .25rem; }
+.sk-kv { display: flex; align-items: center; gap: .625rem; min-height: 2rem; }
+.sk-kv + .sk-kv { border-top: 1px solid rgb(148 163 184 / .16); }
+.sk-line { height: .75rem; margin: .5rem 0; }
+.sk-row { display: flex; align-items: center; gap: .5rem; padding: .25rem 0; min-height: 1.75rem; }
+.sk-meter { height: .375rem; border-radius: 9999px; }
+.st-chip.st-mode.st-skel, html.dark .st-chip.st-mode.st-skel { width: 8rem; color: transparent; text-shadow: none; box-shadow: none; background: linear-gradient(90deg, rgb(148 163 184 / .14) 25%, rgb(148 163 184 / .28) 37%, rgb(148 163 184 / .14) 63%); background-size: 400% 100%; animation: sk-shimmer 1.4s ease infinite; }
+#side-panels-wrapper[data-idle] .sk { animation: none; opacity: .5; }
+@media (prefers-reduced-motion: reduce) { .sk, .st-chip.st-mode.st-skel { animation: none; } }
+
+.mstate-h.st-head { padding: 0; }
+.st-card-body-pad { padding-top: 1rem; }
+
 .st-sec-h svg { width: 14px; height: 14px; flex: none; }
 .st-sec-h .st-chip { padding: .125rem .5rem; font-size: .6875rem; letter-spacing: 0; text-transform: none; }
 .st-sec-h .st-sec-r { margin-left: auto; letter-spacing: 0; text-transform: none; font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -371,12 +427,27 @@ html.dark .st-chip.amber { background: rgb(245 158 11 / .16); color: #fcd34d; bo
 .st-meter { height: .375rem; border-radius: 9999px; background: rgb(148 163 184 / .25); overflow: hidden; }
 .st-meter > div { height: 100%; border-radius: 9999px; transition: width .3s ease; }
 /* plan file */
-.st-plan { display: flex; align-items: flex-start; gap: .5rem; width: 100%; margin-top: .5rem; padding: .5rem .625rem; border: 1px solid rgb(99 102 241 / .28); border-radius: 10px;
-    background: rgb(99 102 241 / .08); color: #4338ca; font-size: .75rem; text-align: left; cursor: pointer; transition: background-color .15s; }
-.st-plan:hover { background: rgb(99 102 241 / .16); }
-html.dark .st-plan { color: #c7d2fe; border-color: rgb(129 140 248 / .32); background: rgb(129 140 248 / .10); }
-.st-plan svg { width: 14px; height: 14px; flex: none; margin-top: 2px; }
-.st-plan-dir { opacity: .6; flex: none; line-height: 1.25rem; }
+/* plan file tree */
+.st-plan-sec { position: relative; }
+.st-plan-sec .st-tree { margin-top: 0; }
+/* the mode chip floats in the top-right corner; only the first row leaves room for it, so long file names get the full width below */
+.st-plan-mode { position: absolute; top: 0; right: 0; padding: .125rem .5rem; font-size: .6875rem; }
+.st-plan-sec .st-tree > ul > li > .st-tree-dir { padding-right: 6.5rem; }
+.st-plan-sec .st-tree > ul > li > .st-plan { padding-right: 6.5rem; }
+.st-tree, .st-tree ul { list-style: none; margin: 0; padding: 0; }
+.st-tree { margin-top: .25rem; font-size: .75rem; }
+.st-tree ul { margin-left: .5rem; padding-left: .75rem; border-left: 1px solid rgb(148 163 184 / .35); }
+.st-tree li { position: relative; padding: .125rem 0; }
+.st-tree ul > li::before { content: ''; position: absolute; left: -.75rem; top: .875rem; width: .625rem; border-top: 1px solid rgb(148 163 184 / .35); }
+.st-tree-dir { display: flex; align-items: center; gap: .375rem; color: #64748b; line-height: 1.25rem; }
+html.dark .st-tree-dir { color: #94a3b8; }
+.st-tree-dir svg { width: 14px; height: 14px; flex: none; }
+.st-tree > ul { margin-left: 0; padding-left: 0; border-left: 0; }
+.st-tree > ul > li::before { display: none; }
+.st-plan { display: flex; align-items: flex-start; gap: .375rem; width: 100%; padding: 0; border: 0; background: transparent; color: #4338ca; font-size: .75rem; text-align: left; cursor: pointer; }
+.st-plan:hover .st-plan-name { text-decoration: underline; }
+html.dark .st-plan { color: #c7d2fe; }
+.st-plan svg { width: 14px; height: 14px; flex: none; margin-top: 3px; }
 .st-plan-name { min-width: 0; overflow-wrap: anywhere; font-weight: 500; line-height: 1.25rem; }
 /* tasks */
 .st-tasks-progress { display: flex; align-items: center; gap: .5rem; margin-bottom: .5rem; }
@@ -452,6 +523,7 @@ html.dark #mobile-dropdown { background: rgb(15 23 42 / .82); border-color: #374
 /* while open, the field itself gives up its own border/background/ring: the surface behind it carries them */
 .msb-field input { position: relative; z-index: 6; }
 .msb-ico { z-index: 7; }
+.msb-field .ev-kbd-field { z-index: 8; }   /* the input sits at z-index 6 and would otherwise cover the shortcut badge */
 .msb-field:has(#mobile-dropdown:not(.hidden)) input, html.dark .msb-field:has(#mobile-dropdown:not(.hidden)) input {
   border-color: transparent !important; background: transparent !important; box-shadow: none; }
 .msd-row { display: flex; align-items: center; gap: .75rem; width: 100%; padding: .5625rem .75rem; border: 0; border-radius: .875rem; background: transparent; text-align: left; cursor: pointer; color: inherit; transition: background-color .15s; }
@@ -516,9 +588,9 @@ html.dark #chat-room { border-color: var(--color-gray-700, #364153); background:
         <div id="sidebar" class="sess-rail hidden md:flex">
             <div class="sess-rail-title"><h2>Sessions</h2></div>
             <div id="SidebarSearch">
-                <label class="msb-field"><svg class="msb-ico" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input type="search" id="sidebar-search" name="sidebar_search_filter" placeholder="Search agent or user ID..."
+                <label class="msb-field"><svg class="msb-ico" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input type="search" id="sidebar-search" data-shortcut="/,mod+k" data-shortcut-label="Search sessions" data-shortcut-hint="off" name="sidebar_search_filter" placeholder="Search agent or user ID..."
                        aria-label="Search sessions"
-                       oninput="debouncedLoadSessions(this.value)" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"></label>
+                       oninput="debouncedLoadSessions(this.value)" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"><kbd class="ev-kbd ev-kbd-field" aria-hidden="true">/</kbd></label>
             </div>
             <div id="session-list" class="flex-1 overflow-y-auto"></div>
             <div class="sess-rail-footer">
@@ -632,7 +704,7 @@ html.dark #chat-room { border-color: var(--color-gray-700, #364153); background:
                     <div id="agent-state-panel" class="flex-shrink-0">
                         <div id="AgentState" class="flex justify-between items-center px-4 py-3 border-b border-gray-100 dark:border-gray-600">
                             <h4 class="text-xs font-semibold text-gray-600 dark:text-gray-100 uppercase tracking-wide">Agent State</h4>
-                            <button onclick="loadAgentState()" class="state-btn" title="Refresh agent state" aria-label="Refresh agent state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+                            <button onclick="spinRefresh(this, loadAgentState)" class="state-btn" title="Refresh agent state" aria-label="Refresh agent state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
                         </div>
                         <div id="agent-state-content" class="overflow-y-auto overflow-x-hidden p-4 break-words" style="max-height:200px;">
                             <p class="text-xs text-gray-400 dark:text-gray-500 italic">No state yet.</p>
@@ -641,12 +713,8 @@ html.dark #chat-room { border-color: var(--color-gray-700, #364153); background:
 
                     <!-- Summary Panel -->
                     <div id="summary-panel" class="flex flex-col flex-1 min-h-0">
-                        <div id="SessionRecap" class="flex justify-between items-center px-4 py-3 border-b border-gray-100 dark:border-gray-600 flex-shrink-0">
-                            <h4 class="text-xs font-semibold text-gray-600 dark:text-gray-100 uppercase tracking-wide">Session State</h4>
-                            <div class="flex items-center gap-1">
-                                <button onclick="forceRecap(this)" class="state-btn state-btn-text" title="Regenerate the session summary now" aria-label="Recap now"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg><span>Recap</span></button>
-                                <button onclick="loadSessionSummary()" class="state-btn" title="Reload session state" aria-label="Reload session state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
-                            </div>
+                        <div id="SessionRecap" class="st-head flex-shrink-0">
+                            <div class="st-bar st-bar-compact"><h4 class="st-seg st-seg-title ">Session State</h4><span class="st-mode-slot"></span><button type="button" onclick="forceRecap(this)" class="st-seg st-seg-btn st-seg-wide" title="Regenerate the session summary now" aria-label="Recap now"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg><span>Recap</span></button><button type="button" onclick="spinRefresh(this, () => Promise.all([loadAgentState(), loadSessionSummary()]))" class="st-seg st-seg-btn" title="Reload session state" aria-label="Reload session state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button></div>
                         </div>
                         <div id="SessionStateContent" class="flex-1 overflow-y-auto overflow-x-hidden p-4 break-words">
                             <div id="SessionContext"></div>
@@ -796,12 +864,8 @@ html.dark #chat-room { border-color: var(--color-gray-700, #364153); background:
 <div id="mobile-summary-overlay" class="md:hidden fixed inset-0 z-[70] hidden">
     <div class="absolute inset-0 bg-black/40" onclick="closeMobileSummary()"></div>
     <div class="absolute bottom-0 left-0 right-0 max-h-[70vh] bg-white dark:bg-gray-800 flex flex-col shadow-xl rounded-t-2xl transform transition-transform duration-200">
-        <div class="flex justify-between items-center px-4 py-3 border-b border-gray-200 dark:border-gray-600">
-            <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">Session State</h4>
-            <div class="flex items-center gap-1">
-                <button onclick="forceRecap(this)" class="state-btn state-btn-text" title="Regenerate the session summary now" aria-label="Recap now"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg><span>Recap</span></button>
-                <button onclick="loadSessionSummary()" class="state-btn" title="Reload session state" aria-label="Reload session state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
-            </div>
+        <div class="st-head">
+            <div class="st-bar st-bar-compact"><h4 class="st-seg st-seg-title ">Session State</h4><span class="st-mode-slot"></span><button type="button" onclick="forceRecap(this)" class="st-seg st-seg-btn st-seg-wide" title="Regenerate the session summary now" aria-label="Recap now"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg><span>Recap</span></button><button type="button" onclick="spinRefresh(this, () => Promise.all([loadAgentState(), loadSessionSummary()]))" class="st-seg st-seg-btn" title="Reload session state" aria-label="Reload session state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button></div>
         </div>
         <div id="mobile-SessionStateContent" class="flex-1 overflow-y-auto overflow-x-hidden p-4 break-words">
             <div id="mobile-SessionContext"></div>
@@ -814,7 +878,7 @@ html.dark #chat-room { border-color: var(--color-gray-700, #364153); background:
         <div class="border-t border-gray-200 dark:border-gray-600">
             <div id="MobileAgentState" class="flex justify-between items-center px-4 py-2 border-b border-gray-100 dark:border-gray-600">
                 <h5 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Agent State</h5>
-                <button onclick="loadAgentState()" class="state-btn" title="Refresh agent state" aria-label="Refresh agent state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+                <button onclick="spinRefresh(this, loadAgentState)" class="state-btn" title="Refresh agent state" aria-label="Refresh agent state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
             </div>
             <div id="mobile-agent-state-content" class="p-4 overflow-x-hidden break-words">
                 <p class="text-xs text-gray-400 dark:text-gray-500 italic">No state yet.</p>
@@ -984,7 +1048,7 @@ const chatUI = new ChatUI($('#chat-messages'), {
     showTimestamps: true,
     userBubbleClass: 'bg-white text-gray-800 border border-gray-200 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
     assistantBubbleClass: 'bg-gray-200 text-gray-800 dark:bg-[#152A3A] border dark:border-[#1B394F] dark:text-gray-100',
-    formatTimestamp: formatTime,
+    formatTimestamp: _formatMessageTime,
 });
 
 // Wiki-link clicks from chat messages → preview modal
@@ -1393,9 +1457,8 @@ async function selectSession(sessionId, opts = {}) {
         spw.classList.remove('lg:flex');
     }
     showMobileSummaryBtn(true);
-    clearSummaryPanel();
+    showStateSkeletons();
     loadSessionSummary();
-    clearAgentStatePanel();
     loadAgentState();
 
     // The durable stream restores queued/running state and any active telemetry.
@@ -2397,6 +2460,7 @@ const ST_ICON = {
     check:  _stI('<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>'),
     circle: _stI('<circle cx="12" cy="12" r="10"/>'),
     spin:   _stI('<path d="M21 12a9 9 0 1 1-6.219-8.56"/>').replace('<svg ', '<svg class="state-spin" '),
+    folder: _stI('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
     chev:   _stI('<path d="m9 18 6-6-6-6"/>'),
     undo:   _stI('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'),
 };
@@ -2447,24 +2511,66 @@ let _sessionStateData = {};
 let _summaryRefreshTimer = null;
 
 let _stTasksDoneOpen = false;
+function _planTreeHtml(pf) {
+        var parts = String(pf).split('/').filter(Boolean);
+        var file = parts.pop();
+        var h = '<button type="button" class="st-plan" onclick="openPlanModal(\'' + esc(pf) + '\')" title="' + esc(pf) + ' — click to open plan">' + ST_ICON.file + '<span class="st-plan-name">' + esc(file) + '</span></button>';
+        h = '<ul><li>' + h + '</li></ul>';
+        for (var i = parts.length - 1; i >= 0; i--) {
+            h = '<li><div class="st-tree-dir">' + ST_ICON.folder + '<span>' + esc(parts[i]) + '</span></div>' + h + '</li>';
+            if (i > 0) h = '<ul>' + h + '</ul>';
+        }
+        return '<div class="st-tree">' + (parts.length ? '<ul>' + h + '</ul>' : h) + '</div>';
+    }
+
+// Mode chip: when the mode changes the new chip slides in from the left and stacks over the old one.
+function _setModeChip(mode, html) {
+    document.querySelectorAll('.st-mode-slot').forEach(slot => {
+        const prev = slot.dataset.mode || '';
+        if (prev === mode) return;
+        slot.dataset.mode = mode;
+        const stage = slot.querySelector('.st-mode-stage');
+        if (!mode || !stage || !prev) {
+            slot.innerHTML = mode ? '<span class="st-mode-stage">' + html + '</span>' : '';
+            return;
+        }
+        const tmp = document.createElement('div');
+        tmp.innerHTML = html;
+        const chip = tmp.firstChild;
+        // Freeze the stage width, then ease it to the new chip's natural width so the neighbours glide instead of snapping.
+        const from = stage.getBoundingClientRect().width;
+        stage.style.width = from + 'px';
+        // The old chip keeps its own rounded shape and eases to the new width with the stage (no clipping, so no square corners).
+        const olds = [...stage.querySelectorAll('.st-chip.st-mode')];
+        olds.forEach(c => { c.style.width = c.getBoundingClientRect().width + 'px'; c.style.overflow = 'hidden'; c.style.whiteSpace = 'nowrap'; });
+        chip.classList.add('st-mode-enter');
+        stage.appendChild(chip);
+        const to = chip.getBoundingClientRect().width;
+        const ease = 'width .45s cubic-bezier(.2, .8, .2, 1)';
+        requestAnimationFrame(() => {
+            stage.style.transition = ease;
+            stage.style.width = to + 'px';
+            olds.forEach(c => { c.style.transition = ease; c.style.width = to + 'px'; });
+        });
+        const settle = () => {
+            olds.forEach(c => c.remove());
+            chip.classList.remove('st-mode-enter');
+            stage.style.width = stage.style.transition = '';
+        };
+        chip.addEventListener('animationend', settle, { once: true });
+        setTimeout(settle, 800);
+    });
+}
+
 function _renderSessionStateSnapshot(stateData) {
     let planHtml = '';
-    // --- Plan: mode + plan file ---
-    if (stateData.mode || stateData.plan_file) {
-        planHtml += `<div class="st-sec"><div class="st-sec-h">${ST_ICON.plan}<span>Plan</span>`;
-        if (stateData.mode) {
-            const cls = stateData.mode === 'execute' ? 'green' : 'amber';
-            planHtml += `<span class="st-sec-r"><span class="st-chip ${cls}"><span class="st-dot ${cls}"></span>${esc(stateData.mode)}</span></span>`;
-        }
-        planHtml += '</div>';
-        if (stateData.plan_file) {
-            const pf = String(stateData.plan_file);
-            const cut = pf.lastIndexOf('/');
-            const dir = cut >= 0 ? pf.slice(0, cut + 1) : '';
-            const name = cut >= 0 ? pf.slice(cut + 1) : pf;
-            planHtml += `<button type="button" class="st-plan" onclick="openPlanModal('${esc(pf)}')" title="${esc(pf)} — click to view plan">${ST_ICON.file}<span class="st-plan-dir">${esc(dir)}</span><span class="st-plan-name">${esc(name)}</span></button>`;
-        }
-        planHtml += '</div>';
+    // --- Mode chip goes in the card header; the plan file tree is its own block ---
+    const modeCls = stateData.mode === 'execute' ? 'green' : 'amber';
+    const modeHtml = stateData.mode
+        ? `<span class="st-chip st-mode ${modeCls}" title="Session mode"><span class="st-dot ${modeCls}"></span>${esc(stateData.mode)} Mode</span>` : '';
+    _setModeChip(stateData.mode || '', modeHtml);
+    if (stateData.plan_file) {
+        planHtml += '<div class="st-sec">' + _planTreeHtml(stateData.plan_file) + '</div>';
     }
     if (stateData.active_goal && (stateData.active_goal.title || stateData.active_goal.text)) {
         // Show a bounded caption + operational summary, never the raw request.
@@ -2490,13 +2596,13 @@ function _renderSessionStateSnapshot(stateData) {
             const staleBadge = stale ? '<span class="st-chip amber" style="padding:0 .375rem;font-size:.625rem" title="This task has been in progress for a while">stale</span>' : '';
             return `<li class="st-task ${kind}">${icon}<span class="${active ? 'task-active-text' : ''}" style="min-width:0;flex:1">${esc(t.text)}</span>${staleBadge}</li>`;
         };
-        planHtml += `<div class="st-sec"><div class="st-sec-h">${ST_ICON.tasks}<span>Tasks</span><span class="st-sec-r">${done.length}/${tasks.length}</span></div>`;
+        planHtml += `<div class="st-sec"><div class="st-sec-h">${ST_ICON.tasks}<span>Tasks</span><span class="st-sec-r" title="${done.length} of ${tasks.length} done">${pct}%</span></div>`;
         planHtml += `<div class="st-tasks-progress"><div class="st-meter"><div style="width:${pct}%;background:#22c55e"></div></div></div>`;
-        if (open.length) planHtml += `<ul>${open.map(row).join('')}</ul>`;
         if (done.length) {
-            planHtml += `<details class="st-done" ${(_stTasksDoneOpen || !open.length) ? 'open' : ''} ontoggle="_stTasksDoneOpen = this.open">`
+            planHtml += `<details class="st-done" ${_stTasksDoneOpen ? 'open' : ''} ontoggle="_stTasksDoneOpen = this.open">`
                      + `<summary class="st-done-toggle">${ST_ICON.chev}<span>Completed (${done.length})</span></summary><ul>${done.map(row).join('')}</ul></details>`;
         }
+        if (open.length) planHtml += `<ul>${open.map(row).join('')}</ul>`;
         planHtml += '</div>';
     }
     planHtml += buildBgProcessesHtml(stateData.background_processes);
@@ -2533,7 +2639,7 @@ function _renderSessionSummary(data) {
         const summaryEl = document.getElementById(prefix + 'SessionSummary');
         const meta = document.getElementById(prefix + 'summary-meta');
         if (summaryEl && data.summary) {
-            summaryEl.innerHTML = '<div class="st-sec-h">' + ST_ICON.text + '<span>Summary</span></div><div class="recap-prose">' + marked.parse(data.summary) + '</div>';
+            summaryEl.innerHTML = '<div class="st-sec-h">' + ST_ICON.text + '<span>Summary</span></div><div class="recap-prose">' + marked.parse(data.summary).replace(/^\s*<h[1-3][^>]*>\s*summary\s*<\/h[1-3]>\s*/i, '') + '</div>';
             ui.addCopyButtons(summaryEl);
             if (meta) {
                 meta.textContent = metaText || '';
@@ -2547,12 +2653,28 @@ function _renderSessionSummary(data) {
     lastSummaryText = data.summary || null;
 }
 
+// Spin the refresh icon while fn() runs (at least 600ms so the click visibly registers).
+async function spinRefresh(btn, fn) {
+    if (btn.disabled) return;
+    const svg = btn.querySelector('svg');
+    btn.disabled = true;
+    if (svg) svg.classList.add('state-spin');
+    try { await Promise.all([fn(), new Promise(r => setTimeout(r, 600))]); }
+    finally {
+        if (svg) svg.classList.remove('state-spin');
+        btn.disabled = false;
+    }
+}
+
 async function loadSessionSummary() {
     if (!currentSessionId) return;
     try {
         const sumRes = await fetch(`/api/sessions/${currentSessionId}/summary`);
         if (sumRes.ok) _renderSessionSummary(await sumRes.json());
-    } catch(e) { /* ignore */ }
+        else if (document.querySelector('#SessionSummary .sk')) _renderSessionSummary({summary: ''});
+    } catch(e) {
+        if (document.querySelector('#SessionSummary .sk')) _renderSessionSummary({summary: ''});
+    }
 }
 
 function scheduleSessionSummaryRefresh() {
@@ -2593,6 +2715,7 @@ function clearSummaryPanel() {
         const summaryEl = document.getElementById(prefix + 'SessionSummary');
         const meta = document.getElementById(prefix + 'summary-meta');
         if (ctxEl) ctxEl.innerHTML = '';
+        document.querySelectorAll('.st-mode-slot').forEach(el => { el.innerHTML = ''; delete el.dataset.mode; });
         if (planEl) planEl.innerHTML = '';
         if (skillsEl) skillsEl.innerHTML = '';
         if (summaryEl) summaryEl.innerHTML = '<p class="text-xs text-gray-400 italic">No summary yet.</p>';
@@ -2616,6 +2739,7 @@ async function loadAgentState() {
             console.warn('[Sessions] Session state request failed:', response.status, currentAgentId, currentSessionId);
             if (myReq === _agentStateReq) {
                 const message = `Unable to load session state (HTTP ${response.status}). Please refresh or try again.`;
+                _dropStateSkeletons();
                 ['agent-state-content', 'mobile-agent-state-content'].forEach(id => {
                     const el = document.getElementById(id);
                     if (el) el.innerHTML = `<p class="text-sm text-amber-600 dark:text-amber-400 italic">${message}</p>`;
@@ -2640,12 +2764,71 @@ async function loadAgentState() {
         console.error('[Sessions] Session state request failed:', e, currentAgentId, currentSessionId);
         if (myReq === _agentStateReq) {
             const message = 'Unable to load session state. Please refresh or try again.';
+            _dropStateSkeletons();
             ['agent-state-content', 'mobile-agent-state-content'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.innerHTML = `<p class="text-sm text-amber-600 dark:text-amber-400 italic">${message}</p>`;
             });
         }
     }
+}
+
+// ---- Loading skeletons: shown while a session's state loads, so the panels keep their shape instead of flashing "No state yet." ----
+function _skAgentState() {
+    const row = '<div class="sk-kv"><span class="sk sk-ic"></span><span class="sk" style="width:3.5rem"></span><span class="sk" style="width:9rem;margin-left:auto"></span></div>';
+    return row + row;
+}
+function _skSessionContext() {
+    return '<div class="st-sec"><div class="st-sec-h"><span class="sk sk-ic"></span><span class="sk" style="width:4.5rem"></span><span class="sk" style="width:6rem;margin-left:auto"></span></div><div class="sk sk-meter"></div></div>';
+}
+function _skSessionPlan() {
+    const task = '<div class="sk-row"><span class="sk sk-ic" style="border-radius:9999px"></span><span class="sk" style="width:82%"></span></div>';
+    return '<div class="st-sec"><div class="sk-row"><span class="sk sk-ic"></span><span class="sk" style="width:2.5rem"></span></div><div class="sk-row" style="padding-left:1.5rem"><span class="sk sk-ic"></span><span class="sk" style="width:55%"></span></div></div>' +
+        '<div class="st-sec"><div class="st-sec-h"><span class="sk sk-ic"></span><span class="sk" style="width:3.5rem"></span><span class="sk" style="width:2rem;margin-left:auto"></span></div><div class="sk sk-meter" style="margin-bottom:.75rem"></div>' + task + task + task + '</div>';
+}
+function _skSummary() {
+    return '<div class="st-sec-h"><span class="sk sk-ic"></span><span class="sk" style="width:5rem"></span></div>' +
+        ['96%', '88%', '92%', '64%'].map(w => '<div class="sk sk-line" style="width:' + w + '"></div>').join('');
+}
+function showStateSkeletons(idle) {
+    // idle = no session selected yet: same placeholder boxes (so picking a session does not resize the panels) but static
+    const wrap = document.getElementById('side-panels-wrapper');
+    if (wrap) { if (idle) wrap.setAttribute('data-idle', '1'); else wrap.removeAttribute('data-idle'); }
+    clearTimeout(_summaryRefreshTimer);
+    _summaryRefreshTimer = null;
+    _sessionStateData = {};
+    ['agent-state-content', 'mobile-agent-state-content'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = _skAgentState();
+    });
+    ['', 'mobile-'].forEach(prefix => {
+        const set = (id, html) => { const el = document.getElementById(prefix + id); if (el) el.innerHTML = html; };
+        set('SessionContext', _skSessionContext());
+        set('SessionPlan', _skSessionPlan());
+        set('SessionSkills', '');
+        set('SessionSummary', _skSummary());
+        const meta = document.getElementById(prefix + 'summary-meta');
+        if (meta) meta.classList.add('hidden');
+    });
+    // mode chip: a shimmering pill of the same shape; the real chip slides in over it
+    document.querySelectorAll('.st-mode-slot').forEach(el => {
+        if (idle) { el.innerHTML = ''; delete el.dataset.mode; return; }
+        el.dataset.mode = '__loading';
+        el.innerHTML = '<span class="st-mode-stage"><span class="st-chip st-mode st-skel">&nbsp;</span></span>';
+    });
+    lastSummaryText = null;
+}
+// First paint with nothing selected: show the idle skeleton instead of "No state yet." / "No summary yet."
+document.addEventListener('DOMContentLoaded', () => { if (!currentSessionId) showStateSkeletons(true); });
+// If a load fails, never leave a skeleton behind
+function _dropStateSkeletons() {
+    document.querySelectorAll('.st-mode-slot').forEach(el => { if (el.dataset.mode === '__loading') { el.innerHTML = ''; delete el.dataset.mode; } });
+    ['', 'mobile-'].forEach(prefix => {
+        ['SessionContext', 'SessionPlan'].forEach(id => {
+            const el = document.getElementById(prefix + id);
+            if (el && el.querySelector('.sk')) el.innerHTML = '';
+        });
+    });
 }
 
 function clearAgentStatePanel() {
@@ -2814,6 +2997,21 @@ function formatTime(ts) {
     if (!ts) return '';
     const d = new Date(ts + (ts.includes('Z') ? '' : 'Z'));
     return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+}
+
+// Chat bubble timestamp. ChatUI hands over a Date (formatTime above expects a string and threw, which hid every timestamp):
+// today → "14:05", yesterday → "Yesterday 14:05", older → "9 Oct 14:05" (plus the year when it is not this year).
+function _formatMessageTime(date) {
+    const now = new Date();
+    const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const startOf = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.round((startOf(now) - startOf(date)) / 86400000);
+    if (days <= 0) return time;
+    if (days === 1) return 'Yesterday ' + time;
+    const opts = date.getFullYear() === now.getFullYear()
+        ? { day: 'numeric', month: 'short' }
+        : { day: 'numeric', month: 'short', year: 'numeric' };
+    return date.toLocaleDateString([], opts) + ' ' + time;
 }
 
 // ==================== Tabs ====================

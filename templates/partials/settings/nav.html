@@ -1,22 +1,21 @@
-{# Settings console nav rail — search + section items.
+{# Settings console nav rail — section items. Search lives in the page header (global).
    Desktop: sticky vertical rail. Mobile: sticky horizontal pill bar.
-   Routing handled by SettingsNav in static/js/settings-core.js. #}
+   General is a group whose sub-pages are separate panes. Routing: SettingsNav in static/js/settings-core.js. #}
 
 <aside class="settings-nav" aria-label="Settings sections">
-    <div class="settings-search">
-        <i data-lucide="search"></i>
-        <input type="text" id="settings-search-input"
-               placeholder="Search settings…" autocomplete="off"
-               aria-label="Search settings" />
-        <kbd>/</kbd>
-        <div id="settings-search-results" class="settings-search-results hidden"></div>
+    <div class="settings-nav-group" id="nav-group-general">
+        <button type="button" class="settings-nav-item settings-nav-parent" data-group="general" aria-expanded="false" aria-controls="nav-sub-general">
+            <i data-lucide="sliders-horizontal"></i><span>General</span><i data-lucide="chevron-right" class="nav-chev"></i>
+        </button>
+        <div class="settings-nav-sub" id="nav-sub-general">
+            <button type="button" class="settings-nav-item" data-section="general-appearance"><i data-lucide="palette"></i><span>Appearance</span></button>
+            <button type="button" class="settings-nav-item" data-section="general-models-routing"><i data-lucide="route"></i><span>Models &amp; Routing</span></button>
+            <button type="button" class="settings-nav-item" data-section="general-agent-behavior"><i data-lucide="bot"></i><span>Agent Behavior</span></button>
+            <button type="button" class="settings-nav-item" data-section="general-reliability"><i data-lucide="activity"></i><span>Reliability &amp; Concurrency</span></button>
+            <button type="button" class="settings-nav-item" data-section="general-whatsapp-safe-delivery"><i data-lucide="shield-check"></i><span>WhatsApp Safe Delivery</span></button>
+            <button type="button" class="settings-nav-item" data-section="general-privacy"><i data-lucide="lock"></i><span>Privacy &amp; Access</span></button>
+        </div>
     </div>
-
-    <div class="settings-nav-label">Sections</div>
-
-    <button type="button" class="settings-nav-item" data-section="general">
-        <i data-lucide="sliders-horizontal"></i><span>General</span>
-    </button>
     <button type="button" class="settings-nav-item" data-section="tools">
         <i data-lucide="wrench"></i><span>Tools</span>
     </button>

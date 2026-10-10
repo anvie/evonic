@@ -11,7 +11,8 @@ window.settingsGeneral = {
         pane.dataset.loading = "1";
 
         // Theme reflects local preference instantly, no fetch needed
-        this._updateThemeButtons(localStorage.getItem("evonic-theme") || "system");
+        this._updateThemeButtons(EvTheme.get().mode);
+        this._renderPresets();
 
         try {
             const [general, models, defaultModel, classifier, cmpModel] = await Promise.all([
@@ -219,35 +220,52 @@ window.settingsGeneral = {
     /* ---- Theme ---- */
 
     setTheme(theme) {
-        if (this._systemSchemeListener) {
-            this._systemSchemeListener.removeEventListener("change", this._applySystemTheme);
-            this._systemSchemeListener = null;
-        }
-        const html = document.documentElement;
-        if (theme === "dark") {
-            html.classList.add("dark");
-        } else if (theme === "light") {
-            html.classList.remove("dark");
-        } else {
-            this._applySystemTheme();
-            if (window.matchMedia) {
-                this._systemSchemeListener = window.matchMedia("(prefers-color-scheme: dark)");
-                this._systemSchemeListener.addEventListener("change", this._applySystemTheme);
-            }
-        }
-        html.style.backgroundColor = html.classList.contains("dark") ? "#0f172a" : "#f5f5f5";
-        localStorage.setItem("evonic-theme", theme);
+        EvTheme.set({ mode: theme });
         this._updateThemeButtons(theme);
+        this._renderPresets();
         const seg = document.getElementById("theme-segmented");
         AutoSave.save("theme", theme, seg);
     },
 
-    _applySystemTheme() {
-        const html = document.documentElement;
-        const dark =
-            window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-        html.classList.toggle("dark", dark);
-        html.style.backgroundColor = dark ? "#0f172a" : "#f5f5f5";
+    /** Pick a preset. Choosing one from the family that is not showing switches the mode so the change is visible
+     *  (unless the mode is "system", which keeps following the OS). */
+    setPreset(id) {
+        const preset = EvTheme.PRESETS.find((p) => p.id === id);
+        if (!preset) return;
+        const opts = {};
+        opts[preset.mode] = id;
+        const mode = EvTheme.get().mode;
+        if (mode !== "system" && mode !== preset.mode) opts.mode = preset.mode;
+        EvTheme.set(opts);
+        this._updateThemeButtons(EvTheme.get().mode);
+        this._renderPresets();
+    },
+
+    _renderPresets() {
+        const st = EvTheme.get();
+        ["dark", "light"].forEach((family) => {
+            const grid = document.getElementById("theme-presets-" + family);
+            if (!grid) return;
+            grid.innerHTML = EvTheme.PRESETS.filter((p) => p.mode === family)
+                .map((p) => {
+                    const sw = p.swatch;
+                    const selected = st[family] === p.id;
+                    const active = selected && st.isDark === (family === "dark");
+                    return (
+                        '<button type="button" class="theme-card' + (selected ? " selected" : "") + (active ? " active" : "") + '"' +
+                        ' role="radio" aria-checked="' + selected + '" data-id="' + p.id + '"' +
+                        ' onclick="settingsGeneral.setPreset(\'' + p.id + '\')" title="' + p.name + (selected && !active ? " (used in " + family + " mode)" : "") + '">' +
+                        '<span class="theme-swatch" style="background:' + sw.bg + ';border-color:' + sw.border + '">' +
+                        '<span class="theme-swatch-bar" style="background:' + sw.surface + ';border-color:' + sw.border + '">' +
+                        '<i style="background:' + sw.text + '"></i><i style="background:' + sw.text + ';opacity:.45"></i></span>' +
+                        '<span class="theme-swatch-dot" style="background:' + sw.accent + '"></span>' +
+                        "</span>" +
+                        '<span class="theme-card-name">' + p.name + "</span>" +
+                        "</button>"
+                    );
+                })
+                .join("");
+        });
     },
 
     _updateThemeButtons(theme) {

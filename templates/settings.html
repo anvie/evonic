@@ -1,18 +1,27 @@
 {% extends "base.html" %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=8">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=19">
 
 <div class="settings-console">
     <div class="settings-console-header">
-        <h2><i data-lucide="settings-2"></i>System Settings</h2>
-        <span class="settings-console-sub">Changes save automatically</span>
+        <div class="settings-console-title">
+            <h2><i data-lucide="settings-2"></i>System Settings</h2>
+            <span class="settings-console-sub">Changes save automatically</span>
+        </div>
+        <div class="settings-search" role="search">
+            <i data-lucide="search"></i>
+            <input type="search" id="settings-search-input" data-shortcut="/,mod+k" data-shortcut-label="Search settings"
+                   placeholder="Search all settings…" autocomplete="off" aria-label="Search all settings"
+                   aria-controls="settings-search-results" />
+            <div id="settings-search-results" class="settings-search-results hidden" role="listbox"></div>
+        </div>
     </div>
 
     <div class="settings-shell">
         {% include 'partials/settings/nav.html' %}
 
         <div class="settings-pane-wrap">
-            <section id="section-general" class="settings-pane narrow">
+            <section id="section-general" class="settings-pane">
                 {% include 'partials/settings/general.html' %}
             </section>
 
@@ -40,8 +49,8 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/toast.js') }}?v=2"></script>
-<script src="{{ url_for('static', filename='js/settings-core.js') }}?v=3"></script>
-<script src="{{ url_for('static', filename='js/settings-general.js') }}?v=2"></script>
+<script src="{{ url_for('static', filename='js/settings-core.js') }}?v=5"></script>
+<script src="{{ url_for('static', filename='js/settings-general.js') }}?v=4"></script>
 <script src="{{ url_for('static', filename='js/settings-tools.js') }}?v=2"></script>
 <script src="{{ url_for('static', filename='js/settings-models.js') }}?v=3"></script>
 {% endblock %}
