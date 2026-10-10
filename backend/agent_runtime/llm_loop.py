@@ -781,11 +781,23 @@ def run_tool_loop(agent: Dict[str, Any],
     # Fast mode is a session preference. The Codex client revalidates support
     # against every effective model, so it cannot leak into an incompatible fallback.
     _session_service_tier = None
+    # Provider-reported prompt size of the previous request — the primary signal
+    # for proactive compaction on the first iteration of this turn (#842).
+    _last_provider_prompt_tokens = None
     try:
         _session_raw = db.get_session_state(session_id, agent_id=agent_id)
         _session_data = json.loads(_session_raw) if _session_raw else {}
-        if isinstance(_session_data, dict) and _session_data.get('service_tier') == 'priority':
-            _session_service_tier = 'priority'
+        if isinstance(_session_data, dict):
+            if _session_data.get('service_tier') == 'priority':
+                _session_service_tier = 'priority'
+            # Seed from the persisted context usage, but only when the provider
+            # actually reported it: an estimated value is the same local
+            # estimator the projection already uses, so it adds no information.
+            _cu_seed = _session_data.get('context_usage')
+            if isinstance(_cu_seed, dict) and not _cu_seed.get('estimated'):
+                _seed_prompt = _cu_seed.get('prompt_tokens') or 0
+                if _seed_prompt > 0:
+                    _last_provider_prompt_tokens = int(_seed_prompt)
     except (TypeError, ValueError):
         pass
 
@@ -1239,6 +1251,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 recent_completed_groups=ACTIVE_CONTEXT_RECENT_GROUPS,
                 receipt_max_chars=ACTIVE_CONTEXT_RECEIPT_MAX_CHARS,
                 soft_token_threshold=_active_context_threshold,
+                provider_prompt_tokens=_last_provider_prompt_tokens,
             )
         except Exception as _active_exc:
             _active_projection = ActiveContextProjection(
@@ -1256,10 +1269,21 @@ def run_tool_loop(agent: Dict[str, Any],
                 session_id, _active_projection.error)
         elif _active_projection.applied:
             _logger.info(
-                "active_context applied session=%s mode=%s canonical=%d projected=%d saved=%d groups=%d",
+                "active_context applied session=%s mode=%s canonical=%d projected=%d saved=%d groups=%d trigger=%s",
                 session_id, _active_projection.mode, _active_projection.canonical_tokens,
                 _active_projection.projected_tokens, _active_projection.saved_tokens,
-                _active_projection.compacted_groups)
+                _active_projection.compacted_groups, _active_projection.trigger_source)
+        elif _active_projection.no_eligible_groups:
+            # The usage signal crossed the threshold, but every completed tool
+            # group is ineligible (unknown tool, error result, or inside the
+            # recent frontier): the request goes out unchanged.  Surface it so
+            # an un-compacted near-full window is diagnosable (#842).
+            _logger.warning(
+                "active_context threshold reached but no eligible tool groups to compact "
+                "session=%s mode=%s usage_signal=%d (provider=%d local=%d) completed_groups=%d",
+                session_id, _active_projection.mode, _active_projection.usage_signal,
+                _active_projection.provider_prompt_tokens, _active_projection.canonical_tokens,
+                _active_projection.completed_groups)
         _request_messages = (
             _active_projection.messages
             if (_active_projection.mode == 'enforced'
@@ -1795,7 +1819,16 @@ def run_tool_loop(agent: Dict[str, Any],
 
         # Context telemetry is attributed to the exact successful provider
         # snapshot, including its projected messages and pruned tool schemas.
-        _cu_prompt = result.get('prompt_tokens') or 0
+        # Preserve a genuine provider value separately for the *next* tool-loop
+        # request.  A local fallback estimate must never masquerade as provider
+        # usage, because it cannot correct the estimator/provider mismatch that
+        # proactive compaction is meant to guard against (#842).
+        _reported_prompt = result.get('prompt_tokens') or 0
+        try:
+            _last_provider_prompt_tokens = max(0, int(_reported_prompt)) or None
+        except (TypeError, ValueError):
+            _last_provider_prompt_tokens = None
+        _cu_prompt = _reported_prompt
         _cu_estimated = False
         if _cu_prompt <= 0:
             try:

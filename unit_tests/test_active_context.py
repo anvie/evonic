@@ -51,6 +51,72 @@ def test_unknown_or_invalid_model_capacity_uses_fixed_fallback():
     assert resolve_soft_token_threshold(12000, "invalid", 85) == 12000
 
 
+def test_provider_prompt_tokens_trigger_projection_when_local_estimate_is_low():
+    """Regression for richard-8cd35a2a: provider >85% while local estimate is below."""
+    messages = _base_messages()
+    messages += _group(["old"], ["read_file"], "large output" * 200)
+    messages += _group(["frontier"], ["read_file"], "recent output")
+
+    # Qwen3.8-27B has a 160k window: 85% is 136k. The session's provider
+    # reported 145,587 prompt tokens, while the local estimate stayed below it.
+    result = project_active_context(
+        messages, mode="enforced", recent_completed_groups=1,
+        soft_token_threshold=136_000, provider_prompt_tokens=145_587,
+    )
+
+    assert result.canonical_tokens < 136_000
+    assert result.provider_prompt_tokens == 145_587
+    assert result.usage_signal == 145_587
+    assert result.trigger_source == "provider"
+    assert result.applied
+    assert result.compacted_groups == 1
+
+
+def test_local_estimate_remains_the_fallback_without_provider_usage():
+    messages = _base_messages()
+    messages += _group(["old"], ["read_file"], "large output" * 200)
+    messages += _group(["frontier"], ["read_file"], "recent output")
+
+    # Force a threshold below this test fixture's deterministic local estimate.
+    result = project_active_context(
+        messages, mode="enforced", recent_completed_groups=1,
+        soft_token_threshold=1, provider_prompt_tokens=None,
+    )
+
+    assert result.provider_prompt_tokens == 0
+    assert result.usage_signal == result.canonical_tokens
+    assert result.trigger_source == "local"
+    assert result.applied
+
+
+def test_invalid_provider_usage_degrades_to_local_estimate():
+    messages = _base_messages()
+    result = project_active_context(
+        messages, mode="shadow", soft_token_threshold=1,
+        provider_prompt_tokens="not-a-number",
+    )
+
+    assert result.provider_prompt_tokens == 0
+    assert result.trigger_source == "local"
+
+
+def test_threshold_without_eligible_groups_reports_diagnostic():
+    messages = _base_messages()
+    # This group is completed but intentionally unknown, therefore ineligible.
+    messages += _group(["unknown"], ["plugin_without_policy"], "large result" * 200)
+
+    result = project_active_context(
+        messages, mode="enforced", recent_completed_groups=0,
+        soft_token_threshold=136_000, provider_prompt_tokens=145_587,
+    )
+
+    assert not result.applied
+    assert result.no_eligible_groups
+    assert result.trigger_source == "provider"
+    assert result.completed_groups == result.retained_groups == 1
+    assert result.messages == messages
+
+
 def test_projection_is_deterministic_and_does_not_mutate_canonical_messages():
     messages = _base_messages()
     messages += _group(["old"], ["read_file"], "x" * 2000)

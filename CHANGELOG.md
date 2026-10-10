@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- Proactive auto-compaction now triggers from the provider-reported `prompt_tokens` of the previous request (the ground truth of what the model actually counted) instead of relying solely on the local tiktoken estimate, which systematically under-counts for some tokenizers and could leave a nearly full window un-compacted (session `richard-8cd35a2a`: provider at 91–107% of the 160k window while the local estimate stayed below the 85% threshold). The local estimate remains the fallback when the provider gives no usage block; the decision compares the threshold against the larger of the two signals. When the threshold is reached but no completed tool-call/result group is eligible for compaction (unknown tool, error result, or inside the recent frontier), the request still goes out unchanged and a `no eligible tool groups` warning is logged with the usage breakdown; the projection metrics (now including `provider_prompt_tokens`, `usage_signal`, `trigger_source`, `no_eligible_groups`) are emitted on the `active_context_projection` event stream.
+
 ### Features
 
 - Safety > DMSS tab: added a bounded **diagnostic tester** for troubleshooting the decision-model provider. Paste a sample payload (bash or python), hit *Test*, and the backend probes the configured DMSS provider end-to-end via `POST /api/admin/decim-safety/test`, returning the decision (allow/review/block), confidence, a sanitized provider reason, latency, and the provider/model used. The probe is explicitly *diagnostic only*: the payload is treated as data (never executed), production decisions are untouched, and the production telemetry store is not polluted. Guardrails: 10 probes/min per session (429 + Retry-After), payload size bounded by the configured `max_payload_chars`, provider timeout bounded by `request_timeout_ms`, a 128 KB request-body cap, and a fresh resolver per probe so test failures cannot trip the production circuit breaker (whose state is reported read-only). Provider reasons are sanitized before display (internal file paths replaced, secret-bearing text redacted).
