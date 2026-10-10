@@ -114,7 +114,21 @@ def test_dmss_tester_offers_ready_to_submit_samples():
     assert html.count('class="sf-tester-sample"') >= 4
     # Bumped asset versions so the new wiring/CSS is not served stale.
     assert "js/safety.js?v=3" in html
-    assert "css/safety.css?v=3" in html
+    assert "css/safety.css?v=4" in html
+
+
+def test_dmss_endpoint_is_plaintext_and_primary_buttons_are_dark_mode_readable():
+    """The endpoint remains visually readable and Save buttons retain dark-mode contrast."""
+    client = _client()
+    html = client.get("/system/safety").get_data(as_text=True)
+
+    assert 'id="dc-endpoint" class="sf-input" type="text"' in html
+    assert 'id="dc-endpoint" class="sf-input" type="password"' not in html
+
+    with open(f"{app.root_path}/static/css/safety.css", encoding="utf-8") as safety_css_file:
+        safety_css = safety_css_file.read()
+    assert "html.dark .sf-btn-primary {\n    background: #4338ca;" in safety_css
+    assert "    color: #fff;\n}" in safety_css
 
 
 def test_dmss_tester_samples_pass_payload_guardrails():

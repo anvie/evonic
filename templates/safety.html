@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=8">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=3">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=4">
 
 <div class="safety-page">
     <div class="safety-header">
@@ -202,7 +202,7 @@
             <p class="sf-card-desc">The endpoint is stored as a secret. It is always redacted after saving; leave its masked value unchanged to retain it.</p>
             <div class="sf-config-grid">
                 <label class="sf-config-field">Provider<select id="dc-provider" class="sf-select"><option value="systemone">SystemOne</option></select><span class="sf-field-err" id="dc-err-provider" hidden></span></label>
-                <label class="sf-config-field">Provider endpoint <input id="dc-endpoint" class="sf-input" type="password" autocomplete="off" placeholder="https://…"><span class="sf-field-hint">A secret deployment URL; never returned in full.</span><span class="sf-field-err" id="dc-err-endpoint" hidden></span></label>
+                <label class="sf-config-field">Provider endpoint <input id="dc-endpoint" class="sf-input" type="text" autocomplete="off" placeholder="https://…"><span class="sf-field-hint">A secret deployment URL; never returned in full.</span><span class="sf-field-err" id="dc-err-endpoint" hidden></span></label>
                 <label class="sf-config-field">Timeout (ms)<input id="dc-timeout" class="sf-input" type="number" min="100" max="10000"><span class="sf-field-err" id="dc-err-timeout" hidden></span></label>
                 <label class="sf-config-field">Minimum confidence<input id="dc-confidence" class="sf-input" type="number" min="0" max="1" step="0.01"><span class="sf-field-err" id="dc-err-confidence" hidden></span></label>
                 <label class="sf-config-field">Maximum payload (chars)<input id="dc-payload" class="sf-input" type="number" min="1" max="120000"><span class="sf-field-err" id="dc-err-payload" hidden></span></label>

@@ -390,7 +390,11 @@ html.dark .sf-switch input:checked + .sf-switch-track::after { background: #1e1b
     color: #fff;
 }
 .sf-btn-primary:hover { filter: brightness(1.08); }
-html.dark .sf-btn-primary { color: #1e1b4b; }
+html.dark .sf-btn-primary {
+    background: #4338ca;
+    border-color: #4338ca;
+    color: #fff;
+}
 .sf-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; filter: none; }
 
 /* ---------- DMSS configuration (task #838) ---------- */
