@@ -450,8 +450,8 @@
             this._clearConfigErrors();
             function error(name, message) { window.safetyDmss._setConfigError(name, message); ok = false; }
             if (payload.provider !== "systemone") error("provider", "Choose a registered provider.");
-            // An existing masked secret is valid; a newly entered endpoint must be HTTPS/HTTP.
-            if (payload.provider_endpoint && payload.provider_endpoint.indexOf("…") < 0 && payload.provider_endpoint.charAt(0) !== "•" && !/^https?:\/\/[^/]+/i.test(payload.provider_endpoint)) error("endpoint", "Enter an absolute http(s) URL.");
+            // A configured endpoint must be an absolute http(s) URL.
+            if (payload.provider_endpoint && !/^https?:\/\/[^/]+/i.test(payload.provider_endpoint)) error("endpoint", "Enter an absolute http(s) URL.");
             if (!Number.isInteger(payload.request_timeout_ms) || payload.request_timeout_ms < 100 || payload.request_timeout_ms > 10000) error("timeout", "Use 100–10,000 ms.");
             if (!Number.isFinite(payload.minimum_confidence) || payload.minimum_confidence < 0 || payload.minimum_confidence > 1) error("confidence", "Use a value from 0 to 1.");
             if (!Number.isInteger(payload.max_payload_chars) || payload.max_payload_chars < 1 || payload.max_payload_chars > 120000) error("payload", "Use 1–120,000 characters.");

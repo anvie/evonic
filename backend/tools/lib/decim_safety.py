@@ -8,8 +8,9 @@ its exact existing behaviour.
 
 Only a small, versioned policy packet is sent to a provider.  In particular no
 agent context, environment values, credentials, or conversation data leaves this
-process.  Provider branding (endpoint, model product) is a private deployment
-concern and never forms part of the public contract.
+process.  The provider endpoint is ordinary admin configuration: it is stored and
+returned verbatim by the admin settings surface, while the telemetry and health
+surfaces stay provider-neutral and never echo it.
 """
 from __future__ import annotations
 
@@ -53,7 +54,6 @@ __all__ = [
     "DecimSettings",
     "DecimDecision",
     "DecimResolution",
-    "mask_secret",
     "DecimSafetyProvider",
     "DecimProviderError",
     "SystemOneDecisionProvider",
@@ -76,8 +76,8 @@ class DecimSettings:
     enabled: bool = False
     mode: Literal["off", "shadow", "enforce"] = "off"
     provider: str = "systemone"
-    # Provider decision endpoint (the sensitive deployment secret).  Empty means
-    # "not configured here" — the adapter falls back to its environment value.
+    # Provider decision endpoint URL.  Empty means "not configured here" — the
+    # adapter falls back to its environment value.
     provider_endpoint: str = ""
     request_timeout_ms: int = 1500
     minimum_confidence: float = 0.90
@@ -139,23 +139,6 @@ class DecimProviderError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Settings loading / validation
 # ---------------------------------------------------------------------------
-
-def mask_secret(value: Any) -> str:
-    """Return a redacted form of a secret value (never the full value).
-
-    Short values are fully masked; longer values keep a short prefix and the
-    last four characters so the field is recognisable without leaking the
-    secret (e.g. ``https://internal:8080/decide`` -> ``htt…cide``).
-    """
-    if value is None:
-        return ""
-    text = str(value)
-    if not text:
-        return ""
-    if len(text) <= 8:
-        return "\u2022" * len(text)
-    return text[:3] + "\u2026" + text[-4:]
-
 
 def _as_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
@@ -229,8 +212,8 @@ def load_decim_settings() -> DecimSettings:
     """Load and validate public Decim operational settings.
 
     Invalid persisted values safely disable model calls rather than causing an
-    execution-path failure. The provider endpoint is a protected secret: only
-    the settings serializer/API layer may expose its redacted form.
+    execution-path failure. The provider endpoint is plain configuration and is
+    returned verbatim by the admin settings surface.
     """
     raw = {
         "enabled": _setting("decim_safety.enabled", "0"),

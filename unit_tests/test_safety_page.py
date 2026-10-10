@@ -113,7 +113,7 @@ def test_dmss_tester_offers_ready_to_submit_samples():
         assert f'data-sample="{sample}"' in html
     assert html.count('class="sf-tester-sample"') >= 4
     # Bumped asset versions so the new wiring/CSS is not served stale.
-    assert "js/safety.js?v=3" in html
+    assert "js/safety.js?v=4" in html
     assert "css/safety.css?v=4" in html
 
 

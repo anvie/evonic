@@ -52,15 +52,14 @@ def _coerce_boolean(value: Any) -> bool:
 def _decim_settings_public(settings) -> Dict[str, Any]:
     """Serialize provider-neutral Decim Safety settings (never transport data).
 
-    The provider endpoint (the sensitive deployment secret) is always returned
-    redacted so a GET never exposes the full value or an internal hostname.
+    ``provider_endpoint`` is plain configuration and is returned verbatim so the
+    admin surface can display and edit it.
     """
-    from backend.tools.lib.decim_safety import mask_secret
     return {
         'enabled': settings.enabled,
         'mode': settings.mode,
         'provider': settings.provider,
-        'provider_endpoint': mask_secret(getattr(settings, 'provider_endpoint', '')),
+        'provider_endpoint': getattr(settings, 'provider_endpoint', '') or '',
         'request_timeout_ms': settings.request_timeout_ms,
         'minimum_confidence': settings.minimum_confidence,
         'max_payload_chars': settings.max_payload_chars,
@@ -664,14 +663,13 @@ def api_root_fs_scan_guard():
 
 @settings_bp.route('/api/settings/decim-safety', methods=['GET', 'PUT'])
 def api_decim_safety_settings():
-    """Read or update Decim Safety settings without exposing provider secrets.
+    """Read or update Decim Safety settings.
 
-    ``provider_endpoint`` is a sensitive deployment URL. GET and PUT responses
-    always redact it; a masked/placeholder value on PUT preserves the currently
-    stored secret rather than overwriting it.
+    ``provider_endpoint`` is plain configuration: GET returns it verbatim and a
+    PUT replaces it with the submitted value (an empty string clears it).
     """
     from backend.tools.lib.decim_safety import (
-        load_decim_settings, mask_secret, validate_decim_settings, save_decim_settings,
+        load_decim_settings, validate_decim_settings, save_decim_settings,
     )
 
     if request.method == 'PUT':
@@ -680,13 +678,9 @@ def api_decim_safety_settings():
         endpoint = current.provider_endpoint
         if 'provider_endpoint' in data:
             submitted = data.get('provider_endpoint')
-            # A value echoed from GET (or a generic masked placeholder) must
-            # never replace the stored secret. Empty string remains the explicit
-            # opt-in way to clear a configured endpoint.
             if not isinstance(submitted, str):
                 return jsonify({'success': False, 'error': 'provider_endpoint must be a string'}), 400
-            if submitted != mask_secret(current.provider_endpoint) and not submitted.strip().startswith('•'):
-                endpoint = submitted.strip()
+            endpoint = submitted.strip()
         merged = {
             'enabled': data.get('enabled', current.enabled),
             'mode': data.get('mode', current.mode),
@@ -707,9 +701,8 @@ def api_decim_safety_settings():
         old = {key: getattr(current, key) for key in merged}
         save_decim_settings(validated)
         for key in merged:
-            # Never copy a sensitive endpoint to the audit log.
-            before = mask_secret(old[key]) if key == 'provider_endpoint' else old[key]
-            after = mask_secret(getattr(validated, key)) if key == 'provider_endpoint' else getattr(validated, key)
+            before = old[key]
+            after = getattr(validated, key)
             _audit_setting_change(f'decim_safety.{key}', before, after)
         return jsonify({'success': True, 'settings': _decim_settings_public(validated)})
 

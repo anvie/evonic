@@ -1,9 +1,10 @@
 """Admin API and dashboard for Decim Safety telemetry.
 
 Decim Safety is Evonic's generic, provider-agnostic *decision model* safety
-layer.  Everything exposed here is provider-neutral: no endpoint, model product
-name, or credential is ever returned.  The routes are protected by the global
-authentication guard and CSRF middleware (like every other admin surface), and
+layer.  Everything exposed here is provider-neutral: the telemetry and health
+surfaces never return the provider endpoint, model product name, or credential.
+The routes are protected by the global authentication guard and CSRF
+middleware (like every other admin surface), and
 all list filters are validated server-side.
 
 Endpoints:
@@ -78,8 +79,7 @@ def api_decim_safety_health():
     return jsonify({
         "enabled": settings.enabled,
         "mode": settings.mode,
-        # Provider key only: endpoint and model identity are private deployment
-        # configuration and are intentionally never returned.
+        # Provider key only: this health surface never echoes the endpoint.
         "provider": settings.provider if settings.enabled else "",
         "circuit_state": circuit_state,
         "recording": settings.mode == "shadow" or (
