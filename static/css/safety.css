@@ -664,6 +664,44 @@ html.dark .sf-btn-danger { color: #fca5a5; }
     line-height: 1.5;
     margin: 0;
 }
+
+/* Sample payload chips (task #843): one click populates the payload field
+   with a valid, ready-to-submit sample (and the matching tool type). */
+.sf-tester-samples {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0;
+}
+.sf-tester-samples-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.sf-tester-sample {
+    appearance: none;
+    font-family: var(--sf-mono);
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    background: var(--bg-controls);
+    border: 1px solid var(--border-input);
+    border-radius: 999px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.sf-tester-sample:hover {
+    border-color: var(--sf-accent);
+    color: var(--sf-accent-strong);
+    background: var(--sf-accent-soft);
+}
+.sf-tester-sample:focus-visible {
+    outline: 2px solid var(--sf-accent);
+    outline-offset: 1px;
+}
 .sf-tester-note {
     display: inline-block;
     font-size: 0.68rem;

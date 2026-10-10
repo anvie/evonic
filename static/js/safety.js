@@ -672,6 +672,15 @@
      * render inline (decision + confidence + reason + timing) with explicit
      * "diagnostic only" semantics. */
 
+    // Ready-to-submit sample payloads (task #843): each chip also selects the
+    // matching tool type, so the pasted payload is valid for the probe as-is.
+    var TESTER_SAMPLES = {
+        "bash-safe": { tool: "bash", payload: 'echo "hello world"' },
+        "bash-risky": { tool: "bash", payload: "sudo rm -rf ./build" },
+        "py-safe": { tool: "python", payload: 'print("hello world")' },
+        "py-risky": { tool: "python", payload: 'import subprocess\nsubprocess.run("rm -rf ./dist", shell=True)' },
+    };
+
     window.safetyTester = {
         _running: false,
 
@@ -690,6 +699,22 @@
                 });
             }
             run.addEventListener("click", function () { window.safetyTester.run(); });
+            // Sample chips: populate the payload (and matching tool type) so the
+            // probe is ready to submit without typing anything.
+            var toolEl = qs("#dmss-tester-tool");
+            Array.prototype.forEach.call(
+                document.querySelectorAll("#dmss-tester-samples .sf-tester-sample"),
+                function (btn) {
+                    btn.addEventListener("click", function () {
+                        var s = TESTER_SAMPLES[btn.dataset.sample];
+                        if (!s || !payload) return;
+                        if (toolEl) toolEl.value = s.tool;
+                        payload.value = s.payload;
+                        window.safetyTester._updateCount();
+                        payload.focus();
+                    });
+                }
+            );
             this._updateCount();
         },
 

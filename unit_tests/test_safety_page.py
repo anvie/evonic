@@ -97,3 +97,38 @@ def test_settings_console_links_to_safety_and_drops_hmads_section():
     assert 'id="section-hmads"' not in html
     assert 'data-section="hmads"' not in html
     assert "partials/hmads.html" not in html
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic tester sample payloads (task #843)
+# ---------------------------------------------------------------------------
+
+def test_dmss_tester_offers_ready_to_submit_samples():
+    """The tester renders one-click sample payload chips (keyboard-reachable buttons)."""
+    client = _client()
+    html = client.get("/system/safety").get_data(as_text=True)
+
+    assert 'id="dmss-tester-samples"' in html
+    for sample in ("bash-safe", "bash-risky", "py-safe", "py-risky"):
+        assert f'data-sample="{sample}"' in html
+    assert html.count('class="sf-tester-sample"') >= 4
+    # Bumped asset versions so the new wiring/CSS is not served stale.
+    assert "js/safety.js?v=3" in html
+    assert "css/safety.css?v=3" in html
+
+
+def test_dmss_tester_samples_pass_payload_guardrails():
+    """Every advertised sample is ready to submit as-is (mirrors TESTER_SAMPLES in static/js/safety.js)."""
+    from backend.tools.lib.decim_safety import build_policy_packet
+
+    samples = [
+        ("bash", 'echo "hello world"'),
+        ("bash", "sudo rm -rf ./build"),
+        ("python", 'print("hello world")'),
+        ("python", 'import subprocess\nsubprocess.run("rm -rf ./dist", shell=True)'),
+    ]
+    for tool_type, payload in samples:
+        # No sensitive_payload / payload_too_large rejection for the default 12,000-char cap.
+        packet = build_policy_packet(payload, tool_type, "sandboxed_docker", 12000)
+        assert packet["requested_code"] == payload
+        assert packet["tool_type"] == tool_type

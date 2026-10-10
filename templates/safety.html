@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=8">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=3">
 
 <div class="safety-page">
     <div class="safety-header">
@@ -314,6 +314,18 @@
                     decision. The payload is treated as data &mdash; it is never executed, production
                     decisions are not altered, and telemetry is not polluted.
                 </p>
+                <div class="sf-tester-samples" id="dmss-tester-samples" role="group"
+                     aria-label="Ready-to-submit sample payloads">
+                    <span class="sf-tester-samples-label">Use a sample:</span>
+                    <button type="button" class="sf-tester-sample" data-sample="bash-safe"
+                            title='echo "hello world"'>echo "hello world"</button>
+                    <button type="button" class="sf-tester-sample" data-sample="bash-risky"
+                            title="sudo rm -rf ./build">sudo rm -rf ./build</button>
+                    <button type="button" class="sf-tester-sample" data-sample="py-safe"
+                            title='print("hello world")'>print("hello world")</button>
+                    <button type="button" class="sf-tester-sample" data-sample="py-risky"
+                            title='import subprocess; subprocess.run("rm -rf ./dist", shell=True)'>subprocess.run(&hellip;)</button>
+                </div>
                 <div class="sf-tester-box">
                     <div class="sf-tester-input">
                         <textarea id="dmss-tester-payload" rows="3"
@@ -337,5 +349,5 @@
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/safety.js') }}?v=2"></script>
+<script src="{{ url_for('static', filename='js/safety.js') }}?v=3"></script>
 {% endblock %}
