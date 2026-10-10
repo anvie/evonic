@@ -441,6 +441,92 @@ def test_tester_requires_payload_and_valid_tool():
                        json={"payload": "x", "tool_type": "java"}).status_code == 400
 
 
+def _configure_tester_endpoint(client):
+    """Point the real provider at a (faked) endpoint so probes reach decide()."""
+    client.put("/api/settings/decim-safety",
+               json={"provider_endpoint": "https://provider.example/decision"})
+
+
+def test_tester_provider_timeout_maps_to_transport_error():
+    """A provider request that times out (socket.timeout) is reported as transport_error."""
+    import socket
+    from backend.tools.lib.decim_safety import SystemOneDecisionProvider
+
+    class _TimingOutOpener:
+        def open(self, request, timeout=None):
+            raise socket.timeout("read timed out")
+
+    class TimingOutProvider(SystemOneDecisionProvider):
+        def __init__(self, endpoint=None, *, transport=None):
+            super().__init__(endpoint,
+                             transport=transport or _TimingOutOpener())
+
+    client = _client()
+    _configure_tester_endpoint(client)
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", TimingOutProvider):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "echo hi"}).get_json()
+    assert body["success"] is True
+    assert body["decision"] is None
+    assert body["fallback_reason"] == "transport_error"
+    assert "timed out" in body["reason"].lower()
+
+
+def test_tester_provider_http_error_maps_to_http_error():
+    """A non-2xx provider response is reported as http_error (diagnostic, not 5xx)."""
+    from backend.tools.lib.decim_safety import SystemOneDecisionProvider
+
+    class _FakeResponse:
+        status = 503
+
+        def read(self, n=-1):
+            return b"Service Unavailable"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _FakeOpener:
+        def open(self, request, timeout=None):
+            return _FakeResponse()
+
+    class Http503Provider(SystemOneDecisionProvider):
+        def __init__(self, endpoint=None, *, transport=None):
+            super().__init__(endpoint,
+                             transport=transport or _FakeOpener())
+
+    client = _client()
+    _configure_tester_endpoint(client)
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", Http503Provider):
+        response = client.post("/api/admin/decim-safety/test",
+                               json={"payload": "echo hi"})
+    assert response.status_code == 200  # diagnostic outcome, not a server error
+    body = response.get_json()
+    assert body["decision"] is None
+    assert body["fallback_reason"] == "http_error"
+    assert "non-2xx" in body["reason"].lower()
+
+
+def test_tester_malformed_provider_response_maps_to_invalid_response():
+    """A 2xx response whose body is not a valid decision is reported as invalid_response."""
+    from backend.tools.lib.decim_safety import SystemOneDecisionProvider
+
+    class GarbageProvider(SystemOneDecisionProvider):
+        def _read_response(self, request, settings):
+            return b"not-json"
+
+    client = _client()
+    _configure_tester_endpoint(client)
+    with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", GarbageProvider):
+        body = client.post("/api/admin/decim-safety/test",
+                           json={"payload": "echo hi"}).get_json()
+    assert body["decision"] is None
+    assert body["fallback_reason"] == "invalid_response"
+    assert "malformed" in body["reason"].lower()
+
+
 def test_tester_unconfigured_provider_reports_fallback():
     client = _client()
     with patch.dict(os.environ, {"DECIM_SAFETY_SYSTEMONE_ENDPOINT": ""}):

@@ -10,6 +10,10 @@
 
 - Safety > DMSS tab: added a bounded **diagnostic tester** for troubleshooting the decision-model provider. Paste a sample payload (bash or python), hit *Test*, and the backend probes the configured DMSS provider end-to-end via `POST /api/admin/decim-safety/test`, returning the decision (allow/review/block), confidence, a sanitized provider reason, latency, and the provider/model used. The probe is explicitly *diagnostic only*: the payload is treated as data (never executed), production decisions are untouched, and the production telemetry store is not polluted. Guardrails: 10 probes/min per session (429 + Retry-After), payload size bounded by the configured `max_payload_chars`, provider timeout bounded by `request_timeout_ms`, a 128 KB request-body cap, and a fresh resolver per probe so test failures cannot trip the production circuit breaker (whose state is reported read-only). Provider reasons are sanitized before display (internal file paths replaced, secret-bearing text redacted).
 
+### Tests
+
+- QA pass over the consolidated System > Safety page: verified accessible tab semantics (ARIA tablist with roving tabindex and arrow-key/Home/End navigation), WCAG AA contrast for all body-text and status tokens in dark mode (≥ 4.5:1 on the `#111827` surface), single-column layout with no horizontal scroll at 320px (grids collapse via `auto-fit`/`minmax`, tables and the tab bar scroll inside their wrappers), settings round-trip and partial-PUT merge, the exact deterministic-HMADS fallback on unusable DMSS decisions, provider-endpoint redaction, and legacy navigation (`/system/decim-safety` → 302 → `/system/safety#dmss`; `/system#hmads` migrated client-side). Added tester failure-path tests: provider timeout (`socket.timeout` → `transport_error`), non-2xx provider response (`http_error`), and malformed 2xx body (`invalid_response`), joining the existing rate-limit (429) and empty-payload (400) coverage.
+
 ## [1.3.0] - 2026-10-05
 
 ### Features
