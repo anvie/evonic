@@ -108,6 +108,13 @@
       "description": "How often to check for stale in-progress tasks that the agent lost track of. Default: 60 (1 minute)."
     },
     {
+      "name": "STALE_REMINDER_DEDUP_MAX_AGE_SECONDS",
+      "label": "Stale Reminder Dedup Max Age (seconds)",
+      "type": "number",
+      "default": 300,
+      "description": "A pending stale-task reminder suppresses a repeat only while it is newer than this. Older, unprocessed reminders no longer block a fresh delivery. Default: 300 (5 minutes)."
+    },
+    {
       "name": "CHANNEL_TYPE",
       "label": "Notification Channel Type",
       "type": "string",

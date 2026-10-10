@@ -140,6 +140,56 @@ class TestSyncStopPropagation:
         assert stop_calls == []
         assert elapsed < 5
 
+    def test_fast_completion_during_dispatch_is_not_lost(self, explore_module, agent):
+        """A final answer emitted by notify_agent is captured before waiting begins."""
+        from backend.event_stream import event_stream
+
+        def dispatch(**_kwargs):
+            event_stream.emit('final_answer', {
+                'agent_id': 'explorer-1',
+                'answer': 'completed before notify_agent returned',
+                'tool_trace': [],
+            })
+            return {'success': True, 'session_id': EXPLORER_SESSION}
+
+        with patch("backend.tools.lib.exec_backend.registry.get_backend", return_value=MockBackend()), \
+             patch("models.db.db.get_agent", return_value=agent), \
+             patch("backend.agent_runtime.explorer.worker_skill_enabled", return_value=True), \
+             patch("backend.skills_manager.skills_manager.get_skill_config",
+                   return_value={"tool_ids": "", "sync": True, "timeout": 300}), \
+             patch("backend.subagent_manager.subagent_manager.spawn_explorer", return_value="explorer-1"), \
+             patch("backend.agent_report_to.resolve_report_to_for_subagent_spawn",
+                   return_value=("test-agent", None, None)), \
+             patch("backend.agent_runtime.notifier.notify_agent", side_effect=dispatch), \
+             patch("backend.agent_runtime.agent_runtime.is_stop_requested", return_value=False):
+            started = time.monotonic()
+            result = explore_module.execute(
+                agent, {"path": str(agent["workspace"]), "query": "who calls foo()?"})
+
+        assert result.get("findings") == 'completed before notify_agent returned'
+        assert time.monotonic() - started < 1
+
+    def test_failed_dispatch_unregisters_completion_listener(self, explore_module, agent):
+        """A failed dispatch must not retain a callback for a never-started explorer."""
+        from backend.event_stream import event_stream
+
+        with patch("backend.tools.lib.exec_backend.registry.get_backend", return_value=MockBackend()), \
+             patch("models.db.db.get_agent", return_value=agent), \
+             patch("backend.agent_runtime.explorer.worker_skill_enabled", return_value=True), \
+             patch("backend.skills_manager.skills_manager.get_skill_config",
+                   return_value={"tool_ids": "", "sync": True, "timeout": 300}), \
+             patch("backend.subagent_manager.subagent_manager.spawn_explorer", return_value="explorer-1"), \
+             patch("backend.agent_report_to.resolve_report_to_for_subagent_spawn",
+                   return_value=("test-agent", None, None)), \
+             patch("backend.agent_runtime.notifier.notify_agent",
+                   return_value={"success": False, "reason": "queue unavailable"}), \
+             patch.object(event_stream, "off", wraps=event_stream.off) as off:
+            result = explore_module.execute(
+                agent, {"path": str(agent["workspace"]), "query": "who calls foo()?"})
+
+        assert 'Failed to dispatch' in result.get('error', '')
+        assert off.call_count == 1
+
 
 class TestWaitHelper:
 

@@ -163,14 +163,31 @@ def execute(agent: dict, args: dict) -> dict:
     except ValueError as e:
         return {'error': str(e)}
 
+    sync = bool(skill_cfg.get('sync', False))
+    done = threading.Event()
+    answer_data = {}
+    event_stream = None
+    _on_explorer_done = None
+    if sync:
+        from backend.event_stream import event_stream
+
+        def _on_explorer_done(data):
+            if data.get('agent_id') == explorer_id:
+                answer_data['answer'] = data.get('answer', '')
+                answer_data['tool_trace'] = data.get('tool_trace', [])
+                answer_data['error'] = data.get('error', False)
+                done.set()
+
+        # Register before dispatch: a fast explorer can otherwise finish and emit
+        # final_answer before this caller begins observing completion.
+        event_stream.on('final_answer', _on_explorer_done)
+
     parent_name = parent_agent.get('name', parent_id)
     report_to_id, report_to_channel_id, _ = resolve_report_to_for_subagent_spawn(
         parent_id,
         agent.get('user_id', ''),
         agent.get('channel_id', '') or '',
     )
-
-    sync = bool(skill_cfg.get('sync', False))
 
     metadata = {
         'agent_message': True,
@@ -196,6 +213,14 @@ def execute(agent: dict, args: dict) -> dict:
         metadata=metadata,
     )
 
+    if sync and not result.get('success'):
+        event_stream.off('final_answer', _on_explorer_done)
+        return {
+            'error': f"Failed to dispatch explorer task: {result.get('reason', 'unknown')}",
+            'explorer_id': explorer_id,
+            'path': path,
+        }
+
     session_id = result.get('session_id')
 
     _logger.info(
@@ -205,13 +230,8 @@ def execute(agent: dict, args: dict) -> dict:
 
     # --- Sync mode: block until the explorer finishes and return findings directly ---
     if sync:
-        if not result.get('success'):
-            return {
-                'error': f"Failed to dispatch explorer task: {result.get('reason', 'unknown')}",
-                'explorer_id': explorer_id,
-                'path': path,
-            }
         if not session_id:
+            event_stream.off('final_answer', _on_explorer_done)
             return {
                 'error': 'Explorer dispatched but no session allocated. Cannot track completion.',
                 'explorer_id': explorer_id,
@@ -219,20 +239,8 @@ def execute(agent: dict, args: dict) -> dict:
             }
 
         timeout = int(skill_cfg.get('timeout', 300))
-        done = threading.Event()
-        answer_data = {}
 
-        from backend.event_stream import event_stream
         from backend.agent_runtime.concurrency import paused_model_gate
-
-        def _on_explorer_done(data):
-            if data.get('agent_id') == explorer_id:
-                answer_data['answer'] = data.get('answer', '')
-                answer_data['tool_trace'] = data.get('tool_trace', [])
-                answer_data['error'] = data.get('error', False)
-                done.set()
-
-        event_stream.on('final_answer', _on_explorer_done)
 
         try:
             # Release our turn's model-gate while blocked so the explorer (which needs

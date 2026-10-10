@@ -933,6 +933,22 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
     except Exception:
         pass
 
+    # Snapshot whatever we are about to overwrite so a delivery that does not
+    # actually resume the task can be rolled back cleanly. Without this a
+    # deduplicated or merely-injected reminder would strand `_active_tasks`
+    # (blocking every later stale scan) and clobber the agent's persisted
+    # mode/plan/focus.
+    with _state_lock:
+        prev_active = _active_tasks.get(agent_id)
+        prev_since = _task_state_since.get(agent_id)
+        prev_pending = _pending_tasks.get(agent_id)
+        prev_paused = _paused_tasks.get(agent_id)
+    try:
+        from models.db import db as _mdb_state
+        prev_state_content = _mdb_state.get_agent_state(agent_id=agent_id)
+    except Exception:
+        prev_state_content = None
+
     # Mark as active directly — task is already in-progress, skip pick/approve
     with _state_lock:
         _active_tasks[agent_id] = str(task_id)
@@ -941,7 +957,34 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
         _paused_tasks.pop(agent_id, None)
 
     # Pre-set agent to execute mode when autopilot is ON
-    _pre_set_execute_mode(agent_id, task, sdk)
+    mode_preset = _pre_set_execute_mode(agent_id, task, sdk)
+
+    def _rollback_reservation():
+        with _state_lock:
+            if prev_active is None:
+                _active_tasks.pop(agent_id, None)
+            else:
+                _active_tasks[agent_id] = prev_active
+            if prev_since is None:
+                _task_state_since.pop(agent_id, None)
+            else:
+                _task_state_since[agent_id] = prev_since
+            if prev_pending is not None:
+                _pending_tasks[agent_id] = prev_pending
+            if prev_paused is not None:
+                _paused_tasks[agent_id] = prev_paused
+        if mode_preset and prev_state_content is not None:
+            try:
+                from models.db import db as _mdb_state
+                _mdb_state.upsert_agent_state(prev_state_content, agent_id=agent_id)
+            except Exception:
+                pass
+
+    try:
+        dedup_max_age = int(_load_config().get(
+            'STALE_REMINDER_DEDUP_MAX_AGE_SECONDS', 300))
+    except Exception:
+        dedup_max_age = 300
 
     from backend.agent_runtime.notifier import notify_agent
     result = notify_agent(
@@ -950,14 +993,27 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
         message=body,
         channel_type=channel_type,
         dedup=True,
+        dedup_max_age_seconds=dedup_max_age,
     )
-    if result['success']:
+    # A reminder only counts as delivered when the runtime actually processed the
+    # turn. A deduplicated send, a failure, or a bare hand-off to a live loop
+    # (injected/buffered/async) leaves the task unresolved, so release the
+    # reservation and let a later scan retry instead of pinning the agent active.
+    if result.get('success') and result.get('delivery') == 'runtime':
         _log(f'Sent stale task reminder to agent {agent_id} for task {task_id}', 'info', sdk)
+        return
+    if result.get('success'):
+        _log(
+            f'Stale task reminder for agent {agent_id} task {task_id} was only '
+            f'queued (delivery={result.get("delivery")!r}) without a confirmed '
+            f'resume — releasing reservation to retry',
+            'warn', sdk,
+        )
     elif result.get('reason') == 'deduplicated':
         _log(f'Skipped duplicate stale reminder for agent {agent_id} task {task_id}', 'info', sdk)
     else:
         _log(f'Failed to send stale task reminder to agent {agent_id}: {result.get("reason")}', 'error', sdk)
-        _active_tasks.pop(agent_id, None)
+    _rollback_reservation()
 
 
 def _scan_stale_tasks(sdk=None):

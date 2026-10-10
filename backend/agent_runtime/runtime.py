@@ -934,6 +934,26 @@ class AgentRuntime:
         with self._session_store._busy_guard:
             return self._session_store._busy.get(session_id, False)
 
+    def _has_live_turn(self, agent_id: str, session_id: str) -> bool:
+        """True when the durable store still holds a running turn for the session.
+
+        The in-process ``_busy`` flag can outlive its durable turn (a worker that
+        was reaped as stale while still marked busy). Probing the store lets the
+        caller avoid injecting into a loop that can no longer consume the
+        message. Falls back to True on any probe error so normal injection is
+        never skipped because of a transient failure.
+        """
+        try:
+            from backend.realtime_store import realtime_store
+            realtime_store.reap_stale_turns()
+            return any(
+                turn.get('state') == 'running'
+                for turn in realtime_store.active_turns(
+                    agent_id=agent_id, session_id=session_id)
+            )
+        except Exception:
+            return True
+
     def _mark_task_queued(self, task: '_QueueTask') -> None:
         from backend.realtime_store import realtime_store
         # ponytail: one runtime lock preserves queue/stop event order; use
@@ -1593,27 +1613,40 @@ class AgentRuntime:
         # into the active loop instead of blocking/queuing a new task.
         # Message is already saved to DB above, so DB order is preserved.
         if self._is_busy(session_id):
-            _logger.info(
-                "[handle_message] agent=%s session=%s — session busy, injecting into active loop.",
-                agent_id, session_id,
-            )
-            self._get_inject_queue(session_id).put({
-                'role': 'user',
-                'content': message or '[Image]',
-            })
-            event_stream.emit('message_injected', {
-                'agent_id': agent_id,
-                'agent_name': agent.get('name', ''),
-                'session_id': session_id,
-                'external_user_id': external_user_id,
-                'channel_id': channel_id,
-                'message': message,
-            })
-            return {
-                "response": None, "injected": True, "tool_trace": [], "timeline": [],
-                "message_id": message_id,
-                "client_message_id": meta.get('client_message_id'),
-            }
+            # Only inject while a durable running turn still owns the session.
+            # A reaped/stale turn can leave the in-process flag set; injecting
+            # then would hand the message to a dead loop and silently drop it.
+            # In that case clear the flag and queue a normal fresh turn instead
+            # (the per-session lock serializes it behind any real worker).
+            if not self._has_live_turn(agent_id, session_id):
+                _logger.warning(
+                    "[handle_message] agent=%s session=%s — clearing stale in-process "
+                    "busy flag (no live durable turn); queuing a fresh turn instead of "
+                    "injecting.", agent_id, session_id,
+                )
+                self._set_busy(session_id, False)
+            else:
+                _logger.info(
+                    "[handle_message] agent=%s session=%s — session busy, injecting into active loop.",
+                    agent_id, session_id,
+                )
+                self._get_inject_queue(session_id).put({
+                    'role': 'user',
+                    'content': message or '[Image]',
+                })
+                event_stream.emit('message_injected', {
+                    'agent_id': agent_id,
+                    'agent_name': agent.get('name', ''),
+                    'session_id': session_id,
+                    'external_user_id': external_user_id,
+                    'channel_id': channel_id,
+                    'message': message,
+                })
+                return {
+                    "response": None, "injected": True, "tool_trace": [], "timeline": [],
+                    "message_id": message_id,
+                    "client_message_id": meta.get('client_message_id'),
+                }
 
         # Message buffering: debounce rapid messages, then queue
         # Skip when skip_buffer=True (e.g. API routes need synchronous response)

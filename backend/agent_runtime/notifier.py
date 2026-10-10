@@ -9,6 +9,9 @@ notifications directed at an agent. Handles:
 - LLM triggering (trigger_llm=True) or DB-only storage (trigger_llm=False)
 """
 
+import time as _time
+from datetime import datetime, timezone
+
 from models.db import db
 from backend.logging_config import get_logger
 
@@ -22,6 +25,7 @@ def notify_agent(agent_id: str, tag: str, message: str,
                  session_id: str = None,
                  dedup: bool = True,
                  dedup_window: int = 5,
+                 dedup_max_age_seconds: float = None,
                  trigger_llm: bool = True,
                  deliver_external: bool = False,
                  metadata: dict = None) -> dict:
@@ -44,6 +48,12 @@ def notify_agent(agent_id: str, tag: str, message: str,
         dedup: If True, skip sending if an identical message already exists in
                the last `dedup_window` messages of the session. Default True.
         dedup_window: Number of recent messages to check for duplicates. Default 5.
+        dedup_max_age_seconds: Optional age limit for deduplication. When set, a
+               matching message only suppresses the notification while it is newer
+               than this many seconds. An older identical message (e.g. a stale-task
+               reminder that was persisted but never processed because its turn was
+               reaped) no longer blocks a fresh delivery. When None (default) any
+               match in the window suppresses the notification, as before.
         trigger_llm: If True (default), route through handle_message() to trigger
                      the LLM loop. If False, save directly to DB without LLM processing
                      (use for informational notifications like system errors).
@@ -161,7 +171,8 @@ def notify_agent(agent_id: str, tag: str, message: str,
     )
 
     # Deduplication check
-    if dedup and _is_duplicate(target_session_id, full_message, dedup_window):
+    if dedup and _is_duplicate(target_session_id, full_message, dedup_window,
+                               dedup_max_age_seconds):
         _logger.info(
             "notify_agent: dedup — skipping duplicate [%s] notification for agent '%s' "
             "in session '%s'.",
@@ -184,10 +195,22 @@ def notify_agent(agent_id: str, tag: str, message: str,
                 agent_id, target_session_id, channel_id or 'none',
             )
             from backend.agent_runtime import agent_runtime
-            agent_runtime.handle_message(
+            hm_result = agent_runtime.handle_message(
                 agent_id, external_user_id, full_message, channel_id,
                 metadata=metadata, session_id=target_session_id,
             )
+            # A runtime turn that short-circuits (busy injection, buffering, or
+            # an async inter-agent hop) hands the message to a live loop rather
+            # than processing it here.  Report that distinctly so callers that
+            # need a confirmed resume (e.g. the Kanban stale-task watchdog) can
+            # tell "queued into an active turn" apart from "actually handled".
+            if isinstance(hm_result, dict):
+                if hm_result.get('injected'):
+                    delivery = 'injected'
+                elif hm_result.get('buffered'):
+                    delivery = 'buffered'
+                elif hm_result.get('async'):
+                    delivery = 'async'
         else:
             meta = dict(metadata) if metadata else {}
             message_id = db.add_chat_message(
@@ -345,13 +368,54 @@ def _resolve_agent_target(agent_id: str, channel_type: str = None):
         return None, None
 
 
-def _is_duplicate(session_id: str, full_message: str, window: int) -> bool:
-    """Return True if full_message already appears in the last `window` user messages."""
+def _parse_created_at(value) -> float | None:
+    """Parse a chat message ``created_at`` into a POSIX timestamp (UTC).
+
+    Accepts the SQLite ``CURRENT_TIMESTAMP`` form (``YYYY-MM-DD HH:MM:SS``,
+    naive UTC) as well as ISO-8601 strings. Returns None if it cannot be read.
+    """
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S.%f'):
+        try:
+            return datetime.strptime(text, fmt).replace(
+                tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            continue
+    try:
+        parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except ValueError:
+        return None
+
+
+def _is_duplicate(session_id: str, full_message: str, window: int,
+                  max_age_seconds: float = None) -> bool:
+    """Return True if full_message already appears in the last `window` messages.
+
+    When ``max_age_seconds`` is provided, only matches newer than that age count
+    as duplicates; an older identical message (an unprocessed reminder whose
+    turn was reaped) no longer suppresses delivery.  Matches whose timestamp
+    cannot be parsed are treated as recent (deduplicated) to preserve the
+    previous conservative behavior.
+    """
     try:
         recent = db.get_session_messages(session_id, limit=window)
-        return any(
-            m.get('role') == 'user' and m.get('content') == full_message
-            for m in recent
-        )
     except Exception:
         return False
+
+    cutoff = None if max_age_seconds is None else _time.time() - max_age_seconds
+    for m in recent:
+        if m.get('role') != 'user' or m.get('content') != full_message:
+            continue
+        if cutoff is None:
+            return True
+        ts = _parse_created_at(m.get('created_at'))
+        if ts is None or ts >= cutoff:
+            return True
+    return False
