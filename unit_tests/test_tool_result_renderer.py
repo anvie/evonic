@@ -17,7 +17,7 @@ def _evaluate_summary(path: Path, result: dict) -> str:
     if not node:
         pytest.skip("A working Node.js runtime is required for the tool result renderer test")
     source = path.read_text()
-    start = source.index("function _summarizeToolResultValue(value) {")
+    start = source.index("function _truncateToolResultText(value, maxLength = 240) {")
     end = source.index("function _renderRunpyResult(r) {")
     summary_functions = source[start:end]
     script = f"""{summary_functions}
