@@ -752,7 +752,9 @@ class SchemaMixin:
                     command_fingerprint TEXT,
                     command_length INTEGER,
                     correlation_id TEXT,
-                    expires_at TEXT
+                    expires_at TEXT,
+                    detection_type TEXT,
+                    detection_command TEXT
                 )
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_occurred ON decim_safety_events(occurred_at)")

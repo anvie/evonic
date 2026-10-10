@@ -85,7 +85,8 @@ _EVENT_COLUMNS = [
     "deterministic_level", "deterministic_score", "deterministic_categories",
     "final_level", "decision_source", "agreement", "fallback_reason", "error_category",
     "final_unsafe", "model_unsafe", "deterministic_unsafe", "disposition",
-    "command_fingerprint", "command_length", "correlation_id", "expires_at",
+    "command_fingerprint", "command_length", "correlation_id", "expires_at", \
+            "detection_type", "detection_command",
 ]
 
 
@@ -143,8 +144,9 @@ def record_comparison(
                 "deterministic_level, deterministic_score, deterministic_categories, "
                 "final_level, decision_source, agreement, fallback_reason, error_category, "
                 "final_unsafe, model_unsafe, deterministic_unsafe, disposition, "
-                "command_fingerprint, command_length, correlation_id, expires_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "command_fingerprint, command_length, correlation_id, expires_at, "
+                "detection_type, detection_command"
+                ") VALUES (" + ", ".join("?" for _ in range(33)) + ")",
                 (
                     event_id, occurred, epoch, mode, tool_type, _execution_boundary(agent_context),
                     1 if getattr(settings, "enabled", False) else 0,
@@ -162,6 +164,7 @@ def record_comparison(
                     _disposition_for(final_level),
                     fingerprint_code(code), len(code),
                     correlation_id, expires_at,
+                    "", ""
                 ),
             )
             conn.execute(

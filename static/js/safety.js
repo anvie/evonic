@@ -642,8 +642,8 @@
                 if (!events.length) {
                     body.innerHTML = '<tr><td colspan="11" class="sf-empty-cell">No events in this window. Commands flagged while "Unsafe only" is on appear here.</td></tr>';
                 } else {
-                    body.innerHTML = events.map(function (e) {
-                        return "<tr>" +
+                    body.innerHTML = events.map(function (e, index) {
+                        return '<tr data-event-index="' + index + '">' +
                             "<td>" + esc(e.occurred_at) + "</td>" +
                             "<td>" + esc(e.mode) + "</td>" +
                             "<td>" + esc(e.tool_type) + "</td>" +
@@ -658,6 +658,18 @@
                             "</tr>";
                     }).join("");
                 }
+                Array.prototype.forEach.call(body.querySelectorAll("tr[data-event-index]"), function (row) {
+                    row.addEventListener("click", function () {
+                        var event = events[Number(row.dataset.eventIndex)];
+                        if (!event || typeof window.openDmssActivityModal !== "function") return;
+                        window.openDmssActivityModal(
+                            "Event ID: " + (event.id || "N/A"),
+                            event.occurred_at,
+                            event.detection_type,
+                            event.detection_command
+                        );
+                    });
+                });
                 window.safetyDmss._renderPager();
             }).catch(function (e) {
                 console.error("DMSS events failed:", e);

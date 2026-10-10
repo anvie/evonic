@@ -1,0 +1,71 @@
+<!-- DMSS Activity Detail Modal -->
+<div id="dmss-activity-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="dmss-modal-title">Activity Details</h3>
+            <button type="button" class="modal-close" aria-label="Close activity details" onclick="window.closeDmssActivityModal()">&times;</button>
+        </div>
+        <div id="dmss-modal-body" class="modal-body">
+            <div class="modal-detail-container">
+                <div class="detail-row">
+                    <span class="detail-label">Record Name:</span>
+                    <span id="dmss-record-name" class="detail-value"></span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Timestamp:</span>
+                    <span id="dmss-record-timestamp" class="detail-value"></span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Detection Type:</span>
+                    <span id="dmss-detection-type" class="detail-value"></span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Detection Command:</span>
+                    <span id="dmss-detection-command" class="detail-value"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* DMSS Activity Modal Styles */
+.detail-container {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 1rem;
+}
+
+.detail-label {
+    font-weight: 600;
+    color: #4b5563;
+    font-size: 0.95rem;
+}
+
+.detail-value {
+    color: #1f2937;
+    font-size: 0.95rem;
+    word-break: break-word;
+    background: #f9fafb;
+    padding: 0.5rem;
+    border-radius: 6px;
+}
+</style>
+
+<script>
+window.openDmssActivityModal = function (recordName, timestamp, detectionType, detectionCommand) {
+    document.getElementById("dmss-activity-modal").style.display = "flex";
+    document.getElementById("dmss-record-name").textContent = recordName || "N/A";
+    document.getElementById("dmss-record-timestamp").textContent = timestamp || "N/A";
+    document.getElementById("dmss-detection-type").textContent = detectionType || "N/A";
+    document.getElementById("dmss-detection-command").textContent = detectionCommand || "N/A";
+};
+
+window.closeDmssActivityModal = function () {
+    document.getElementById("dmss-activity-modal").style.display = "none";
+};
+
+document.getElementById("dmss-activity-modal").addEventListener("click", function (event) {
+    if (event.target === this) window.closeDmssActivityModal();
+});
+</script>
