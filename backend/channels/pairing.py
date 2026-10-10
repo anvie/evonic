@@ -1,37 +1,45 @@
 """Pairing code generation and validation.
 
 Generates uppercase alphanumeric pairing codes with a ``EVN-`` prefix, e.g.
-``EVN-AB12``. The random payload uses an unambiguous character set (excludes
+``EVN-AB12CD34``. The random payload uses an unambiguous character set (excludes
 0/O and 1/I/L) to avoid visual mistyping.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-import random
 import re
+import secrets
 
 # Prefix that marks a pairing code in free text. Distinctive enough that
 # ordinary chat ("Hi khodam", "thanks", ...) is never taken for a code.
 _PREFIX = "EVN-"
-# Number of random characters after the prefix.
-_CODE_LEN = 4
+# Eight payload characters provide roughly 40 bits of entropy while remaining
+# short enough to share manually. This makes accidental collisions negligible.
+_CODE_LEN = 8
 # Unambiguous characters: removed 0, O, 1, I, L to prevent visual mistyping.
 # This is a subset of the uppercase alphanumeric set [A-Z0-9].
 _CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
-# Canonical form: EVN-XXXX (uppercase alphanumeric payload).
-_PATTERN = re.compile(r"^EVN-[A-Z0-9]{%d}$" % _CODE_LEN)
+# New pairing codes use eight payload characters. Four-character codes remain
+# accepted until existing pending approvals expire after an upgrade.
+_LEGACY_CODE_LEN = 4
+_PATTERN = re.compile(
+    r"^EVN-[A-Z0-9]{%d}(?:[A-Z0-9]{%d})?$" % (_LEGACY_CODE_LEN, _LEGACY_CODE_LEN)
+)
 
-# Finds an EVN-XXXX code embedded in arbitrary text. The hyphen is required and
-# the match is anchored on word boundaries, so a word such as "EVNEWS" is not
-# mistaken for a code.
-_EXTRACT_RE = re.compile(r"\bEVN-([A-Z0-9]{%d})\b" % _CODE_LEN)
+# Finds a new or legacy code embedded in arbitrary text. The hyphen is required
+# and the match is anchored on word boundaries, so a word such as "EVNEWS" is
+# not mistaken for a code. The longer form is listed first to avoid partial
+# matches when an eight-character code is supplied.
+_EXTRACT_RE = re.compile(
+    r"\bEVN-([A-Z0-9]{%d}|[A-Z0-9]{%d})\b" % (_CODE_LEN, _LEGACY_CODE_LEN)
+)
 
 
 def generate_pair_code() -> str:
-    """Generate a pairing code in canonical form, e.g. ``EVN-AB12``."""
-    return _PREFIX + "".join(random.choices(_CHARS, k=_CODE_LEN))
+    """Generate a cryptographically secure code, e.g. ``EVN-AB12CD34``."""
+    return _PREFIX + "".join(secrets.choice(_CHARS) for _ in range(_CODE_LEN))
 
 
 def format_pair_code(raw: str) -> str:
@@ -40,18 +48,18 @@ def format_pair_code(raw: str) -> str:
 
 
 def validate_pair_code(code: Optional[str]) -> bool:
-    """Check that *code* matches the canonical ``EVN-XXXX`` format."""
+    """Check for a new or still-valid legacy pairing-code format."""
     return bool(code is not None and _PATTERN.match(code))
 
 
 def extract_pair_code(text: Optional[str]) -> str | None:
-    """Extract an ``EVN-XXXX`` pairing code from arbitrary text.
+    """Extract a new or legacy pairing code from arbitrary text.
 
     Only codes carrying the ``EVN-`` prefix and an uppercase alphanumeric
     payload are recognised, so ordinary words are never treated as pairing
     attempts. Matching is case-insensitive; the result is normalised to
-    uppercase and returned in canonical form (``EVN-XXXX``), or ``None`` when
-    no code is present.
+    uppercase and returned in canonical form, or ``None`` when no code is
+    present.
     """
     if not text or not isinstance(text, str):
         return None

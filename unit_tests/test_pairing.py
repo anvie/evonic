@@ -1,6 +1,6 @@
-"""Tests for backend.channels.pairing — EVN-XXXX pairing codes.
+"""Tests for backend.channels.pairing — EVN-XXXXXXXX pairing codes.
 
-Codes are uppercase alphanumeric with a ``EVN-`` prefix, e.g. ``EVN-AB12``.
+Codes are uppercase alphanumeric with a ``EVN-`` prefix, e.g. ``EVN-AB12CD34``.
 The detector keys off that prefix, so ordinary chat ("Hi khodam", "thanks")
 is never mistaken for a pairing attempt.
 """
@@ -31,13 +31,13 @@ class TestGeneratePairCode(unittest.TestCase):
             self.assertTrue(generate_pair_code().startswith("EVN-"))
 
     def test_total_length(self):
-        self.assertEqual(len(generate_pair_code()), 8)  # 'EVN-' + 4 payload chars
+        self.assertEqual(len(generate_pair_code()), 12)  # 'EVN-' + 8 payload chars
 
     def test_payload_is_uppercase_alphanumeric(self):
         for _ in range(200):
             payload = generate_pair_code()[4:]
-            self.assertEqual(len(payload), 4)
-            self.assertRegex(payload, r"^[A-Z0-9]{4}$")
+            self.assertEqual(len(payload), 8)
+            self.assertRegex(payload, r"^[A-Z0-9]{8}$")
 
     def test_contains_only_unambiguous_chars(self):
         for _ in range(200):
@@ -55,13 +55,13 @@ class TestGeneratePairCode(unittest.TestCase):
 
 
 class TestFormatPairCode(unittest.TestCase):
-    """Tests for format_pair_code() — canonical uppercase EVN-XXXX form."""
+    """Tests for format_pair_code() — canonical uppercase EVN-XXXXXXXX form."""
 
     def test_returns_canonical_form(self):
-        self.assertEqual(format_pair_code("EVN-AB12"), "EVN-AB12")
+        self.assertEqual(format_pair_code("EVN-AB12CD34"), "EVN-AB12CD34")
 
     def test_uppercases_input(self):
-        self.assertEqual(format_pair_code("evn-ab12"), "EVN-AB12")
+        self.assertEqual(format_pair_code("evn-ab12cd34"), "EVN-AB12CD34")
 
     def test_output_validates(self):
         raw = generate_pair_code()
@@ -71,10 +71,11 @@ class TestFormatPairCode(unittest.TestCase):
 class TestValidatePairCode(unittest.TestCase):
     """Tests for validate_pair_code()."""
 
-    def test_accepts_canonical_codes(self):
+    def test_accepts_new_and_legacy_codes(self):
+        self.assertTrue(validate_pair_code("EVN-AB12CD34"))
+        self.assertTrue(validate_pair_code("EVN-99999999"))
+        self.assertTrue(validate_pair_code("EVN-A1B2C3D4"))
         self.assertTrue(validate_pair_code("EVN-AB12"))
-        self.assertTrue(validate_pair_code("EVN-9999"))
-        self.assertTrue(validate_pair_code("EVN-A1B2"))
 
     def test_rejects_missing_prefix(self):
         self.assertFalse(validate_pair_code("AB12"))
@@ -87,12 +88,12 @@ class TestValidatePairCode(unittest.TestCase):
         self.assertFalse(validate_pair_code("evn-ab12"))
 
     def test_rejects_wrong_length(self):
-        self.assertFalse(validate_pair_code("EVN-ABC"))
-        self.assertFalse(validate_pair_code("EVN-ABCDE"))
+        self.assertFalse(validate_pair_code("EVN-AB12CD3"))
+        self.assertFalse(validate_pair_code("EVN-AB12CD345"))
 
     def test_rejects_special_characters(self):
-        self.assertFalse(validate_pair_code("EVN-AB_1"))
-        self.assertFalse(validate_pair_code("EVN-AB$1"))
+        self.assertFalse(validate_pair_code("EVN-AB12_CD3"))
+        self.assertFalse(validate_pair_code("EVN-AB12$CD3"))
 
     def test_rejects_empty_and_none(self):
         self.assertFalse(validate_pair_code(""))
@@ -116,18 +117,21 @@ class TestExtractPairCode(unittest.TestCase):
 
     def test_returns_none_for_words_starting_with_evn(self):
         self.assertIsNone(extract_pair_code("EVNEWS"))  # letters only, no hyphen
-        self.assertIsNone(extract_pair_code("EVNAB12"))  # hyphen required
-        self.assertIsNone(extract_pair_code("SEVN-AB12"))  # no boundary before prefix
+        self.assertIsNone(extract_pair_code("EVNAB12CD34"))  # hyphen required
+        self.assertIsNone(extract_pair_code("SEVN-AB12CD34"))  # no boundary before prefix
 
     def test_extracts_bare_code(self):
-        self.assertEqual(extract_pair_code("EVN-AB12"), "EVN-AB12")
+        self.assertEqual(extract_pair_code("EVN-AB12CD34"), "EVN-AB12CD34")
 
     def test_extracts_embedded_code(self):
         self.assertEqual(
-            extract_pair_code("here is my code EVN-AB12 ok"), "EVN-AB12"
+            extract_pair_code("here is my code EVN-AB12CD34 ok"), "EVN-AB12CD34"
         )
 
     def test_is_case_insensitive_and_normalises(self):
+        self.assertEqual(extract_pair_code("evn-ab12cd34"), "EVN-AB12CD34")
+
+    def test_extracts_legacy_code_for_existing_approvals(self):
         self.assertEqual(extract_pair_code("evn-ab12"), "EVN-AB12")
 
     def test_returns_none_for_empty_or_none(self):
