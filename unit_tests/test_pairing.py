@@ -8,6 +8,7 @@ is never mistaken for a pairing attempt.
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -49,9 +50,11 @@ class TestGeneratePairCode(unittest.TestCase):
             for ch in generate_pair_code()[4:]:
                 self.assertNotIn(ch, self.AMBIGUOUS_CHARS)
 
-    def test_no_two_codes_are_identical_in_500_runs(self):
-        codes = {generate_pair_code() for _ in range(500)}
-        self.assertEqual(len(codes), 500)
+    @patch("backend.channels.pairing.secrets.choice", side_effect="AB12CD34")
+    def test_uses_secure_randomness_for_each_payload_character(self, choice):
+        self.assertEqual(generate_pair_code(), "EVN-AB12CD34")
+        self.assertEqual(choice.call_count, 8)
+        self.assertTrue(all(call.args == ("ABCDEFGHJKMNPQRSTUVWXYZ23456789",) for call in choice.call_args_list))
 
 
 class TestFormatPairCode(unittest.TestCase):
