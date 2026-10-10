@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=8">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=4">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=5">
 
 <div class="safety-page">
     <div class="safety-header">
@@ -146,6 +146,28 @@
                     </label>
                 </div>
                 <span class="sf-field-err" id="sg-err-policy" hidden></span>
+            </div>
+
+            <!-- DMSS mode selector (shadow / enforce) -->
+            <div class="sf-field" id="sg-mode-field">
+                <span class="sf-field-label" id="sg-mode-label">DMSS mode</span>
+                <div class="sf-segmented" role="radiogroup" aria-labelledby="sg-mode-label" id="sg-mode-group">
+                    <label class="sf-seg">
+                        <input type="radio" name="sg-mode" value="shadow" id="sg-radio-shadow">
+                        <span>Shadow</span>
+                    </label>
+                    <label class="sf-seg">
+                        <input type="radio" name="sg-mode" value="enforce" id="sg-radio-enforce">
+                        <span>Enforce</span>
+                    </label>
+                </div>
+                <span class="sf-field-hint">
+                    <strong>Shadow</strong>: model decisions are recorded and compared, but HMADS still
+                    decides. <strong>Enforce</strong>: the model decides when it can; the deterministic
+                    HMADS decision is the exact fallback. Dimmed while the policy is
+                    &ldquo;HMADS only&rdquo; (effective mode: <code>off</code>).
+                </span>
+                <span class="sf-field-err" id="sg-err-mode" hidden></span>
             </div>
 
             <!-- Enable toggle (kept in sync with the policy selector) -->
@@ -349,5 +371,5 @@
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/safety.js') }}?v=4"></script>
+<script src="{{ url_for('static', filename='js/safety.js') }}?v=5"></script>
 {% endblock %}

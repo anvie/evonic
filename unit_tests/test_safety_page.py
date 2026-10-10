@@ -74,6 +74,25 @@ def test_safety_general_tab_explains_policy_choice_and_fallback():
     assert "minimum_confidence" in html
 
 
+def test_safety_general_tab_offers_dmss_mode_selector():
+    """The General tab exposes a shadow/enforce mode selector for DMSS."""
+    client = _client()
+    html = client.get("/system/safety").get_data(as_text=True)
+
+    # The mode field and its accessible radiogroup…
+    assert 'id="sg-mode-field"' in html
+    assert 'id="sg-mode-group"' in html
+    assert 'id="sg-mode-label"' in html
+    assert "DMSS mode" in html
+    # …with exactly the two DMSS modes (shadow / enforce).
+    assert 'name="sg-mode" value="shadow" id="sg-radio-shadow"' in html
+    assert 'name="sg-mode" value="enforce" id="sg-radio-enforce"' in html
+    # …plus a dedicated error slot and a hint explaining both modes.
+    assert 'id="sg-err-mode"' in html
+    assert "Shadow" in html
+    assert "Enforce" in html
+
+
 # ---------------------------------------------------------------------------
 # Legacy route preservation
 # ---------------------------------------------------------------------------
@@ -113,8 +132,8 @@ def test_dmss_tester_offers_ready_to_submit_samples():
         assert f'data-sample="{sample}"' in html
     assert html.count('class="sf-tester-sample"') >= 4
     # Bumped asset versions so the new wiring/CSS is not served stale.
-    assert "js/safety.js?v=4" in html
-    assert "css/safety.css?v=4" in html
+    assert "js/safety.js?v=5" in html
+    assert "css/safety.css?v=5" in html
 
 
 def test_dmss_endpoint_is_plaintext_and_primary_buttons_are_dark_mode_readable():

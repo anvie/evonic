@@ -96,16 +96,16 @@
 
     /* ==================== General pane: policy + live status ====================
      * Explains the "HMADS only" vs "DMSS enabled" choice, offers the policy
-     * controls (segmented selector + synced enable switch, persisted via
-     * PUT /api/settings/decim-safety — task #837), and shows the live
-     * operational state (settings + health). */
+     * controls (segmented policy selector, shadow/enforce mode selector, and a
+     * synced enable switch, persisted via PUT /api/settings/decim-safety —
+     * task #837), and shows the live operational state (settings + health). */
 
     window.safetyGeneral = {
         _initialized: false,
         _timer: null,
         _loaded: null,          // last settings object returned by the API
         _lastHealth: null,      // last health object (reused after a save)
-        _pending: { policy: null }, // policy currently selected in the UI
+        _pending: { policy: null, mode: null }, // policy + mode currently selected in the UI
         _dirty: false,          // _pending differs from the loaded policy
         _saving: false,
 
@@ -121,6 +121,9 @@
             var self = this;
             document.querySelectorAll('input[name="sg-policy"]').forEach(function (r) {
                 r.addEventListener("change", function () { self._onPolicyChange(r.value); });
+            });
+            document.querySelectorAll('input[name="sg-mode"]').forEach(function (r) {
+                r.addEventListener("change", function () { self._onModeChange(r.value); });
             });
             var toggle = qs("#sg-enabled-toggle");
             if (toggle) toggle.addEventListener("change", function () { self._onToggleChange(); });
@@ -141,10 +144,16 @@
             return (!s || !s.enabled || s.mode === "off") ? "hmads-only" : "dmss";
         },
 
+        /* The mode selector only offers shadow/enforce; anything else (e.g. "off"
+         * while the policy is HMADS-only) falls back to the safe default. */
+        _modeFromSettings(s) {
+            return (s && (s.mode === "shadow" || s.mode === "enforce")) ? s.mode : "shadow";
+        },
+
         _payloadFromPolicy(policy) {
             if (policy === "dmss") {
-                var mode = (this._loaded && (this._loaded.mode === "shadow" || this._loaded.mode === "enforce"))
-                    ? this._loaded.mode : "shadow";
+                var mode = (this._pending && (this._pending.mode === "shadow" || this._pending.mode === "enforce"))
+                    ? this._pending.mode : "shadow";
                 return { enabled: true, mode: mode };
             }
             return { enabled: false, mode: "off" };
@@ -158,11 +167,37 @@
             if (toggle) toggle.checked = on;
             var text = qs("#sg-enabled-text");
             if (text) text.textContent = on ? "On" : "Off";
+            // The mode selector only matters while DMSS is enabled; dim + disable
+            // it otherwise but keep the selection so re-enabling restores it.
+            this._setModeFieldEnabled(on);
+            this._applyModeToControls(this._pending && this._pending.mode);
+        },
+
+        _setModeFieldEnabled(enabled) {
+            var field = qs("#sg-mode-field");
+            if (field) field.classList.toggle("is-dimmed", !enabled);
+            document.querySelectorAll('input[name="sg-mode"]').forEach(function (r) {
+                r.disabled = !enabled;
+            });
+        },
+
+        _applyModeToControls(mode) {
+            if (mode !== "shadow" && mode !== "enforce") return;
+            var radio = qs("#sg-radio-" + mode);
+            if (radio) radio.checked = true;
         },
 
         _markDirty() {
             var loadedPolicy = this._policyFromSettings(this._loaded);
-            var dirty = !!(this._pending.policy && this._pending.policy !== loadedPolicy);
+            var policyDirty = !!(this._pending.policy && this._pending.policy !== loadedPolicy);
+            // The mode only changes the payload while the DMSS policy is selected
+            // (HMADS-only always sends mode="off").
+            var modeDirty = !!(
+                this._pending.policy === "dmss" &&
+                this._pending.mode &&
+                this._pending.mode !== this._modeFromSettings(this._loaded)
+            );
+            var dirty = policyDirty || modeDirty;
             this._dirty = dirty;
             var badge = qs("#sg-dirty");
             if (badge) badge.hidden = !dirty;
@@ -178,12 +213,15 @@
         _onToggleChange() {
             var toggle = qs("#sg-enabled-toggle");
             var on = !!(toggle && toggle.checked);
-            var policy = on ? "dmss" : "hmads-only";
-            this._pending.policy = policy;
-            var radio = qs("#sg-radio-" + (on ? "dmss" : "hmads"));
-            if (radio) radio.checked = true;
-            var text = qs("#sg-enabled-text");
-            if (text) text.textContent = on ? "On" : "Off";
+            this._pending.policy = on ? "dmss" : "hmads-only";
+            this._applyPolicyToControls(this._pending.policy);
+            this._clearFieldErrors();
+            this._markDirty();
+        },
+
+        _onModeChange(value) {
+            this._pending.mode = value;
+            this._applyModeToControls(value);
             this._clearFieldErrors();
             this._markDirty();
         },
@@ -194,6 +232,7 @@
             this._loaded = settings || {};
             if (!this._dirty) {
                 this._pending.policy = this._policyFromSettings(this._loaded);
+                this._pending.mode = this._modeFromSettings(this._loaded);
                 this._applyPolicyToControls(this._pending.policy);
             }
             this._markDirty();
@@ -210,7 +249,7 @@
             var payload = this._payloadFromPolicy(policy);
             if (typeof payload.enabled !== "boolean") errors.enabled = "Enabled must be a boolean.";
             if (["off", "shadow", "enforce"].indexOf(payload.mode) === -1) {
-                errors.enabled = "Mode must be one of: off, shadow, enforce.";
+                errors.mode = "Mode must be one of: off, shadow, enforce.";
             }
             return { ok: Object.keys(errors).length === 0, errors: errors };
         },
@@ -224,11 +263,13 @@
 
         _showFieldErrors(errors) {
             this._setFieldError("#sg-err-policy", errors.policy);
-            this._setFieldError("#sg-err-enabled", errors.enabled || errors.mode);
+            this._setFieldError("#sg-err-mode", errors.mode);
+            this._setFieldError("#sg-err-enabled", errors.enabled);
         },
 
         _clearFieldErrors() {
             this._setFieldError("#sg-err-policy", null);
+            this._setFieldError("#sg-err-mode", null);
             this._setFieldError("#sg-err-enabled", null);
         },
 

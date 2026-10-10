@@ -310,6 +310,12 @@ html.dark .sf-seg input:checked + span { color: #1e1b4b; }
     outline-offset: 1px;
 }
 
+/* Dimmed state for the DMSS mode field while the policy is "HMADS only"
+ * (the effective mode is "off", so the selector is inert but remembered). */
+.sf-field.is-dimmed { opacity: 0.55; }
+.sf-field.is-dimmed .sf-seg { cursor: default; }
+.sf-field.is-dimmed .sf-seg:hover span { color: var(--text-secondary); }
+
 /* Enable switch */
 .sf-switch {
     display: inline-flex;
