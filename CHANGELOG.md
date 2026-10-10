@@ -2,20 +2,34 @@
 
 ## [Unreleased]
 
-### Bug Fixes
-
-- Proactive auto-compaction now triggers from the provider-reported `prompt_tokens` of the previous request (the ground truth of what the model actually counted) instead of relying solely on the local tiktoken estimate, which systematically under-counts for some tokenizers and could leave a nearly full window un-compacted (session `richard-8cd35a2a`: provider at 91–107% of the 160k window while the local estimate stayed below the 85% threshold). The local estimate remains the fallback when the provider gives no usage block; the decision compares the threshold against the larger of the two signals. When the threshold is reached but no completed tool-call/result group is eligible for compaction (unknown tool, error result, or inside the recent frontier), the request still goes out unchanged and a `no eligible tool groups` warning is logged with the usage breakdown; the projection metrics (now including `provider_prompt_tokens`, `usage_signal`, `trigger_source`, `no_eligible_groups`) are emitted on the `active_context_projection` event stream.
-
-- Safety > DMSS provider endpoint is now plain configuration. It is stored under `decim_safety.provider_endpoint` and returned verbatim by `GET/PUT /api/settings/decim-safety`, so the admin UI shows and edits the full URL. The previous secret handling — response redaction, masked-placeholder preservation on save, and masked audit values — has been removed entirely with no backward-compatibility shim; values were always persisted verbatim, so no migration is required. The telemetry and health surfaces remain provider-neutral and never echo the endpoint.
+## [1.4.0] - 2026-10-10
 
 ### Features
 
-- Safety > DMSS > Diagnostic Tester: added **ready-to-submit sample payloads** — one-click chips (*safe bash*, *risky bash*, *safe python*, *risky python*) that populate the payload field with a valid example and select the matching tool type, so the probe can be submitted immediately without typing anything.
-- Safety > DMSS tab: added a bounded **diagnostic tester** for troubleshooting the decision-model provider. Paste a sample payload (bash or python), hit *Test*, and the backend probes the configured DMSS provider end-to-end via `POST /api/admin/decim-safety/test`, returning the decision (allow/review/block), confidence, a sanitized provider reason, latency, and the provider/model used. The probe is explicitly *diagnostic only*: the payload is treated as data (never executed), production decisions are untouched, and the production telemetry store is not polluted. Guardrails: 10 probes/min per session (429 + Retry-After), payload size bounded by the configured `max_payload_chars`, provider timeout bounded by `request_timeout_ms`, a 128 KB request-body cap, and a fresh resolver per probe so test failures cannot trip the production circuit breaker (whose state is reported read-only). Provider reasons are sanitized before display (internal file paths replaced, secret-bearing text redacted).
+- Refreshed the application experience across chat, agent, session, evaluation, dashboard, user, and settings pages with a new dark palette, mobile navigation, keyboard shortcuts, toasts, comboboxes, state panels, and generated default agent avatars.
+- Added System > Safety as a consolidated configuration surface, including persistent policy controls, a provider-neutral decision-model safety guard, provider health status, activity telemetry, and a bounded DMSS diagnostic tester with ready-to-submit sample payloads.
+- Added image generation through the ComfyUI provider, including portrait and landscape sizes, workflow-template support, prompt injection, and provider discovery.
+- Added a text-to-speech skill supporting Google Gemini, OpenAI, and OpenRouter providers.
+- Added durable `/goal` state visible to agents, semantic session-summary compaction, active monitor conditions in chat state, and proactive context compaction based on model capacity and provider token usage.
+- Added a session state header, theme presets, refreshed Safety and Users settings, and other usability improvements to the administration interface.
+
+### Bug Fixes
+
+- Fixed direct-channel pairing approval, increased pairing-code entropy, and stabilized pairing tests.
+- Fixed stale agent turns and Kanban task-resume handling; paused Kanban boards now prevent scans.
+- Fixed WhatsApp bridge shutdown and restart handling, dark-mode disconnect banners, structured tool-error rendering, session-summary editing, binary artifact write chunking, and image artifact filename collisions.
+- Fixed ComfyUI workflow-name handling and metadata generation; added cross-platform launcher locking and Windows virtual-environment detection.
+- Improved DMSS settings and diagnostic behavior, including endpoint controls, dark-mode presentation, failure-path handling, and KPI spacing.
+- Improved tool-result renderer dependency loading and Explorer compatibility with shell `rg` wrappers.
 
 ### Tests
 
-- QA pass over the consolidated System > Safety page: verified accessible tab semantics (ARIA tablist with roving tabindex and arrow-key/Home/End navigation), WCAG AA contrast for all body-text and status tokens in dark mode (≥ 4.5:1 on the `#111827` surface), single-column layout with no horizontal scroll at 320px (grids collapse via `auto-fit`/`minmax`, tables and the tab bar scroll inside their wrappers), settings round-trip and partial-PUT merge, the exact deterministic-HMADS fallback on unusable DMSS decisions, plaintext provider-endpoint configuration (returned verbatim by the settings API, never echoed by the health or tester surfaces), and legacy navigation (`/system/decim-safety` → 302 → `/system/safety#dmss`; `/system#hmads` migrated client-side). Added tester failure-path tests: provider timeout (`socket.timeout` → `transport_error`), non-2xx provider response (`http_error`), and malformed 2xx body (`invalid_response`), joining the existing rate-limit (429) and empty-payload (400) coverage.
+- Expanded Safety and DMSS API/UI coverage, including diagnostic timeout, HTTP error, malformed-response, rate-limit, and empty-payload paths.
+- Added regression coverage for pairing, renderer tool-result helpers, theme-aware disconnect banners, and Kanban task resume behavior.
+
+### Release Notes
+
+- The DMSS provider endpoint remains an administrator-configured integration. The residual endpoint egress risk was reviewed and explicitly accepted for this release because changes require authenticated administrative access.
 
 ## [1.3.0] - 2026-10-05
 
