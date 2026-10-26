@@ -183,6 +183,11 @@ def execute(agent: dict, args: dict) -> dict:
     _safety_prov = verdict_provenance(safety)
 
     if safety['level'] == 'dangerous':
+        # A block that never reached Decim still has to be recorded: without it
+        # the refusal is invisible and the positive class can never accumulate.
+        if _decim_event_id is None and get_safety_pipeline is not None:
+            _decim_event_id = get_safety_pipeline().record_refusal(
+                script, tool_type='bash', agent_context=agent, verdict=safety)
         _update_decim_disposition(_decim_event_id, None, 'blocked')
         return {
             'error': 'Execution blocked by heuristic safety system',
@@ -194,6 +199,11 @@ def execute(agent: dict, args: dict) -> dict:
         }
 
     if safety['level'] == 'requires_approval':
+        # Same reasoning as the block path: an escalation raised by the rules
+        # alone is still a high-stakes attempt worth keeping.
+        if _decim_event_id is None and get_safety_pipeline is not None:
+            _decim_event_id = get_safety_pipeline().record_refusal(
+                script, tool_type='bash', agent_context=agent, verdict=safety)
         _update_decim_disposition(_decim_event_id, None, 'approval_requested')
         return {
             'error': 'Script requires manual approval before execution',

@@ -393,6 +393,46 @@ class SafetyPipeline:
                            "blocked_patterns": ["safety_command_block"], "approval_info": None})
         return result
 
+    def record_refusal(self, code: str, *, tool_type: str,
+                       agent_context: dict | None, verdict: dict,
+                       decision_source: str = "hmads") -> str | None:
+        """Record a refusal that never reached Decim Safety.
+
+        The safety gate returns *before* the Decim comparison runs, so a blocked
+        execution used to leave no trace at all: the positive class was
+        structurally invisible (`docs/safety/label-audit.md`).  A refusal is an
+        execution outcome, not a comparison sample, so ``record_enforce_events``
+        does not gate it — otherwise turning sampling off would blind us exactly
+        when something was stopped.  Disabling safety still records nothing.
+        """
+        try:
+            settings = self._load_settings()
+            if settings is None or not getattr(settings, "enabled", False):
+                return None
+            if getattr(settings, "mode", "off") == "off":
+                return None
+            service = self._telemetry_service()
+            return service.record_comparison(
+                settings=settings,
+                code=code,
+                tool_type=tool_type,
+                agent_context=agent_context,
+                deterministic={
+                    "level": verdict.get("level"),
+                    "score": verdict.get("score"),
+                    "blocked_patterns": verdict.get("blocked_patterns") or [],
+                },
+                model_decision=None,
+                confidence=None,
+                latency_ms=None,
+                fallback_reason=None,
+                decision_source=decision_source,
+                final_level=verdict.get("level"),
+            )
+        except Exception:
+            logger.exception("Decim Safety refusal recording failed")
+            return None
+
     def _load_settings(self):
         try:
             from backend.tools.lib.decim_safety import load_decim_settings
