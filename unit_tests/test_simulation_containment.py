@@ -206,8 +206,9 @@ def test_resolve_self_path_redirects_to_sim_root(sim_id):
 def test_resolve_self_artifacts_redirects_to_sim_root(sim_id):
     agent = _sim_agent(sim_id)
     p = workspace.resolve_self_path(sim_id, "/_self/artifacts/chart.png", agent)
-    assert p == os.path.join(
-        _sim_root(sim_id), "shared", "agents", sim_id, "artifacts", "chart.png")
+    # realpath on both sides: on macOS /tmp is a symlink to /private/tmp.
+    assert os.path.realpath(p) == os.path.realpath(os.path.join(
+        _sim_root(sim_id), "shared", "agents", sim_id, "artifacts", "chart.png"))
 
 
 def test_live_self_resolution_unchanged_without_simulation():

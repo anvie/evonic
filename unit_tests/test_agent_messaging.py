@@ -88,9 +88,14 @@ def setup_module(module):
     _models_stub = types.ModuleType('models')
     _models_stub.__path__ = [os.path.join(_repo_root, 'models')]
     # Submodules that conftest's isolate_agent_dirs fixture monkeypatches by
-    # name (models.chat / models.chatlog) must be present as attributes.
-    _models_stub.chat = mock.MagicMock()
-    _models_stub.chatlog = mock.MagicMock()
+    # name (models.chat / models.chatlog) must be present as attributes. Plain
+    # modules, not MagicMocks: since pytest 9.2, monkeypatch.undo() deletes an
+    # attribute it does not find in the target's __dict__, and a deleted
+    # MagicMock child then raises AttributeError for every later test.
+    _models_stub.chat = types.ModuleType('models.chat')
+    _models_stub.chat.AGENTS_DIR = _models_stub.chat.SUB_AGENTS_TMP_DIR = ''
+    _models_stub.chatlog = types.ModuleType('models.chatlog')
+    _models_stub.chatlog._AGENTS_DIR = ''
     sys.modules['models'] = _models_stub
 
     _notifier_stub = types.ModuleType('backend.agent_runtime.notifier')

@@ -1,6 +1,7 @@
 """Regression tests for local subprocess cancellation."""
 
 import os
+import subprocess
 import threading
 import time
 import uuid
@@ -11,6 +12,10 @@ from backend.tools.lib.process_tracker import process_tracker
 
 def _process_is_alive(pid: int) -> bool:
     """Return False for a missing process or a zombie awaiting reaping."""
+    if not os.path.isdir('/proc'):  # macOS: no procfs, ask ps for the state
+        state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)],
+                               capture_output=True, text=True).stdout.strip()
+        return bool(state) and not state.startswith('Z')
     try:
         with open(f'/proc/{pid}/stat', encoding='utf-8') as stat_file:
             state = stat_file.read().split()[2]
