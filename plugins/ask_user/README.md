@@ -1,6 +1,6 @@
 # Ask User Question
 
-Lets an agent pause mid-turn and ask the user 1–4 multiple-choice questions, like Claude Code's `AskUserQuestion`. The questions render as an interactive card in the agent's web chat; the agent's turn waits until the user responds, then the answers come back as the tool result and the agent continues in the same turn.
+Lets an agent pause mid-turn and ask the user 1–4 multiple-choice questions, like Claude Code's `AskUserQuestion`. The questions render as an interactive card in the agent's web chat, or as inline-keyboard buttons on Telegram; the agent's turn waits until the user responds, then the answers come back as the tool result and the agent continues in the same turn.
 
 ## How it works
 
@@ -26,7 +26,7 @@ Every question gets an automatic free-text "Other" choice. In the web chat a pen
 
 `recommended` is optional. It shows a "Recommended" badge and is never pre-selected. A single-choice question keeps only its first recommendation. A label written as `"SQLite (Recommended)"` (or `(Rekomendasi)`) is turned into the flag, so the answer text stays clean.
 
-The tool registers the question and blocks. It has no timeout; it ends in one of four ways:
+The tool registers the question and blocks. It has no timeout; it ends in one of five ways:
 
 | Status | When | Result the agent gets |
 |---|---|---|
@@ -34,14 +34,21 @@ The tool registers the question and blocks. It has no timeout; it ends in one of
 | `replied_in_chat` | The user sends a normal chat message instead (not from the agent page, where the input is locked) | `reply`; the message also follows as the next user message |
 | `dismissed` | The user presses **Cancel** (or Esc) on the card | a message telling the agent not to assume answers and to carry on |
 | `cancelled` | The user sends `/stop` | an error telling the agent not to assume an answer |
+| `disabled` | The plugin is disabled while the question is open | an error telling the agent not to call the tool again and to ask in plain text |
 
 While it waits, the tool journals a small heartbeat event every minute so the stale-turn reaper does not kill the turn. It also journals `question_required` / `question_resolved` on the session's chat stream for any client that wants them. Once the card is answered, closed or no longer open, it simply leaves the dock and the input unlocks. The answer shows in the thinking timeline as the tool's result.
 
-Interactive questions work only in the Evonic web chat. The tool is declared `"web_only": true` in `tools.json`, so on Telegram/WhatsApp/Discord sessions Evonic leaves it out of the agent's tool list entirely (no schema tokens, no call). API sessions, scheduler runs, agent-to-agent messages and simulations have no `channel_id`, so the tool is still listed there but returns `status: "unavailable"` and tells the agent not to call it again, so it asks in plain text.
+Interactive questions work in the Evonic web chat and on Telegram. The tool is declared `"channels": ["web", "telegram"]` in `tools.json`, so on WhatsApp/Discord sessions Evonic leaves it out of the agent's tool list entirely (no schema tokens, no call). API sessions, scheduler runs, agent-to-agent messages and simulations have no `channel_id`, so the tool is still listed there but returns `status: "unavailable"` and tells the agent not to call it again, so it asks in plain text.
+
+## Telegram
+
+On a Telegram session the tool emits `ask_user_required` / `ask_user_resolved` on Evonic's `event_stream`, and the Telegram channel (`backend/channels/telegram.py`) shows each question as a message with one button per option; descriptions and the ⭐ recommendation are in the message text. A tap on a single-select option moves to the next question; on a multi-select question taps toggle a ✅ and **Done** moves on; **Cancel** closes the question (`dismissed`). After the last question the message is replaced by a summary of the answers. Typing a message instead answers in the user's own words (`replied_in_chat`). If the question ends any other way (stopped, answered elsewhere, plugin disabled), the message is edited to say so and its buttons stop working.
+
+When the plugin is disabled, nothing is shown in either UI: the tool refuses to run, the web assets are no longer injected, Telegram sends no buttons and ignores taps, and a question that is already open ends as `disabled` within a second, which closes the web card and the Telegram message.
 
 ## Install
 
-The plugin is self-contained and needs no Evonic core changes:
+The plugin's web UI is self-contained; Telegram support lives in Evonic's Telegram channel:
 
 1. Zip the `ask_user` folder (the zip must contain `ask_user/plugin.json`) and upload it on the **Plugins** page, or copy the folder into `plugins/`.
 2. Enable **Ask User Question**, then restart Evonic so its routes register.

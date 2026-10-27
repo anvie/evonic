@@ -181,6 +181,14 @@ def build_result(status: str, questions: List[dict], answers: Optional[List[dict
                        'as their answer to your questions, or as a new instruction if it '
                        'is unrelated.',
         }
+    if status == 'disabled':
+        return {
+            'status': 'disabled',
+            'questions': [{'header': q['header'], 'question': q['question']} for q in questions],
+            'error': 'The Ask User Question plugin was disabled before the user answered. '
+                     'Do not assume an answer and do not call ask_user_question again; '
+                     'ask the user in plain text instead.',
+        }
     return {
         'status': 'cancelled',
         'questions': [{'header': q['header'], 'question': q['question']} for q in questions],

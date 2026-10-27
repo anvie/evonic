@@ -1,4 +1,4 @@
-"""Tools declared web_only must not be advertised on external channels."""
+"""Tools declared web_only (or with a "channels" list) are advertised only on those channels."""
 
 from backend.agent_runtime import context
 from backend.agent_runtime.context import build_tools
@@ -6,12 +6,17 @@ from backend.agent_runtime.context import build_tools
 TOOL_ID = 'plugin:ask_user:ask_user_question'
 
 
-def _setup(monkeypatch, web_only):
+def _setup(monkeypatch, web_only=False, channels=None):
     tool_def = {
         'id': TOOL_ID,
         'web_only': web_only,
         'function': {'name': 'ask_user_question', 'description': 'd', 'parameters': {'type': 'object'}},
     }
+    if channels is not None:
+        tool_def['channels'] = channels
+    channel_types = {'telegram-1': 'telegram', 'whatsapp-1': 'whatsapp'}
+    monkeypatch.setattr(context.db, 'get_channel',
+                        lambda channel_id: {'type': channel_types[channel_id]} if channel_id in channel_types else None)
     monkeypatch.setattr(context.db, 'get_agent_tools', lambda agent_id: [TOOL_ID])
     monkeypatch.setattr(context.db, 'get_agent_skills', lambda agent_id: [])
     monkeypatch.setattr(context.tool_registry, 'get_all_tool_defs', lambda: [tool_def])
@@ -42,3 +47,17 @@ def test_web_only_tool_is_hidden_on_external_channel(monkeypatch):
 def test_regular_tool_is_kept_on_external_channel(monkeypatch):
     agent = _setup(monkeypatch, web_only=False)
     assert 'ask_user_question' in _names(agent, channel_id='whatsapp-1')
+
+
+def test_channels_tool_is_listed_only_on_declared_channel_types(monkeypatch):
+    agent = _setup(monkeypatch, channels=['web', 'telegram'])
+    assert 'ask_user_question' in _names(agent)
+    assert 'ask_user_question' in _names(agent, channel_id='telegram-1')
+    assert 'ask_user_question' not in _names(agent, channel_id='whatsapp-1')
+    assert 'ask_user_question' not in _names(agent, channel_id='deleted-channel')
+
+
+def test_channels_without_web_hides_tool_in_web_chat(monkeypatch):
+    agent = _setup(monkeypatch, channels=['telegram'])
+    assert 'ask_user_question' not in _names(agent)
+    assert 'ask_user_question' in _names(agent, channel_id='telegram-1')

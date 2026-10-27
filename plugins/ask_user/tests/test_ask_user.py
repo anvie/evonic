@@ -254,18 +254,30 @@ class _FakeRealtime:
         return len(self.events)
 
 
+class _FakeEventStream:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, event_name, data):
+        self.events.append((event_name, data))
+
+
 class TestAskUserQuestionTool(unittest.TestCase):
     AGENT = {'id': 'agent-1', 'session_id': 'sess-1', 'user_id': 'web_test', 'channel_id': None}
 
     def setUp(self):
         self.runtime = _FakeRuntime()
         self.realtime = _FakeRealtime()
+        self.event_stream = _FakeEventStream()
         self.enabled = '1'
-        fake_db = types.SimpleNamespace(get_setting=lambda key, default=None: self.enabled)
+        channels = {'telegram-1': {'type': 'telegram'}, 'whatsapp-1': {'type': 'whatsapp'}}
+        fake_db = types.SimpleNamespace(get_setting=lambda key, default=None: self.enabled,
+                                        get_channel=channels.get)
         self.modules = patch.dict(sys.modules, {
             'models.db': types.SimpleNamespace(db=fake_db),
             'backend.agent_runtime': types.SimpleNamespace(agent_runtime=self.runtime),
             'backend.realtime_store': types.SimpleNamespace(realtime_store=self.realtime),
+            'backend.event_stream': types.SimpleNamespace(event_stream=self.event_stream),
         })
         self.modules.start()
         from plugins.ask_user.backend.tools import ask_user_question
@@ -369,9 +381,10 @@ class TestAskUserQuestionTool(unittest.TestCase):
         self.assertIsNone(question_registry.get(question_id))
         self.assertEqual(question_registry.resolved_status(question_id), 'dismissed')
 
-    def test_unavailable_outside_web_chat(self):
+    def test_unavailable_outside_web_chat_and_telegram(self):
         for agent in (
-            {**self.AGENT, 'channel_id': 'telegram-1'},
+            {**self.AGENT, 'channel_id': 'whatsapp-1'},
+            {**self.AGENT, 'channel_id': 'deleted-channel'},
             {**self.AGENT, 'user_id': 'api:key-1'},
             {**self.AGENT, 'user_id': '__scheduler__'},
             {**self.AGENT, 'from_agent_id': 'other-agent'},
@@ -380,6 +393,44 @@ class TestAskUserQuestionTool(unittest.TestCase):
             self.assertEqual(result['status'], 'unavailable', agent)
             self.assertIn('Do not call ask_user_question again', result['error'])
         self.assertEqual(self.realtime.events, [])
+
+    def test_web_chat_does_not_notify_channels(self):
+        thread, result = self._run_async()
+        question_id = self._wait_for_question()
+        question_registry.answer(question_id, [{'selected': ['SQLite']}])
+        thread.join(5)
+        self.assertEqual(self.event_stream.events, [])
+
+    def test_telegram_session_notifies_channel(self):
+        agent = {**self.AGENT, 'channel_id': 'telegram-1', 'user_id': '12345'}
+        thread, result = self._run_async(agent=agent)
+        question_id = self._wait_for_question()
+        name, data = self.event_stream.events[0]
+        self.assertEqual(name, 'ask_user_required')
+        self.assertEqual(data['question_id'], question_id)
+        self.assertEqual((data['channel_id'], data['external_user_id']), ('telegram-1', '12345'))
+        self.assertEqual(data['questions'][0]['header'], 'Database')
+
+        question_registry.answer(question_id, [{'selected': ['SQLite']}])
+        thread.join(5)
+        self.assertEqual(result['value']['status'], 'answered')
+        name, data = self.event_stream.events[-1]
+        self.assertEqual(name, 'ask_user_resolved')
+        self.assertEqual(data['status'], 'answered')
+        self.assertEqual(data['answers'][0]['answer'], 'SQLite')
+
+    def test_disabling_plugin_closes_open_question(self):
+        agent = {**self.AGENT, 'channel_id': 'telegram-1', 'user_id': '12345'}
+        thread, result = self._run_async(agent=agent)
+        question_id = self._wait_for_question()
+        self.enabled = '0'
+        thread.join(5)
+        self.assertEqual(result['value']['status'], 'disabled')
+        self.assertIn('do not call ask_user_question again', result['value']['error'])
+        # Both UIs drop it: the web card polls the registry, Telegram edits its message.
+        self.assertIsNone(question_registry.get(question_id))
+        self.assertEqual(question_registry.resolved_status(question_id), 'disabled')
+        self.assertEqual(self.event_stream.events[-1][1]['status'], 'disabled')
 
     def test_invalid_questions_and_disabled_plugin(self):
         self.assertIn('error', self.tool.execute(self.AGENT, {'questions': []}))

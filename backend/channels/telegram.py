@@ -403,6 +403,59 @@ def _split_message(text: str, max_len: int = 4050) -> list:
     return chunks
 
 
+def _ask_user_enabled() -> bool:
+    try:
+        from models.db import db
+        return db.get_setting('plugin_enabled:ask_user') == '1'
+    except Exception:
+        return False
+
+
+def _ask_user_view(question_id: str, prompt: dict):
+    """Text and inline keyboard for the current step of an ask_user prompt.
+
+    ``prompt`` holds ``questions``, ``step`` and ``answers`` (one
+    ``{"selected": [...], "other": None}`` per question). Callback data stays
+    within Telegram's 64-byte limit: ``aq:<question_id>:<action>[:<q>[:<o>]]``.
+    """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    questions, step = prompt['questions'], prompt['step']
+    q = questions[step]
+    selected = prompt['answers'][step]['selected']
+    counter = f" ({step + 1}/{len(questions)})" if len(questions) > 1 else ''
+    lines = [f"\u2753 {q['header']}{counter}", q['question'], '']
+    rows = []
+    for oi, opt in enumerate(q['options']):
+        star = ' \u2b50 recommended' if opt.get('recommended') else ''
+        lines.append(f"{oi + 1}. {opt['label']}{star}")
+        if opt.get('description'):
+            lines.append(f"   {opt['description']}")
+        check = '\u2705 ' if q['multiSelect'] and opt['label'] in selected else ''
+        rows.append([InlineKeyboardButton(
+            f"{check}{oi + 1}. {opt['label']}", callback_data=f"aq:{question_id}:o:{step}:{oi}")])
+    lines.append('')
+    if q['multiSelect']:
+        lines.append('Select one or more options, then tap Done. Or type a message to answer in your own words.')
+        rows.append([InlineKeyboardButton('Done', callback_data=f"aq:{question_id}:d:{step}")])
+    else:
+        lines.append('Tap an option, or type a message to answer in your own words.')
+    rows.append([InlineKeyboardButton('Cancel', callback_data=f"aq:{question_id}:x")])
+    return '\n'.join(lines), InlineKeyboardMarkup(rows)
+
+
+def _ask_user_summary(answers: list) -> str:
+    return 'Answered:\n' + '\n'.join(f"{a['header']}: {a['answer']}" for a in answers)
+
+
+# How an ask_user prompt's message reads once the question stops waiting
+# for a reason other than an answer.
+_ASK_USER_CLOSED_TEXT = {
+    'dismissed': 'Closed without answering.',
+    'replied_in_chat': 'Answered in chat.',
+    'cancelled': 'Stopped before answering.',
+}
+
+
 class TelegramChannel(BaseChannel):
     def __init__(self, channel_id: str, agent_id: str, config: Dict[str, Any]):
         super().__init__(channel_id, agent_id, config)
@@ -411,6 +464,8 @@ class TelegramChannel(BaseChannel):
         self._loop = None  # the event loop owned by the polling thread
         self._approval_required_handler = None
         self._approval_resolved_handler = None
+        self._ask_user_required_handler = None
+        self._ask_user_resolved_handler = None
 
     @staticmethod
     def get_channel_type() -> str:
@@ -704,14 +759,93 @@ class TelegramChannel(BaseChannel):
             handle_message,
         ))
 
-        # Inline keyboard callback for approval decisions
+        # Inline keyboard callback for approval decisions and ask_user prompts
         from telegram.ext import CallbackQueryHandler
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+        _ask_user_prompts: dict = {}  # question_id -> {chat_id, message_id, questions, step, answers}
+
+        async def _edit_query_text(query, text):
+            try:
+                await query.edit_message_text(text)
+            except Exception:
+                pass
+
+        async def handle_ask_user_callback(query, raw):
+            parts = raw.split(':')
+            question_id = parts[1] if len(parts) >= 3 else ''
+            prompt = _ask_user_prompts.get(question_id)
+            if prompt is None or not _ask_user_enabled():
+                await query.answer()
+                await _edit_query_text(query, 'This question is no longer open.')
+                return
+            from plugins.ask_user.store import question_registry
+            action = parts[2]
+            if action == 'x':
+                # Pop before resolving so the ask_user_resolved handler skips its edit.
+                _ask_user_prompts.pop(question_id, None)
+                await query.answer()
+                _, error = question_registry.dismiss(question_id)
+                await _edit_query_text(
+                    query, 'This question is no longer open.' if error else _ASK_USER_CLOSED_TEXT['dismissed'])
+                return
+            try:
+                step = int(parts[3])
+            except (IndexError, ValueError):
+                await query.answer()
+                return
+            if step != prompt['step']:
+                await query.answer()  # a tap on an earlier step's buttons
+                return
+            q = prompt['questions'][step]
+            selected = prompt['answers'][step]['selected']
+            if action == 'o':
+                try:
+                    label = q['options'][int(parts[4])]['label']
+                except (IndexError, ValueError):
+                    await query.answer()
+                    return
+                if q['multiSelect']:
+                    if label in selected:
+                        selected.remove(label)
+                    else:
+                        selected.append(label)
+                    await query.answer()
+                    _, keyboard = _ask_user_view(question_id, prompt)
+                    try:
+                        await query.edit_message_reply_markup(reply_markup=keyboard)
+                    except Exception:
+                        pass
+                    return
+                selected[:] = [label]
+            elif action == 'd':
+                if not selected:
+                    await query.answer('Pick at least one option.')
+                    return
+            else:
+                await query.answer()
+                return
+            await query.answer()
+            prompt['step'] += 1
+            if prompt['step'] < len(prompt['questions']):
+                text, keyboard = _ask_user_view(question_id, prompt)
+                try:
+                    await query.edit_message_text(text, reply_markup=keyboard)
+                except Exception:
+                    pass
+                return
+            _ask_user_prompts.pop(question_id, None)
+            pending, error = question_registry.answer(question_id, prompt['answers'])
+            await _edit_query_text(
+                query, 'This question is no longer open.' if error else _ask_user_summary(pending.answers))
+
         async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query = update.callback_query
-            await query.answer()
             raw = query.data or ''
+            if raw.startswith('aq:'):
+                await handle_ask_user_callback(query, raw)
+                return
+            await query.answer()
             parts = raw.split(':', 1)
             if len(parts) != 2 or parts[0] not in ('approve', 'reject'):
                 return
@@ -839,6 +973,55 @@ class TelegramChannel(BaseChannel):
         self._llm_thinking_handler = _on_llm_thinking
         event_stream.on('llm_thinking', _on_llm_thinking)
 
+        # EventStream listeners: show ask_user questions as inline-keyboard buttons
+        def _on_ask_user_required(data):
+            if data.get('channel_id') != channel_id or not _ask_user_enabled():
+                return
+            user_id = data.get('external_user_id')
+            question_id = data.get('question_id')
+            questions = data.get('questions') or []
+            if not user_id or not question_id or not questions:
+                return
+            prompt = {
+                'chat_id': int(user_id), 'message_id': None, 'questions': questions, 'step': 0,
+                'answers': [{'selected': [], 'other': None} for _ in questions],
+            }
+            _ask_user_prompts[question_id] = prompt
+            text, keyboard = _ask_user_view(question_id, prompt)
+            try:
+                sent_msg = self._run_async(
+                    self._app.bot.send_message(chat_id=int(user_id), text=text, reply_markup=keyboard)
+                )
+                prompt['message_id'] = sent_msg.message_id
+            except Exception as e:
+                _ask_user_prompts.pop(question_id, None)
+                _logger.error("Failed to send ask_user prompt: %s", e)
+
+        def _on_ask_user_resolved(data):
+            if data.get('channel_id') != channel_id:
+                return
+            prompt = _ask_user_prompts.pop(data.get('question_id'), None)
+            if not prompt or not prompt['message_id']:
+                return
+            status = data.get('status')
+            if status == 'answered' and data.get('answers'):
+                text = _ask_user_summary(data['answers'])
+            else:
+                text = _ASK_USER_CLOSED_TEXT.get(status, 'This question is no longer open.')
+            try:
+                self._run_async(
+                    self._app.bot.edit_message_text(
+                        chat_id=prompt['chat_id'], message_id=prompt['message_id'], text=text
+                    )
+                )
+            except Exception:
+                pass
+
+        self._ask_user_required_handler = _on_ask_user_required
+        self._ask_user_resolved_handler = _on_ask_user_resolved
+        event_stream.on('ask_user_required', _on_ask_user_required)
+        event_stream.on('ask_user_resolved', _on_ask_user_resolved)
+
         def run_polling():
             import asyncio
             loop = asyncio.new_event_loop()
@@ -884,6 +1067,10 @@ class TelegramChannel(BaseChannel):
             event_stream.off('approval_resolved', self._approval_resolved_handler)
         if self._llm_thinking_handler:
             event_stream.off('llm_thinking', self._llm_thinking_handler)
+        if self._ask_user_required_handler:
+            event_stream.off('ask_user_required', self._ask_user_required_handler)
+        if self._ask_user_resolved_handler:
+            event_stream.off('ask_user_resolved', self._ask_user_resolved_handler)
         import asyncio
         loop = self._loop
         if loop and loop.is_running():

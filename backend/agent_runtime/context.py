@@ -881,7 +881,9 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
 
     ``channel_id`` is the external channel the session runs on (None for the
     web chat). Tools declared ``"web_only": true`` in their definition are left
-    out of the list on external channels, so the model never sees them.
+    out of the list on external channels, so the model never sees them. Tools
+    declaring ``"channels": ["web", "telegram", ...]`` are listed only on those
+    channel types ("web" is the web chat).
     """
     tools = []
 
@@ -987,11 +989,18 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
 
     if assigned_ids:
         seen_fn_names = {t['function']['name'] for t in tools if t.get('function', {}).get('name')}
+        channel_type = None  # resolved lazily: only tools declaring "channels" need it
         for tool_def in tool_registry.get_all_tool_defs():
             tool_id = tool_def.get('id', '')
             fn_name = tool_def.get('function', {}).get('name', '')
             if channel_id and tool_def.get('web_only'):
                 continue
+            if tool_def.get('channels'):
+                if channel_type is None:
+                    channel = db.get_channel(channel_id) if channel_id else None
+                    channel_type = (channel or {}).get('type', '') if channel_id else 'web'
+                if channel_type not in tool_def['channels']:
+                    continue
             # Match by namespaced id OR bare function name (backward compat)
             if tool_id in assigned_ids or fn_name in assigned_ids:
                 # One function name per agent — skip duplicates

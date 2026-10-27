@@ -2,12 +2,14 @@
 ask_user_question.py — pause the agent loop and ask the user multiple-choice questions.
 
 Registers the question (the plugin's web UI polls /api/ask_user/pending and
-renders it as a card above the chat input), then blocks until one of:
+renders it as a card above the chat input; on Telegram the channel shows it as
+inline-keyboard buttons on ``ask_user_required``), then blocks until one of:
 
-* the user submits the card (POST /api/ask_user/answer) → status 'answered'
-* the user closes the card (POST /api/ask_user/cancel) → status 'dismissed'
+* the user submits the card or taps the last button → status 'answered'
+* the user closes the card or taps Cancel → status 'dismissed'
 * the user sends a normal chat message instead → status 'replied_in_chat'
 * the user presses Stop → status 'cancelled'
+* the plugin is disabled while waiting → status 'disabled'
 
 There is deliberately no timeout: the card stays open until the user acts.
 ``question_required`` / ``question_resolved`` are also journaled on the
@@ -30,14 +32,27 @@ _POLL_SECONDS = 0.5
 _NO_HUMAN_USERS = ('__agent__', '__scheduler__', 'api:')
 
 
-def _web_chat_unavailable_reason(agent: dict) -> str | None:
+# External channel types that can show the question (as inline-keyboard buttons).
+_SUPPORTED_CHANNEL_TYPES = ('telegram',)
+
+
+def _plugin_enabled() -> bool:
+    from models.db import db
+    return db.get_setting('plugin_enabled:ask_user') == '1'
+
+
+def _unavailable_reason(agent: dict) -> str | None:
     if agent.get('is_simulation'):
         return 'simulation runs have no user to answer'
-    if agent.get('channel_id'):
-        return 'this conversation is on an external channel, not the Evonic web chat'
+    channel_id = agent.get('channel_id')
+    if channel_id:
+        from models.db import db
+        channel = db.get_channel(channel_id) or {}
+        if channel.get('type') not in _SUPPORTED_CHANNEL_TYPES:
+            return 'this conversation is on a channel that cannot show interactive questions'
     user_id = str(agent.get('user_id') or '')
     if user_id.startswith(_NO_HUMAN_USERS) or agent.get('from_agent_id'):
-        return 'this turn was not started by a human in the web chat'
+        return 'this turn was not started by a human user'
     if not agent.get('session_id'):
         return 'no chat session is attached to this turn'
     return None
@@ -63,8 +78,7 @@ def _peek_chat_reply(session_id: str) -> str | None:
 
 
 def execute(agent: dict, args: dict) -> Any:
-    from models.db import db
-    if db.get_setting('plugin_enabled:ask_user') != '1':
+    if not _plugin_enabled():
         return {'error': 'Ask User Question plugin is disabled. Enable it in Plugins settings.'}
 
     from plugins.ask_user.store import build_result, normalize_questions, question_registry
@@ -73,7 +87,7 @@ def execute(agent: dict, args: dict) -> Any:
     if error:
         return {'error': error}
 
-    reason = _web_chat_unavailable_reason(agent)
+    reason = _unavailable_reason(agent)
     if reason:
         return {
             'status': 'unavailable',
@@ -108,16 +122,36 @@ def execute(agent: dict, args: dict) -> Any:
         except Exception:
             _logger.exception('ask_user: failed to journal %s', event_type)
 
+    def notify_channel(event_name: str, payload: dict) -> None:
+        # External channels (Telegram) render the question from event_stream.
+        if not agent.get('channel_id'):
+            return
+        try:
+            from backend.event_stream import event_stream
+            event_stream.emit(event_name, {
+                'question_id': pending.question_id,
+                'channel_id': agent['channel_id'],
+                'external_user_id': agent.get('user_id'),
+                'session_id': session_id,
+                **payload,
+            })
+        except Exception:
+            _logger.exception('ask_user: failed to emit %s', event_name)
+
     publish('question_required', {
         'question_id': pending.question_id,
         'questions': questions,
     })
+    notify_channel('ask_user_required', {'questions': questions})
 
     status, chat_reply = 'cancelled', None
     last_heartbeat = time.monotonic()
     try:
         while not pending.event.wait(timeout=_POLL_SECONDS):
             if agent_runtime.is_stop_requested(session_id):
+                break
+            if not _plugin_enabled():
+                status = 'disabled'
                 break
             chat_reply = _peek_chat_reply(session_id)
             if chat_reply is not None:
@@ -141,4 +175,5 @@ def execute(agent: dict, args: dict) -> Any:
         'answers': pending.answers or [],
         'reply': chat_reply,
     })
+    notify_channel('ask_user_resolved', {'status': status, 'answers': pending.answers or []})
     return result
