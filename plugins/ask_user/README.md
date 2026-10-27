@@ -22,7 +22,7 @@ The agent calls `ask_user_question` with:
 }
 ```
 
-Every question gets an automatic free-text "Other" choice. In the web chat a pending card docks above the chat input. With more than one question it becomes a wizard: one question per step, header chips to jump between steps, Back/Next, and Submit on the last step. Clicking a single-select option moves to the next step on its own, and Enter (shown as a keycap on Next/Submit) advances or submits unless the user is typing in the chat input. While a card is docked, the chat input, send and attach buttons are disabled, so the user answers or cancels the card. If the agent stops waiting (for example after a server restart), the card closes as "no longer open" and the input unlocks.
+Every question gets an automatic free-text "Other" choice. In the web chat a pending card docks above the chat input. With more than one question it becomes a wizard: one question per step, header chips to jump between steps, Back/Next, and Submit on the last step. Clicking a single-select option moves to the next step on its own, and Enter (shown as a keycap on Next/Submit) advances or submits unless the user is typing in the chat input. The card takes keyboard focus as soon as it docks (unless the user is typing in another field): ↑/↓ move through the options of the current question, wrapping around, and choose a single-select option as they go; Space toggles a multi-select option; Enter on a not-yet-chosen single-select option picks it and then advances or submits; Esc cancels. While a card is docked, the chat input, send and attach buttons are disabled, so the user answers or cancels the card. If the agent stops waiting (for example after a server restart), the card closes as "no longer open" and the input unlocks.
 
 `recommended` is optional. It shows a "Recommended" badge and is never pre-selected. A single-choice question keeps only its first recommendation. A label written as `"SQLite (Recommended)"` (or `(Rekomendasi)`) is turned into the flag, so the answer text stays clean.
 
@@ -37,7 +37,7 @@ The tool registers the question and blocks. It has no timeout; it ends in one of
 
 While it waits, the tool journals a small heartbeat event every minute so the stale-turn reaper does not kill the turn. It also journals `question_required` / `question_resolved` on the session's chat stream for any client that wants them. Once the card is answered, closed or no longer open, it simply leaves the dock and the input unlocks. The answer shows in the thinking timeline as the tool's result.
 
-Interactive questions work only in the Evonic web chat. On Telegram/WhatsApp/Discord, API sessions, scheduler runs, agent-to-agent messages and simulations, the tool returns `status: "unavailable"` so the agent asks in plain text.
+Interactive questions work only in the Evonic web chat. The tool is declared `"web_only": true` in `tools.json`, so on Telegram/WhatsApp/Discord sessions Evonic leaves it out of the agent's tool list entirely (no schema tokens, no call). API sessions, scheduler runs, agent-to-agent messages and simulations have no `channel_id`, so the tool is still listed there but returns `status: "unavailable"` and tells the agent not to call it again, so it asks in plain text.
 
 ## Install
 

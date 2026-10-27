@@ -77,10 +77,10 @@ DETAIL_EDIT_ATTACHMENTS = _between(
     "cancelEditFromDetail()",
 )
 CREATE_FORM_ATTACHMENTS = _between(
-    '<div class="mb-5">\n'
+    '<div class="mb-5 kb-task-files-field">\n'
     + " " * 16
     + '<div class="flex items-center justify-between gap-3 mb-1.5">',
-    'id="modal-submit"',
+    '</div>\n            <div class="kb-task-footer">',
 )
 
 

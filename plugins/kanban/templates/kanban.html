@@ -2,6 +2,38 @@
 {% block content %}
 
 <style>
+/* Create/edit task popup: content-sized, scrollable body, pinned footer, responsive two-column form. */
+.kb-task-modal { max-height: calc(100dvh - 2rem); overflow: hidden; }
+.kb-task-form { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; overflow: hidden; padding: 0 !important; }
+.kb-task-fields { min-height: 0; flex: 1 1 auto; overflow-y: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 1.125rem 1.25rem; padding: 1.25rem 1.5rem; }
+.kb-task-fields > div { min-width: 0; margin: 0 !important; }
+.kb-task-fields > div:last-child, .kb-task-fields > div.kb-task-wide { grid-column: 1 / -1; }
+.kb-task-fields label.kb-field-label, .kb-task-fields .kb-field-label { display: block; margin-bottom: 0.375rem; font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.01em; }
+.kb-task-fields input[type="text"], .kb-task-fields select, .kb-task-fields textarea { border-radius: 0.625rem; transition: border-color .15s ease, box-shadow .15s ease; }
+.kb-task-fields input[type="text"], .kb-task-fields select { height: 2.5rem; padding-top: 0 !important; padding-bottom: 0 !important; }
+.kb-task-fields select { appearance: none; -webkit-appearance: none; padding-right: 2.25rem !important; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%239ca3af' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 8l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 0.75rem center; background-size: 1rem; }
+.kb-task-fields textarea { min-height: 7rem; line-height: 1.5; }
+.kb-task-files-field { margin-bottom: 0 !important; }
+.kb-task-footer { flex: none; display: flex; align-items: center; justify-content: flex-start; gap: 0.5rem; padding: 0.875rem 1.5rem; border-top: 1px solid #e5e7eb; background: rgba(249, 250, 251, 0.8); }
+html.dark .kb-task-footer { border-top-color: #374151; background: rgba(17, 24, 39, 0.35); }
+.kb-enhance-btn { display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; font-weight: 600; line-height: 1; padding: 0.375rem 0.625rem; border-radius: 9999px; color: #4f46e5; background: #eef2ff; border: 1px solid #c7d2fe; transition: background-color .15s ease, border-color .15s ease; }
+.kb-enhance-btn:hover { background: #e0e7ff; border-color: #a5b4fc; }
+html.dark .kb-enhance-btn { color: #a5b4fc; background: rgba(79, 70, 229, 0.15); border-color: rgba(129, 140, 248, 0.35); }
+html.dark .kb-enhance-btn:hover { background: rgba(79, 70, 229, 0.28); }
+@media (max-width: 640px) {
+    .kb-task-modal { max-height: calc(100dvh - 1.5rem); }
+    .kb-task-fields { grid-template-columns: minmax(0, 1fr); padding: 1rem; gap: 1rem; }
+    .kb-task-fields > div:last-child { grid-column: auto; }
+    .kb-task-fields > div.kb-task-wide { grid-column: 1; }
+    .kb-task-footer { padding: 0.75rem 1rem; }
+}
+
+/* Clickable elements always show a pointer cursor */
+button:not(:disabled), [role="button"], summary, select, #kb-modal select, #kb-modal label[for], #kb-detail-modal label[for], #kb-modal [onclick], #kb-detail-modal [onclick], #task-deps-dropdown li, .kb-tab { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
 /* Markdown rendering in comments */
 .kb-markdown > :first-child { margin-top: 0; }
 .kb-markdown > :last-child { margin-bottom: 0; }
@@ -137,12 +169,17 @@ html.dark .kb-task-title {
     html.dark .kb-dropzone:hover, html.dark .kb-dropzone:focus-within { border-color: #818cf8; background: rgba(49, 46, 129, 0.25); }
     .kb-dropzone:focus-within { box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.45); }
     .kb-dropzone-lg {
-        min-height: 116px;
+        min-height: 0;
         flex-direction: column;
         justify-content: center;
+        gap: 0;
         text-align: center;
-        padding: 1rem;
+        padding: 1.125rem 1rem;
+        border-width: 1.5px;
+        border-radius: 0.75rem;
     }
+    .kb-dropzone-over, html.dark .kb-dropzone-over { border-style: solid; border-color: #6366f1; background: rgba(99, 102, 241, 0.12); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
+    .kb-dropzone-over .kb-dropzone-icon { background: #6366f1; border-color: #6366f1; color: #fff; transform: translateY(-2px); }
     .kb-dropzone-icon {
         display: flex;
         flex: none;
@@ -158,7 +195,7 @@ html.dark .kb-task-title {
         transition: transform 0.15s ease, background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     }
     html.dark .kb-dropzone-icon { border-color: #4b5563; background: #1f2937; color: #818cf8; }
-    .kb-dropzone-lg .kb-dropzone-icon { height: 2.25rem; width: 2.25rem; margin-bottom: 0.5rem; }
+    .kb-dropzone-lg .kb-dropzone-icon { height: 2.25rem; width: 2.25rem; margin-bottom: 0.625rem; border-radius: 0.625rem; }
     .kb-dropzone:hover .kb-dropzone-icon, .kb-dropzone:focus-within .kb-dropzone-icon {
         background: #4f46e5;
         border-color: #4f46e5;
@@ -172,12 +209,12 @@ html.dark .kb-task-title {
     }
     .kb-dropzone-title { display: block; font-size: 0.75rem; font-weight: 500; color: #374151; }
     html.dark .kb-dropzone-title { color: #e5e7eb; }
-    .kb-dropzone-lg .kb-dropzone-title { font-size: 0.875rem; }
+    .kb-dropzone-lg .kb-dropzone-title { font-size: 0.875rem; line-height: 1.25rem; }
     .kb-dropzone-accent { color: #4f46e5; }
     html.dark .kb-dropzone-accent { color: #818cf8; }
     .kb-dropzone-hint { display: block; font-size: 11px; color: #9ca3af; }
     html.dark .kb-dropzone-hint { color: #9ca3af; }
-    .kb-dropzone-lg .kb-dropzone-hint { margin-top: 0.25rem; }
+    .kb-dropzone-lg .kb-dropzone-hint { margin-top: 0.125rem; }
     .kb-file-count {
         flex: none;
         border-radius: 9999px;
@@ -363,41 +400,43 @@ html.dark .kb-task-title {
 </div>
 
 <!-- Create/Edit Modal -->
-<div class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center" id="kb-modal">
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
-        <h2 class="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100" id="modal-title">Add Task</h2>
-        <form id="task-form" onsubmit="handleSubmit(event)">
+<div class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-3 sm:p-5" id="kb-modal">
+    <div class="kb-task-modal bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-3xl mx-2 sm:mx-4 flex flex-col border-t-4 border-indigo-500 dark:border-indigo-400">
+        <div class="w-full px-5 sm:px-6 pt-5 pb-4 flex items-center justify-between gap-3 flex-shrink-0 border-b border-gray-200 dark:border-gray-700"><h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100" id="modal-title">Add Task</h2><button type="button" onclick="closeModal()" aria-label="Close task form" title="Close" class="p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition"><svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+        <form id="task-form" class="kb-task-form" onsubmit="handleSubmit(event)">
             <input type="hidden" id="task-id">
+            <div class="kb-task-fields">
             <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="task-title">Title *</label>
+                <label class="kb-field-label text-gray-700 dark:text-gray-300" for="task-title">Title *</label>
                 <input class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400 dark:focus:border-indigo-500" type="text" id="task-title" required placeholder="Enter task title">
             </div>
             <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="task-desc">Description</label>
-                <textarea class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm resize-y bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400 dark:focus:border-indigo-500" id="task-desc" rows="3" placeholder="Enter task description"></textarea>
-                <button type="button" onclick="enhanceDescription()" id="enhance-btn" class="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg px-3 py-1.5 transition" title="Use AI to enhance description & generate title">
+                <label class="kb-field-label text-gray-700 dark:text-gray-300" for="task-assignee">Assign to Agent (optional)</label>
+                <select class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400 dark:focus:border-indigo-500" id="task-assignee">
+                    <option value="">-- None --</option>
+                </select>
+                <div id="task-assignee-warning" class="hidden mt-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2">This agent does not have the 'kanban' skill yet. To add this skill, go to Agent &gt; Settings &gt; Skills.</div>
+            </div>
+            <div class="mb-4 kb-task-wide">
+                <div class="flex items-center justify-between gap-3" style="margin-bottom:0.375rem"><label class="kb-field-label text-gray-700 dark:text-gray-300" style="margin:0" for="task-desc">Description</label>
+                <button type="button" onclick="enhanceDescription()" id="enhance-btn" class="kb-enhance-btn" title="Use AI to enhance description & generate title">
                     <svg class="w-3.5 h-3.5 enhance-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143z"></path></svg>
                     <span class="enhance-label">Enhance</span>
                     <svg class="w-3.5 h-3.5 enhance-spinner hidden animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                </button>
+                </button></div>
+                <textarea class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm resize-y bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400 dark:focus:border-indigo-500" id="task-desc" rows="3" placeholder="Enter task description"></textarea>
+                
             </div>
             <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="task-priority">Priority</label>
+                <label class="kb-field-label text-gray-700 dark:text-gray-300" for="task-priority">Priority</label>
                 <select class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400 dark:focus:border-indigo-500" id="task-priority">
                     <option value="low" selected>Low</option>
                     <option value="medium">Medium</option>
                     <option value="high">High</option>
                 </select>
             </div>
-            <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="task-assignee">Assign to Agent (optional)</label>
-                <select class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400 dark:focus:border-indigo-500" id="task-assignee">
-                    <option value="">-- None --</option>
-                </select>
-                <div id="task-assignee-warning" class="hidden mt-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2">This agent does not have the 'kanban' skill yet. To add this skill, go to Agent &gt; Settings &gt; Skills.</div>
-            </div>
             <div class="mb-5">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Depends on (optional)</label>
+                <label class="kb-field-label text-gray-700 dark:text-gray-300">Depends on (optional)</label>
                 <div class="relative">
                     <input type="text" id="task-deps-search" autocomplete="off" placeholder="Search tasks…"
                         class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500">
@@ -405,9 +444,9 @@ html.dark .kb-task-title {
                 </div>
                 <ul id="task-deps-selected" class="mt-2 flex flex-col gap-1"></ul>
             </div>
-            <div class="mb-5">
+            <div class="mb-5 kb-task-files-field">
                 <div class="flex items-center justify-between gap-3 mb-1.5">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300" for="task-files">Attachments</label>
+                    <label class="kb-field-label text-gray-700 dark:text-gray-300" style="margin:0" for="task-files">Attachments</label>
                     <span class="flex items-center gap-2">
                         <span id="task-files-count" class="hidden rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" aria-live="polite"></span>
                         <span class="text-xs text-gray-400 dark:text-gray-500">Optional</span>
@@ -427,8 +466,8 @@ html.dark .kb-task-title {
                 <div id="task-files-error" class="hidden mt-1.5 text-xs text-red-600 dark:text-red-400" role="alert" aria-live="polite"></div>
                 <ul id="task-files-list" class="kb-file-grid"></ul>
             </div>
-            <div class="flex justify-end gap-2">
-                <button type="button" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition" onclick="closeModal()">Cancel</button>
+            </div>
+            <div class="kb-task-footer">
                 <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 dark:bg-indigo-500 rounded-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 transition" id="modal-submit">Create Task</button>
             </div>
         </form>
@@ -1357,7 +1396,7 @@ html.dark .kb-task-title {
     function handleTaskFilesDrag(event, isOver) {
         event.preventDefault();
         event.stopPropagation();
-        $('#task-files-dropzone').toggleClass('border-indigo-500 bg-indigo-50 dark:border-indigo-400 dark:bg-indigo-900/30', isOver);
+        $('#task-files-dropzone').toggleClass('kb-dropzone-over', isOver);
     }
 
     function handleTaskFilesDrop(event) {

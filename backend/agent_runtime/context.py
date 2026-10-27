@@ -12,7 +12,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 import tiktoken
 
@@ -876,8 +876,13 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
     return prompt
 
 
-def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Build the OpenAI function tool list for this agent."""
+def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Build the OpenAI function tool list for this agent.
+
+    ``channel_id`` is the external channel the session runs on (None for the
+    web chat). Tools declared ``"web_only": true`` in their definition are left
+    out of the list on external channels, so the model never sees them.
+    """
     tools = []
 
     # Explorer sub-agents (the Explore tool's explorers AND the KB organizer) are
@@ -985,6 +990,8 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         for tool_def in tool_registry.get_all_tool_defs():
             tool_id = tool_def.get('id', '')
             fn_name = tool_def.get('function', {}).get('name', '')
+            if channel_id and tool_def.get('web_only'):
+                continue
             # Match by namespaced id OR bare function name (backward compat)
             if tool_id in assigned_ids or fn_name in assigned_ids:
                 # One function name per agent — skip duplicates

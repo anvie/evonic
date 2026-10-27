@@ -2148,7 +2148,7 @@ class AgentRuntime:
             _logger.debug("Turn prefetch HIT for session %s — skipping context build", ctx.session_id)
         else:
             system_prompt = _ctx.build_system_prompt(agent, injected_system_vars=agent.get('injected_system_vars'))
-            tools = _ctx.build_tools(agent)
+            tools = _ctx.build_tools(agent, channel_id=ctx.channel_id)
             _used_prefetch = False
             messages = [{"role": "system", "content": system_prompt}]
 
@@ -2406,7 +2406,7 @@ class AgentRuntime:
             assigned_tool_ids = list(_agent_ctx_prebuilt.get('assigned_tool_ids', []))
             agent_context = dict(_agent_ctx_prebuilt)  # shallow copy to allow mutations
         else:
-            tools = _ctx.build_tools(agent)
+            tools = _ctx.build_tools(agent, channel_id=ctx.channel_id)
 
             # Build agent context for tool backends. Explorers use their own
             # configured tool set; everyone else resolves through sim_spec so

@@ -378,6 +378,7 @@ class TestAskUserQuestionTool(unittest.TestCase):
         ):
             result = self.tool.execute(agent, {'questions': [_q()]})
             self.assertEqual(result['status'], 'unavailable', agent)
+            self.assertIn('Do not call ask_user_question again', result['error'])
         self.assertEqual(self.realtime.events, [])
 
     def test_invalid_questions_and_disabled_plugin(self):

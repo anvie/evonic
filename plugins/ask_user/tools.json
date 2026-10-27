@@ -5,7 +5,7 @@
         "description": "Ask the user multiple-choice questions and wait for the answer.",
         "function": {
             "name": "ask_user_question",
-            "description": "Ask the user 1-4 multiple-choice questions during your turn and wait for their answer. Use it when you are blocked on a decision only the user can make: an ambiguous requirement, a choice between approaches, or a preference. Do NOT use it for things you can decide yourself or look up. The questions appear as an interactive card in the web chat; your turn pauses until the user answers, then the answers come back as this tool's result. The user can always pick 'Other' and type a free-form answer, so do not add an 'Other' option yourself. If one option is your recommendation, put it first and set recommended: true on it; the card shows a 'Recommended' badge. Recommending is optional; leave it out when you have no preference. The user may also close the card without answering (status 'dismissed'): do not assume answers then. Only works in the Evonic web chat; on other channels it returns status 'unavailable' and you should ask in plain text instead.",
+            "description": "Ask the user 1-4 multiple-choice questions during your turn and wait for their answer. Use it only when blocked on a decision that is the user's to make (ambiguous requirement, choice between approaches, preference); never for things you can decide or look up. The user can always pick 'Other', so do not add an 'Other' option. If one option is your recommendation, put it first with recommended: true. If status is 'dismissed' the user closed the card: do not assume answers. Web chat only: if it returns status 'unavailable', do not call it again; ask in plain text.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -70,6 +70,7 @@
             }
         },
         "mock_response": "{\"status\":\"answered\",\"answers\":[{\"header\":\"Database\",\"question\":\"Which database should we use?\",\"answer\":\"SQLite\",\"selected\":[\"SQLite\"],\"other\":null}],\"message\":\"The user answered your questions: \\\"Which database should we use?\\\" = \\\"SQLite\\\". Continue with these answers in mind.\"}",
-        "mock_response_type": "json"
+        "mock_response_type": "json",
+        "web_only": true
     }
 ]

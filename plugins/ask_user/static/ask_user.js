@@ -120,6 +120,31 @@
         return complete ? answers : null;
     }
 
+    // Arrow keys walk the options of the focused question (wrapping around). A radio
+    // is chosen as focus lands on it, like a native radio group; checkboxes only get
+    // focus (Space toggles). The "Other" text box counts as its option's toggle, so
+    // the arrows also lead back out of it. Returns false when the target is not an option.
+    function moveOption($target, step) {
+        const $fs = $target.closest('fieldset.ask-question');
+        const $inputs = $fs.find('input').not('.ask-other-text');
+        const current = $target.is('.ask-other-text') ? $fs.find('.ask-other-toggle')[0] : $target[0];
+        const index = $inputs.index(current);
+        if (index < 0) return false;
+        const $next = $inputs.eq((index + step + $inputs.length) % $inputs.length);
+        $fs.closest('.ask-card').addClass('ask-keynav');  // no fade while arrowing, so it feels instant
+        $next.trigger('focus');
+        if ($next.is('[type="radio"]')) $next.prop('checked', true).trigger('change');
+        return true;
+    }
+
+    // Puts keyboard focus on the card's current question (its chosen option, else the
+    // first one), so the answer can be picked with the arrow keys straight away.
+    function focusCard($card) {
+        const $fs = $card.find('fieldset.ask-question').filter((i, fs) => !fs.hidden).first();
+        const $checked = $fs.find('input:checked').not('.ask-other-toggle');
+        ($checked.length ? $checked : $fs.find('input').not('.ask-other-text')).first().trigger('focus');
+    }
+
     function buildCard(pending) {
         const questionId = pending.question_id;
         const questions = pending.questions;
@@ -140,7 +165,7 @@
                 $('<span class="ask-chip">').text(q.header || `Q${qi + 1}`),
                 $('<span>').text(q.question || '')
             ));
-            $fs.append($('<div class="ask-hint">').text(multi ? 'Choose one or more' : 'Choose one'));
+            $fs.append($('<div class="ask-hint">').text(multi ? 'Choose one or more · ↑↓ to move, Space to toggle' : 'Choose one · ↑↓ to pick, Enter to confirm'));
 
             (q.options || []).forEach(opt => {
                 const $label = $('<span class="ask-option-label">').text(opt.label);
@@ -173,6 +198,7 @@
             $submit.prop('disabled', !collectAnswers($card));
             if (wizard) wizard.refresh();
         });
+        $card.on('pointerdown', () => $card.removeClass('ask-keynav'));
         $card.on('submit', e => {
             e.preventDefault();
             submitAnswer(questionId, $card);
@@ -189,9 +215,18 @@
                 cancelQuestion(questionId, $card);
                 return;
             }
+            if (inCard && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                if (moveOption($(e.target), e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
+                return;
+            }
             if (e.key !== 'Enter' || e.shiftKey) return;
             if (e.target.tagName === 'BUTTON') return;  // let buttons activate natively
             e.preventDefault();
+            // Enter on a focused, not yet chosen radio picks it, then carries on.
+            const $target = $(e.target);
+            if ($target.is('input[type="radio"]:not(.ask-other-toggle)') && !e.target.checked) {
+                $target.prop('checked', true).trigger('change');
+            }
             if (wizard && !wizard.isLast()) wizard.next();
             else if (!$submit.prop('disabled')) $card.trigger('submit');
         };
@@ -267,6 +302,13 @@
         cards.set(pending.question_id, $card);
         list.appendChild($card[0]);
         syncDock();
+        // The composer is locked now, so focus is free to move onto the card; never
+        // pull it out of some other field the user is typing into.
+        const active = document.activeElement;
+        if (!active || active === document.body || active === composer || composer.contains(active)
+            || !/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) || dock.contains(active)) {
+            focusCard($card);
+        }
     }
 
     // ── Resolution ──────────────────────────────────────────────────────────
@@ -313,6 +355,7 @@
         $controls.prop('disabled', false);
         $card.trigger('change');  // restore wizard / submit enabled states
         $card.removeData('busy');
+        focusCard($card);
     }
 
     async function cancelQuestion(questionId, $card) {
@@ -331,6 +374,7 @@
         $controls.prop('disabled', false);
         $card.trigger('change');
         $card.removeData('busy');
+        focusCard($card);
     }
 
     // ── Polling ─────────────────────────────────────────────────────────────

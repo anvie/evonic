@@ -78,7 +78,8 @@ def execute(agent: dict, args: dict) -> Any:
         return {
             'status': 'unavailable',
             'error': f'Interactive questions are unavailable: {reason}. '
-                     'Ask the user in plain text instead.',
+                     'Do not call ask_user_question again in this conversation; '
+                     'ask the user in plain text instead.',
         }
 
     from backend.agent_runtime import agent_runtime

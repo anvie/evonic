@@ -91,7 +91,7 @@ class TurnPrefetcher:
             fresh_system_prompt = _ctx.build_system_prompt(agent)
 
             # Rebuild tools
-            fresh_tools = _ctx.build_tools(agent)
+            fresh_tools = _ctx.build_tools(agent, channel_id=ctx.channel_id)
 
             # Rebuild agent context. Explorers use their own configured tool
             # set; everyone else resolves through sim_spec so this allowlist

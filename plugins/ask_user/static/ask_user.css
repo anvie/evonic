@@ -44,6 +44,10 @@ html.dark .ask-dock {
 @keyframes ask-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
 @media (max-width: 767.98px) { .ask-dock { margin: 0 1.25rem; --ask-r: .5rem; } }
 @media (prefers-reduced-motion: reduce) { .ask-dock { animation: none; } }
+/* Arrow-key navigation swaps the chosen option at once instead of cross-fading. */
+.ask-keynav .ask-option,
+.ask-keynav .ask-option input,
+.ask-keynav .ask-option input::before { transition: none; }
 
 /* While a card is docked the composer is locked (ask_user.js lockComposer): outline it in the
    dock's line colour, as the focused composer is under the slash menu, and keep that menu away. */
