@@ -76,6 +76,29 @@ func TestLogBufferTrimsToMaxLinesKeepingNewest(t *testing.T) {
 	}
 }
 
+func TestLogBufferSnapshotKeepsOnlyDisplayWindow(t *testing.T) {
+	buf := &logBuffer{}
+	total := maxDisplayedLines + 100
+	for i := 0; i < total; i++ {
+		buf.append([]byte(fmt.Sprintf("l%d\n", i)))
+	}
+
+	text, ok := buf.snapshot()
+	if !ok {
+		t.Fatal("snapshot reported no pending content")
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) != maxDisplayedLines {
+		t.Fatalf("snapshot rendered %d lines, want %d", len(lines), maxDisplayedLines)
+	}
+	if want := fmt.Sprintf("l%d", total-maxDisplayedLines); lines[0] != want {
+		t.Fatalf("first rendered line = %q, want %q", lines[0], want)
+	}
+	if want := fmt.Sprintf("l%d", total-1); lines[len(lines)-1] != want {
+		t.Fatalf("last rendered line = %q, want %q", lines[len(lines)-1], want)
+	}
+}
+
 func TestLogBufferSnapshotResetsDirty(t *testing.T) {
 	buf := &logBuffer{}
 	buf.append([]byte("x\n"))

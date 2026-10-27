@@ -56,6 +56,12 @@ func GUIAvailable() bool { return true }
 // shows the connector view; otherwise it shows the pairing form (first run).
 // Must be called from the main goroutine.
 func RunGUI(store *config.Store) {
+	defer recoverPanic("gui")
+
+	if path := redirectStderr(); path != "" {
+		log.Printf("[evonet] logging to %s", path)
+	}
+
 	a := app.New()
 	w := a.NewWindow("Evonet v" + version.Version)
 	w.Resize(fyne.NewSize(700, 420))
@@ -146,7 +152,7 @@ func showConnectorView(a fyne.App, w fyne.Window, root *fyne.Container, store *c
 		myGen := gen
 		myClient := client
 		client.OnConnected = func() {
-			fyne.Do(func() {
+			doUI(func() {
 				if myGen != gen {
 					return
 				}
@@ -155,7 +161,7 @@ func showConnectorView(a fyne.App, w fyne.Window, root *fyne.Container, store *c
 			})
 		}
 		client.OnDisconnected = func() {
-			fyne.Do(func() {
+			doUI(func() {
 				if myGen != gen {
 					return
 				}
@@ -166,9 +172,10 @@ func showConnectorView(a fyne.App, w fyne.Window, root *fyne.Container, store *c
 		}
 
 		go func() {
+			defer recoverPanic("client run")
 			log.Printf("[evonet] Connecting to %s...", cfg.ServerURL)
 			myClient.Run()
-			fyne.Do(func() {
+			doUI(func() {
 				if myGen != gen {
 					return
 				}
@@ -210,18 +217,21 @@ func showConnectorView(a fyne.App, w fyne.Window, root *fyne.Container, store *c
 		statusLabel.SetText("Switching to " + picked.ServerURL + "...")
 
 		go func() {
+			defer recoverPanic("server switch")
 			if oldClient != nil {
 				oldClient.Stop()
 			}
 			if err := config.SaveStore(store); err != nil {
 				log.Printf("[evonet] saving selected server: %v", err)
 			}
-			fyne.Do(func() {
-				if gen != switchGen {
-					return
+			doUI(func() {
+				if gen == switchGen {
+					lw.Clear()
+					startClient()
 				}
-				lw.Clear()
-				startClient()
+				// Always release the switch guard and re-enable the controls: a
+				// superseded switch must not leave the top bar permanently
+				// disabled, which looks exactly like a frozen window.
 				switching = false
 				serverSelect.Enable()
 				toggleBtn.Enable()
@@ -490,9 +500,10 @@ func showPairingView(a fyne.App, w fyne.Window, root *fyne.Container, store *con
 		statusLabel.SetText("Pairing...")
 
 		go func() {
+			defer recoverPanic("pairing")
 			cfg, err := doPair(serverURL, code)
 			if err != nil {
-				fyne.Do(func() {
+				doUI(func() {
 					statusLabel.SetText("Error: " + err.Error())
 					pairBtn.Enable()
 				})
@@ -501,13 +512,13 @@ func showPairingView(a fyne.App, w fyne.Window, root *fyne.Container, store *con
 			store.Upsert(cfg)
 			store.SetActive(serverKeyOf(cfg))
 			if err := config.SaveStore(store); err != nil {
-				fyne.Do(func() {
+				doUI(func() {
 					statusLabel.SetText("Paired but failed to save config: " + err.Error())
 					pairBtn.Enable()
 				})
 				return
 			}
-			fyne.Do(func() {
+			doUI(func() {
 				showConnectorView(a, w, root, store)
 			})
 		}()

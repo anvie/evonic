@@ -10,11 +10,17 @@ import (
 // cap is exceeded the oldest lines are dropped so memory use stays bounded.
 const maxLines = 1000
 
+// maxDisplayedLines bounds how many retained lines are pushed to the RichText
+// view. Fyne re-lays-out the whole text on every refresh and that cost grows
+// super-linearly (measured on macOS: ~4 ms for 250 lines, ~58 ms for 1000), so
+// rendering the full backlog at flush rate saturated the main goroutine and
+// froze the window once the buffer had filled up.
+const maxDisplayedLines = 250
+
 // flushInterval bounds how long a burst of log writes may be coalesced before
-// the accumulated text is handed to the display. It matches the cadence of the
-// previous fixed ticker (100 ms), so the maximum UI latency is unchanged even
-// though no timer runs while the writer is idle.
-const flushInterval = 100 * time.Millisecond
+// the accumulated text is handed to the display. A shorter window buys no
+// visible responsiveness, because every flush costs a full text layout.
+const flushInterval = 200 * time.Millisecond
 
 // logBuffer is a concurrency-safe, fixed-capacity line buffer. It holds no
 // reference to any GUI toolkit, which keeps the batching logic testable on
@@ -53,7 +59,11 @@ func (b *logBuffer) snapshot() (string, bool) {
 	if !b.dirty {
 		return "", false
 	}
-	text := strings.Join(b.lines, "\n")
+	lines := b.lines
+	if len(lines) > maxDisplayedLines {
+		lines = lines[len(lines)-maxDisplayedLines:]
+	}
+	text := strings.Join(lines, "\n")
 	b.dirty = false
 	return text, true
 }

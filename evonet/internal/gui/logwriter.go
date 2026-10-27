@@ -6,7 +6,6 @@ import (
 	"os"
 	"sync/atomic"
 
-	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 )
@@ -60,7 +59,7 @@ func (lw *LogWriter) render(text string) {
 	}
 
 	epoch := lw.epoch.Load()
-	fyne.Do(func() {
+	doUI(func() {
 		latest := lw.gate.take()
 		if lw.epoch.Load() != epoch {
 			return
@@ -84,7 +83,7 @@ func (lw *LogWriter) Clear() {
 	lw.buf.clear()
 	epoch := lw.epoch.Add(1)
 
-	fyne.Do(func() {
+	doUI(func() {
 		if lw.epoch.Load() != epoch {
 			return
 		}
