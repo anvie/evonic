@@ -2450,8 +2450,9 @@ def api_bg_job_log(agent_id):
     if not log_path.startswith('/tmp/evonic_build_') or '..' in log_path:
         return jsonify({'error': 'Invalid log file path'}), 400
 
+    # Compare against the resolved /tmp too: on macOS /tmp is a symlink to /private/tmp.
     real = os.path.realpath(log_path)
-    if not real.startswith('/tmp/evonic_build_'):
+    if not real.startswith(os.path.join(os.path.realpath('/tmp'), 'evonic_build_')):
         return jsonify({'error': 'Invalid log file path'}), 400
 
     try:
@@ -2471,8 +2472,10 @@ def api_bg_job_log(agent_id):
             return jsonify({'error': 'session_id is required for sandbox logs'}), 400
         try:
             from backend.agent_runtime.background_jobs import background_jobs
+            # Use the path as given: it names a file inside the sandbox, and the
+            # host's realpath (e.g. /private/tmp on macOS) means nothing there.
             job = next((j for j in background_jobs.list_for_session(session_id)
-                        if j.log_file == real), None)
+                        if j.log_file == log_path), None)
             if not job:
                 return jsonify({'error': 'Log file not found'}), 404
             agent = db.get_agent(agent_id)
@@ -2485,7 +2488,7 @@ def api_bg_job_log(agent_id):
             # that owns the log rather than creating/resolving a different one.
             backend_context = {**agent, 'agent_id': agent_id, **(job.backend_ctx or {})}
             backend = registry.get_backend(session_id, backend_context)
-            command = f"{direction} -n {lines_count} -- {shlex.quote(real)}"
+            command = f"{direction} -n {lines_count} -- {shlex.quote(log_path)}"
             result = backend.run_bash(command, 15, {})
             if result.get('exit_code') != 0:
                 return jsonify({'error': 'Log file not found'}), 404
