@@ -65,6 +65,14 @@
       "provider": "google-gemini"
     },
     {
+      "name": "openrouter_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": true,
+      "description": "Enable OpenRouter image generation using the configured API key and model.",
+      "provider": "openrouter"
+    },
+    {
       "name": "mock_enabled",
       "label": "Enabled",
       "type": "boolean",
