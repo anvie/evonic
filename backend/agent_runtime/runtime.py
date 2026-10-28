@@ -168,6 +168,23 @@ def _append_attachment_context(content: str, attachment_infos, attachment_info,
     return content.rstrip() + ''.join(notes) if notes else content
 
 
+def _injected_user_content(text: str, meta: dict, agent: dict, db_agent_id: str) -> str:
+    """Model-visible content for a mid-loop injected user message, including
+    attachment notes (mirrors what a fresh turn renders via _apply_multimodal)."""
+    infos = _ctx.attachment_infos_from_metadata(meta)
+    if not infos:
+        return text
+    has_describe_image = (
+        'describe_image' in db.get_agent_tools(db_agent_id)
+        or bool(agent.get('vision_enabled', 1))
+    )
+    return text.rstrip() + _ctx.build_attachment_notes(
+        infos,
+        has_describe_image=has_describe_image,
+        audio_enabled=bool(agent.get('audio_enabled')),
+    )
+
+
 # --- Configuration constants ---
 CLEANUP_INTERVAL_SECONDS = 300       # Interval between idle session cleanup sweeps (5 minutes)
 CLEANUP_TTL_SECONDS = 3600          # TTL for session state entries before cleanup (1 hour)
@@ -1747,7 +1764,8 @@ class AgentRuntime:
                 )
                 self._get_inject_queue(session_id).put({
                     'role': 'user',
-                    'content': message or '[Image]',
+                    'content': _injected_user_content(
+                        message or '[Image]', meta, agent, db_agent_id),
                 })
                 event_stream.emit('message_injected', {
                     'agent_id': agent_id,
@@ -3539,7 +3557,7 @@ class AgentRuntime:
         if agent and self._is_busy(session_id):
             self._get_inject_queue(session_id).put({
                 'role': 'user',
-                'content': text,
+                'content': _injected_user_content(text, meta, agent, agent_id),
             })
             event_stream.emit('message_injected', {
                 'agent_id': agent_id,
