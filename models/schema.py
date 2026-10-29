@@ -1568,6 +1568,7 @@ class SchemaMixin:
             "ollama_cloud": ("Ollama Cloud", "remote", "https://ollama.com/api", "ollama"),
             "opencode_zen": ("OpenCode Zen", "remote", "https://opencode.ai/zen/v1", "openai"),
             "opencode_go": ("OpenCode Go", "remote", "https://opencode.ai/zen/go/v1", "openai"),
+            "cheaperinference": ("Cheaper Inference", "remote", "https://api.cheaperinference.com/v1", "openai"),
             "deepseek": ("DeepSeek", "remote", "https://api.deepseek.com", "openai"),
             "llama.cpp": ("llama.cpp", "local", "http://localhost:8080/v1", "openai"),
             "custom": ("Custom", "remote", "", "openai"),

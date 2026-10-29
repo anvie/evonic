@@ -83,6 +83,14 @@ PROVIDER_DEFAULTS = {
         # prior assistant messages, so default thinking on for this provider.
         "default_thinking": True,
     },
+    "cheaperinference": {
+        "type": "remote",
+        "base_url": "https://api.cheaperinference.com/v1",
+        "api_key_required": True,
+        "placeholder_model": "gpt-5.4-mini",
+        "label": "Cheaper Inference",
+        "description": "Cloud · API key required",
+    },
     "deepseek": {
         "type": "remote",
         "base_url": "https://api.deepseek.com",
