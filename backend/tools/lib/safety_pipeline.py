@@ -231,18 +231,20 @@ class SafetyPipeline:
                 result = dict(deterministic)
                 result["decision_source"] = "deterministic_fallback"
                 result["decim_safety"] = {**metadata, "decision_source": "deterministic_fallback"}
-                return result
-            metadata.update({"model_decision": outcome.decision,
-                             "model_confidence": outcome.confidence,
-                             "model_id": outcome.model_id,
-                             "provider_key": outcome.provider_key,
-                             "model_latency_ms": outcome.latency_ms})
-            if outcome.mode == "shadow":
-                result = dict(deterministic)
-                result["decision_source"] = "deterministic_shadow"
-                result["decim_safety"] = {**metadata, "decision_source": "deterministic_shadow"}
-                return result
-            return self._apply_profile_decision(deterministic, outcome.decision, metadata)
+            else:
+                metadata.update({"model_decision": outcome.decision,
+                                 "model_confidence": outcome.confidence,
+                                 "model_id": outcome.model_id,
+                                 "provider_key": outcome.provider_key,
+                                 "model_latency_ms": outcome.latency_ms})
+                if outcome.mode == "shadow":
+                    result = dict(deterministic)
+                    result["decision_source"] = "deterministic_shadow"
+                    result["decim_safety"] = {**metadata, "decision_source": "deterministic_shadow"}
+                else:
+                    result = self._apply_profile_decision(deterministic, outcome.decision, metadata)
+            self._record_profile_outcome(code, tool_type, agent_context, deterministic, outcome, result)
+            return result
 
         settings = decim_settings
         if settings is None:
@@ -393,6 +395,33 @@ class SafetyPipeline:
                            "blocked_patterns": ["safety_command_block"], "approval_info": None})
         return result
 
+    def _record_profile_outcome(self, code, tool_type, agent_context, deterministic,
+                                outcome, result) -> None:
+        """Record a ``safety.command`` attempt with both the HMADS and DMSS output.
+
+        Without this the profile path left no row for allowed commands, and a
+        refusal surfaced only through ``record_refusal`` labelled as HMADS with
+        no DMSS verdict.  Retention and enforce sampling come from the Decim
+        settings; the mode is the profile's own.
+        """
+        if not outcome.attempted or outcome.mode not in {"shadow", "enforce"}:
+            return
+        from dataclasses import replace
+        from backend.tools.lib.decim_safety import DecimSettings
+
+        settings = self._load_settings() or DecimSettings()
+        settings = replace(settings, enabled=True, mode=outcome.mode)
+        event_id = self._record(settings, code, tool_type, agent_context, deterministic,
+                                model_decision=outcome.decision, confidence=outcome.confidence,
+                                latency_ms=outcome.latency_ms,
+                                fallback_reason=outcome.fallback_reason,
+                                decision_source=result["decision_source"],
+                                correlation_id=outcome.correlation_id,
+                                provider_key=outcome.provider_key, model_id=outcome.model_id,
+                                final_level=result["level"])
+        if event_id:
+            result["decim_safety"]["event_id"] = event_id
+
     def record_refusal(self, code: str, *, tool_type: str,
                        agent_context: dict | None, verdict: dict,
                        decision_source: str = "hmads") -> str | None:
@@ -457,10 +486,13 @@ class SafetyPipeline:
                 model_id=None, policy_version=None, final_level=None) -> str | None:
         """Best-effort telemetry recording; never affects execution safety.
 
-        ``shadow`` always records; ``enforce`` records only when explicitly
-        enabled via ``record_enforce_events``.
+        ``shadow`` always records; ``enforce`` records allowed executions only
+        when explicitly enabled via ``record_enforce_events``.  A refusal is an
+        execution outcome, not a sample, so it is always recorded here — with
+        the DMSS output — rather than later by ``record_refusal`` without it.
         """
-        if settings.mode == "enforce" and not settings.record_enforce_events:
+        if settings.mode == "enforce" and not settings.record_enforce_events \
+                and final_level not in {"dangerous", "requires_approval"}:
             return None
         try:
             service = self._telemetry_service()
