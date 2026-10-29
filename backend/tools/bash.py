@@ -14,6 +14,7 @@ from typing import Optional
 
 from backend.tools.lib.agent_env import build_agent_env
 from backend.tools.lib.exec_backend import registry, validate_env_keys
+from backend.tools.lib.shell_path import ensure_path_env
 
 try:
     from backend.tools.lib.safety_pipeline import (
@@ -241,6 +242,9 @@ def execute(agent: dict, args: dict) -> dict:
     # Dispatch to active backend
     # ------------------------------------------------------------------
     backend = registry.get_backend(session_id, agent)
+    # SSH/Evonet backends run `bash -s`, which never sources ~/.profile or
+    # ~/.bashrc: resolve the host's real PATH once (see lib/shell_path.py).
+    env = ensure_path_env(agent, backend, env)
     result = backend.run_bash(script, timeout, env)
 
     # Best-effort lifecycle disposition for Decim telemetry (internal only).

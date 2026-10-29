@@ -13,6 +13,7 @@ New backends (E2B, etc.) plug in without changing this file.
 # imported from here. Keeps backwards compatibility.
 from backend.tools.lib.agent_env import build_agent_env
 from backend.tools.lib.exec_backend import registry, validate_env_keys, truncate
+from backend.tools.lib.shell_path import ensure_path_env
 
 # Keep these names importable from runpy for any code that imported them before
 _validate_env_keys = validate_env_keys
@@ -142,6 +143,8 @@ def execute(agent_context: dict, args: dict) -> dict:
     # Dispatch to active backend
     # ------------------------------------------------------------------
     backend = registry.get_backend(session_id, agent_context)
+    # SSH/Evonet: resolve the host's real PATH once (non-login `bash -s` misses it).
+    env = ensure_path_env(agent_context, backend, env)
     result = backend.run_python(code, timeout, env)
 
     # Best-effort lifecycle disposition for Decim telemetry (internal only).

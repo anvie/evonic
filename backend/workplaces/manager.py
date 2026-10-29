@@ -213,6 +213,8 @@ class WorkplaceManager:
                 self._backends[tunnel_key] = backend
         backend.on_ws_connected(ws, replay_ok=replay_ok)
         self._set_status(workplace_id, 'connected')
+        # Reconnected Evonet device: refresh the agent PATH from its rc files.
+        self._mark_path_stale(workplace_id)
         _logger.info("Tunnel workplace %s connected via Evonet", workplace_id)
 
     def on_connector_disconnected(self, workplace_id: str) -> None:
@@ -255,6 +257,15 @@ class WorkplaceManager:
             except (json.JSONDecodeError, TypeError):
                 return {}
         return cfg or {}
+
+    def _mark_path_stale(self, workplace_id: str) -> None:
+        """Ask shell_path to re-resolve the agent PATH after a (re)connect."""
+        try:
+            from backend.tools.lib.shell_path import mark_workplace_stale
+            mark_workplace_stale(workplace_id)
+        except Exception as e:
+            _logger.debug("PATH re-resolution flag failed for workplace %s: %s",
+                          workplace_id, e)
 
     def _set_status(self, workplace_id: str, status: str, error_msg: Optional[str] = None) -> None:
         try:
@@ -299,6 +310,9 @@ class WorkplaceManager:
             with self._lock:
                 self._backends[(workplace_id, False)] = backend
             self._set_status(workplace_id, 'connected')
+            # A fresh SSH session may see different rc-file state (e.g. ~/bin
+            # added to PATH), so re-resolve the agent PATH on the next bash call.
+            self._mark_path_stale(workplace_id)
             return backend
         except Exception as e:
             self._set_status(workplace_id, 'error', str(e))
