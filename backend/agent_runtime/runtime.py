@@ -1637,7 +1637,21 @@ class AgentRuntime:
         # history, then stop the originating agent from processing it as a new turn.
         is_human_message = not external_user_id.startswith(
             ('__agent__', '__system__', '__scheduler__'))
-        if is_human_message and not meta.get('escalation_reply'):
+        _is_agent_traffic = bool(
+            meta.get('escalation_reply')
+            or meta.get('agent_message')
+            or meta.get('agent_reply')
+        )
+        if is_human_message and _is_agent_traffic:
+            _triggered_key = next(
+                (k for k in ('escalation_reply', 'agent_message', 'agent_reply')
+                 if meta.get(k)), 'unknown')
+            _logger.debug(
+                "[ESCALATION_GUARD] agent=%s session=%s suppressed escalation routing "
+                "because metadata marks agent traffic (key=%s)",
+                agent_id, session_id, _triggered_key,
+            )
+        if is_human_message and not _is_agent_traffic:
             from backend.escalation_routing import route_pending_escalation_reply
             escalation_result = route_pending_escalation_reply(
                 agent_id, session_id, message,
