@@ -209,6 +209,10 @@ class ProvidersMixin:
         legacy_override = bool(result.get("base_url") or result.get("api_key"))
         result["base_url"] = result.get("base_url") or provider.get("endpoint") or provider.get("base_url", "")
         result["api_key"] = result.get("api_key") or provider.get("api_key", "")
+        # Resolved provider kind ("local" vs "remote"). Callers use it to gate
+        # self-hosted-only request options (e.g. chat_template_kwargs) without
+        # re-querying the provider table.
+        result["provider_type"] = provider.get("type")
         # Dual-read precedence: an explicit legacy model-level format keeps
         # routing until the compatibility window ends; otherwise the provider's
         # versioned adapter is authoritative.

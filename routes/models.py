@@ -234,6 +234,11 @@ def api_ping_model(model_id):
     same client agents use, so credentials, routing and the model name are all
     exercised. No fallback is allowed: a dead model must not look alive because
     another one answered.
+
+    Reachability is decided by whether the server answered at all: an HTTP 200
+    completion whose budget was consumed by reasoning still proves the endpoint,
+    the credentials and the model name are good, so it is reported as reachable
+    with a note instead of as "Unreachable".
     """
     import time
     from backend.llm_client import LLMClient
@@ -251,17 +256,23 @@ def api_ping_model(model_id):
         "timeout": min(int(model.get("timeout") or 60), 30),
         "thinking": False,
         "thinking_budget": 0,
-        "max_tokens": 16,
+        "max_tokens": 32,
         "context_window": model.get("context_window"),
         "temperature": model.get("temperature"),
         "vision_supported": bool(model.get("vision_supported")),
         "api_format": model.get("api_format", "openai"),
     }
+    # Thinking models (Groot/Qwen-style chat templates) open every reply with a
+    # reasoning block, so a tiny ping budget is gone before any content exists.
+    # Self-hosted OpenAI-compatible servers can skip that block when asked via
+    # the chat template; cloud APIs reject the field, hence provider_type gate.
+    if model.get("provider_type") == "local" and model.get("thinking"):
+        config["chat_template_kwargs"] = {"enable_thinking": False}
     started = time.monotonic()
     try:
         result = LLMClient(model_config=config, _allow_fallback=False).chat_completion(
             messages=[{"role": "user", "content": "Reply with the single word: pong"}],
-            tools=None, temperature=0.0, enable_thinking=False, max_tokens=16,
+            tools=None, temperature=0.0, enable_thinking=False, max_tokens=32,
         )
     except Exception as exc:  # network errors, bad credentials, missing CLI ...
         _logger.info("Model ping failed for %s: %s", model_id, exc)
@@ -269,6 +280,18 @@ def api_ping_model(model_id):
                         "latency_ms": int((time.monotonic() - started) * 1000)})
     latency = int((time.monotonic() - started) * 1000)
     if not result.get("success"):
+        # "answered" means the server returned HTTP 200 with a completion: it is
+        # reachable, it just spent the whole budget on reasoning. Reporting that
+        # as "Unreachable" is a false negative, so surface it as a reachable ping
+        # with an explanatory note instead.
+        if result.get("answered"):
+            return jsonify({
+                "success": True,
+                "latency_ms": latency,
+                "reply": "",
+                "reasoning_only": True,
+                "note": "Model answered, but reasoning used the whole token budget",
+            })
         detail = result.get("error_detail") or result.get("error") or result.get("error_type") or "No response"
         if isinstance(detail, dict):
             detail = detail.get("message") or json.dumps(detail)

@@ -450,6 +450,10 @@ class LLMClient:
         """
         self.provider = None
         self.service_tier = model_config.get("service_tier") if model_config else None
+        # Opt-in escape hatch for OpenAI-compatible servers that expose chat
+        # template switches (llama.cpp/vLLM: {"enable_thinking": false}).
+        # Only merged into OpenAI-format payloads — see _chat_completion_once.
+        self.chat_template_kwargs = None
         self._model_api_key_override = False
         if model_config:
             self._model_api_key_override = bool(model_config.get("api_key"))
@@ -469,6 +473,7 @@ class LLMClient:
             self.temperature = model_config.get("temperature")
             self.api_format = model_config.get("api_format", "openai")
             self.adapter_key = model_config.get("adapter_key")
+            self.chat_template_kwargs = model_config.get("chat_template_kwargs")
         else:
             try:
                 from models.db import db
@@ -1146,6 +1151,13 @@ class LLMClient:
                 if tool_choice:
                     payload["tool_choice"] = {
                         "type": "function", "function": {"name": tool_choice}}
+            # Opt-in only (model_config["chat_template_kwargs"]). Self-hosted
+            # OpenAI-compatible servers (llama.cpp/vLLM) use it to switch the
+            # chat template, e.g. {"enable_thinking": false} to stop a thinking
+            # model from spending the whole budget on chain-of-thought.
+            # Anthropic and Ollama have their own protocols and never see it.
+            if getattr(self, "chat_template_kwargs", None):
+                payload["chat_template_kwargs"] = dict(self.chat_template_kwargs)
 
         if is_anthropic:
             from backend.provider.claude_code import auth_headers
@@ -1449,6 +1461,11 @@ class LLMClient:
                             "success": False,
                             "error_type": "generation_timeout",
                             "error_detail": error_detail,
+                            # The server did answer (HTTP 200 with a choice); it
+                            # only spent the whole budget on chain-of-thought.
+                            # Callers that probe reachability (model ping) can
+                            # tell this apart from a dead endpoint.
+                            "answered": True,
                         }
 
                 usage = result.get("usage", {})

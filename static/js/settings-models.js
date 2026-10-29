@@ -269,7 +269,7 @@ window.settingsModels = {
         if (r.busy) return '<span class="mcd-pingres busy">Pinging…</span>';
         const e = (v) => this._escapeHtml(v);
         if (r.success) {
-            const tip = r.reply ? `Replied: ${r.reply}` : "Model answered";
+            const tip = r.reply ? `Replied: ${r.reply}` : (r.note || "Model answered");
             return `<span class="mcd-pingres ok" title="${e(tip)}">${this._ICON.check}Reachable · ${r.latency_ms} ms</span>`;
         }
         const msg = String(r.error || "No answer");
