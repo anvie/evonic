@@ -76,6 +76,39 @@ class EscalationMixin:
                 (time.time(), escalation_id),
             )
 
+    def has_pending_user_escalation(
+        self,
+        originating_session_id: str,
+        originating_agent_id: Optional[str] = None,
+    ) -> bool:
+        """Return True when the session holds a live, unanswered escalation.
+
+        Read-only probe (no status writes) used to decide whether an
+        auto-forwarded agent reply would collide with a pending
+        human-in-the-loop question. Only rows that were actually delivered
+        (``pending``), not yet answered/cancelled and not expired count, so a
+        stale correlation can never suppress forwarding forever.
+
+        Args:
+            originating_session_id: Session that received the escalation.
+            originating_agent_id: Optional filter on the agent that owns that
+                session, so a forwarded reply is only suppressed for the
+                conversation it belongs to.
+        """
+        now = time.time()
+        query = (
+            "SELECT 1 FROM user_escalations "
+            "WHERE originating_session_id = ? AND status = 'pending' "
+            "AND expires_at > ?"
+        )
+        params: list = [originating_session_id, now]
+        if originating_agent_id:
+            query += " AND originating_agent_id = ?"
+            params.append(originating_agent_id)
+        query += " LIMIT 1"
+        with self._connect() as conn:
+            return conn.execute(query, params).fetchone() is not None
+
     def consume_pending_user_escalation(
         self, originating_session_id: str,
     ) -> Optional[Dict[str, Any]]:

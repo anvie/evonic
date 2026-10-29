@@ -24,7 +24,7 @@ import atexit
 import threading
 from queue import Queue, Empty
 from collections import defaultdict
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from backend.agent_state import AgentState
 from backend.logging_config import get_logger
@@ -760,6 +760,63 @@ def _exec_resolve_agent_approval(args: dict, agent_context: dict) -> dict:
 # ==================== Fire-and-Forget: auto-forward B's reply to A ====================
 
 
+def _lookup_human_session_id(
+    agent_id: str, external_user_id: str, channel_id: Optional[str],
+) -> Optional[str]:
+    """Read-only session lookup that never creates a session as a side effect."""
+    lookup = getattr(db, 'get_session_id', None)
+    if lookup is None:
+        return None
+    try:
+        return lookup(agent_id, external_user_id, channel_id)
+    except Exception:
+        _logger.debug(
+            "Auto-forward: human session lookup failed for '%s' (agent=%s).",
+            external_user_id, agent_id, exc_info=True,
+        )
+        return None
+
+
+def _has_live_user_escalation(
+    session_id: Optional[str], originating_agent_id: str,
+) -> bool:
+    """True only when persisted state proves a delivered, unexpired escalation.
+
+    Deliberately strict: anything other than a definite ``True`` (None, a
+    MagicMock in tests, a database without the helper) leaves the normal
+    auto-forward path untouched, so this guard can never swallow a reply by
+    accident.
+    """
+    if not session_id:
+        return False
+    probe = getattr(db, 'has_pending_user_escalation', None)
+    if probe is None:
+        return False
+    try:
+        pending = probe(session_id, originating_agent_id=originating_agent_id)
+    except Exception:
+        _logger.warning(
+            "Auto-forward: escalation probe failed for session '%s'.",
+            session_id, exc_info=True,
+        )
+        return False
+    return pending is True
+
+
+def _target_human_session_id(
+    meta_session_id: Optional[str],
+    report_to_id: str,
+    sender_id: str,
+    channel_id: Optional[str],
+) -> Optional[str]:
+    """Resolve the human session an auto-forward would land in, if any."""
+    if report_to_id.startswith(_AGENT_MSG_PREFIX):
+        return None  # Chained delegation: no human session is involved.
+    if meta_session_id:
+        return meta_session_id
+    return _lookup_human_session_id(sender_id, report_to_id, channel_id)
+
+
 def _on_final_answer(data: dict) -> None:
     """Event listener: when agent B finishes a turn in an inter-agent session,
     forward the reply to agent A's user session so A can relay it to the user."""
@@ -863,6 +920,24 @@ def _on_final_answer(data: dict) -> None:
         )
         return
 
+    # Guard: a live human escalation in the destination session owns the next
+    # inbound human reply. Forwarding A's answer there would make the runtime
+    # treat that forward as the human answer and echo A's own words back to the
+    # delegated agent as a fake reply. The escalation delivery already surfaced
+    # the human-facing question, so suppress this forward while the correlation
+    # is live. Decided purely from persisted row state — no timing heuristics.
+    target_session_id = _target_human_session_id(
+        session_id_from_meta, report_to_id, sender_id, report_to_channel_id,
+    )
+    if _has_live_user_escalation(target_session_id, sender_id):
+        _logger.info(
+            "Auto-forward skip: reply from '%s' in session '%s' suppressed — "
+            "a pending user escalation for '%s' owns the next human reply "
+            "(target_session=%s).",
+            agent_b_id, session_id, sender_id, target_session_id,
+        )
+        return
+
     _logger.info(
         "Auto-forward: report_to_id='%s', report_to_channel_id='%s'.",
         report_to_id, report_to_channel_id or 'none',
@@ -899,6 +974,7 @@ def _on_final_answer(data: dict) -> None:
                 'from_agent_id': agent_b_id,
                 'from_agent_name': agent_b_name,
                 'agent_reply': True,
+                'skip_escalation_consume': True,
                 'report_to_id': report_to_id,
                 'agent_message_depth': original_depth,
                 'reply_to_agent_id': agent_b_id,

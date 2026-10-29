@@ -1153,6 +1153,127 @@ class TestOnFinalAnswer(unittest.TestCase):
 
 
 # -------------------------------------------------------
+# _on_final_answer — pending-escalation suppression
+# -------------------------------------------------------
+
+class TestOnFinalAnswerEscalationSuppression(unittest.TestCase):
+    """The auto-forward must never collide with a pending human escalation.
+
+    An escalation delivered into A's human session owns the next inbound human
+    reply. Forwarding A's own answer there would make the runtime consume the
+    correlation and echo A's text back to the delegated agent as a fake human
+    answer (observed in siwa-d1ea6763).
+    """
+
+    human_meta = {
+        'from_agent_id': 'agent_a',
+        'report_to_id': 'user_123',
+        'report_to_channel_id': 'channel-1',
+        'session_id': 'human-session',
+        'agent_message_depth': 1,
+    }
+
+    def _call(self, answer='Task done!'):
+        from backend.tools.agent_messaging import _on_final_answer
+        _on_final_answer({
+            'external_user_id': '__agent__agent_a',
+            'agent_id': 'agent_b',
+            'session_id': 'delegated-session',
+            'answer': answer,
+        })
+
+    def test_pending_escalation_suppresses_auto_forward(self):
+        """Escalate then finish the turn: no forward, no consumption."""
+        with mock.patch(
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=self.human_meta,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.has_pending_user_escalation',
+            return_value=True,
+        ) as probe, mock.patch(
+            'backend.tools.agent_messaging.db.consume_pending_user_escalation',
+        ) as consume, mock.patch(
+            'backend.agent_runtime.notifier.notify_agent',
+        ) as notify:
+            self._call()
+
+        probe.assert_called_once_with(
+            'human-session', originating_agent_id='agent_a',
+        )
+        consume.assert_not_called()
+        notify.assert_not_called()
+
+    def test_no_pending_escalation_still_forwards_and_marks_skip(self):
+        """Plain delegation keeps auto-forwarding and tags the metadata."""
+        target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
+        with mock.patch(
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=self.human_meta,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.has_pending_user_escalation',
+            return_value=False,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.get_agent',
+            return_value=target_agent,
+        ), mock.patch(
+            'backend.agent_runtime.notifier.notify_agent',
+            return_value={'success': True, 'session_id': 'human-session'},
+        ) as notify:
+            self._call(answer='Report ready.')
+
+        notify.assert_called_once()
+        forwarded = notify.call_args.kwargs['metadata']
+        self.assertTrue(forwarded['agent_reply'])
+        self.assertTrue(forwarded['skip_escalation_consume'])
+        self.assertEqual(notify.call_args.kwargs['session_id'], 'human-session')
+
+    def test_missing_origin_session_uses_read_only_lookup(self):
+        """Without a metadata session id the target session is looked up, not created."""
+        meta = dict(self.human_meta)
+        meta.pop('session_id')
+        with mock.patch(
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=meta,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.get_session_id',
+            return_value='resolved-session',
+        ) as lookup, mock.patch(
+            'backend.tools.agent_messaging.db.has_pending_user_escalation',
+            return_value=True,
+        ) as probe, mock.patch(
+            'backend.agent_runtime.notifier.notify_agent',
+        ) as notify:
+            self._call()
+
+        lookup.assert_called_once_with('agent_a', 'user_123', 'channel-1')
+        probe.assert_called_once_with(
+            'resolved-session', originating_agent_id='agent_a',
+        )
+        notify.assert_not_called()
+
+    def test_inter_agent_chain_does_not_probe_escalations(self):
+        """Chained delegation has no human session, so nothing can be consumed."""
+        meta = dict(self.human_meta)
+        meta['report_to_id'] = '__agent__agent_x'
+        target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
+        with mock.patch(
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=meta,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.has_pending_user_escalation',
+        ) as probe, mock.patch(
+            'backend.tools.agent_messaging.db.get_agent',
+            return_value=target_agent,
+        ), mock.patch(
+            'backend.agent_runtime.notifier.notify_agent',
+        ) as notify:
+            self._call()
+
+        probe.assert_not_called()
+        notify.assert_called_once()
+
+
+# -------------------------------------------------------
 # _check_global_rate_limit
 # -------------------------------------------------------
 

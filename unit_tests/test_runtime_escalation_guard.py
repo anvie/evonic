@@ -150,3 +150,23 @@ def test_escalation_reply_metadata_does_not_route(monkeypatch, tmp_path):
     mock_route.assert_not_called()
     # Escalation should still be pending (not consumed by handle_message)
     assert store.consume_pending_user_escalation('human-session') is not None
+
+
+def test_skip_escalation_consume_marker_does_not_route(monkeypatch, tmp_path):
+    """The auto-forward's explicit marker is honoured as agent traffic.
+
+    `skip_escalation_consume` is set by the delegation auto-forward path so the
+    guard stays self-describing even if the generic agent_message/agent_reply
+    keys are ever renamed.
+    """
+    store = _EscalationStore(tmp_path / 'escalations.db')
+    _create_pending(store)
+
+    with _patch_runtime(monkeypatch) as (mock_route, runtime):
+        runtime.handle_message(
+            'agent-a', 'human-user', 'auto-forwarded answer',
+            metadata={'skip_escalation_consume': True},
+        )
+
+    mock_route.assert_not_called()
+    assert store.consume_pending_user_escalation('human-session') is not None

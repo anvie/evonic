@@ -1637,15 +1637,17 @@ class AgentRuntime:
         # history, then stop the originating agent from processing it as a new turn.
         is_human_message = not external_user_id.startswith(
             ('__agent__', '__system__', '__scheduler__'))
-        _is_agent_traffic = bool(
-            meta.get('escalation_reply')
-            or meta.get('agent_message')
-            or meta.get('agent_reply')
+        # `skip_escalation_consume` is the explicit marker set by the
+        # delegation auto-forward path; the other keys cover pre-existing
+        # agent traffic. Any of them means this message is not a human answer.
+        _agent_traffic_keys = (
+            'escalation_reply', 'agent_message', 'agent_reply',
+            'skip_escalation_consume',
         )
+        _is_agent_traffic = any(bool(meta.get(k)) for k in _agent_traffic_keys)
         if is_human_message and _is_agent_traffic:
             _triggered_key = next(
-                (k for k in ('escalation_reply', 'agent_message', 'agent_reply')
-                 if meta.get(k)), 'unknown')
+                (k for k in _agent_traffic_keys if meta.get(k)), 'unknown')
             _logger.debug(
                 "[ESCALATION_GUARD] agent=%s session=%s suppressed escalation routing "
                 "because metadata marks agent traffic (key=%s)",
