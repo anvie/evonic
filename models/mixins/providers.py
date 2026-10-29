@@ -19,6 +19,10 @@ _ADAPTER_TO_LEGACY_FORMAT = {
 }
 _LEGACY_FORMAT_TO_ADAPTER = {value: key for key, value in _ADAPTER_TO_LEGACY_FORMAT.items()}
 
+# The Claude Code CLI has no HTTP adapter: it is selected by api_format alone and
+# keeps the default adapter key so endpoint validation and routing stay unchanged.
+_CLI_FORMAT = "claude_cli"
+
 
 _SENSITIVE_PROVIDER_KEYS = frozenset({"api_key"})
 
@@ -74,7 +78,8 @@ class ProvidersMixin:
         if not isinstance(options, dict):
             raise ValueError("connection_options must be an object")
         result.update(endpoint=endpoint, base_url=endpoint, adapter_key=adapter_key,
-                      api_format=_ADAPTER_TO_LEGACY_FORMAT[adapter_key],
+                      api_format=(_CLI_FORMAT if result.get("api_format") == _CLI_FORMAT
+                                  else _ADAPTER_TO_LEGACY_FORMAT[adapter_key]),
                       connection_options=json.dumps(options, sort_keys=True))
         return result
 
@@ -109,7 +114,8 @@ class ProvidersMixin:
             **current,
             **data,
             "adapter_key": requested_adapter or current.get("adapter_key"),
-            "api_format": _ADAPTER_TO_LEGACY_FORMAT.get(requested_adapter, data.get("api_format") or current.get("api_format")),
+            "api_format": (_CLI_FORMAT if data.get("api_format") == _CLI_FORMAT
+                           else _ADAPTER_TO_LEGACY_FORMAT.get(requested_adapter, data.get("api_format") or current.get("api_format"))),
             "endpoint": requested_endpoint if requested_endpoint is not None else current.get("endpoint") or current.get("base_url", ""),
         })
         allowed = {"name", "type", "base_url", "api_key", "api_format", "endpoint", "adapter_key", "connection_options", "enabled",
