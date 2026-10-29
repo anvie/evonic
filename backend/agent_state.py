@@ -477,6 +477,8 @@ class AgentState:
             "in_progress" — Mark a task as the sole in_progress task (requires task_id).
                             Any other active task returns to pending.
             "replace"     — Update task text while preserving its ID and status.
+            "update"      — Patch specific tasks by ID (requires a 'tasks' list of
+                            {id, text?, status?}); unlisted tasks are untouched.
             "remove"      — Remove a task (requires task_id).
         """
         if action == "set":
@@ -504,20 +506,7 @@ class AgentState:
             task = self._find_task(task_id)
             if task is None:
                 return {"error": f"Task #{task_id} not found."}
-            if action == "in_progress":
-                # A serially executed batch may activate several IDs in turn.
-                # Make the latest transition authoritative and repair malformed
-                # legacy state deterministically without changing task order.
-                for other in self.tasks:
-                    if other is not task and other.get("status") == "in_progress":
-                        other["status"] = "pending"
-                task["status"] = "in_progress"
-                if "in_progress_since" not in task:
-                    task["in_progress_since"] = time.time()
-            else:
-                task["status"] = "done"
-                # Timestamp is only meaningful while the task is in progress.
-                task.pop("in_progress_since", None)
+            self._set_task_status(task, action)
             return {"result": f"Task #{task_id} marked as {task['status']}.", "tasks": self._task_summary()}
 
         if action == "replace":
@@ -530,6 +519,47 @@ class AgentState:
             task["text"] = clean
             return {"result": f"Task #{task_id} text replaced.", "tasks": self._task_summary()}
 
+        if action == "update":
+            if not isinstance(tasks, list) or not tasks:
+                return {"error": "Action 'update' requires a non-empty 'tasks' list of {id, text?, status?}."}
+            # Validate the whole batch before applying so a bad item never
+            # leaves the plan half-updated.
+            changes = []
+            seen_ids = set()
+            for item in tasks:
+                if not isinstance(item, dict) or item.get("id") is None:
+                    return {"error": "Each 'update' item must be an object with an 'id'."}
+                try:
+                    item_id = int(item["id"])
+                except (TypeError, ValueError):
+                    return {"error": f"Invalid task id {item['id']!r}."}
+                if item_id in seen_ids:
+                    return {"error": f"Task #{item_id} listed more than once."}
+                seen_ids.add(item_id)
+                task = self._find_task(item_id)
+                if task is None:
+                    return {"error": f"Task #{item_id} not found."}
+                clean = None
+                if item.get("text") is not None:
+                    clean, _ = _sanitize_task_text(str(item["text"]))
+                    if not clean:
+                        return {"error": f"Task #{item_id} text must not be empty."}
+                status = item.get("status")
+                if status is not None and status not in VALID_TASK_STATUSES:
+                    return {"error": f"Invalid status {status!r} for task #{item_id}."}
+                if clean is None and status is None:
+                    return {"error": f"Task #{item_id} update needs 'text' and/or 'status'."}
+                changes.append((task, clean, status))
+            if sum(1 for _, _, s in changes if s == "in_progress") > 1:
+                return {"error": "Only one task may be set to in_progress."}
+            for task, clean, status in changes:
+                if clean is not None:
+                    task["text"] = clean
+                if status is not None:
+                    self._set_task_status(task, status)
+            ids = ", ".join(f"#{t['id']}" for t, _, _ in changes)
+            return {"result": f"Updated tasks {ids}.", "tasks": self._task_summary()}
+
         if action == "remove":
             if task_id is None:
                 return {"error": "Action 'remove' requires 'task_id'."}
@@ -539,7 +569,23 @@ class AgentState:
                 return {"error": f"Task #{task_id} not found."}
             return {"result": f"Task #{task_id} removed.", "tasks": self._task_summary()}
 
-        return {"error": f"Unknown action '{action}'. Valid: set, add, done, in_progress, replace, remove"}
+        return {"error": f"Unknown action '{action}'. Valid: set, add, done, in_progress, replace, update, remove"}
+
+    def _set_task_status(self, task: dict, status: str) -> None:
+        if status == "in_progress":
+            # A serially executed batch may activate several IDs in turn.
+            # Make the latest transition authoritative and repair malformed
+            # legacy state deterministically without changing task order.
+            for other in self.tasks:
+                if other is not task and other.get("status") == "in_progress":
+                    other["status"] = "pending"
+            task["status"] = "in_progress"
+            if "in_progress_since" not in task:
+                task["in_progress_since"] = time.time()
+        else:
+            task["status"] = status
+            # Timestamp is only meaningful while the task is in progress.
+            task.pop("in_progress_since", None)
 
     def _find_task(self, task_id: int):
         for t in self.tasks:

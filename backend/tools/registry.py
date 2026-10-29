@@ -634,19 +634,23 @@ def _builtin_update_tasks_factory(agent_context: dict):
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["set", "add", "done", "in_progress", "replace", "remove"],
+                        "enum": ["set", "add", "done", "in_progress", "replace", "update", "remove"],
                         "description": (
                             "'set': replace the entire task list (provide a structured 'tasks' array). "
                             "'add': add one atomic task. "
                             "'done': mark a task complete. 'in_progress': make the "
                             "selected task the sole active task; this returns every "
                             "other active task to pending. 'replace': update task text "
-                            "while preserving its ID and status. 'remove': delete a task."
+                            "while preserving its ID and status. 'update': change only "
+                            "specific tasks (e.g. when the user revises part of the plan) "
+                            "by passing 'tasks' items with 'id' plus new 'text' and/or "
+                            "'status'; unlisted tasks are left untouched. "
+                            "'remove': delete a task."
                         )
                     },
                     "task_id": {
                         "type": "integer",
-                        "description": "Task ID for done/in_progress/remove actions."
+                        "description": "Task ID for done/in_progress/replace/remove actions."
                     },
                     "text": {
                         "type": "string",
@@ -670,12 +674,12 @@ def _builtin_update_tasks_factory(agent_context: dict):
                                     "enum": ["pending", "in_progress", "done"]
                                 }
                             },
-                            "required": ["text"],
                             "additionalProperties": False,
-                            "description": "Structured task item; exactly one concrete, independently completable action or outcome. ID and status preserve existing task state when provided."
+                            "description": "Structured task item; exactly one concrete, independently completable action or outcome. ID and status preserve existing task state when provided. 'text' is required for 'set'; for 'update', 'id' is required with 'text' and/or 'status'."
                         },
                         "description": (
-                            "Atomic task descriptions for the 'set' action. "
+                            "Atomic task descriptions for the 'set' action, or the "
+                            "per-ID changes for the 'update' action. "
                             "Split multi-action work across separate array entries."
                         )
                     }

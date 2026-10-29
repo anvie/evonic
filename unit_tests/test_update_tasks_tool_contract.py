@@ -18,6 +18,8 @@ def test_update_tasks_contract_requires_atomic_entries():
 
     actions = properties["action"]["enum"]
     assert "replace" in actions
+    assert "update" in actions
+    assert "required" not in properties["tasks"]["items"]
     action_description = properties["action"]["description"].lower()
     assert "sole active task" in action_description
     assert "returns every other active task to pending" in action_description

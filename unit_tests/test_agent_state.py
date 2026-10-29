@@ -386,6 +386,66 @@ class TestLosslessTaskUpdates:
 
         assert result["tasks"] == [{"id": 7, "text": "New", "status": "done"}]
 
+    def test_update_patches_only_listed_tasks(self):
+        ms = AgentState()
+        ms.update_tasks("set", tasks=["A", "B", "C"])
+        ms.update_tasks("done", task_id=1)
+
+        result = ms.update_tasks("update", tasks=[
+            {"id": 2, "text": "B revised"},
+            {"id": 3, "text": "C revised", "status": "in_progress"},
+        ])
+
+        assert "error" not in result
+        assert result["tasks"] == [
+            {"id": 1, "text": "A", "status": "done"},
+            {"id": 2, "text": "B revised", "status": "pending"},
+            {"id": 3, "text": "C revised", "status": "in_progress"},
+        ]
+        assert "in_progress_since" in ms.tasks[2]
+
+    def test_update_status_only_keeps_single_active_task(self):
+        ms = AgentState()
+        ms.update_tasks("set", tasks=["A", "B"])
+        ms.update_tasks("in_progress", task_id=1)
+
+        ms.update_tasks("update", tasks=[{"id": 2, "status": "in_progress"}])
+
+        assert [t["status"] for t in ms.tasks] == ["pending", "in_progress"]
+
+    def test_update_done_clears_timestamp(self):
+        ms = AgentState()
+        ms.update_tasks("set", tasks=["A"])
+        ms.update_tasks("in_progress", task_id=1)
+
+        ms.update_tasks("update", tasks=[{"id": 1, "status": "done"}])
+
+        assert ms.tasks == [{"id": 1, "text": "A", "status": "done"}]
+
+    @pytest.mark.parametrize("items", [
+        None,
+        [],
+        [{"text": "no id"}],
+        [{"id": 99, "text": "missing"}],
+        [{"id": 1}],
+        [{"id": 1, "status": "blocked"}],
+        [{"id": 1, "text": "   "}],
+        [{"id": 1, "text": "x"}, {"id": 1, "text": "y"}],
+        [{"id": 1, "status": "in_progress"}, {"id": 2, "status": "in_progress"}],
+    ])
+    def test_update_rejects_invalid_batch_atomically(self, items):
+        ms = AgentState()
+        ms.update_tasks("set", tasks=["A", "B"])
+        before = [dict(t) for t in ms.tasks]
+
+        # A valid leading item must not be applied when a later one is invalid.
+        if items:
+            items = [{"id": 2, "text": "changed"}] + items
+        result = ms.update_tasks("update", tasks=items)
+
+        assert "error" in result
+        assert ms.tasks == before
+
 
 class TestRender:
     def test_plan_mode_shows_blocked_note(self):
