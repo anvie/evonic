@@ -182,7 +182,9 @@ def test_guard_blocks_root_scan_when_enabled(script, fake_backend, monkeypatch):
     db.set_setting('root_fs_scan_guard_enabled', '1')
     result = bash.execute(_trusted_agent(), {'script': script})
 
-    assert result.get('level') == 'requires_approval', result
+    assert result.get('level') == 'dangerous', result
+    assert 'approval_info' not in result, 'root scan must be auto-rejected, not sent for approval'
+    assert result.get('error', '').startswith('REJECTED'), result
     assert result.get('blocked_patterns') == ['root_filesystem_scan'], result
     assert fake_backend.calls == [], 'root scan must not reach the execution backend'
 
@@ -237,7 +239,7 @@ def test_non_root_scan_unaffected(fake_backend, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# Detector still reports requires_approval (guard semantics unchanged)
+# Detector reports an auto-reject (dangerous) verdict
 # --------------------------------------------------------------------------
 
 def test_detector_unchanged():
@@ -245,6 +247,6 @@ def test_detector_unchanged():
 
     hit = check_root_filesystem_scan('find / -type f')
     assert hit is not None
-    assert hit['level'] == 'requires_approval'
-    assert hit['requires_approval'] is True
+    assert hit['level'] == 'dangerous'
+    assert hit['requires_approval'] is False
     assert check_root_filesystem_scan('find /tmp') is None

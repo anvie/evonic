@@ -147,22 +147,34 @@ def execute(agent: dict, args: dict) -> dict:
     # full-root scan is a performance hazard regardless of trust. It therefore has its
     # own switch (RFS_GUARD_DISABLED=1 env var force-disables it; otherwise the
     # root_fs_scan_guard_enabled DB setting toggled in System > Settings applies),
-    # NOT the per-agent safety checker toggle. We still honour `_skip_safety` (set on
-    # the post-approval re-execution) so an approved scan runs without re-prompting.
+    # NOT the per-agent safety checker toggle. The scan is auto-rejected (no approval
+    # prompt) so the agent falls back to a scoped search instead of stalling the turn.
+    # We still honour `_skip_safety` (set on the post-approval re-execution) so a
+    # script a human already approved runs as approved.
     # ------------------------------------------------------------------
     if _root_fs_scan_guard_enabled() and not should_skip_safety(agent):
         _rfs = check_root_filesystem_scan(script)
         if _rfs:
             return {
-                'error': 'Script requires manual approval before execution',
-                'level': 'requires_approval',
+                'error': (
+                    "REJECTED: Root filesystem scan (`find /`, `tree /`) is not allowed — "
+                    "it walks the entire filesystem and can stall the turn. "
+                    "Do NOT retry it, it will be rejected again.\n\n"
+                    "Explore another way instead:\n"
+                    "- Scope the search to a likely directory (e.g. the working "
+                    "directory, $HOME, /etc, /usr/local, /opt, /var/log).\n"
+                    "- Limit depth, e.g. `find /etc -maxdepth 3 -name '*.conf'` or "
+                    "`ls -la /` to see top-level directories first.\n"
+                    "- Use targeted lookups: `which <cmd>`, `command -v <cmd>`, "
+                    "`locate <name>` (if available), or `grep -rl <text> <dir>`."
+                ),
+                'level': 'dangerous',
                 'score': _rfs['score'],
                 'reasons': _rfs['reasons'],
                 'blocked_patterns': _rfs['blocked_patterns'],
-                'approval_info': _rfs['approval_info'],
                 '_safety': {
-                    'source': 'guard', 'mode': 'root_fs_scan', 'level': 'requires_approval',
-                    'decision': 'review', 'model_decision': None, 'confidence': None,
+                    'source': 'guard', 'mode': 'root_fs_scan', 'level': 'dangerous',
+                    'decision': 'block', 'model_decision': None, 'confidence': None,
                     'event_id': None,
                     'blocked_patterns': list(_rfs['blocked_patterns'])[:6],
                     'reasons': list(_rfs['reasons'])[:4],

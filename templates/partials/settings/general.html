@@ -322,9 +322,9 @@
             <div class="setting-row-text">
                 <div class="setting-row-title">Root Filesystem Scan Guard</div>
                 <div class="setting-row-desc">
-                    Ask for approval before running a root-wide scan
+                    Auto-reject root-wide scans
                     (<code>find /</code>, <code>tree /</code>) &mdash; a full-root scan can
-                    stall the turn. Applies to every agent, including super agents and
+                    stall the turn, so the agent is told to search a narrower path instead. Applies to every agent, including super agents and
                     agents with the Safety Checker off. When disabled, root scans run
                     directly. The <code>RFS_GUARD_DISABLED=1</code> env var overrides this
                     setting and force-disables the guard.

@@ -664,7 +664,7 @@ def test_sql_approval_info():
 
 
 def test_root_filesystem_scan_detected():
-    """Test that 'find /' and 'tree /' are detected as requires_approval.
+    """Test that 'find /' and 'tree /' are detected as dangerous (auto-rejected).
 
     Root scan detection lives in the standalone check_root_filesystem_scan()
     (an independent performance guard bash.py runs regardless of safety flags),
@@ -682,8 +682,8 @@ def test_root_filesystem_scan_detected():
     for code in positive_cases:
         result = check_root_filesystem_scan(code)
         assert result is not None, f"Expected a match for '{code}', got None"
-        assert result['level'] == 'requires_approval', \
-            f"Expected 'requires_approval' for '{code}', got '{result['level']}' (score={result['score']})"
+        assert result['level'] == 'dangerous', \
+            f"Expected 'dangerous' for '{code}', got '{result['level']}' (score={result['score']})"
         assert 'root_filesystem_scan' in result.get('blocked_patterns', []), \
             f"Expected 'root_filesystem_scan' in blocked_patterns for '{code}', got {result.get('blocked_patterns')}"
 
@@ -713,19 +713,15 @@ def test_root_filesystem_scan_no_false_positive():
     print("✅ test_root_filesystem_scan_no_false_positive passed")
 
 
-def test_root_filesystem_scan_approval_info():
-    """Test that approval_info for root filesystem scan has correct metadata."""
+def test_root_filesystem_scan_auto_rejected():
+    """Test that a root filesystem scan is auto-rejected, not sent for approval."""
     from backend.tools.lib.heuristic_safety import check_root_filesystem_scan
     result = check_root_filesystem_scan("find / -name '*.env'")
     assert result is not None
-    assert result['requires_approval'] == True, f"Expected requires_approval=True, got {result}"
-    assert result['approval_info'] is not None
-    assert result['approval_info']['risk_level'] == 'medium', \
-        f"Expected risk_level 'medium', got '{result['approval_info']['risk_level']}'"
-    assert 'root_filesystem_scan' in result['approval_info']['categories'], \
-        f"Expected root_filesystem_scan in categories, got {result['approval_info']['categories']}"
+    assert result['requires_approval'] == False, f"Expected requires_approval=False, got {result}"
+    assert 'approval_info' not in result, f"Expected no approval_info, got {result}"
 
-    print("✅ test_root_filesystem_scan_approval_info passed")
+    print("✅ test_root_filesystem_scan_auto_rejected passed")
 
 
 
@@ -781,7 +777,7 @@ if __name__ == '__main__':
         test_sql_approval_info,
         test_root_filesystem_scan_detected,
         test_root_filesystem_scan_no_false_positive,
-        test_root_filesystem_scan_approval_info,
+        test_root_filesystem_scan_auto_rejected,
     ]
     
     passed = 0
