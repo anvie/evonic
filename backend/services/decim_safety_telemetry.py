@@ -316,16 +316,48 @@ def _row_to_dict(row, columns: list[str]) -> dict[str, Any]:
     return {name: row[idx] for idx, name in enumerate(columns)}
 
 
+# Which engine's verdict became final.  DMSS decides only when its accepted
+# decision governed (enforce) and was not overridden by a stricter HMADS floor;
+# shadow, fallback, refusals and DMSS-off rows are all decided by HMADS.
+_DMSS_SOURCES = ("decim", "decision_profile")
+
+
+def decided_by(decision_source: str | None, model_decision: str | None,
+               final_level: str | None) -> str:
+    if decision_source in _DMSS_SOURCES and _FINAL_TO_LEVEL.get(model_decision) == final_level:
+        return "dmss"
+    return "hmads"
+
+
+_DECIDED_BY_SQL = (
+    "(CASE WHEN e.decision_source IN ('decim', 'decision_profile') AND e.final_level = "
+    "(CASE e.model_decision WHEN 'allow' THEN 'safe' WHEN 'review' THEN 'requires_approval' "
+    "WHEN 'block' THEN 'dangerous' END) THEN 'dmss' ELSE 'hmads' END)"
+)
+
+# Verdict filter buckets, in user terms.
+_VERDICT_LEVELS = {
+    "unsafe": ("requires_approval", "dangerous"),
+    "blocked": ("dangerous",),
+    "approval": ("requires_approval",),
+    "allowed": ("safe", "warning"),
+}
+
+_SELECT_EVENT = (
+    "SELECT " + ", ".join(f"e.{c}" for c in _EVENT_COLUMNS)
+    + ", a.name, " + _DECIDED_BY_SQL
+    + " FROM decim_safety_events e LEFT JOIN agents a ON a.id = e.agent_id"
+)
+_SELECT_COLUMNS = [*_EVENT_COLUMNS, "agent_name", "decided_by"]
+
+
 def get_event(event_id: str) -> dict[str, Any] | None:
     """Fetch a single stored event (sanitized; command text is a redacted preview)."""
     try:
         with _connect() as conn:
             conn.row_factory = None
-            row = conn.execute(
-                f"SELECT {', '.join(_EVENT_COLUMNS)} FROM decim_safety_events WHERE id = ?",
-                (event_id,),
-            ).fetchone()
-            return _row_to_dict(row, _EVENT_COLUMNS) if row else None
+            row = conn.execute(_SELECT_EVENT + " WHERE e.id = ?", (event_id,)).fetchone()
+            return _row_to_dict(row, _SELECT_COLUMNS) if row else None
     except Exception:
         logger.exception("Failed to read Decim Safety event")
         return None
@@ -333,42 +365,73 @@ def get_event(event_id: str) -> dict[str, Any] | None:
 
 def list_events(*, limit: int = 50, offset: int = 0, mode: str | None = None,
                 tool_type: str | None = None, final_level: str | None = None,
-                unsafe_only: bool = False, since: str | None = None) -> dict[str, Any]:
-    """List sanitized events with server-side validated filters and pagination."""
+                unsafe_only: bool = False, since: str | None = None,
+                agent_id: str | None = None, decided: str | None = None,
+                verdict: str | None = None) -> dict[str, Any]:
+    """List sanitized events with server-side validated filters and pagination.
+
+    Each event carries ``agent_name`` (current name, ``None`` once the agent is
+    deleted) and ``decided_by`` (``dmss`` / ``hmads``).
+    """
     where: list[str] = []
     params: list[Any] = []
     if mode in {"off", "shadow", "enforce"}:
-        where.append("mode = ?")
+        where.append("e.mode = ?")
         params.append(mode)
     if tool_type in {"bash", "python"}:
-        where.append("tool_type = ?")
+        where.append("e.tool_type = ?")
         params.append(tool_type)
     if final_level in _SEVERITY:
-        where.append("final_level = ?")
+        where.append("e.final_level = ?")
         params.append(final_level)
     if unsafe_only:
-        where.append("final_unsafe = 1")
+        where.append("e.final_unsafe = 1")
     if since:
-        where.append("occurred_at >= ?")
+        where.append("e.occurred_at >= ?")
         params.append(since)
+    if agent_id:
+        where.append("e.agent_id = ?")
+        params.append(agent_id)
+    if decided in {"dmss", "hmads"}:
+        where.append(_DECIDED_BY_SQL + " = ?")
+        params.append(decided)
+    if verdict in _VERDICT_LEVELS:
+        levels = _VERDICT_LEVELS[verdict]
+        where.append(f"e.final_level IN ({', '.join('?' for _ in levels)})")
+        params.extend(levels)
     clause = f" WHERE {' AND '.join(where)}" if where else ""
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
     try:
         with _connect() as conn:
             total = conn.execute(
-                f"SELECT COUNT(*) FROM decim_safety_events{clause}", params
+                f"SELECT COUNT(*) FROM decim_safety_events e{clause}", params
             ).fetchone()[0]
             rows = conn.execute(
-                f"SELECT {', '.join(_EVENT_COLUMNS)} FROM decim_safety_events{clause} "
-                "ORDER BY occurred_at DESC LIMIT ? OFFSET ?",
+                f"{_SELECT_EVENT}{clause} ORDER BY e.occurred_at DESC LIMIT ? OFFSET ?",
                 [*params, limit, offset],
             ).fetchall()
-        return {"events": [_row_to_dict(r, _EVENT_COLUMNS) for r in rows],
+        return {"events": [_row_to_dict(r, _SELECT_COLUMNS) for r in rows],
                 "total": int(total), "limit": limit, "offset": offset}
     except Exception:
         logger.exception("Failed to list Decim Safety events")
         return {"events": [], "total": 0, "limit": limit, "offset": offset}
+
+
+def list_agents() -> list[dict[str, Any]]:
+    """Agents that have at least one recorded event, for the filter dropdown."""
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT e.agent_id, MAX(a.name) FROM decim_safety_events e "
+                "LEFT JOIN agents a ON a.id = e.agent_id "
+                "WHERE e.agent_id IS NOT NULL GROUP BY e.agent_id"
+            ).fetchall()
+        agents = [{"id": r[0], "name": r[1]} for r in rows]
+        return sorted(agents, key=lambda a: (a["name"] or a["id"]).lower())
+    except Exception:
+        logger.exception("Failed to list Decim Safety agents")
+        return []
 
 
 def clear(actor: str = "admin") -> dict[str, Any]:

@@ -11,6 +11,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.services.decim_safety_telemetry import decided_by
+
 logger = logging.getLogger(__name__)
 
 # A final verdict is "unsafe" when a human must intervene or execution is
@@ -24,6 +26,9 @@ _AGREEMENTS = (
     "unavailable",
     "fallback",
 )
+
+
+_VERDICT_BUCKET = {"requires_approval": "approval", "dangerous": "blocked"}
 
 
 def _connect():
@@ -56,7 +61,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
 
 
 def _fetch(window_hours: int | None = None, *, mode: str | None = None,
-           tool_type: str | None = None) -> list[dict[str, Any]]:
+           tool_type: str | None = None, agent_id: str | None = None) -> list[dict[str, Any]]:
     where: list[str] = []
     params: list[Any] = []
     since = _window_start(window_hours)
@@ -69,6 +74,9 @@ def _fetch(window_hours: int | None = None, *, mode: str | None = None,
     if tool_type in ("bash", "python"):
         where.append("tool_type = ?")
         params.append(tool_type)
+    if agent_id:
+        where.append("agent_id = ?")
+        params.append(agent_id)
     clause = f" WHERE {' AND '.join(where)}" if where else ""
     with _connect() as conn:
         conn.row_factory = None
@@ -90,10 +98,10 @@ def _fetch(window_hours: int | None = None, *, mode: str | None = None,
 
 
 def summary(window_hours: int | None = None, *, mode: str | None = None,
-            tool_type: str | None = None) -> dict[str, Any]:
+            tool_type: str | None = None, agent_id: str | None = None) -> dict[str, Any]:
     """Compute aggregate statistics for the dashboard."""
     try:
-        rows = _fetch(window_hours, mode=mode, tool_type=tool_type)
+        rows = _fetch(window_hours, mode=mode, tool_type=tool_type, agent_id=agent_id)
     except Exception:
         logger.exception("Failed to compute Decim Safety summary")
         return _empty_summary()
@@ -115,6 +123,14 @@ def summary(window_hours: int | None = None, *, mode: str | None = None,
     for r in rows:
         if r["agreement"] in agreement_matrix:
             agreement_matrix[r["agreement"]] += 1
+
+    final_verdicts = {"allowed": 0, "approval": 0, "blocked": 0}
+    for r in rows:
+        final_verdicts[_VERDICT_BUCKET.get(r["final_level"], "allowed")] += 1
+
+    decided = {"dmss": 0, "hmads": 0}
+    for r in rows:
+        decided[decided_by(r["decision_source"], r["model_decision"], r["final_level"])] += 1
 
     error_categories: dict[str, int] = {}
     for r in rows:
@@ -139,6 +155,8 @@ def summary(window_hours: int | None = None, *, mode: str | None = None,
         "fallback_rate": round(fallbacks / total, 4) if total else 0.0,
         "decision_distribution": decision_distribution,
         "agreement_matrix": agreement_matrix,
+        "final_verdicts": final_verdicts,
+        "decided_by": decided,
         "unsafe": {
             "final": final_unsafe,
             "final_rate": round(final_unsafe / total, 4) if total else 0.0,
@@ -170,6 +188,8 @@ def _empty_summary() -> dict[str, Any]:
         "fallback_rate": 0.0,
         "decision_distribution": {d: 0 for d in _DECISIONS},
         "agreement_matrix": {a: 0 for a in _AGREEMENTS},
+        "final_verdicts": {"allowed": 0, "approval": 0, "blocked": 0},
+        "decided_by": {"dmss": 0, "hmads": 0},
         "unsafe": {"final": 0, "final_rate": 0.0, "model": 0, "deterministic": 0},
         "confidence": {"count": 0, "min": None, "max": None, "mean": None},
         "latency_ms": {"count": 0, "p50": None, "p95": None, "max": None},

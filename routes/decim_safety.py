@@ -15,6 +15,7 @@ Endpoints:
 * ``GET  /api/admin/decim-safety/metrics``     summary + time-bucketed trend
 * ``GET  /api/admin/decim-safety/events``      paged, filtered event list
 * ``GET  /api/admin/decim-safety/events/<id>`` single event
+* ``GET  /api/admin/decim-safety/agents``      agents with recorded events
 * ``POST /api/admin/decim-safety/telemetry/clear`` audited retention reset
 """
 from __future__ import annotations
@@ -103,15 +104,18 @@ def api_decim_safety_summary():
     """Aggregate statistics for the dashboard cards."""
     from backend.services import decim_safety_metrics
 
+    # 0 means "all time".
     window = _parse_positive_int(request.args.get("window_hours"),
-                                  default=24 * 7, minimum=1, maximum=24 * 365)
+                                  default=24 * 7, minimum=0, maximum=24 * 365)
     mode = request.args.get("mode")
     tool_type = request.args.get("tool_type")
     if mode not in _VALID_MODES:
         mode = None
     if tool_type not in _VALID_TOOLS:
         tool_type = None
-    return jsonify(decim_safety_metrics.summary(window, mode=mode, tool_type=tool_type))
+    agent_id = request.args.get("agent_id") or None
+    return jsonify(decim_safety_metrics.summary(window, mode=mode, tool_type=tool_type,
+                                                agent_id=agent_id))
 
 
 @decim_safety_bp.route("/api/admin/decim-safety/metrics", methods=["GET"])
@@ -158,11 +162,27 @@ def api_decim_safety_events():
         final_level = None
     unsafe_only = request.args.get("unsafe_only", "").lower() in ("1", "true", "yes")
     since = request.args.get("since") or None
+    if since is None and request.args.get("window_hours"):
+        from backend.services import decim_safety_metrics
+        window = _parse_positive_int(request.args.get("window_hours"),
+                                      default=24 * 7, minimum=0, maximum=24 * 365)
+        since = decim_safety_metrics._window_start(window)
 
     return jsonify(decim_safety_telemetry.list_events(
         limit=limit, offset=offset, mode=mode, tool_type=tool_type,
         final_level=final_level, unsafe_only=unsafe_only, since=since,
+        agent_id=request.args.get("agent_id") or None,
+        decided=request.args.get("decided_by"),
+        verdict=request.args.get("verdict"),
     ))
+
+
+@decim_safety_bp.route("/api/admin/decim-safety/agents", methods=["GET"])
+def api_decim_safety_agents():
+    """Agents with recorded events, for the telemetry agent filter."""
+    from backend.services import decim_safety_telemetry
+
+    return jsonify({"agents": decim_safety_telemetry.list_agents()})
 
 
 @decim_safety_bp.route("/api/admin/decim-safety/events/<event_id>", methods=["GET"])

@@ -717,3 +717,88 @@ def test_endpoint_test_does_not_echo_the_endpoint():
     assert body["ok"] is True
     assert endpoint not in str(body)
     assert "internal.example" not in str(body)
+
+
+# ---------------------------------------------------------------------------
+# Simplified telemetry table: agent, decided_by, verdict filters
+# ---------------------------------------------------------------------------
+
+def _record_event(*, agent_id, decision_source, model_decision, det_level, final_level):
+    from types import SimpleNamespace
+    from backend.services import decim_safety_telemetry
+
+    return decim_safety_telemetry.record_comparison(
+        settings=SimpleNamespace(enabled=True, mode="enforce", provider="systemone", retention_days=30),
+        code="echo hi", tool_type="bash", agent_context={"id": agent_id},
+        deterministic={"level": det_level, "score": 0, "blocked_patterns": []},
+        model_decision=model_decision, confidence=0.9 if model_decision else None,
+        latency_ms=50, decision_source=decision_source, final_level=final_level,
+        hmads_duration_ms=2,
+    )
+
+
+@pytest.fixture
+def _telemetry_rows():
+    from backend.services import decim_safety_telemetry
+
+    decim_safety_telemetry.clear()
+    with db._connect() as conn:
+        conn.execute("DELETE FROM agents WHERE id = 'dmss-test-agent'")
+        conn.execute("INSERT INTO agents (id, name, system_prompt) VALUES ('dmss-test-agent', 'Atlas', '')")
+        conn.commit()
+    ids = {
+        # Enforced DMSS block.
+        "dmss_block": _record_event(agent_id="dmss-test-agent", decision_source="decim",
+                                    model_decision="block", det_level="safe", final_level="dangerous"),
+        # HMADS floor: DMSS allowed, the stricter rule won.
+        "floor": _record_event(agent_id="dmss-test-agent", decision_source="decision_profile",
+                               model_decision="allow", det_level="dangerous", final_level="dangerous"),
+        # Shadow: DMSS observed, HMADS decided.
+        "shadow": _record_event(agent_id="ghost-agent", decision_source="deterministic_shadow",
+                                model_decision="review", det_level="safe", final_level="safe"),
+    }
+    yield ids
+    decim_safety_telemetry.clear()
+    with db._connect() as conn:
+        conn.execute("DELETE FROM agents WHERE id = 'dmss-test-agent'")
+        conn.commit()
+
+
+def test_events_carry_agent_name_and_decided_by(_telemetry_rows):
+    events = {e["id"]: e for e in _client().get("/api/admin/decim-safety/events").get_json()["events"]}
+    block = events[_telemetry_rows["dmss_block"]]
+    assert block["agent_id"] == "dmss-test-agent" and block["agent_name"] == "Atlas"
+    assert block["decided_by"] == "dmss"
+    assert block["hmads_duration_ms"] == 2 and block["model_latency_ms"] == 50
+    assert events[_telemetry_rows["floor"]]["decided_by"] == "hmads"
+    shadow = events[_telemetry_rows["shadow"]]
+    assert shadow["decided_by"] == "hmads"
+    # A deleted / unknown agent keeps its id and has no name.
+    assert shadow["agent_name"] is None and shadow["agent_id"] == "ghost-agent"
+
+
+def test_events_filter_by_agent_decided_by_and_verdict(_telemetry_rows):
+    client = _client()
+
+    def ids(query):
+        return {e["id"] for e in client.get("/api/admin/decim-safety/events?" + query).get_json()["events"]}
+
+    assert ids("agent_id=dmss-test-agent") == {_telemetry_rows["dmss_block"], _telemetry_rows["floor"]}
+    assert ids("decided_by=dmss") == {_telemetry_rows["dmss_block"]}
+    assert ids("verdict=unsafe") == {_telemetry_rows["dmss_block"], _telemetry_rows["floor"]}
+    assert ids("verdict=allowed") == {_telemetry_rows["shadow"]}
+    assert ids("window_hours=24") == set(_telemetry_rows.values())
+
+
+def test_agents_endpoint_lists_agents_with_events(_telemetry_rows):
+    agents = _client().get("/api/admin/decim-safety/agents").get_json()["agents"]
+    assert {"id": "dmss-test-agent", "name": "Atlas"} in agents
+    assert {"id": "ghost-agent", "name": None} in agents
+
+
+def test_summary_counts_verdicts_and_decided_by(_telemetry_rows):
+    summary = _client().get("/api/admin/decim-safety/summary?window_hours=0").get_json()
+    assert summary["final_verdicts"] == {"allowed": 1, "approval": 0, "blocked": 2}
+    assert summary["decided_by"] == {"dmss": 1, "hmads": 2}
+    agent = _client().get("/api/admin/decim-safety/summary?agent_id=dmss-test-agent").get_json()
+    assert agent["total_comparisons"] == 2
