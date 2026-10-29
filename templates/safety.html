@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=19">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=15">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=16">
 
 <div class="settings-console safety-console">
     <div class="settings-console-header">
@@ -472,7 +472,7 @@
             <div class="dm-card-head">
                 <div>
                     <h3 id="dm-telemetry-title"><i data-lucide="activity"></i>Telemetry</h3>
-                    <p>How DMSS and HMADS decided recent commands. Click a row for the full detection.</p>
+                    <p>Every command an agent ran, what HMADS and DMSS each said, and the final verdict. Click a row for details.</p>
                 </div>
                 <button type="button" class="sf-btn dm-btn-quiet-danger" id="dmss-clear">
                     <i data-lucide="trash-2"></i>Clear telemetry
@@ -490,11 +490,9 @@
                     </select>
                 </label>
                 <label class="dm-filter">
-                    <span>Mode</span>
-                    <select id="f-mode" class="sf-select">
+                    <span>Agent</span>
+                    <select id="f-agent" class="sf-select">
                         <option value="">Any</option>
-                        <option value="shadow">Shadow</option>
-                        <option value="enforce">Enforce</option>
                     </select>
                 </label>
                 <label class="dm-filter">
@@ -505,39 +503,59 @@
                         <option value="python">python</option>
                     </select>
                 </label>
-                <label class="dm-filter dm-filter-switch relative cursor-pointer">
-                    <input type="checkbox" id="f-unsafe" class="sr-only peer" checked>
-                    <span class="dyn-toggle"></span>
-                    <span>Unsafe only</span>
+                <label class="dm-filter">
+                    <span>Decided by</span>
+                    <select id="f-decided" class="sf-select">
+                        <option value="">Any</option>
+                        <option value="dmss">DMSS</option>
+                        <option value="hmads">HMADS</option>
+                    </select>
+                </label>
+                <label class="dm-filter">
+                    <span>Verdict</span>
+                    <select id="f-verdict" class="sf-select">
+                        <option value="">Any</option>
+                        <option value="unsafe" selected>Blocked + needs approval</option>
+                        <option value="blocked">Blocked</option>
+                        <option value="approval">Needs approval</option>
+                        <option value="allowed">Allowed</option>
+                    </select>
                 </label>
             </div>
 
-            <div class="dm-dist">
-                <div class="dm-dist-panel">
-                    <div class="dm-dist-title">Final decisions</div>
-                    <div class="dm-bars" id="tbl-decisions"></div>
+            <div class="dm-stats">
+                <div class="dm-stat">
+                    <span class="dm-stat-label">Total checks</span>
+                    <span class="dm-stat-value num" id="stat-total">—</span>
                 </div>
-                <div class="dm-dist-panel">
-                    <div class="dm-dist-title">DMSS vs HMADS agreement</div>
-                    <div class="dm-bars" id="tbl-agreement"></div>
+                <div class="dm-stat dm-tone-err">
+                    <span class="dm-stat-label">Blocked</span>
+                    <span class="dm-stat-value num" id="stat-blocked">—</span>
+                </div>
+                <div class="dm-stat dm-tone-warn">
+                    <span class="dm-stat-label">Needs approval</span>
+                    <span class="dm-stat-value num" id="stat-approval">—</span>
+                </div>
+                <div class="dm-stat">
+                    <span class="dm-stat-label">Decided by</span>
+                    <span class="dm-stat-value" id="stat-decided">—</span>
                 </div>
             </div>
 
             <div class="dm-activity-head">
-                <span class="dm-dist-title">Activity</span>
+                <span class="dm-section-label">Activity</span>
                 <span class="dm-activity-count" id="dmss-events-count"></span>
             </div>
             <div class="sf-table-wrap">
                 <table class="sf-table dm-events" id="tbl-events">
                     <thead>
                         <tr>
-                            <th>When</th><th>Tool</th><th>Final</th><th>Decided by</th>
-                            <th>Model</th><th>Agreement</th><th>Fallback</th>
-                            <th>Disposition</th><th>Fingerprint</th><th class="dm-col-go"><span class="sr-only">Details</span></th>
+                            <th>When</th><th>Agent</th><th>Command</th><th>HMADS</th><th>DMSS</th>
+                            <th>Verdict</th><th class="dm-col-go"><span class="sr-only">Details</span></th>
                         </tr>
                     </thead>
                     <tbody id="tbl-events-body">
-                        <tr><td colspan="10" class="sf-empty-cell">Loading…</td></tr>
+                        <tr><td colspan="7" class="sf-empty-cell">Loading…</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -549,5 +567,5 @@
 </div>
 
 {% include 'partials/dmss/activity-modal.html' %}
-<script src="{{ url_for('static', filename='js/safety.js') }}?v=14"></script>
+<script src="{{ url_for('static', filename='js/safety.js') }}?v=15"></script>
 {% endblock %}

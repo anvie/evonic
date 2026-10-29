@@ -7,7 +7,7 @@
         <header class="dm-modal-header">
             <div class="dm-modal-heading">
                 <h3 id="dmss-modal-title" class="dm-modal-title">Activity detail</h3>
-                <p id="dmss-modal-subtitle" class="dm-modal-subtitle">Detection and decision evidence for this event</p>
+                <p id="dmss-modal-subtitle" class="dm-modal-subtitle">What HMADS and DMSS decided for this command</p>
             </div>
             <button type="button" id="dmss-modal-close" class="dm-modal-close"
                     aria-label="Close activity detail">&times;</button>
@@ -17,13 +17,29 @@
             <p id="dmss-modal-status" class="dm-modal-status" role="status" hidden></p>
             <p id="dmss-modal-error" class="dm-modal-error" hidden></p>
 
+            <!-- Summary -->
+            <section class="dm-modal-section" aria-labelledby="dmss-sec-summary">
+                <h4 id="dmss-sec-summary" class="dm-modal-section-title">Summary</h4>
+                <dl class="dm-detail-grid">
+                    <dt>Agent</dt>
+                    <dd id="dmss-agent">&mdash;</dd>
+                    <dt>Tool</dt>
+                    <dd id="dmss-tool-type">&mdash;</dd>
+                    <dt>When</dt>
+                    <dd id="dmss-occurred-at">&mdash;</dd>
+                    <dt>Verdict</dt>
+                    <dd id="dmss-final-level">&mdash;</dd>
+                    <dt>Decided by</dt>
+                    <dd id="dmss-decided-by">&mdash;</dd>
+                </dl>
+            </section>
+
             <!-- Command -->
             <section class="dm-modal-section" aria-labelledby="dmss-sec-command">
                 <h4 id="dmss-sec-command" class="dm-modal-section-title">Command</h4>
                 <pre id="dmss-command-text" class="dm-command-text" aria-label="Recorded command preview"></pre>
                 <p id="dmss-command-empty" class="dm-command-empty" hidden>
-                    Command text was not recorded for this event. Only the fingerprint is available
-                    because it was recorded before command previews were enabled.
+                    Command text was not recorded for this event.
                 </p>
                 <div class="dm-command-foot">
                     <span id="dmss-command-meta" class="dm-modal-muted"></span>
@@ -31,70 +47,50 @@
                 </div>
             </section>
 
-            <!-- Detection -->
-            <section class="dm-modal-section" aria-labelledby="dmss-sec-detection">
-                <h4 id="dmss-sec-detection" class="dm-modal-section-title">Detection</h4>
-                <dl class="dm-detail-grid">
-                    <dt>Detection type</dt>
-                    <dd id="dmss-detection-type">&mdash;</dd>
-                    <dt>Rule categories</dt>
-                    <dd id="dmss-rule-categories">&mdash;</dd>
-                    <dt>Rule verdict</dt>
-                    <dd id="dmss-rule-verdict">&mdash;</dd>
-                    <dt>Rule score</dt>
-                    <dd id="dmss-rule-score">&mdash;</dd>
-                    <dt>Model decision</dt>
-                    <dd id="dmss-model-decision">&mdash;</dd>
-                    <dt>Model confidence</dt>
-                    <dd id="dmss-model-confidence">&mdash;</dd>
-                    <dt>Model latency</dt>
-                    <dd id="dmss-model-latency">&mdash;</dd>
-                    <dt>Agreement</dt>
-                    <dd id="dmss-agreement">&mdash;</dd>
-                    <dt>Fallback reason</dt>
-                    <dd id="dmss-fallback-reason">&mdash;</dd>
-                </dl>
-            </section>
+            <!-- What each engine said -->
+            <div class="dm-engines">
+                <section class="dm-modal-section" aria-labelledby="dmss-sec-hmads">
+                    <h4 id="dmss-sec-hmads" class="dm-modal-section-title">HMADS rules</h4>
+                    <dl class="dm-detail-grid">
+                        <dt>Verdict</dt>
+                        <dd id="dmss-rule-verdict">&mdash;</dd>
+                        <dt>Matched rules</dt>
+                        <dd id="dmss-rule-categories">&mdash;</dd>
+                        <dt>Score</dt>
+                        <dd id="dmss-rule-score">&mdash;</dd>
+                        <dt>Time</dt>
+                        <dd id="dmss-rule-time">&mdash;</dd>
+                    </dl>
+                </section>
+                <section class="dm-modal-section" aria-labelledby="dmss-sec-dmss">
+                    <h4 id="dmss-sec-dmss" class="dm-modal-section-title">DMSS model</h4>
+                    <dl class="dm-detail-grid">
+                        <dt>Result</dt>
+                        <dd id="dmss-model-decision">&mdash;</dd>
+                        <dt>Confidence</dt>
+                        <dd id="dmss-model-confidence">&mdash;</dd>
+                        <dt>Time</dt>
+                        <dd id="dmss-model-latency">&mdash;</dd>
+                        <dt>Model</dt>
+                        <dd id="dmss-model-id">&mdash;</dd>
+                    </dl>
+                </section>
+            </div>
 
-            <!-- Decision -->
-            <section class="dm-modal-section" aria-labelledby="dmss-sec-decision">
-                <h4 id="dmss-sec-decision" class="dm-modal-section-title">Decision</h4>
-                <dl class="dm-detail-grid">
-                    <dt>Final level</dt>
-                    <dd id="dmss-final-level">&mdash;</dd>
-                    <dt>Decision source</dt>
-                    <dd id="dmss-decision-source">&mdash;</dd>
-                    <dt>Disposition</dt>
-                    <dd id="dmss-disposition">&mdash;</dd>
-                    <dt>Mode</dt>
-                    <dd id="dmss-mode">&mdash;</dd>
-                </dl>
-            </section>
-
-            <!-- Metadata -->
-            <section class="dm-modal-section" aria-labelledby="dmss-sec-metadata">
-                <h4 id="dmss-sec-metadata" class="dm-modal-section-title">Metadata</h4>
+            <!-- Technical details: collapsed, for debugging only -->
+            <details class="dm-modal-section dm-modal-tech">
+                <summary class="dm-modal-section-title">Technical details</summary>
                 <dl class="dm-detail-grid">
                     <dt>Event ID</dt>
                     <dd id="dmss-event-id" class="mono">&mdash;</dd>
-                    <dt>Occurred at</dt>
-                    <dd id="dmss-occurred-at">&mdash;</dd>
-                    <dt>Tool</dt>
-                    <dd id="dmss-tool-type">&mdash;</dd>
-                    <dt>Execution boundary</dt>
-                    <dd id="dmss-boundary">&mdash;</dd>
+                    <dt>Mode</dt>
+                    <dd id="dmss-mode">&mdash;</dd>
                     <dt>Policy version</dt>
                     <dd id="dmss-policy-version">&mdash;</dd>
                     <dt>Provider</dt>
                     <dd id="dmss-provider">&mdash;</dd>
-                    <dt>Model ID</dt>
-                    <dd id="dmss-model-id">&mdash;</dd>
-                    <dt>Correlation ID</dt>
-                    <dd id="dmss-correlation-id" class="mono">&mdash;</dd>
-                    <dt>Expires at</dt>
-                    <dd id="dmss-expires-at">&mdash;</dd>
                 </dl>
-            </section>
+            </details>
         </div>
     </div>
 </div>
