@@ -15,8 +15,7 @@
     "patch",
     "bash",
     "runpy",
-    "calculator",
-    "sshc"
+    "calculator"
   ],
   "skills": [
     "github"

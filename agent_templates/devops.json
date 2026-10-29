@@ -15,8 +15,7 @@
     "str_replace",
     "patch",
     "runpy",
-    "calculator",
-    "sshc"
+    "calculator"
   ],
   "skills": [],
   "variables": [],

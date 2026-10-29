@@ -4,7 +4,7 @@ bash — Bash script execution via the active execution backend.
 The backend is resolved per-session from the backend registry:
   - Default: DockerBackend (sandboxed Docker container, shared with runpy)
   - If sandbox_enabled=0: LocalBackend (direct host subprocess)
-  - If sshc is connected: SSHBackend (remote server)
+  - If a remote workplace is active: RemoteWorkplaceBackend/SSHBackend (remote server)
 
 New backends (E2B, etc.) plug in without changing this file.
 """

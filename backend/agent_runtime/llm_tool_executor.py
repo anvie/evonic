@@ -45,7 +45,7 @@ MAX_INJECTIONS_PER_LOOP = 5
 #     channels or the human user;
 #   * remember / evomem / forget_memory — writes to durable long-term memory;
 #   * kanban_* mutations — durable board state shared across agents;
-#   * database_query / sshc — remote / external systems.
+#   * database_query — remote / external systems.
 #
 # The interceptor runs at the *single* tool-execution chokepoint
 # (``llm_call._execute_tool_core``) so every execution path (serial loop,
@@ -67,7 +67,7 @@ SIMULATION_OUTBOUND_DENYLIST: frozenset = frozenset({
     # Durable memory writes.
     "remember", "evomem", "memorize", "save_memory", "forget_memory",
     # Remote / external state.
-    "database_query", "sshc",
+    "database_query",
 })
 
 #: Whole tool namespaces (prefix match) that mutate durable shared state.
@@ -265,8 +265,6 @@ def _synthetic_message(fn_name: str, args: dict) -> str:
         return f"Kanban change '{fn_name}' applied (simulated)."
     if fn_name == "database_query":
         return "Database query executed (simulated)."
-    if fn_name == "sshc":
-        return "SSH command executed (simulated)."
     return f"'{fn_name}' executed (simulated)."
 
 

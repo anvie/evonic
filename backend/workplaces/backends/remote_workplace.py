@@ -1,7 +1,7 @@
 """
 RemoteWorkplaceBackend — wraps SSHBackend for a Workplace execution environment.
 
-Unlike the sshc tool (manual per-session), this backend is managed by WorkplaceManager:
+Unlike a manual per-session SSH connection, this backend is managed by WorkplaceManager:
 it auto-connects when the workplace is first accessed and is shared across all sessions
 using the same workplace.
 

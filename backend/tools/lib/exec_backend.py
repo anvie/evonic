@@ -192,7 +192,6 @@ class BackendRegistry:
 
     Each session starts with no explicit backend; get_backend() auto-creates
     a DockerBackend or LocalBackend on first call based on agent_context.
-    Tools like sshc call set_backend() to override for a session.
     """
 
     def __init__(self):
@@ -206,7 +205,7 @@ class BackendRegistry:
         (see ``backend.tools.lib.simulation_scope``) the run is *forced* into an
         isolating sandbox (docker/bwrap) regardless of the template's
         ``sandbox_enabled`` / ``run_as_user`` / ``workplace_id``, and any
-        explicit per-session override (such as an SSHBackend installed by sshc)
+        explicit per-session override (such as an SSHBackend)
         is dropped -- a temp-root workspace is meaningless on a remote host.
         """
         from backend.tools.lib.simulation_scope import (
@@ -302,40 +301,9 @@ class BackendRegistry:
                                    run_as_user=run_as_user)
 
         # Don't store default backends -- they're ephemeral and session-keyed
-        # internally by DockerBackend itself. Only explicit overrides are stored.
+        # internally by DockerBackend itself.
         return backend
 
-    def set_backend(self, session_id: str, backend: 'ExecutionBackend') -> None:
-        """Override the backend for a session (called by sshc, e2b, etc.)."""
-        with self._lock:
-            old = self._backends.get(session_id)
-            if old is not None:
-                try:
-                    old.destroy()
-                except Exception:
-                    pass
-            self._backends[session_id] = backend
 
-    def clear_backend(self, session_id: str) -> dict:
-        """Remove backend override, reverting to default (Docker/local) on next call."""
-        with self._lock:
-            backend = self._backends.pop(session_id, None)
-        if backend is None:
-            return {'result': 'no_override', 'detail': 'No explicit backend was set for this session.'}
-        try:
-            result = backend.destroy()
-        except Exception as e:
-            result = {'error': str(e)}
-        return result
-
-    def get_status(self, session_id: str) -> dict:
-        """Return status of the active backend override, or 'default' if none."""
-        with self._lock:
-            backend = self._backends.get(session_id)
-        if backend is None:
-            return {'backend': 'default', 'detail': 'Using default Docker/local backend.'}
-        return backend.status()
-
-
-# Module-level singleton used by bash.py, runpy.py, and sshc.py
+# Module-level singleton used by bash.py and runpy.py
 registry = BackendRegistry()

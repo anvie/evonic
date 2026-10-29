@@ -107,7 +107,7 @@ def _sim_context(sid, **extra):
     ("kanban_create_task", True), ("kanban_update_status", True),
     ("kanban_update_task", True), ("kanban_add_comment", True),
     # remote / external
-    ("database_query", True), ("sshc", True),
+    ("database_query", True),
     # read-only members stay allowed (fidelity)
     ("kanban_search_tasks", False), ("kanban_get_task", False),
     ("kanban_get_comments", False), ("recall", False),
@@ -269,10 +269,10 @@ def test_simulation_scope_contextvar_activates_interception(sim_id):
             ran.append(fn_name)
             return {"result": "ok"}
 
-        r = _execute_tool_core("sshc", {"action": "open", "host": "h"},
+        r = _execute_tool_core("database_query", {"query": "SELECT 1"},
                                _builtin_exec, real_exec)
         assert ran == []
         assert r["simulated"] is True
-        assert [e["tool"] for e in itx.get_simulated_outbox(sim_id)] == ["sshc"]
+        assert [e["tool"] for e in itx.get_simulated_outbox(sim_id)] == ["database_query"]
     finally:
         sim.clear_active_simulation(token)

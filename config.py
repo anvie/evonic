@@ -234,7 +234,7 @@ SANDBOX_BACKEND = os.getenv("SANDBOX_BACKEND", "docker").strip().lower()
 # limits (systemd-run --scope) are a follow-up.
 SANDBOX_BWRAP_ULIMIT_V_MB = _get_env_int("SANDBOX_BWRAP_ULIMIT_V_MB", 0, min_val=0, max_val=65536)
 
-# SSH backend configuration (used by sshc tool / SSHBackend)
+# SSH backend configuration (used by RemoteWorkplace / portals / SSHBackend)
 SSH_DEFAULT_TIMEOUT = _get_env_int("SSH_DEFAULT_TIMEOUT", 30, min_val=1, max_val=3600)   # seconds per command
 SSH_IDLE_TIMEOUT = _get_env_int("SSH_IDLE_TIMEOUT", 1800, min_val=1, max_val=43200)       # 30 min idle disconnect
 

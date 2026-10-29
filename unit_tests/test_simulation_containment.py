@@ -4,8 +4,7 @@ A simulation runs a template's REAL tools (fidelity) but must stay contained:
 
 * the backend registry must force an isolating backend (docker/bwrap) even when
   the template ships ``sandbox_enabled: false`` (the DB stores absent as ``0``),
-  sets ``run_as_user``, assigns a workplace, or when ``sshc`` installed an
-  explicit SSH backend override;
+  sets ``run_as_user``, or assigns a workplace;
 * every write must land under
   ``/tmp/evonic_agent_template_simulation/<sim_id>/`` and never under the live
   ``<BASE_DIR>/agents/<id>/`` or ``<BASE_DIR>/shared/agents/<id>/`` trees.
@@ -91,7 +90,7 @@ def test_get_backend_ignores_workplace_for_simulation(sim_id, monkeypatch):
 
 
 def test_get_backend_drops_explicit_ssh_override(sim_id):
-    """An SSHBackend installed by sshc must be dropped for a simulation."""
+    """An explicit backend override must be dropped for a simulation."""
 
     class _FakeSSH:
         instances = []
@@ -108,13 +107,13 @@ def test_get_backend_drops_explicit_ssh_override(sim_id):
             return {"backend": "ssh"}
 
     fake = _FakeSSH()
-    registry.set_backend(sim_id, fake)
+    registry._backends[sim_id] = fake
     try:
         backend = registry.get_backend(sim_id, _sim_agent(sim_id))
         assert type(backend).__name__ in _SANDBOX_BACKENDS
-        assert _FakeSSH.destroyed is True, "SSH override should be destroyed"
+        assert _FakeSSH.destroyed is True, "override should be destroyed"
     finally:
-        registry.clear_backend(sim_id)
+        registry._backends.pop(sim_id, None)
 
 
 def test_non_simulation_defaults_unchanged(monkeypatch):
