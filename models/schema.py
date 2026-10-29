@@ -724,7 +724,8 @@ class SchemaMixin:
 
             # ==================== Decim Safety telemetry ====================
             # Sanitized comparison evidence only: never raw command text,
-            # agent context, environment values, or provider transport details.
+            # agent context (beyond the agent id), environment values, or
+            # provider transport details.
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS decim_safety_events (
                     id TEXT PRIMARY KEY,
@@ -759,9 +760,16 @@ class SchemaMixin:
                     correlation_id TEXT,
                     expires_at TEXT,
                     detection_type TEXT,
-                    detection_command TEXT
+                    detection_command TEXT,
+                    agent_id TEXT,
+                    hmads_duration_ms INTEGER
                 )
             """)
+            cursor.execute("PRAGMA table_info(decim_safety_events)")
+            decim_cols = {row[1] for row in cursor.fetchall()}
+            for col, ddl in (("agent_id", "TEXT"), ("hmads_duration_ms", "INTEGER")):
+                if col not in decim_cols:
+                    cursor.execute(f"ALTER TABLE decim_safety_events ADD COLUMN {col} {ddl}")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_occurred ON decim_safety_events(occurred_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_unsafe ON decim_safety_events(final_unsafe)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_epoch ON decim_safety_events(telemetry_epoch)")

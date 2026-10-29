@@ -435,6 +435,29 @@ def test_shadow_always_records_comparison_evidence():
     assert stored["detection_type"]
 
 
+def test_event_records_agent_id_and_both_timings():
+    telemetry = _events()
+    telemetry.clear()
+    pipeline = _pipeline(_Provider(_decision("allow")))
+    result = pipeline.check(UNSAFE_BASH, tool_type="bash", agent_context={"id": "agent-7"},
+                            decim_settings=_settings(mode="shadow"))
+    stored = telemetry.get_event(result["decim_safety"]["event_id"])
+    assert stored["agent_id"] == "agent-7"
+    assert isinstance(stored["hmads_duration_ms"], int) and stored["hmads_duration_ms"] >= 0
+    assert stored["model_latency_ms"] is not None
+
+
+def test_dmss_failure_records_measured_time():
+    telemetry = _events()
+    telemetry.clear()
+    pipeline = _pipeline(_Provider(RuntimeError("provider down")))
+    result = pipeline.check(UNSAFE_BASH, tool_type="bash", decim_settings=_settings(mode="shadow"))
+    assert result["decision_source"] == "deterministic_fallback"
+    event = telemetry.list_events()["events"][0]
+    assert event["model_decision"] is None
+    assert isinstance(event["model_latency_ms"], int)
+
+
 def test_enforce_records_only_when_enabled():
     telemetry = _events()
     telemetry.clear()

@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from backend.tools.lib.safety_base import SafetyCheckerBase, CheckResult
@@ -211,13 +212,19 @@ class SafetyPipeline:
         Deterministic HMADS is always calculated when Decim is attempted so it
         remains available as comparison evidence and as an unchanged fallback.
         """
+        started = time.perf_counter()
         deterministic = self.check_deterministic(code, tool_type, agent_context)
+        # Timing is telemetry only; it rides on the verdict so a refusal recorded
+        # later by the tool boundary still carries it.
+        deterministic["hmads_duration_ms"] = _elapsed_ms(started)
 
         # `safety.command` is the preferred configuration source for DMSS. The
         # bridge only classifies text; this pipeline retains final policy control.
         profile = self._safety_command_profile()
         if profile is not None:
+            started = time.perf_counter()
             outcome = self._run_safety_command_profile(code, tool_type, agent_context)
+            dmss_ms = _elapsed_ms(started)
             metadata = {
                 "attempted": outcome.attempted,
                 "accepted": outcome.decision is not None,
@@ -243,7 +250,8 @@ class SafetyPipeline:
                     result["decim_safety"] = {**metadata, "decision_source": "deterministic_shadow"}
                 else:
                     result = self._apply_profile_decision(deterministic, outcome.decision, metadata)
-            self._record_profile_outcome(code, tool_type, agent_context, deterministic, outcome, result)
+            self._record_profile_outcome(code, tool_type, agent_context, deterministic, outcome,
+                                         result, dmss_ms)
             return result
 
         settings = decim_settings
@@ -253,6 +261,7 @@ class SafetyPipeline:
                 or tool_type not in SCOPED_TOOL_TYPES:
             return deterministic
 
+        started = time.perf_counter()
         try:
             resolver = self._decim_resolver or self._get_resolver()
             resolution = resolver.resolve(code, tool_type, agent_context, settings)
@@ -266,7 +275,7 @@ class SafetyPipeline:
                 "fallback_reason": "provider_error",
             }
             self._record(settings, code, tool_type, agent_context, deterministic,
-                         model_decision=None, confidence=None, latency_ms=None,
+                         model_decision=None, confidence=None, latency_ms=_elapsed_ms(started),
                          fallback_reason="provider_error", decision_source="deterministic_fallback",
                          final_level=deterministic["level"])
             return result
@@ -286,7 +295,7 @@ class SafetyPipeline:
             result["decision_source"] = "deterministic_fallback"
             result["decim_safety"] = {**metadata, "decision_source": "deterministic_fallback"}
             self._record(settings, code, tool_type, agent_context, deterministic,
-                         model_decision=None, confidence=None, latency_ms=None,
+                         model_decision=None, confidence=None, latency_ms=_elapsed_ms(started),
                          fallback_reason=resolution.fallback_reason,
                          decision_source="deterministic_fallback",
                          correlation_id=resolution.correlation_id,
@@ -396,7 +405,7 @@ class SafetyPipeline:
         return result
 
     def _record_profile_outcome(self, code, tool_type, agent_context, deterministic,
-                                outcome, result) -> None:
+                                outcome, result, dmss_ms) -> None:
         """Record a ``safety.command`` attempt with both the HMADS and DMSS output.
 
         Without this the profile path left no row for allowed commands, and a
@@ -413,7 +422,7 @@ class SafetyPipeline:
         settings = replace(settings, enabled=True, mode=outcome.mode)
         event_id = self._record(settings, code, tool_type, agent_context, deterministic,
                                 model_decision=outcome.decision, confidence=outcome.confidence,
-                                latency_ms=outcome.latency_ms,
+                                latency_ms=outcome.latency_ms if outcome.latency_ms is not None else dmss_ms,
                                 fallback_reason=outcome.fallback_reason,
                                 decision_source=result["decision_source"],
                                 correlation_id=outcome.correlation_id,
@@ -457,6 +466,7 @@ class SafetyPipeline:
                 fallback_reason=None,
                 decision_source=decision_source,
                 final_level=verdict.get("level"),
+                hmads_duration_ms=verdict.get("hmads_duration_ms"),
             )
         except Exception:
             logger.exception("Decim Safety refusal recording failed")
@@ -512,10 +522,15 @@ class SafetyPipeline:
                 policy_version=policy_version,
                 correlation_id=correlation_id,
                 final_level=final_level,
+                hmads_duration_ms=deterministic.get("hmads_duration_ms"),
             )
         except Exception:
             logger.exception("Decim Safety telemetry recording failed")
             return None
+
+
+def _elapsed_ms(started: float) -> int:
+    return int(round((time.perf_counter() - started) * 1000))
 
 
 _LEVEL_TO_DECISION = {

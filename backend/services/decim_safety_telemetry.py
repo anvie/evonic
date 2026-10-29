@@ -195,7 +195,7 @@ _EVENT_COLUMNS = [
     "final_level", "decision_source", "agreement", "fallback_reason", "error_category",
     "final_unsafe", "model_unsafe", "deterministic_unsafe", "disposition",
     "command_fingerprint", "command_length", "correlation_id", "expires_at", \
-            "detection_type", "detection_command",
+            "detection_type", "detection_command", "agent_id", "hmads_duration_ms",
 ]
 
 
@@ -216,6 +216,7 @@ def record_comparison(
     policy_version: str | None = None,
     correlation_id: str | None = None,
     final_level: str | None = None,
+    hmads_duration_ms: int | None = None,
 ) -> str | None:
     """Insert one sanitized comparison event.  Returns the event id or None.
 
@@ -223,7 +224,9 @@ def record_comparison(
     or ``None`` when the provider was unusable (a fallback).  The command is
     stored as a bounded, credential-redacted preview (see ``command_preview``)
     alongside its fingerprint and length, and ``detection_type`` records which
-    rule categories fired (or ``model`` / ``none``).
+    rule categories fired (or ``model`` / ``none``).  ``agent_id`` is taken
+    from *agent_context*; ``latency_ms`` is the DMSS time and
+    ``hmads_duration_ms`` the deterministic rule time.
     """
     try:
         from backend.tools.lib.decim_safety import POLICY_VERSION, _execution_boundary, fingerprint_code
@@ -256,8 +259,8 @@ def record_comparison(
                 "final_level, decision_source, agreement, fallback_reason, error_category, "
                 "final_unsafe, model_unsafe, deterministic_unsafe, disposition, "
                 "command_fingerprint, command_length, correlation_id, expires_at, "
-                "detection_type, detection_command"
-                ") VALUES (" + ", ".join("?" for _ in range(33)) + ")",
+                "detection_type, detection_command, agent_id, hmads_duration_ms"
+                ") VALUES (" + ", ".join("?" for _ in range(35)) + ")",
                 (
                     event_id, occurred, epoch, mode, tool_type, _execution_boundary(agent_context),
                     1 if getattr(settings, "enabled", False) else 0,
@@ -277,6 +280,7 @@ def record_comparison(
                     correlation_id, expires_at,
                     detection_label(deterministic, model_decision, accepted=accepted),
                     command_preview(code),
+                    (agent_context or {}).get("id"), hmads_duration_ms,
                 ),
             )
             conn.execute(
