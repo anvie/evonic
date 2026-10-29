@@ -7099,6 +7099,10 @@ async function loadChatHistory() {
 
 const _seenRealtimeMessages = new Set();
 const _optimisticMessages = new Map();
+// client_message_id -> last bubble rendered for it. /goal yields a second
+// message ([SYSTEM] goal event) under the same id; it must sit with the
+// user's bubble, not after the thinking bubble anchored to it.
+const _adoptedOptimistic = new Map();
 
 function newClientMessageId() {
     return (window.crypto && crypto.randomUUID)
@@ -7117,11 +7121,17 @@ document.addEventListener('evonic:message-received', function (event) {
     if (optimistic) {
         optimistic.attr('data-message-id', data.message_id);
         _optimisticMessages.delete(data.client_message_id);
+        _adoptedOptimistic.set(data.client_message_id, optimistic);
     } else {
         $message = chatUI.appendMessage(data.role || 'user', data.content || data.message || '', {
             metadata: data.metadata || {},
             timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : null,
         }).attr('data-message-id', data.message_id);
+        const $prev = data.client_message_id && _adoptedOptimistic.get(data.client_message_id);
+        if ($prev && $prev.length && $message.length) {
+            $message.insertAfter($prev);
+            _adoptedOptimistic.set(data.client_message_id, $message);
+        }
     }
     if ((data.role || 'user') === 'user' && data.turn_id) {
         chatUI.markLastUserBubbleQueued($message);
