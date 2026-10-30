@@ -989,7 +989,10 @@ html.dark #safety-panel-general {
     font-weight: 600;
     color: var(--text-heading);
 }
-.sg-flow-steps { list-style: none; margin: 0; padding: 0; }
+.sg-flow-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+/* enforce: DMSS is consulted first, HMADS only on fallback */
+[data-policy="dmss"][data-mode="enforce"] .sg-step-hmads { order: 1; }
+[data-policy="dmss"][data-mode="enforce"] .sg-step-final { order: 2; }
 .sg-step {
     position: relative;
     display: grid;

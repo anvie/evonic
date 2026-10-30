@@ -52,12 +52,32 @@ def test_shadow_profile_never_changes_hmads_verdict():
     assert result["decision_source"] == "deterministic_shadow"
 
 
-def test_enforce_profile_cannot_weaken_hmads_block():
+class CountingChecker(Checker):
+    calls = 0
+
+    def check(self, *args):
+        self.calls += 1
+        return super().check(*args)
+
+
+def test_enforce_profile_decides_without_running_hmads():
     pipeline = ProfilePipeline(SafetyCommandOutcome(True, mode="enforce", decision="allow", confidence=.99))
-    pipeline._checkers = [Checker(15)]
+    checker = CountingChecker(15)
+    pipeline._checkers = [checker]
+    result = pipeline.check("synthetic", "bash", {})
+    assert result["level"] == "safe"
+    assert result["decision_source"] == "decision_profile"
+    assert checker.calls == 0
+
+
+def test_enforce_profile_falls_back_to_hmads_when_unusable():
+    pipeline = ProfilePipeline(SafetyCommandOutcome(True, mode="enforce", fallback_reason="timeout"))
+    checker = CountingChecker(15)
+    pipeline._checkers = [checker]
     result = pipeline.check("synthetic", "bash", {})
     assert result["level"] == "dangerous"
-    assert result["decim_safety"]["final_reason"] == "hmads_floor"
+    assert result["decision_source"] == "deterministic_fallback"
+    assert checker.calls == 1
 
 
 def test_profile_failure_uses_exact_deterministic_fallback():

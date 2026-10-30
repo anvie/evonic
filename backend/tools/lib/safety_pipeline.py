@@ -13,14 +13,15 @@ Decim Safety (a provider-agnostic *decision model* layer) is layered on top:
 
 * ``check_deterministic()`` runs only the deterministic checkers and preserves
   exact score aggregation and threshold mapping — unchanged HMADS behaviour.
-* ``check()`` keeps its legacy signature, computes the deterministic baseline,
-  and — when Decim Safety is enabled and in scope — resolves a model decision:
+* ``check()`` keeps its legacy signature and — when Decim Safety is enabled and
+  in scope — resolves a model decision:
 
   - ``shadow``  → deterministic HMADS still governs execution; the model only
     provides comparison evidence (and mandatory telemetry).
-  - ``enforce`` → a valid, confident model decision governs the public verdict
-    (allow→safe, review→requires_approval, block→dangerous).  Any unusable answer
-    falls back to the exact deterministic result with sanitized metadata.
+  - ``enforce`` → the model is consulted first and a valid, confident decision
+    governs the public verdict (allow→safe, review→requires_approval,
+    block→dangerous) without running HMADS.  Any unusable answer falls back to
+    the exact deterministic result with sanitized metadata.
 
 No provider failure can escape this module: a broken adapter degrades to the
 deterministic pipeline.
@@ -47,7 +48,6 @@ SCOPED_TOOL_TYPES = frozenset({"bash", "python"})
 _UNSAFE_LEVELS = frozenset({"warning", "requires_approval", "dangerous"})
 
 # Rank for agreement calculation: how "strict" a verdict is.
-_LEVEL_RANK = {"safe": 0, "warning": 0, "requires_approval": 1, "dangerous": 2}
 _DECISION_RANK = {"allow": 0, "review": 1, "block": 2}
 
 
@@ -209,15 +209,10 @@ class SafetyPipeline:
               decim_settings: Any = None) -> dict:
         """Apply Decim Safety when operational, otherwise preserve HMADS exactly.
 
-        Deterministic HMADS is always calculated when Decim is attempted so it
-        remains available as comparison evidence and as an unchanged fallback.
+        In ``enforce`` mode DMSS is consulted first and a confident decision is
+        final; HMADS runs only when DMSS is unusable (timeout, error, low
+        confidence, ...).  In ``shadow`` mode HMADS governs and always runs.
         """
-        started = time.perf_counter()
-        deterministic = self.check_deterministic(code, tool_type, agent_context)
-        # Timing is telemetry only; it rides on the verdict so a refusal recorded
-        # later by the tool boundary still carries it.
-        deterministic["hmads_duration_ms"] = _elapsed_ms(started)
-
         # `safety.command` is the preferred configuration source for DMSS. The
         # bridge only classifies text; this pipeline retains final policy control.
         profile = self._safety_command_profile()
@@ -234,22 +229,22 @@ class SafetyPipeline:
                 "fallback_reason": outcome.fallback_reason,
                 "correlation_id": outcome.correlation_id,
             }
-            if outcome.decision is None:
-                result = dict(deterministic)
-                result["decision_source"] = "deterministic_fallback"
-                result["decim_safety"] = {**metadata, "decision_source": "deterministic_fallback"}
-            else:
+            if outcome.decision is not None:
                 metadata.update({"model_decision": outcome.decision,
                                  "model_confidence": outcome.confidence,
                                  "model_id": outcome.model_id,
                                  "provider_key": outcome.provider_key,
                                  "model_latency_ms": outcome.latency_ms})
-                if outcome.mode == "shadow":
-                    result = dict(deterministic)
-                    result["decision_source"] = "deterministic_shadow"
-                    result["decim_safety"] = {**metadata, "decision_source": "deterministic_shadow"}
-                else:
-                    result = self._apply_profile_decision(deterministic, outcome.decision, metadata)
+            if outcome.decision is not None and outcome.mode == "enforce":
+                deterministic = {}
+                result = _model_verdict(outcome.decision, "decision_profile", metadata,
+                                        "Command Safety", "safety_command")
+            else:
+                deterministic = self._timed_deterministic(code, tool_type, agent_context)
+                source = "deterministic_fallback" if outcome.decision is None else "deterministic_shadow"
+                result = dict(deterministic)
+                result["decision_source"] = source
+                result["decim_safety"] = {**metadata, "decision_source": source}
             self._record_profile_outcome(code, tool_type, agent_context, deterministic, outcome,
                                          result, dmss_ms)
             return result
@@ -259,7 +254,13 @@ class SafetyPipeline:
             settings = self._load_settings()
         if settings is None or not settings.enabled or settings.mode == "off" \
                 or tool_type not in SCOPED_TOOL_TYPES:
-            return deterministic
+            return self._timed_deterministic(code, tool_type, agent_context)
+
+        # Shadow compares against the HMADS verdict it leaves in charge; enforce
+        # only needs HMADS when the model's answer is unusable.
+        deterministic = None
+        if settings.mode == "shadow":
+            deterministic = self._timed_deterministic(code, tool_type, agent_context)
 
         started = time.perf_counter()
         try:
@@ -267,6 +268,7 @@ class SafetyPipeline:
             resolution = resolver.resolve(code, tool_type, agent_context, settings)
         except Exception:
             logger.exception("Decim Safety resolution failed; using deterministic result")
+            deterministic = deterministic or self._timed_deterministic(code, tool_type, agent_context)
             result = dict(deterministic)
             result["decision_source"] = "deterministic_fallback"
             result["decim_safety"] = {
@@ -288,9 +290,10 @@ class SafetyPipeline:
         }
 
         if not resolution.attempted:
-            return deterministic
+            return deterministic or self._timed_deterministic(code, tool_type, agent_context)
 
         if resolution.decision is None:
+            deterministic = deterministic or self._timed_deterministic(code, tool_type, agent_context)
             result = dict(deterministic)
             result["decision_source"] = "deterministic_fallback"
             result["decim_safety"] = {**metadata, "decision_source": "deterministic_fallback"}
@@ -328,35 +331,12 @@ class SafetyPipeline:
                 result["decim_safety"]["event_id"] = event_id
             return result
 
-        # In enforce mode an accepted Decim decision governs the public verdict.
-        level_map = {"allow": "safe", "review": "requires_approval", "block": "dangerous"}
-        level = level_map[decision.decision]
-        result = dict(deterministic)
-        result.update({
-            "level": level,
-            "requires_approval": level == "requires_approval",
-            "decision_source": "decim",
-            "decim_safety": {**metadata, "decision_source": "decim"},
-        })
-        if level == "safe":
-            result.update({"score": 0, "reasons": [], "blocked_patterns": [], "approval_info": None})
-        elif level == "requires_approval":
-            approval_info = _generate_approval_info(["decim_review"], 0)
-            result.update({
-                "score": max(8, deterministic["score"]),
-                "reasons": ["Decim Safety requires manual approval."],
-                "blocked_patterns": ["decim_review"],
-                "approval_info": approval_info,
-            })
-        else:
-            result.update({
-                "score": max(15, deterministic["score"]),
-                "reasons": ["Decim Safety blocked this execution."],
-                "blocked_patterns": ["decim_block"],
-                "approval_info": None,
-            })
+        # In enforce mode an accepted Decim decision governs the public verdict;
+        # HMADS is not consulted.
+        result = _model_verdict(decision.decision, "decim", metadata, "Decim Safety", "decim")
+        level = result["level"]
 
-        event_id = self._record(settings, code, tool_type, agent_context, deterministic,
+        event_id = self._record(settings, code, tool_type, agent_context, {},
                                 model_decision=decision.decision, confidence=decision.confidence,
                                 latency_ms=decision.latency_ms, fallback_reason=None,
                                 decision_source="decim",
@@ -385,24 +365,13 @@ class SafetyPipeline:
             boundary = "local_process"
         return get_safety_command_runner().decide(code, tool_type, boundary)
 
-    def _apply_profile_decision(self, deterministic, decision, metadata):
-        level_map = {"allow": "safe", "review": "requires_approval", "block": "dangerous"}
-        requested = level_map[decision]
-        level = requested if _LEVEL_RANK[requested] >= _LEVEL_RANK[deterministic["level"]] else deterministic["level"]
-        result = dict(deterministic)
-        result.update({"level": level, "requires_approval": level == "requires_approval",
-                       "decision_source": "decision_profile",
-                       "decim_safety": {**metadata, "decision_source": "decision_profile",
-                                        "final_reason": "model" if level == requested else "hmads_floor"}})
-        if level == deterministic["level"]:
-            return result
-        if level == "requires_approval":
-            result.update({"score": max(8, deterministic["score"]), "reasons": ["Command Safety requires manual approval."],
-                           "blocked_patterns": ["safety_command_review"], "approval_info": _generate_approval_info(["safety_command_review"], 0)})
-        else:
-            result.update({"score": max(15, deterministic["score"]), "reasons": ["Command Safety blocked this execution."],
-                           "blocked_patterns": ["safety_command_block"], "approval_info": None})
-        return result
+    def _timed_deterministic(self, code, tool_type, agent_context) -> dict:
+        started = time.perf_counter()
+        deterministic = self.check_deterministic(code, tool_type, agent_context)
+        # Timing is telemetry only; it rides on the verdict so a refusal recorded
+        # later by the tool boundary still carries it.
+        deterministic["hmads_duration_ms"] = _elapsed_ms(started)
+        return deterministic
 
     def _record_profile_outcome(self, code, tool_type, agent_context, deterministic,
                                 outcome, result, dmss_ms) -> None:
@@ -527,6 +496,36 @@ class SafetyPipeline:
         except Exception:
             logger.exception("Decim Safety telemetry recording failed")
             return None
+
+
+def _model_verdict(decision: str, source: str, metadata: dict,
+                   label: str, pattern_prefix: str) -> dict:
+    """Build the public verdict for an accepted enforce-mode model decision."""
+    level = {"allow": "safe", "review": "requires_approval", "block": "dangerous"}[decision]
+    result = {
+        "level": level,
+        "score": 0,
+        "reasons": [],
+        "blocked_patterns": [],
+        "requires_approval": level == "requires_approval",
+        "approval_info": None,
+        "decision_source": source,
+        "decim_safety": {**metadata, "decision_source": source},
+    }
+    if level == "requires_approval":
+        result.update({
+            "score": 8,
+            "reasons": [f"{label} requires manual approval."],
+            "blocked_patterns": [f"{pattern_prefix}_review"],
+            "approval_info": _generate_approval_info([f"{pattern_prefix}_review"], 0),
+        })
+    elif level == "dangerous":
+        result.update({
+            "score": 15,
+            "reasons": [f"{label} blocked this execution."],
+            "blocked_patterns": [f"{pattern_prefix}_block"],
+        })
+    return result
 
 
 def _elapsed_ms(started: float) -> int:

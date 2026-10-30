@@ -158,7 +158,7 @@
                         <label class="sg-mode-opt">
                             <input type="radio" name="sg-mode" value="enforce" id="sg-radio-enforce">
                             <span class="sg-mode-name"><i data-lucide="gavel"></i>Enforce</span>
-                            <span class="sg-mode-desc">The model decides when it can; HMADS is the exact fallback.</span>
+                            <span class="sg-mode-desc">The model decides first; HMADS runs only as the exact fallback.</span>
                         </label>
                     </div>
                     <span class="sg-mode-off">Not used while the policy is &ldquo;HMADS only&rdquo; (effective mode: <code>off</code>).</span>
@@ -178,7 +178,10 @@
                     <li class="sg-step sg-step-hmads">
                         <span class="sg-step-dot" aria-hidden="true"><i data-lucide="shield-alert"></i></span>
                         <span class="sg-step-name">HMADS scores it</span>
-                        <span class="sg-step-note">Deterministic rules, always run</span>
+                        <span class="sg-step-note">
+                            <span class="sg-when-off sg-when-shadow">Deterministic rules, always run</span>
+                            <span class="sg-when-enforce">Only when the DMSS decision is unusable</span>
+                        </span>
                     </li>
                     <li class="sg-step sg-step-dmss">
                         <span class="sg-step-dot" aria-hidden="true"><i data-lucide="brain-circuit"></i></span>

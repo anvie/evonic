@@ -163,6 +163,9 @@ def agreement_class(model_decision: str | None, deterministic_level: str | None,
     """Classify how the model verdict relates to the deterministic verdict."""
     if not accepted or model_decision is None:
         return "fallback"
+    if deterministic_level is None:
+        # Enforce mode skips HMADS once the model decision is accepted.
+        return "unavailable"
     model_rank = _MODEL_SEVERITY.get(model_decision)
     det_rank = _SEVERITY.get(deterministic_level or "safe", 0)
     if model_rank is None:
