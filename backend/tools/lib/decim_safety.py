@@ -98,6 +98,10 @@ class DecimSettings:
     circuit_breaker_failures: int = 3
     circuit_breaker_cooldown_seconds: int = 60
     record_enforce_events: bool = False
+    # When true, HMADS still scores every scoped command in enforce mode and its
+    # verdict can only raise (never lower) the DMSS severity.  Off by default so
+    # the model-first design documented in the release notes stays the default.
+    hmads_floor: bool = False
     retention_days: int = 30
 
 
@@ -200,10 +204,12 @@ def _parse_settings(values: dict[str, Any], *, strict: bool) -> DecimSettings:
     enabled = _as_bool(values.get("enabled", defaults.enabled), defaults.enabled)
     record_events = _as_bool(values.get("record_enforce_events", defaults.record_enforce_events),
                              defaults.record_enforce_events)
+    floor = _as_bool(values.get("hmads_floor", defaults.hmads_floor), defaults.hmads_floor)
     provider_endpoint = str(values.get("provider_endpoint", defaults.provider_endpoint) or "")
     if strict:
         for name, raw in (("enabled", values.get("enabled", enabled)),
-                          ("record_enforce_events", values.get("record_enforce_events", record_events))):
+                          ("record_enforce_events", values.get("record_enforce_events", record_events)),
+                          ("hmads_floor", values.get("hmads_floor", floor))):
             if not isinstance(raw, (bool, str)):
                 raise ValueError(f"{name} must be a boolean")
         if not isinstance(values.get("provider_endpoint", provider_endpoint), str):
@@ -217,7 +223,7 @@ def _parse_settings(values: dict[str, Any], *, strict: bool) -> DecimSettings:
         request_timeout_ms=timeout, minimum_confidence=confidence,
         max_payload_chars=payload, circuit_breaker_failures=failures,
         circuit_breaker_cooldown_seconds=cooldown, retention_days=retention,
-        record_enforce_events=record_events,
+        record_enforce_events=record_events, hmads_floor=floor,
     )
 
 
@@ -239,6 +245,7 @@ def load_decim_settings() -> DecimSettings:
         "circuit_breaker_failures": _setting("decim_safety.circuit_breaker_failures", "3"),
         "circuit_breaker_cooldown_seconds": _setting("decim_safety.circuit_breaker_cooldown_seconds", "60"),
         "record_enforce_events": _setting("decim_safety.record_enforce_events", "0"),
+        "hmads_floor": _setting("decim_safety.hmads_floor", "0"),
         "retention_days": _setting("decim_safety.retention_days", "30"),
     }
     try:
@@ -264,6 +271,7 @@ _PERSISTED_SETTING_KEYS = (
     ("circuit_breaker_failures", lambda s: str(s.circuit_breaker_failures)),
     ("circuit_breaker_cooldown_seconds", lambda s: str(s.circuit_breaker_cooldown_seconds)),
     ("record_enforce_events", lambda s: "1" if s.record_enforce_events else "0"),
+    ("hmads_floor", lambda s: "1" if s.hmads_floor else "0"),
     ("retention_days", lambda s: str(s.retention_days)),
 )
 

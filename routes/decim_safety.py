@@ -89,6 +89,12 @@ def api_decim_safety_health():
         "recording": settings.mode == "shadow" or (
             settings.mode == "enforce" and settings.record_enforce_events
         ),
+        "record_enforce_events": bool(settings.record_enforce_events),
+        "hmads_floor": bool(getattr(settings, "hmads_floor", False)),
+        # Present only when the telemetry store could not be read, so the
+        # dashboard can distinguish "no events" from "storage unavailable".
+        "telemetry_error": state.get("error"),
+        "telemetry_error_detail": state.get("error_detail"),
         "last_decision_at": state.get("last_decision_at"),
         # Aggregate timing only; never expose transport endpoint/hostname.
         "latency_ms": (summary.get("latency_ms") or {}).copy(),

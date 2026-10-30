@@ -764,11 +764,7 @@ class SchemaMixin:
                     hmads_duration_ms INTEGER
                 )
             """)
-            cursor.execute("PRAGMA table_info(decim_safety_events)")
-            decim_cols = {row[1] for row in cursor.fetchall()}
-            for col, ddl in (("agent_id", "TEXT"), ("hmads_duration_ms", "INTEGER")):
-                if col not in decim_cols:
-                    cursor.execute(f"ALTER TABLE decim_safety_events ADD COLUMN {col} {ddl}")
+            self._migrate_decim_safety_events(cursor)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_occurred ON decim_safety_events(occurred_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_unsafe ON decim_safety_events(final_unsafe)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_epoch ON decim_safety_events(telemetry_epoch)")
@@ -1507,6 +1503,28 @@ class SchemaMixin:
 
         # Populate session_index from per-agent chat DBs (idempotent one-time migration)
         self._populate_session_index()
+
+    # Additive columns introduced after the telemetry table shipped.  A database
+    # created by an older build never receives them from CREATE TABLE IF NOT
+    # EXISTS, so every read and write must have a migration here.  Missing
+    # ``detection_type``/``detection_command`` silently disabled the whole
+    # activity table (INSERT and SELECT both raised), which is why this list has
+    # to stay in sync with ``_EVENT_COLUMNS`` in
+    # ``backend/services/decim_safety_telemetry.py``.
+    _DECIM_EVENT_ADDED_COLUMNS = (
+        ("agent_id", "TEXT"),
+        ("hmads_duration_ms", "INTEGER"),
+        ("detection_type", "TEXT"),
+        ("detection_command", "TEXT"),
+    )
+
+    def _migrate_decim_safety_events(self, cursor):
+        """Add telemetry columns that are absent from a pre-existing table."""
+        cursor.execute("PRAGMA table_info(decim_safety_events)")
+        existing = {row[1] for row in cursor.fetchall()}
+        for col, ddl in self._DECIM_EVENT_ADDED_COLUMNS:
+            if col not in existing:
+                cursor.execute(f"ALTER TABLE decim_safety_events ADD COLUMN {col} {ddl}")
 
     def _migrate_model_ids_v2(self, cursor):
         """One-shot rename of llm_models ids to 'provider/model_name' format.

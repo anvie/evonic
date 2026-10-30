@@ -802,3 +802,31 @@ def test_summary_counts_verdicts_and_decided_by(_telemetry_rows):
     assert summary["decided_by"] == {"dmss": 1, "hmads": 2}
     agent = _client().get("/api/admin/decim-safety/summary?agent_id=dmss-test-agent").get_json()
     assert agent["total_comparisons"] == 2
+
+
+def test_hmads_floor_round_trips_through_the_settings_api():
+    client = _client()
+    assert client.get("/api/settings/decim-safety").get_json()["settings"]["hmads_floor"] is False
+
+    response = client.put("/api/settings/decim-safety", json={"hmads_floor": True})
+
+    assert response.status_code == 200
+    assert response.get_json()["settings"]["hmads_floor"] is True
+    assert db.get_setting("decim_safety.hmads_floor") == "1"
+    assert client.get("/api/settings/decim-safety").get_json()["settings"]["hmads_floor"] is True
+
+
+def test_hmads_floor_rejects_non_boolean_values():
+    client = _client()
+    response = client.put("/api/settings/decim-safety", json={"hmads_floor": 3.5})
+    assert response.status_code == 400
+    assert response.get_json()["success"] is False
+
+
+def test_health_reports_recording_policy_fields():
+    client = _client()
+    body = client.get("/api/admin/decim-safety/health").get_json()
+    assert body["recording"] is False
+    assert body["record_enforce_events"] is False
+    assert body["hmads_floor"] is False
+    assert "telemetry_error" in body

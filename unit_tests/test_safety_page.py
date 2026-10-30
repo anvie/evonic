@@ -240,3 +240,21 @@ def test_activity_modal_styles_exist_and_use_theme_tokens():
     html = client.get("/system/safety").get_data(as_text=True)
     assert ".detail-container {" not in html
     assert "modal-detail-container" not in html
+
+
+def test_dmss_enforce_behaviour_controls_are_exposed():
+    """The recording policy and the HMADS floor must be operable from the UI."""
+    html = _client().get("/system/safety").get_data(as_text=True)
+
+    # Fieldset that hosts the two enforce-mode switches.
+    assert "Enforce behaviour" in html
+    assert 'id="dc-record"' in html
+    assert 'id="dc-floor"' in html
+    assert 'role="switch"' in html
+    # Each switch keeps its own auto-save status slot.
+    for slot in ("dc-status-record", "dc-status-floor"):
+        assert f'id="{slot}"' in html, slot
+
+    # The recording indicator that the redesign dropped is back on the
+    # Provider KPI card.
+    assert 'id="kpi-recording"' in html

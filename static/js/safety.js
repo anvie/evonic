@@ -821,6 +821,8 @@
             payload: { sel: "#dc-payload", key: "max_payload_chars", kind: "num" },
             failures: { sel: "#dc-failures", key: "circuit_breaker_failures", kind: "num" },
             cooldown: { sel: "#dc-cooldown", key: "circuit_breaker_cooldown_seconds", kind: "num" },
+            record: { sel: "#dc-record", key: "record_enforce_events", kind: "switch" },
+            floor: { sel: "#dc-floor", key: "hmads_floor", kind: "switch" },
         },
         CONFIG_DEBOUNCE_MS: 800,
         _cfgTimers: {},
@@ -840,7 +842,7 @@
                 var f = self.CONFIG_FIELDS[name];
                 var el = qs(f.sel);
                 if (!el) return;
-                if (f.kind === "select") {
+                if (f.kind === "select" || f.kind === "switch") {
                     el.addEventListener("change", function () { self._flushField(name); });
                 } else {
                     // typing, -/+ steppers and the confidence slider all fire "input"
@@ -969,6 +971,7 @@
         _fieldValue(name) {
             var f = this.CONFIG_FIELDS[name], el = qs(f.sel);
             if (!el) return undefined;
+            if (f.kind === "switch") return !!el.checked;
             return f.kind === "num" ? NumField.value(el) : el.value.trim();
         },
 
@@ -989,6 +992,7 @@
 
         _sameAsSaved(name, v) {
             var saved = (this._config || {})[this.CONFIG_FIELDS[name].key];
+            if (this.CONFIG_FIELDS[name].kind === "switch") return !!v === !!saved;
             if (name === "endpoint") return (v || "") === (saved || "");
             if (name === "provider") return v === saved;
             return Number.isFinite(v) && Number(saved) === v;
@@ -1101,7 +1105,8 @@
         _applyField(name, v) {
             var f = this.CONFIG_FIELDS[name], el = qs(f.sel);
             if (!el) return;
-            if (f.kind === "num") NumField.set(el, Number(v));
+            if (f.kind === "switch") el.checked = !!v;
+            else if (f.kind === "num") NumField.set(el, Number(v));
             else el.value = (v === null || v === undefined) ? "" : v;
         },
 
@@ -1166,6 +1171,7 @@
                 return r.json();
             }).then(function (d) {
                 window.safetyDmss._setError(false);
+                window.safetyDmss._health = d;
                 var mode = d.enabled ? (d.mode || "off") : "off";
                 var state = mode === "enforce" ? "enforce" : (mode === "shadow" ? "shadow" : "off");
                 if (card) card.dataset.state = state;
@@ -1178,6 +1184,18 @@
                 var provider = qs("#dc-provider");
                 var providerOpt = provider && Array.prototype.find.call(provider.options, function (o) { return o.value === d.provider; });
                 text("#kpi-provider", providerOpt ? providerOpt.textContent : (d.provider || "—"));
+                // Recording indicator (was lost in the dashboard redesign): it
+                // answers "will this decision leave a trace?" at a glance.
+                var rec = qs("#kpi-recording");
+                if (rec) {
+                    var on = !!d.recording;
+                    rec.hidden = !on;
+                    if (on) {
+                        rec.textContent = d.hmads_floor ? "recording \u00b7 floor" : "recording";
+                        rec.className = "sf-badge sf-badge-ok";
+                        rec.title = "Scoped checks are written to the activity table.";
+                    }
+                }
                 var circuit = (d.circuit_state || "closed").toLowerCase();
                 var cb = qs("#kpi-circuit");
                 if (cb) {
@@ -1267,18 +1285,39 @@
                 if (!r.ok) throw new Error("HTTP " + r.status);
                 return r.json();
             }).then(function (d) {
+                if (d.error) {
+                    // An unreadable table used to render as "no events", which
+                    // made a broken telemetry store indistinguishable from an
+                    // idle one.  Say what actually happened.
+                    window.safetyDmss.state.total = 0;
+                    var countEl = qs("#dmss-events-count");
+                    if (countEl) countEl.textContent = "";
+                    body.innerHTML = '<tr><td colspan="7" class="sf-empty-cell sf-empty-cell-err">' +
+                        "<strong>Activity storage unavailable</strong>" +
+                        "<span>" + esc(d.error_detail || "The telemetry table could not be read.") +
+                        "</span></td></tr>";
+                    window.safetyDmss._setError(true,
+                        "The DMSS activity table cannot be read, so decisions are not listed (" +
+                        (d.error_detail || d.error) + ").");
+                    return false;
+                }
                 window.safetyDmss._setError(false);
                 window.safetyDmss.state.total = d.total || 0;
                 var count = qs("#dmss-events-count");
                 if (count) count.textContent = d.total ? fmtNum(d.total) + (d.total === 1 ? " event" : " events") : "";
                 var events = d.events || [];
                 var filtered = !!(verdict && verdict.value);
+                var health = window.safetyDmss._health || {};
+                var notRecording = health.enabled && health.mode === "enforce" &&
+                    !health.record_enforce_events;
                 if (!events.length) {
                     body.innerHTML = '<tr><td colspan="7" class="sf-empty-cell dm-events-empty">' +
                         "<strong>No events in this window</strong>" +
                         "<span>" + (filtered
                             ? "Only commands matching the Verdict filter are shown. Set it to “Any” to see every check."
-                            : "Checks appear here once agents run bash or python commands.") + "</span></td></tr>";
+                            : (notRecording
+                                ? "Recording of allowed decisions is off, so only refusals are stored. Turn on \u201cRecord allowed decisions\u201d in Enforce behaviour to record every check."
+                                : "Checks appear here once agents run bash or python commands.")) + "</span></td></tr>";
                 } else {
                     body.innerHTML = events.map(function (e, index) {
                         var agent = e.agent_name || e.agent_id;

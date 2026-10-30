@@ -379,6 +379,7 @@ _DEFAULT_SETTINGS = [
     ("decim_safety.circuit_breaker_failures", "3"),
     ("decim_safety.circuit_breaker_cooldown_seconds", "60"),
     ("decim_safety.record_enforce_events", "0"),
+    ("decim_safety.hmads_floor", "0"),
     ("decim_safety.retention_days", "30"),
 ]
 

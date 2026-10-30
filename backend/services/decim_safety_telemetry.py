@@ -30,6 +30,17 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
+# Reason strings surfaced to the admin dashboard are bounded: they are UI text,
+# not a stack trace, and must never carry command content.
+MAX_ERROR_DETAIL = 200
+
+
+def _error_detail(exc: BaseException | None) -> str:
+    """Short, single-line reason for a telemetry failure (admin-facing)."""
+    text = " ".join(str(exc).split()) if exc else ""
+    return text[:MAX_ERROR_DETAIL]
+
+
 # A verdict is "unsafe" when a human must intervene or execution is refused.
 UNSAFE_LEVELS = frozenset({"warning", "requires_approval", "dangerous"})
 _SEVERITY = {"safe": 0, "warning": 1, "requires_approval": 2, "dangerous": 3}
@@ -293,8 +304,12 @@ def record_comparison(
             )
             conn.commit()
         return event_id
-    except Exception:
+    except Exception as exc:
+        # Best-effort by contract: a failed write never blocks execution.  It is
+        # logged with its reason so a broken store is visible in the log instead
+        # of silently dropping every row.
         logger.exception("Failed to record Decim Safety telemetry event")
+        logger.warning("Decim Safety telemetry write rejected: %s", _error_detail(exc))
         return None
 
 
@@ -416,9 +431,14 @@ def list_events(*, limit: int = 50, offset: int = 0, mode: str | None = None,
             ).fetchall()
         return {"events": [_row_to_dict(r, _SELECT_COLUMNS) for r in rows],
                 "total": int(total), "limit": limit, "offset": offset}
-    except Exception:
+    except Exception as exc:
+        # An unreadable table is not an empty table.  Returning ``events: []``
+        # alone made a broken store look like "nothing happened yet", which hid
+        # a schema drift for weeks; the error is now part of the payload so the
+        # dashboard can say the activity storage is unavailable.
         logger.exception("Failed to list Decim Safety events")
-        return {"events": [], "total": 0, "limit": limit, "offset": offset}
+        return {"events": [], "total": 0, "limit": limit, "offset": offset,
+                "error": "telemetry_unavailable", "error_detail": _error_detail(exc)}
 
 
 def list_agents() -> list[dict[str, Any]]:
@@ -490,5 +510,8 @@ def get_state() -> dict[str, Any]:
             return {"telemetry_epoch": 0, "cleared_at": None, "last_decision_at": None, "total_recorded": 0}
         return {"telemetry_epoch": int(row[0]), "cleared_at": row[1],
                 "last_decision_at": row[2], "total_recorded": int(row[3])}
-    except Exception:
-        return {"telemetry_epoch": 0, "cleared_at": None, "last_decision_at": None, "total_recorded": 0}
+    except Exception as exc:
+        logger.exception("Failed to read Decim Safety telemetry state")
+        return {"telemetry_epoch": 0, "cleared_at": None, "last_decision_at": None,
+                "total_recorded": 0, "error": "telemetry_unavailable",
+                "error_detail": _error_detail(exc)}

@@ -250,7 +250,10 @@
             <div class="sf-kpi">
                 <div class="sf-kpi-label">Provider</div>
                 <div class="sf-kpi-value" id="kpi-provider">—</div>
-                <div class="sf-kpi-sub"><span id="kpi-circuit" class="sf-badge sf-badge-muted">circuit —</span></div>
+                <div class="sf-kpi-sub">
+                    <span id="kpi-circuit" class="sf-badge sf-badge-muted">circuit —</span>
+                    <span id="kpi-recording" class="sf-badge sf-badge-ok" hidden>recording</span>
+                </div>
             </div>
             <div class="sf-kpi">
                 <div class="sf-kpi-label">Comparisons</div>
@@ -420,6 +423,52 @@
                         </div>
                         <span class="dc-meta"><span class="dc-human" data-for="dc-cooldown"></span><span class="dc-range">1 – 3,600 s</span></span>
                         <span class="sf-field-err" id="dc-err-cooldown" hidden></span>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Enforce behaviour: what an allowed model decision actually does -->
+            <fieldset class="dc-group">
+                <legend class="dc-group-title"><i data-lucide="gavel"></i>Enforce behaviour</legend>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-record">Record allowed decisions</label>
+                            <span class="save-status" id="dc-status-record" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">
+                            In enforce mode an allowed command is stored in the activity table only while
+                            this is on. Refusals are always recorded. Turning it off leaves no trace of
+                            what the model cleared.
+                        </span>
+                    </div>
+                    <div class="dc-row-control">
+                        <label class="dc-switch">
+                            <input type="checkbox" id="dc-record" role="switch">
+                            <span class="dc-switch-track" aria-hidden="true"></span>
+                        </label>
+                        <span class="sf-field-err" id="dc-err-record" hidden></span>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-floor">HMADS safety floor</label>
+                            <span class="save-status" id="dc-status-floor" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">
+                            Score every command with HMADS as well, and let that verdict raise the DMSS
+                            severity when it is stricter. The floor can only make a decision stricter,
+                            never more permissive — it is how local rules such as
+                            <code>git add -A</code> still apply in enforce mode.
+                        </span>
+                    </div>
+                    <div class="dc-row-control">
+                        <label class="dc-switch">
+                            <input type="checkbox" id="dc-floor" role="switch">
+                            <span class="dc-switch-track" aria-hidden="true"></span>
+                        </label>
+                        <span class="sf-field-err" id="dc-err-floor" hidden></span>
                     </div>
                 </div>
             </fieldset>

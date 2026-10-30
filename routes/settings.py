@@ -66,6 +66,7 @@ def _decim_settings_public(settings) -> Dict[str, Any]:
         'circuit_breaker_failures': settings.circuit_breaker_failures,
         'circuit_breaker_cooldown_seconds': settings.circuit_breaker_cooldown_seconds,
         'record_enforce_events': settings.record_enforce_events,
+        'hmads_floor': getattr(settings, 'hmads_floor', False),
         'retention_days': settings.retention_days,
     }
 
@@ -721,6 +722,7 @@ def api_decim_safety_settings():
             'circuit_breaker_failures': data.get('circuit_breaker_failures', current.circuit_breaker_failures),
             'circuit_breaker_cooldown_seconds': data.get('circuit_breaker_cooldown_seconds', current.circuit_breaker_cooldown_seconds),
             'record_enforce_events': data.get('record_enforce_events', current.record_enforce_events),
+            'hmads_floor': data.get('hmads_floor', getattr(current, 'hmads_floor', False)),
             'retention_days': data.get('retention_days', current.retention_days),
         }
         try:
