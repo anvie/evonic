@@ -289,6 +289,79 @@ html.dark .kb-task-title {
     html.dark .kb-progress-track { background: #374151; }
     .kb-progress-fill { height: 100%; width: 0; border-radius: 9999px; background: #4f46e5; transition: width 0.15s ease-out; }
     html.dark .kb-progress-fill { background: #6366f1; }
+/* Board / Table segmented switch */
+@media (min-width: 768px) { .kb-toolbar-actions { align-self: stretch; } }
+.kb-view-switch { flex: none; align-self: flex-start; position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; align-items: stretch; padding: 3px; border-radius: 0.625rem; background: #e5e7eb; border: 1px solid #d1d5db; }
+html.dark .kb-view-switch { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.1); }
+.kb-view-thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: 0.45rem; background: #4f46e5; box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 4px 10px -2px rgba(79,70,229,.45); transition: transform .22s cubic-bezier(.4,0,.2,1); }
+.kb-view-switch[data-active="table"] .kb-view-thumb { transform: translateX(100%); }
+.kb-view-switch .kb-view-opt { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.3125rem 0.875rem; font-size: 0.875rem; font-weight: 500; line-height: 1.25rem; color: #4b5563; background: transparent; border: 0; border-radius: 0.45rem; transition: color .18s ease; }
+html.dark .kb-view-switch .kb-view-opt { color: #9ca3af; }
+.kb-view-switch .kb-view-opt:hover { color: #111827; }
+html.dark .kb-view-switch .kb-view-opt:hover { color: #e5e7eb; }
+.kb-view-switch .kb-view-opt[aria-selected="true"], html.dark .kb-view-switch .kb-view-opt[aria-selected="true"], .kb-view-switch .kb-view-opt[aria-selected="true"]:hover { color: #fff; }
+.kb-view-opt:focus-visible { outline: 2px solid #818cf8; outline-offset: 1px; }
+@media (max-width: 640px) { .kb-view-switch .kb-view-opt span { display: none; } .kb-view-switch .kb-view-opt { padding: 0.375rem 0.75rem; } }
+@media (prefers-reduced-motion: reduce) { .kb-view-thumb { transition: none; } }
+/* Row selection (click / Shift / drag) */
+.kb-table tr.kb-row:hover { background: rgba(107, 114, 128, 0.08); }
+.kb-table tr.kb-row-selected, .kb-table tr.kb-row-selected:hover { background: rgba(99, 102, 241, 0.16); }
+.kb-cb-cell { cursor: pointer; user-select: none; -webkit-user-select: none; width: 2.25rem; }
+.kb-cb-cell .kb-cb { cursor: pointer; }
+body.kb-select-dragging, body.kb-select-dragging * { user-select: none !important; -webkit-user-select: none !important; cursor: row-resize !important; }
+/* Selection discoverability: tip, grip, drag preview, pointer chip */
+.kb-tip { display: flex; align-items: center; gap: 0.625rem; margin-bottom: 0.75rem; padding: 0.5rem 0.5rem 0.5rem 0.875rem; border-radius: 0.625rem; font-size: 0.8125rem; line-height: 1.25rem; color: #3730a3; background: #eef2ff; border: 1px solid #c7d2fe; animation: kb-tip-in .25s ease-out; }
+.kb-tip[hidden] { display: none; }
+html.dark .kb-tip { color: #c7d2fe; background: rgba(99, 102, 241, 0.12); border-color: rgba(129, 140, 248, 0.3); }
+.kb-summary-wrap { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.kb-tip-link { font-size: 0.75rem; color: #6366f1; text-decoration: underline dotted; text-underline-offset: 3px; }
+.kb-tip-link:hover { color: #4f46e5; text-decoration-style: solid; }
+html.dark .kb-tip-link { color: #a5b4fc; }
+.kb-tip-icon { flex: none; opacity: .85; }
+.kb-tip-text { flex: 1 1 auto; min-width: 0; }
+.kb-tip kbd { display: inline-block; padding: 0 0.375rem; margin: 0 0.1rem; font: 600 0.75rem/1.2rem ui-monospace, SFMono-Regular, Menlo, monospace; color: inherit; background: rgba(255,255,255,.75); border: 1px solid #a5b4fc; border-bottom-width: 2px; border-radius: 0.3rem; }
+html.dark .kb-tip kbd { background: rgba(255,255,255,.08); border-color: rgba(165,180,252,.45); }
+.kb-tip-drag { font-weight: 600; text-decoration: underline dotted; text-underline-offset: 3px; }
+.kb-tip-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border-radius: 0.4rem; color: inherit; opacity: .7; transition: opacity .15s ease, background-color .15s ease; }
+.kb-tip-close:hover { opacity: 1; background: rgba(99, 102, 241, 0.18); }
+@keyframes kb-tip-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (max-width: 640px) { .kb-tip-drag, .kb-tip kbd { display: none; } }
+.kb-table tr.kb-row-selected .kb-cb-cell { box-shadow: inset 3px 0 0 #6366f1; }
+/* "N selected" card: height grows open, the card slides + fades in, and the reverse on the way out */
+.kb-bulk-wrap { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows .3s cubic-bezier(.4, 0, .2, 1), opacity .2s ease, visibility 0s linear .3s; }
+.kb-bulk-wrap.is-open { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows .3s cubic-bezier(.4, 0, .2, 1), opacity .25s ease .05s, visibility 0s; }
+.kb-bulk-inner { min-height: 0; overflow: hidden; }
+.kb-bulk-inner > #bulk-bar { margin-bottom: 0.75rem; transform: translateY(-10px) scale(.985); transform-origin: top center; transition: transform .3s cubic-bezier(.2, .8, .2, 1); }
+.kb-bulk-wrap.is-open .kb-bulk-inner > #bulk-bar { transform: none; }
+.kb-table tr.kb-row { transition: background-color .15s ease; }
+@media (prefers-reduced-motion: reduce) { .kb-bulk-wrap, .kb-bulk-wrap.is-open, .kb-bulk-inner > #bulk-bar, .kb-table tr.kb-row { transition: none; } }
+/* live preview of the range being dragged */
+.kb-table tr.kb-row-drag, .kb-table tr.kb-row-drag:hover { background: rgba(99, 102, 241, 0.3); }
+.kb-table tr.kb-row-drag-off, .kb-table tr.kb-row-drag-off:hover { background: rgba(239, 68, 68, 0.18); }
+.kb-drag-chip { position: fixed; z-index: 80; pointer-events: none; padding: 0.25rem 0.625rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; color: #fff; background: #4f46e5; box-shadow: 0 4px 14px rgba(79, 70, 229, 0.45); white-space: nowrap; }
+.kb-drag-chip[hidden] { display: none; }
+.kb-drag-chip.kb-chip-off { background: #dc2626; box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4); }
+@media (prefers-reduced-motion: reduce) { .kb-tip { animation: none; } }
+/* Table pagination */
+.kb-table-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 1rem; margin-top: 0.5rem; min-height: 2.25rem; }
+.kb-pager { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.kb-pager-size { display: inline-flex; align-items: center; gap: 0.5rem; }
+.kb-pager-size .ev-cb { flex: none; }
+.kb-pager-nav { display: inline-flex; align-items: center; gap: 0.5rem; }
+.kb-pager-info { min-width: 6.5rem; text-align: center; font-size: 0.8125rem; color: #6b7280; font-variant-numeric: tabular-nums; }
+html.dark .kb-pager-info { color: #9ca3af; }
+.kb-pager-btn { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border-radius: 0.5rem; border: 1px solid #d1d5db; color: #374151; background: #fff; transition: background-color .15s ease, opacity .15s ease; }
+html.dark .kb-pager-btn { border-color: rgba(255,255,255,.12); color: #e5e7eb; background: rgba(255,255,255,.05); }
+.kb-pager-btn:hover:not(:disabled) { background: #eef2ff; }
+html.dark .kb-pager-btn:hover:not(:disabled) { background: rgba(99,102,241,.25); }
+.kb-pager-btn:disabled { opacity: .4; }
+/* Table view: layout rules kept here because the compiled Tailwind build does not ship every utility. */
+.kb-table-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem; }
+.kb-table-filters .kb-reset-btn { white-space: nowrap; }
+.kb-table { width: 100%; border-collapse: collapse; }
+.kb-table th, .kb-table td { vertical-align: middle; }
+.kb-table td.kb-title-cell { max-width: 28rem; width: 100%; }
+.kb-table td.kb-title-cell a { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 </style>
 
 <!-- Board header -->
@@ -307,6 +380,18 @@ html.dark .kb-task-title {
         </div>
     </div>
     <div class="flex flex-col md:flex-row gap-2 items-center mt-3">
+        <!-- View switch (left corner) -->
+<div class="kb-view-switch" id="view-switch" role="tablist" aria-label="View mode" data-active="board">
+                <span class="kb-view-thumb" aria-hidden="true"></span>
+                <button type="button" id="view-btn-board" role="tab" aria-selected="true" onclick="setViewMode('board')" class="kb-view-opt">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="5" height="18" rx="1.5"/><rect x="10" y="3" width="5" height="11" rx="1.5"/><rect x="17" y="3" width="4" height="15" rx="1.5"/></svg>
+                    <span>Board</span>
+                </button>
+                <button type="button" id="view-btn-table" role="tab" aria-selected="false" onclick="setViewMode('table')" class="kb-view-opt">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 10h18M3 15h18M9 10v10"/></svg>
+                    <span>Table</span>
+                </button>
+            </div>
         <!-- Desktop search bar (left of buttons) -->
         <div class="hidden md:flex gap-2 items-center">
             <input type="text" id="search-input-desktop" placeholder="Search tasks..." class="w-64 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500 focus:border-indigo-400" onkeydown="if(event.key==='Enter')applySearch()" oninput="syncSearch(this)">
@@ -314,11 +399,11 @@ html.dark .kb-task-title {
         </div>
 
         <!-- Buttons group -->
-        <div class="flex gap-2 md:ml-auto">
+        <div class="kb-toolbar-actions flex gap-2 md:ml-auto">
             <button id="assign-btn" onclick="openAssignModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 bg-gray-300 dark:bg-gray-600 transition">Assign Agents</button>
             <button id="trigger-btn" onclick="triggerAgents()" class="px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition">Trigger Agents</button>
 
-<button onclick="openCreateModal()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition">+ Add Task</button>
+            <button onclick="openCreateModal()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition">+ Add Task</button>
         </div>
 
         <!-- Mobile search bar (below buttons, full width) -->
@@ -330,7 +415,7 @@ html.dark .kb-task-title {
 </div>
 
 <!-- Board columns -->
-<div class="flex gap-4 px-6 pb-6 overflow-x-auto" style="min-height: calc(100vh - 140px);">
+<div id="board-view" class="flex gap-4 px-6 pb-6 overflow-x-auto" style="min-height: calc(100vh - 140px);">
     <div class="flex-1 min-w-[280px] dark:bg-gray-800 bg-gray-200 rounded-xl p-4 flex flex-col border border-gray-500" data-status="todo">
         <div class="flex items-center gap-2 mb-3">
             <span class="font-semibold text-gray-700 dark:text-gray-200">Todo</span>
@@ -385,6 +470,98 @@ html.dark .kb-task-title {
             <div class="kanban-skeleton" id="skel-archived">
                 <div class="skeleton-card"><div class="skeleton-line sk-title"></div><div class="skeleton-line sk-desc"></div><div class="skeleton-line sk-meta"></div><div class="sk-actions"><div class="skeleton-line sk-btn"></div><div class="skeleton-line sk-btn"></div></div></div>
                 <div class="skeleton-card"><div class="skeleton-line sk-title"></div><div class="skeleton-line sk-desc"></div><div class="skeleton-line sk-meta"></div><div class="sk-actions"><div class="skeleton-line sk-btn"></div><div class="skeleton-line sk-btn"></div></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Table view -->
+<div id="table-view" class="hidden px-6 pb-6" style="min-height: calc(100vh - 140px);">
+    <div class="kb-table-filters">
+        <select id="tf-status" onchange="onTableFilterChange()" class="w-full px-2.5 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500">
+            <option value="active">Status: Active (no archived)</option>
+            <option value="all">Status: All</option>
+            <option value="todo">Todo</option>
+            <option value="in-progress">In Progress</option>
+            <option value="done">Done</option>
+            <option value="archived">Archived</option>
+        </select>
+        <select id="tf-priority" onchange="onTableFilterChange()" class="w-full px-2.5 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500">
+            <option value="">Priority: All</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+        </select>
+        <select id="tf-assignee" onchange="onTableFilterChange()" class="w-full px-2.5 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500"></select>
+        <select id="tf-deps" onchange="onTableFilterChange()" class="w-full px-2.5 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-500">
+            <option value="">Dependencies: Any</option>
+            <option value="blocked">Blocked (deps unmet)</option>
+            <option value="ready">No unmet deps</option>
+        </select>
+        <button type="button" onclick="resetTableFilters()" class="kb-reset-btn px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-600 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500 transition">Reset filters</button>
+    </div>
+    <div id="select-tip" class="kb-tip" role="note" hidden>
+        <svg class="kb-tip-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/></svg>
+        <span class="kb-tip-text"><strong>Select many at once:</strong> <kbd>Shift</kbd>+click for a range, <span class="kb-tip-drag">drag across the checkboxes to toggle rows</span>, or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+click to add one.</span>
+        <button type="button" class="kb-tip-close" onclick="dismissSelectTip()" aria-label="Dismiss tip" title="Dismiss">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+    </div>
+    <div id="bulk-wrap" class="kb-bulk-wrap">
+    <div class="kb-bulk-inner">
+    <div id="bulk-bar" class="flex items-center flex-wrap gap-2 px-3 py-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700">
+        <span class="text-sm font-medium text-indigo-700 dark:text-indigo-300"><span id="bulk-count">0</span> selected<span id="bulk-offpage" class="font-normal text-indigo-500 dark:text-indigo-400"></span></span>
+        <select id="bulk-status" onchange="bulkSelectAction(this, 'status')" class="px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+            <option value="">Move to…</option>
+            <option value="todo">Todo</option>
+            <option value="in-progress">In Progress</option>
+            <option value="done">Done</option>
+        </select>
+        <select id="bulk-priority" onchange="bulkSelectAction(this, 'priority')" class="px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+            <option value="">Priority…</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+        </select>
+        <select id="bulk-assignee" onchange="bulkSelectAction(this, 'assignee')" class="px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"></select>
+        <button type="button" onclick="bulkArchive(true)" class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 transition">Archive</button>
+        <button type="button" onclick="bulkArchive(false)" class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 transition">Unarchive</button>
+        <button type="button" onclick="bulkDelete()" class="px-3 py-1 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition">Delete</button>
+        <button type="button" onclick="clearSelection()" class="ml-auto text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline">Clear selection</button>
+    </div>
+    </div>
+    </div>
+    <div class="overflow-x-auto rounded-xl border border-gray-300 dark:border-gray-600">
+        <table class="kb-table text-sm">
+            <thead class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                <tr id="table-head"></tr>
+            </thead>
+            <tbody id="table-body" class="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800"></tbody>
+        </table>
+    </div>
+    <div class="kb-table-footer">
+        <div class="kb-summary-wrap">
+            <div id="table-summary" class="text-xs text-gray-500 dark:text-gray-400"></div>
+            <button type="button" class="kb-tip-link" onclick="showSelectTip()" title="Shift+click, Ctrl/⌘+click and drag to select several rows">Selection tips</button>
+        </div>
+        <div class="kb-pager">
+            <label class="kb-pager-size text-xs text-gray-500 dark:text-gray-400">
+                <span>Rows per page</span>
+                <select id="page-size" onchange="setPageSize(this.value)" class="px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </label>
+            <div class="kb-pager-nav">
+                <button type="button" id="page-prev" onclick="gotoPage(tablePage - 1)" class="kb-pager-btn" aria-label="Previous page">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+                </button>
+                <span id="page-indicator" class="kb-pager-info"></span>
+                <button type="button" id="page-next" onclick="gotoPage(tablePage + 1)" class="kb-pager-btn" aria-label="Next page">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+                </button>
             </div>
         </div>
     </div>
@@ -977,6 +1154,7 @@ html.dark .kb-task-title {
 
         // Check for auto-archive (done tasks > 3 days without archived_at)
         checkAutoArchive();
+        if (viewMode === 'table') renderTable();
     }
 
     function fmtDate(dateStr) {
@@ -2830,8 +3008,505 @@ html.dark .kb-task-title {
     window.addEventListener('load', _initTaskFlash);
     if (typeof RealtimeClient !== 'undefined') _initTaskFlash();
 
+
+    // ── Table view + bulk actions ─────────────────────────────────────────────
+
+    let viewMode = 'board';
+    try { viewMode = localStorage.getItem('kanban_view') === 'table' ? 'table' : 'board'; } catch (e) {}
+    let tableSort = { key: 'updated_at', dir: 'desc' };
+    const selectedIds = new Set();
+    let tablePage = 1;
+    let tablePageSize = 25;
+    try { const saved = parseInt(localStorage.getItem('kanban_page_size'), 10); if ([10, 25, 50, 100].includes(saved)) tablePageSize = saved; } catch (e) {}
+    let tableViewSig = '';
+    let tablePageRows = [];      // tasks on the page currently shown, in display order
+    let selAnchorId = null;      // last row clicked: start of a Shift range
+    let selAnchorState = true;   // whether that click selected or deselected it
+    let selDrag = null;          // active drag-select: { startIdx, curIdx, target, base:Set }
+    let selRenderPending = false;
+    let selScrollRaf = 0;
+    let selLastY = 0;
+    let selTipDismissed = false;
+    try { selTipDismissed = localStorage.getItem('kanban_select_tip') === '1'; } catch (e) {}
+
+    const TABLE_COLUMNS = [
+        { key: 'id', label: 'ID' },
+        { key: 'title', label: 'Title' },
+        { key: 'status', label: 'Status' },
+        { key: 'priority', label: 'Priority' },
+        { key: 'assignee', label: 'Assignee' },
+        { key: 'deps', label: 'Deps' },
+        { key: 'updated_at', label: 'Updated' },
+    ];
+    const STATUS_LABEL = { 'todo': 'Todo', 'in-progress': 'In Progress', 'done': 'Done' };
+    const STATUS_BADGE = {
+        'todo': 'bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-200',
+        'in-progress': 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300',
+        'done': 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300',
+    };
+    const PRIORITY_RANK = { high: 3, medium: 2, low: 1 };
+
+    function setViewMode(mode) {
+        viewMode = mode === 'table' ? 'table' : 'board';
+        try { localStorage.setItem('kanban_view', viewMode); } catch (e) {}
+        applyViewMode();
+    }
+
+    function applyViewMode() {
+        const isTable = viewMode === 'table';
+        $('#board-view').toggleClass('hidden', isTable);
+        $('#table-view').toggleClass('hidden', !isTable);
+        $('#view-switch').attr('data-active', viewMode);
+        $('#view-btn-board').attr('aria-selected', String(!isTable));
+        $('#view-btn-table').attr('aria-selected', String(isTable));
+        if (isTable) { populateTableAgentSelects(); renderTable(); }
+    }
+
+    function populateTableAgentSelects() {
+        const agents = _agentCache || [];
+        const opts = agents.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+        const $f = $('#tf-assignee');
+        const cur = $f.val();
+        $f.html('<option value="">Assignee: All</option><option value="__none__">Unassigned</option>' + opts);
+        if (cur) $f.val(cur);
+        $('#bulk-assignee').html('<option value="">Assign to…</option><option value="__none__">Unassigned</option>' + opts);
+    }
+
+    function onTableFilterChange() { renderTable(); }
+
+    function resetTableFilters() {
+        $('#tf-status').val('active');
+        $('#tf-priority, #tf-assignee, #tf-deps').val('');
+        clearSearch();
+        renderTable();
+    }
+
+    function getFilteredTableTasks() {
+        const kw = searchKeyword.toLowerCase();
+        const st = $('#tf-status').val() || 'active';
+        const pr = $('#tf-priority').val();
+        const as = $('#tf-assignee').val();
+        const dp = $('#tf-deps').val();
+        const list = tasks.filter(t => {
+            if (st === 'active' && t.archived_at) return false;
+            if (st === 'archived' && !t.archived_at) return false;
+            if (['todo', 'in-progress', 'done'].includes(st) && (t.status !== st || t.archived_at)) return false;
+            if (pr && t.priority !== pr) return false;
+            if (as === '__none__' ? !!t.assignee : (as && t.assignee !== as)) return false;
+            if (dp === 'blocked' && t.deps_met !== false) return false;
+            if (dp === 'ready' && t.deps_met === false) return false;
+            if (kw && !((t.title || '').toLowerCase().includes(kw) ||
+                        (t.description || '').toLowerCase().includes(kw) ||
+                        String(t.id).includes(kw))) return false;
+            return true;
+        });
+        const dir = tableSort.dir === 'asc' ? 1 : -1;
+        const val = t => {
+            switch (tableSort.key) {
+                case 'id': return t.id;
+                case 'title': return (t.title || '').toLowerCase();
+                case 'status': return t.archived_at ? 'archived' : (t.status || '');
+                case 'priority': return PRIORITY_RANK[t.priority] || 0;
+                case 'assignee': return (getAgentName(t.assignee) || '').toLowerCase();
+                case 'deps': return (t.deps || []).length;
+                default: return new Date(t.updated_at || t.created_at || 0).getTime();
+            }
+        };
+        return list.sort((a, b) => {
+            const x = val(a), y = val(b);
+            return x < y ? -dir : x > y ? dir : b.id - a.id;
+        });
+    }
+
+    function sortTable(key) {
+        tableSort = { key, dir: tableSort.key === key && tableSort.dir === 'asc' ? 'desc' : 'asc' };
+        renderTable();
+    }
+
+    function renderTable() {
+        // A re-render mid-drag would swap the rows under the pointer; run it once the drag ends.
+        if (selDrag) { selRenderPending = true; return; }
+        const allRows = getFilteredTableTasks();
+        // Back to page 1 whenever the filters, search or sort change (not on plain auto-refresh).
+        const sig = JSON.stringify([$('#tf-status').val(), $('#tf-priority').val(), $('#tf-assignee').val(), $('#tf-deps').val(), searchKeyword, tableSort]);
+        if (sig !== tableViewSig) { tableViewSig = sig; tablePage = 1; selAnchorId = null; }
+        const totalPages = Math.max(1, Math.ceil(allRows.length / tablePageSize));
+        tablePage = Math.min(Math.max(1, tablePage), totalPages);
+        const startIdx = (tablePage - 1) * tablePageSize;
+        const rows = allRows.slice(startIdx, startIdx + tablePageSize);
+        tablePageRows = rows;
+
+        // Selection survives paging, but only tasks matching the current filters may stay selected.
+        const filteredIds = new Set(allRows.map(t => t.id));
+        selectedIds.forEach(id => { if (!filteredIds.has(id)) selectedIds.delete(id); });
+
+        // Header checkbox reflects the current page only.
+        const allSel = rows.length > 0 && rows.every(t => selectedIds.has(t.id));
+        const someSel = rows.some(t => selectedIds.has(t.id));
+        const th = 'px-3 py-2 text-left font-semibold whitespace-nowrap select-none';
+        let head = `<th class="${th} w-8"><input type="checkbox" id="select-all" ${allSel ? 'checked' : ''} onchange="toggleSelectAll(this.checked)" aria-label="Select all" title="Select all rows on this page"></th>`;
+        TABLE_COLUMNS.forEach(c => {
+            const arrow = tableSort.key === c.key ? (tableSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+            head += `<th class="${th} cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-300" onclick="sortTable('${c.key}')">${c.label}${arrow}</th>`;
+        });
+        $('#table-head').html(head);
+        const selAll = document.getElementById('select-all');
+        if (selAll) selAll.indeterminate = someSel && !allSel;
+
+        if (rows.length === 0) {
+            $('#table-body').html(`<tr><td colspan="${TABLE_COLUMNS.length + 1}" class="px-3 py-8 text-center text-gray-400">No tasks match the current filters</td></tr>`);
+        } else {
+            $('#table-body').html(rows.map(t => {
+                const checked = selectedIds.has(t.id);
+                const status = t.archived_at ? 'archived' : t.status;
+                const sBadge = t.archived_at ? STATUS_BADGE.todo : (STATUS_BADGE[t.status] || STATUS_BADGE.todo);
+                const sLabel = t.archived_at ? 'Archived' : (STATUS_LABEL[t.status] || t.status);
+                const pBadge = PRIORITY_BADGE[t.priority] || PRIORITY_BADGE.medium;
+                const deps = (t.deps || []);
+                const depsCell = deps.length
+                    ? `<span class="${t.deps_met === false ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}" title="${t.deps_met === false ? 'Blocked by unmet dependencies' : 'All dependencies met'}">${deps.map(d => '#' + d).join(', ')}</span>`
+                    : '<span class="text-gray-300 dark:text-gray-600">—</span>';
+                return `<tr class="kb-row${checked ? ' kb-row-selected' : ''}" data-id="${t.id}" data-status="${esc(status)}">
+                    <td class="px-3 py-2 kb-cb-cell" title="Shift+click selects a range · drag down the checkboxes to select several"><input type="checkbox" class="kb-cb" ${checked ? 'checked' : ''} aria-label="Select task ${t.id}"></td>
+                    <td class="px-3 py-2 text-gray-500 dark:text-gray-400 whitespace-nowrap">#${t.id}</td>
+                    <td class="px-3 py-2 kb-title-cell"><a href="javascript:void(0)" onclick="openDetailModal(${t.id})" class="font-medium text-gray-900 dark:text-gray-100 hover:text-indigo-600 dark:hover:text-indigo-300">${esc(t.title)}</a></td>
+                    <td class="px-3 py-2 whitespace-nowrap"><span class="text-xs font-medium px-2 py-0.5 rounded-full ${sBadge}">${esc(sLabel)}</span></td>
+                    <td class="px-3 py-2 whitespace-nowrap"><span class="text-xs font-medium px-2 py-0.5 rounded-full ${pBadge}">${esc(t.priority || 'medium')}</span></td>
+                    <td class="px-3 py-2 whitespace-nowrap text-gray-700 dark:text-gray-200">${t.assignee ? esc(getAgentName(t.assignee)) : '<span class="text-gray-300 dark:text-gray-600">—</span>'}</td>
+                    <td class="px-3 py-2 whitespace-nowrap">${depsCell}</td>
+                    <td class="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-gray-400">${fmtShort(t.updated_at || t.created_at)}</td>
+                </tr>`;
+            }).join(''));
+        }
+        const from = allRows.length ? startIdx + 1 : 0;
+        $('#table-summary').text(allRows.length === tasks.length
+            ? `${from}–${startIdx + rows.length} of ${allRows.length} tasks`
+            : `${from}–${startIdx + rows.length} of ${allRows.length} matching (${tasks.length} total)`);
+        $('#page-indicator').text(`Page ${tablePage} of ${totalPages}`);
+        $('#page-prev').prop('disabled', tablePage <= 1);
+        $('#page-next').prop('disabled', tablePage >= totalPages);
+        if (String($('#page-size').val()) !== String(tablePageSize)) $('#page-size').val(String(tablePageSize));
+        const tip = document.getElementById('select-tip');
+        if (tip) tip.hidden = selTipDismissed || allRows.length < 2;
+        updateBulkBar(rows);
+    }
+
+    // Repaint checkboxes, row highlight, header checkbox and bulk bar without rebuilding the table.
+    function syncRowSelection() {
+        const body = document.getElementById('table-body');
+        if (!body) return;
+        body.querySelectorAll('tr[data-id]').forEach(tr => {
+            const on = selectedIds.has(Number(tr.dataset.id));
+            tr.classList.toggle('kb-row-selected', on);
+            const cb = tr.querySelector('.kb-cb');
+            if (cb && cb.checked !== on) cb.checked = on;
+        });
+        const allSel = tablePageRows.length > 0 && tablePageRows.every(t => selectedIds.has(t.id));
+        const someSel = tablePageRows.some(t => selectedIds.has(t.id));
+        const selAll = document.getElementById('select-all');
+        if (selAll) { selAll.checked = allSel; selAll.indeterminate = someSel && !allSel; }
+        updateBulkBar(tablePageRows);
+    }
+
+    // Drag semantics: every row the drag overlaps flips relative to how it was before the drag started,
+    // so a selected row becomes deselected and an unselected row becomes selected.
+    function selApplyToggle(base, from, to) {
+        selectedIds.clear();
+        base.forEach(id => selectedIds.add(id));
+        const lo = Math.min(from, to), hi = Math.max(from, to);
+        for (let i = lo; i <= hi; i++) {
+            const t = tablePageRows[i];
+            if (!t) continue;
+            if (base.has(t.id)) selectedIds.delete(t.id); else selectedIds.add(t.id);
+        }
+        syncRowSelection();
+    }
+
+    function selIndexOf(id) { return tablePageRows.findIndex(t => t.id === id); }
+
+    // Set rows from..to (inclusive, either order) to `on`, starting from the `base` selection.
+    function selApplyRange(base, from, to, on) {
+        selectedIds.clear();
+        base.forEach(id => selectedIds.add(id));
+        const lo = Math.min(from, to), hi = Math.max(from, to);
+        for (let i = lo; i <= hi; i++) {
+            const t = tablePageRows[i];
+            if (!t) continue;
+            if (on) selectedIds.add(t.id); else selectedIds.delete(t.id);
+        }
+        syncRowSelection();
+    }
+
+    // Row index under a screen Y, clamped to the first/last row so dragging past the table still works.
+    function selRowIndexAtY(y) {
+        const rows = document.querySelectorAll('#table-body tr[data-id]');
+        if (!rows.length) return -1;
+        for (let i = 0; i < rows.length; i++) {
+            if (y < rows[i].getBoundingClientRect().bottom) return i;
+        }
+        return rows.length - 1;
+    }
+
+    function dismissSelectTip() {
+        selTipDismissed = true;
+        try { localStorage.setItem('kanban_select_tip', '1'); } catch (e) {}
+        const tip = document.getElementById('select-tip');
+        if (tip) tip.hidden = true;
+    }
+
+    function showSelectTip() {
+        selTipDismissed = false;
+        try { localStorage.removeItem('kanban_select_tip'); } catch (e) {}
+        const tip = document.getElementById('select-tip');
+        if (tip) tip.hidden = false;
+    }
+
+    function selChip() {
+        let chip = document.getElementById('sel-drag-chip');
+        if (!chip) {
+            chip = document.createElement('div');
+            chip.id = 'sel-drag-chip';
+            chip.className = 'kb-drag-chip';
+            chip.hidden = true;
+            document.body.appendChild(chip);
+        }
+        return chip;
+    }
+
+    // Highlight the rows inside the dragged range and keep a small label next to the pointer.
+    // Nothing is shown until the pointer actually leaves the first row, so a plain click stays clean.
+    function selDragPaint(x, y) {
+        if (!selDrag) return;
+        const moved = selDrag.curIdx !== selDrag.startIdx;
+        const lo = Math.min(selDrag.startIdx, selDrag.curIdx), hi = Math.max(selDrag.startIdx, selDrag.curIdx);
+        let adding = 0, removing = 0;
+        document.querySelectorAll('#table-body tr[data-id]').forEach((tr, i) => {
+            const inRange = moved && i >= lo && i <= hi;
+            const wasOn = inRange && selDrag.base.has(Number(tr.dataset.id));
+            tr.classList.toggle('kb-row-drag', inRange && !wasOn);        // will become selected
+            tr.classList.toggle('kb-row-drag-off', inRange && wasOn);     // will become deselected
+            if (inRange) { if (wasOn) removing++; else adding++; }
+        });
+        const chip = selChip();
+        chip.hidden = !moved;
+        if (!moved) return;
+        const parts = [];
+        if (adding) parts.push('Select ' + adding);
+        if (removing) parts.push('Deselect ' + removing);
+        chip.textContent = parts.join(' · ');
+        chip.classList.toggle('kb-chip-off', adding === 0);
+        if (x != null) {
+            // Keep the label inside the window: flip above the pointer near the bottom, pull in from the right edge.
+            const w = chip.offsetWidth || 120, h = chip.offsetHeight || 26;
+            const left = Math.max(8, Math.min(x + 16, window.innerWidth - w - 8));
+            const top = (y + 18 + h > window.innerHeight - 8) ? Math.max(8, y - h - 14) : y + 18;
+            chip.style.left = left + 'px';
+            chip.style.top = top + 'px';
+        }
+    }
+
+    function selFinishDrag() {
+        const moved = selDrag && selDrag.curIdx !== selDrag.startIdx;
+        selDrag = null;
+        const chip = document.getElementById('sel-drag-chip');
+        if (chip) chip.hidden = true;
+        document.querySelectorAll('#table-body tr.kb-row-drag, #table-body tr.kb-row-drag-off')
+            .forEach(tr => tr.classList.remove('kb-row-drag', 'kb-row-drag-off'));
+        if (moved) dismissSelectTip();      // they found the feature, no need to keep hinting
+        document.body.classList.remove('kb-select-dragging');
+        if (selScrollRaf) { cancelAnimationFrame(selScrollRaf); selScrollRaf = 0; }
+        if (selRenderPending) { selRenderPending = false; renderTable(); }
+    }
+
+    // Scroll the page while the pointer is held near the top/bottom edge of the window.
+    function selAutoScroll() {
+        selScrollRaf = 0;
+        if (!selDrag) return;
+        const edge = 70, max = 22;
+        let dy = 0;
+        if (selLastY < edge) dy = -Math.ceil(max * (edge - selLastY) / edge);
+        else if (selLastY > window.innerHeight - edge) dy = Math.ceil(max * (selLastY - (window.innerHeight - edge)) / edge);
+        if (dy) {
+            window.scrollBy(0, dy);
+            const idx = selRowIndexAtY(selLastY);
+            if (idx >= 0 && idx !== selDrag.curIdx) {
+                selDrag.curIdx = idx;
+                selApplyToggle(selDrag.base, selDrag.startIdx, idx);
+            }
+            selDragPaint();
+        }
+        selScrollRaf = requestAnimationFrame(selAutoScroll);
+    }
+
+    // Plain click toggles one row, Ctrl/Cmd+click toggles without moving the anchor,
+    // Shift+click selects everything between the anchor and the clicked row.
+    function selClickRow(id, e) {
+        const idx = selIndexOf(id);
+        if (idx < 0) return;
+        const anchorIdx = selAnchorId == null ? -1 : selIndexOf(selAnchorId);
+        if (e.shiftKey && anchorIdx >= 0) {
+            selApplyRange(new Set(selectedIds), anchorIdx, idx, selAnchorState);
+            dismissSelectTip();
+            return;
+        }
+        const on = !selectedIds.has(id);
+        if (on) selectedIds.add(id); else selectedIds.delete(id);
+        if (!(e.ctrlKey || e.metaKey)) { selAnchorId = id; selAnchorState = on; }
+        syncRowSelection();
+    }
+
+    function initTableSelection() {
+        const body = document.getElementById('table-body');
+        if (!body || body._selReady) return;
+        body._selReady = true;
+
+        body.addEventListener('mousedown', function (e) {
+            if (e.button !== 0) return;
+            const cell = e.target.closest('.kb-cb-cell');
+            if (!cell) return;
+            const tr = cell.closest('tr[data-id]');
+            if (!tr) return;
+            e.preventDefault();                       // no text selection, no native toggle
+            const id = Number(tr.dataset.id);
+            if (e.shiftKey || e.ctrlKey || e.metaKey) { selClickRow(id, e); return; }
+            const idx = selIndexOf(id);
+            const target = !selectedIds.has(id);
+            selDrag = { startIdx: idx, curIdx: idx, target, base: new Set(selectedIds) };
+            selAnchorId = id; selAnchorState = target;
+            selLastY = e.clientY;
+            document.body.classList.add('kb-select-dragging');
+            selApplyToggle(selDrag.base, idx, idx);
+            if (!selScrollRaf) selScrollRaf = requestAnimationFrame(selAutoScroll);
+        });
+
+        document.addEventListener('mousemove', function (e) {
+            if (!selDrag) return;
+            selLastY = e.clientY;
+            const idx = selRowIndexAtY(e.clientY);
+            if (idx >= 0 && idx !== selDrag.curIdx) {
+                selDrag.curIdx = idx;
+                selApplyToggle(selDrag.base, selDrag.startIdx, idx);
+            }
+            selDragPaint(e.clientX, e.clientY);
+        });
+
+        document.addEventListener('mouseup', function () { if (selDrag) selFinishDrag(); });
+        window.addEventListener('blur', function () { if (selDrag) selFinishDrag(); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Escape' || !selDrag) return;
+            selectedIds.clear(); selDrag.base.forEach(id => selectedIds.add(id));
+            syncRowSelection();
+            selFinishDrag();
+        });
+
+        // Mouse selection is handled on mousedown; this only serves the keyboard (Space, Shift+Space).
+        body.addEventListener('click', function (e) {
+            const cb = e.target.closest('.kb-cb');
+            if (!cb) return;
+            e.preventDefault();
+            if (e.detail === 0) {
+                const tr = cb.closest('tr[data-id]');
+                if (tr) selClickRow(Number(tr.dataset.id), e);
+            }
+            setTimeout(syncRowSelection, 0);
+        });
+    }
+
+    function toggleSelectAll(on) {
+        const start = (tablePage - 1) * tablePageSize;
+        getFilteredTableTasks().slice(start, start + tablePageSize)
+            .forEach(t => { if (on) selectedIds.add(t.id); else selectedIds.delete(t.id); });
+        selAnchorId = null;
+        renderTable();
+    }
+
+    function gotoPage(n) { tablePage = n; renderTable(); }
+
+    function setPageSize(v) {
+        const n = parseInt(v, 10);
+        if (![10, 25, 50, 100].includes(n)) return;
+        tablePageSize = n;
+        tablePage = 1;
+        try { localStorage.setItem('kanban_page_size', String(n)); } catch (e) {}
+        renderTable();
+    }
+
+    function clearSelection() { selectedIds.clear(); selAnchorId = null; renderTable(); }
+
+    function updateBulkBar(pageRows) {
+        const wrap = document.getElementById('bulk-wrap');
+        const open = selectedIds.size > 0;
+        // While the card slides away keep the last numbers so it doesn't flash "0 selected".
+        if (open) {
+            $('#bulk-count').text(selectedIds.size);
+            const onPage = (pageRows || []).filter(t => selectedIds.has(t.id)).length;
+            const other = selectedIds.size - onPage;
+            $('#bulk-offpage').text(other > 0 && pageRows ? ` (${other} on other pages)` : '');
+        }
+        if (wrap) {
+            wrap.classList.toggle('is-open', open);
+            wrap.setAttribute('aria-hidden', open ? 'false' : 'true');
+        }
+    }
+
+    // Run one request per selected task, then report how many succeeded.
+    function runBulk(label, ids, request) {
+        const calls = ids.map(id => new Promise(resolve => {
+            request(id).done(() => resolve({ id, ok: true }))
+                .fail(xhr => resolve({ id, ok: false, error: xhr.responseJSON?.error || 'failed' }));
+        }));
+        return Promise.all(calls).then(results => {
+            const failed = results.filter(r => !r.ok);
+            const okCount = results.length - failed.length;
+            if (failed.length === 0) {
+                toast.show(`${okCount} task${okCount === 1 ? '' : 's'} ${label}`, 'success');
+            } else {
+                const detail = failed.slice(0, 3).map(f => `#${f.id}: ${f.error}`).join('; ');
+                toast.show(`${okCount} ${label}, ${failed.length} failed (${detail})`, 'error', 6000);
+            }
+            previousTasksFingerprint = '';
+            loadTasks();
+        });
+    }
+
+    function bulkSelectAction(sel, field) {
+        const value = sel.value;
+        sel.value = '';
+        if (!value || selectedIds.size === 0) return;
+        const ids = [...selectedIds];
+        const payload = field === 'assignee' ? { assignee: value === '__none__' ? '' : value } : { [field]: value };
+        runBulk(`updated (${field})`, ids, id => $.ajax({
+            url: `${API}/tasks/${id}`, method: 'PUT',
+            contentType: 'application/json', data: JSON.stringify(payload),
+        }));
+    }
+
+    function bulkArchive(archive) {
+        if (selectedIds.size === 0) return;
+        const verb = archive ? 'archive' : 'unarchive';
+        runBulk(archive ? 'archived' : 'unarchived', [...selectedIds], id => $.post(`${API}/tasks/${id}/${verb}`));
+    }
+
+    async function bulkDelete() {
+        const ids = [...selectedIds];
+        if (ids.length === 0) return;
+        const confirmed = await showConfirm({
+            title: 'Delete Tasks',
+            message: `Are you sure you want to delete ${ids.length} selected task${ids.length === 1 ? '' : 's'}? This action cannot be undone.`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            danger: true
+        });
+        if (!confirmed) return;
+        runBulk('deleted', ids, id => $.ajax({ url: `${API}/tasks/${id}`, method: 'DELETE' }));
+    }
+
+    initTableSelection();
+    applyViewMode();
+
     fetchNotifierStatus();
     preloadAgentCache(function() {
+        populateTableAgentSelects();
         loadTasks();
     });
 </script>
