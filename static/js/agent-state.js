@@ -748,7 +748,7 @@ function _renderModelDialog() {
         '</div>' +
         '<div style="display:flex;flex:1;min-height:0;flex-wrap:wrap;overflow-y:auto;">' +
         '  <div style="flex:1 1 260px;display:flex;flex-direction:column;min-height:0;">' +
-        '    <div style="padding:10px 10px 0;">' + evSearchBox('data-search', _modelDlgQuery, 'Search models…') + '</div>' +
+        '    <div style="padding:10px 10px 0;">' + evSearchBox('data-search aria-label="Search models"', _modelDlgQuery, 'Search models…') + '</div>' +
         '    <div data-list style="max-height:330px;overflow-y:auto;padding:10px;">' + options + '</div>' +
         '  </div>' +
         '  <div style="flex:1 1 260px;padding:14px 18px;" class="sm:border-l border-gray-100 dark:border-gray-700">' +
@@ -782,7 +782,35 @@ function _renderModelDialog() {
     document.addEventListener('keydown', _modelDlgEsc);
     var newList = panel.querySelector('[data-list]');
     if (newList) newList.scrollTop = listScroll;
-    if (_modelDlgQuery) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
+    _focusModelSearch(overlay, search);
+}
+
+// Focus the model search input every time the dialog becomes visible so the
+// user can start typing immediately. Focus is attempted synchronously (instant
+// feedback) and retried on the next frame, because some browsers (notably
+// Safari/iOS) only honour focus() once the node has been laid out.
+function _focusModelSearch(overlay, search) {
+    if (!overlay || !search) return;
+    function apply() {
+        // The dialog was closed or re-rendered meanwhile — don't touch the DOM.
+        if (!overlay.isConnected || overlay !== document.getElementById('model-switch-modal')) return;
+        var active = document.activeElement;
+        // Never steal focus from something the user already focused inside the
+        // dialog (a model row, the apply button, ...).
+        if (active && active !== document.body && active !== search && overlay.contains(active)) return;
+        try { search.focus({ preventScroll: true }); } catch (e) { search.focus(); }
+        if (document.activeElement !== search) return;
+        // Caret at the end so an existing query keeps behaving like normal typing.
+        try {
+            var end = search.value.length;
+            search.setSelectionRange(end, end);
+        } catch (e) { /* selection range unsupported for this input type */ }
+    }
+    apply();
+    if (document.activeElement !== search) {
+        if (window.requestAnimationFrame) window.requestAnimationFrame(apply);
+        else setTimeout(apply, 0);
+    }
 }
 
 function _modelDlgBindList(panel) {
