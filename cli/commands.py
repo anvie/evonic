@@ -4438,7 +4438,6 @@ import sqlite3
 import tarfile
 import glob
 import shutil
-import getpass
 from datetime import datetime as _datetime
 
 try:
@@ -4446,13 +4445,6 @@ try:
 except ImportError:
     def _get_evonic_version():
         return _datetime.now().strftime("%Y%m%d")
-
-# Encryption support (pure Python AES-256-GCM)
-try:
-    from cli.backup_crypto import encrypt_file_aes256gcm, decrypt_file_aes256gcm
-    _ENCRYPTION_AVAILABLE = True
-except ImportError:
-    _ENCRYPTION_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Backup source definitions
@@ -5004,7 +4996,7 @@ def _validate_restored_db():
 # Backup command
 # ---------------------------------------------------------------------------
 
-def backup_command(output=None, fmt="gz", quiet=False, exclude=None, encrypt=False):
+def backup_command(output=None, fmt="gz", quiet=False, exclude=None):
     """Create a full Evonic backup archive."""
     
     # Parse options
@@ -5031,24 +5023,7 @@ def backup_command(output=None, fmt="gz", quiet=False, exclude=None, encrypt=Fal
         print(f"Evonic Backup v{version}")
         print(f"Output: {output}")
         print(f"Format: {fmt}")
-        if encrypt:
-            print("Encryption: AES-256-GCM (passphrase will be prompted)")
         print()
-    
-    # Handle encryption passphrase
-    passphrase = None
-    if encrypt:
-        if not _ENCRYPTION_AVAILABLE:
-            print("Error: Encryption not available (backup_crypto module not found)")
-            sys.exit(1)
-        passphrase = getpass.getpass("Enter encryption passphrase: ")
-        confirm = getpass.getpass("Confirm encryption passphrase: ")
-        if passphrase != confirm:
-            print("Error: Passphrases do not match")
-            sys.exit(1)
-        if len(passphrase) < 8:
-            print("Error: Passphrase must be at least 8 characters")
-            sys.exit(1)
     
     # Step 1: WAL checkpoint on main DB
     if not quiet:
@@ -5130,29 +5105,12 @@ def backup_command(output=None, fmt="gz", quiet=False, exclude=None, encrypt=Fal
         if not quiet:
             print(f"Creating archive ({fmt})...")
         
-        if encrypt:
-            # Create unencrypted archive first, then encrypt
-            tmp_archive = output + ".plain"
-            archive_path = _create_archive(staging_dir, tmp_archive, fmt)
-            archive_sha = _archive_sha256(archive_path)
-            
-            # Update manifest with archive SHA
-            _update_manifest_sha256(archive_path, archive_sha)
-            
-            # Encrypt
-            if not quiet:
-                print("Encrypting archive...")
-            encrypt_file_aes256gcm(archive_path, output, passphrase)
-            os.remove(archive_path)
-            # Recompute SHA of encrypted file
-            archive_sha = _archive_sha256(output)
-        else:
-            archive_path = _create_archive(staging_dir, output, fmt)
-            archive_sha = _archive_sha256(archive_path)
-            # Update manifest with archive SHA, then recompute
-            _update_manifest_sha256(archive_path, archive_sha)
-            archive_sha = _archive_sha256(output)
-        
+        archive_path = _create_archive(staging_dir, output, fmt)
+        archive_sha = _archive_sha256(archive_path)
+        # Update manifest with archive SHA, then recompute
+        _update_manifest_sha256(archive_path, archive_sha)
+        archive_sha = _archive_sha256(output)
+    
         archive_size = os.path.getsize(output)
         
         print(f"\n  Backup complete!")
@@ -5185,6 +5143,17 @@ def restore_command(backup_file, dry_run=False, force=False, no_restart=False):
     print(f"Backup file: {backup_file}")
     print()
     
+    # Reject anything that is not a plain gzip/bzip2/zip archive. Encrypted
+    # backup archives are no longer supported (see CHANGELOG.md).
+    with open(backup_file, "rb") as _f:
+        _header = _f.read(4)
+    if not (_header[:2] == b"\x1f\x8b" or _header[:3] == b"BZh" or _header[:2] == b"PK"):
+        print("Error: Unsupported backup archive format.")
+        print("Only plain gzip (.tar.gz), bzip2 (.tar.bz2) and zip (.zip) archives are supported.")
+        print("Encrypted backups are no longer supported: the --encrypt option was removed.")
+        print("Use gpg or age to encrypt backup archives at the file level instead.")
+        sys.exit(1)
+
     # Step 1: Verify archive
     print("Verifying backup...")
     manifest, err = _read_manifest_from_archive(backup_file)
@@ -5199,40 +5168,6 @@ def restore_command(backup_file, dry_run=False, force=False, no_restart=False):
         sys.exit(1)
     print(f"Verification: OK ({manifest.get('file_count', 0)} files verified)")
     
-    # Check if encrypted (look for encryption header)
-    is_encrypted = False
-    try:
-        with open(backup_file, "rb") as f:
-            header = f.read(4)
-            # Plain archives start with a known magic: gzip (0x1f 0x8b),
-            # bzip2 ("BZh") or zip ("PK"). Anything else is treated as encrypted.
-            if not (header[:2] == b"\x1f\x8b" or header[:3] == b"BZh" or header[:2] == b"PK"):
-                is_encrypted = True
-    except Exception:
-        pass
-    
-    # If encrypted, prompt for passphrase
-    if is_encrypted:
-        if not _ENCRYPTION_AVAILABLE:
-            print("Error: File appears encrypted but encryption module is not available")
-            sys.exit(1)
-        passphrase = getpass.getpass("Enter decryption passphrase: ")
-        decrypted_path = backup_file + ".decrypted"
-        try:
-            print("Decrypting...")
-            decrypt_file_aes256gcm(backup_file, decrypted_path, passphrase)
-            backup_file = decrypted_path
-            # Re-verify decrypted archive
-            manifest, err = _read_manifest_from_archive(backup_file)
-            if err:
-                print(f"Error reading decrypted archive: {err}")
-                sys.exit(1)
-        except ValueError as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-    else:
-        decrypted_path = None
-    
     # Step 2: Show contents
     print()
     _list_archive_contents(backup_file, manifest)
@@ -5240,8 +5175,6 @@ def restore_command(backup_file, dry_run=False, force=False, no_restart=False):
     # Step 3: Dry run handling
     if dry_run:
         print("\nDry run complete. No changes were made.")
-        if decrypted_path:
-            os.remove(decrypted_path)
         return
     
     # Step 4: Confirmation
@@ -5250,8 +5183,6 @@ def restore_command(backup_file, dry_run=False, force=False, no_restart=False):
         response = input("Continue? [y/N] ").strip().lower()
         if response not in ("y", "yes"):
             print("Restore cancelled.")
-            if decrypted_path:
-                os.remove(decrypted_path)
             return
     
     # Step 5: Extract to staging
@@ -5354,8 +5285,6 @@ def restore_command(backup_file, dry_run=False, force=False, no_restart=False):
         
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
-        if decrypted_path and os.path.exists(decrypted_path):
-            os.remove(decrypted_path)
 
 
 # ---------------------------------------------------------------------------
