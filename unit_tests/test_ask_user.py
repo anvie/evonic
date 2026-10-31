@@ -283,11 +283,27 @@ class TestAskUserQuestionTool(unittest.TestCase):
 
         self.assertEqual(result['value']['status'], 'answered')
         self.assertEqual(result['value']['answers'][0]['answer'], 'PostgreSQL')
-        channel, event_type, payload, kwargs = self.realtime.events[-1]
+        channel, event_type, payload, kwargs = [e for e in self.realtime.events if e[0] == 'chat'][-1]
         self.assertEqual((channel, event_type), ('chat', 'question_resolved'))
         self.assertEqual(payload['status'], 'answered')
         self.assertEqual(kwargs['turn_id'], 'turn-1')
         self.assertIsNone(question_registry.get(question_id))
+
+    def test_browsers_get_a_global_notice(self):
+        agent = {**self.AGENT, 'name': 'Builder'}
+        thread, result = self._run_async(agent=agent)
+        question_id = self._wait_for_question()
+        question_registry.dismiss(question_id)
+        thread.join(5)
+        notices = [e for e in self.realtime.events if e[0] == 'questions']
+        self.assertEqual([e[1] for e in notices], ['question_required', 'question_resolved'])
+        _, _, required, kwargs = notices[0]
+        self.assertEqual(required['agent_name'], 'Builder')
+        self.assertEqual(required['question'], 'Which database?')
+        self.assertEqual((required['question_id'], required['count']), (question_id, 1))
+        # Not tied to the turn, so it expires with the normal retention.
+        self.assertEqual((kwargs['session_id'], kwargs.get('turn_id')), ('sess-1', None))
+        self.assertEqual(notices[1][2], {'question_id': question_id, 'status': 'dismissed'})
 
     def test_dismiss_returns_dismissed(self):
         thread, result = self._run_async()

@@ -84,7 +84,7 @@ def execute(agent: dict, args: dict) -> Any:
     if not _enabled_for(agent):
         return {'error': "Ask User Question is disabled for this agent. Enable it in the agent's settings."}
 
-    from backend.ask_user_store import build_result, normalize_questions, question_registry
+    from backend.ask_user_store import browser_notice, build_result, normalize_questions, question_registry
 
     questions, error = normalize_questions((args or {}).get('questions'))
     if error:
@@ -125,6 +125,17 @@ def execute(agent: dict, args: dict) -> Any:
         except Exception:
             _logger.exception('ask_user: failed to journal %s', event_type)
 
+    def notify_browsers(event_type: str, payload: dict) -> None:
+        # Global (not per-session) channel so any open Evonic tab can show a
+        # browser notification. No turn id: it expires with the normal retention.
+        if realtime_store is None:
+            return
+        try:
+            realtime_store.publish('questions', event_type, payload,
+                                   agent_id=agent_id, session_id=session_id)
+        except Exception:
+            _logger.exception('ask_user: failed to publish %s', event_type)
+
     def notify_channel(event_name: str, payload: dict) -> None:
         # External channels (Telegram) render the question from event_stream.
         if not agent.get('channel_id'):
@@ -146,6 +157,7 @@ def execute(agent: dict, args: dict) -> Any:
         'questions': questions,
     })
     notify_channel('ask_user_required', {'questions': questions})
+    notify_browsers('question_required', browser_notice(pending, agent.get('name', '')))
 
     status, chat_reply = 'cancelled', None
     last_heartbeat = time.monotonic()
@@ -179,4 +191,5 @@ def execute(agent: dict, args: dict) -> Any:
         'reply': chat_reply,
     })
     notify_channel('ask_user_resolved', {'status': status, 'answers': pending.answers or []})
+    notify_browsers('question_resolved', {'question_id': pending.question_id, 'status': status})
     return result

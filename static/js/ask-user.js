@@ -152,7 +152,8 @@
             .data('questions', questions);
         $card.append($('<div class="ask-card-title">').append(
             $('<span class="ask-card-icon" aria-hidden="true">').html(QUESTION_ICON),
-            $('<span>').text('The agent needs your input')
+            $('<span>').text('The agent needs your input'),
+            window.EvonicNotify ? window.EvonicNotify.promptElement('ask-notify') : null
         ));
 
         questions.forEach((q, qi) => {

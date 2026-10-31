@@ -54,6 +54,18 @@ Upgrading from the plugin: the first start after the upgrade removes the agents'
 
 The agent page (`templates/agent_detail.html`) loads `static/js/ask-user.js` and `static/css/ask-user.css`; the endpoints live in `routes/ask_user.py` and the question registry in `backend/ask_user_store.py`. The script polls `/api/ask_user/pending` for the page's chat session: every second while the agent is busy or a card is open, and every 4 seconds otherwise. It docks pending questions above the chat input and locks the composer. The agent is re-read from the URL on every poll, so the card follows the sidebar's in-place agent switch (which changes the URL without reloading the page). It relies only on these chat page element ids: `#chat-input`, `#chat-send-btn`, `#chat-attach-btn`, `#chat-file-preview` and `#chat-messages`. If Evonic renames them, update `ask-user.js`. The Sessions page is not covered.
 
+## Browser notifications
+
+`static/js/browser-notify.js` (loaded on every page by `templates/base.html`) shows a browser notification when an agent asks a question, or when a command needs approval, while you are not looking at it:
+
+- A question notifies unless a focused Evonic tab is showing that agent's chat. Clicking the notification focuses the tab and opens the agent's chat.
+- An approval notifies unless any Evonic tab is focused (the approval modal is already on screen there).
+- The notification closes once the question or approval is resolved, and each one notifies at most once per browser.
+
+Permission is asked with **Notify me in this browser** on the question card and in the approval modal. While it is granted, one tab per browser (elected with the Web Locks API) keeps a realtime connection open on the `questions` and `approvals` channels, even while hidden. The tool publishes `question_required` / `question_resolved` on the global `questions` channel for this; a reconnecting tab gets the still-open questions in the stream snapshot.
+
+Limits: notifications need a secure context (HTTPS or `localhost`; on plain `http://` the card shows "Browser notifications need HTTPS" instead), and at least one Evonic tab must be open, in the background is fine. There is no Web Push, so nothing arrives with the browser or every Evonic tab closed.
+
 ## Endpoints
 
 - `POST /api/ask_user/answer` — `{"question_id": "...", "answers": [{"selected": ["SQLite"], "other": null}]}`; one entry per question, in order.

@@ -195,7 +195,7 @@ def test_realtime_assets_are_cache_busted_and_legacy_buffers_are_gone():
     update_manager = read_repo_file("backend/update_manager.py")
     runtime = read_repo_file("backend/agent_runtime/runtime.py")
 
-    assert "realtime.js') }}?v=3" in base
+    assert "realtime.js') }}?v=4" in base
     # Cache-busted means "has a ?v= query"; the number moves with every chat-ui.js change.
     assert re.search(r"chat-ui\.js'\) \}\}\?v=\d+", detail)
     assert re.search(r"chat-ui\.js'\) \}\}\?v=\d+", sessions)

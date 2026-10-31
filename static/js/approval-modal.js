@@ -142,6 +142,12 @@ function closeModal() {
 
 function openModal() {
     ensureModal();
+    const header = document.getElementById('ev-approval-agent');
+    if (window.EvonicNotify && !header.parentNode.querySelector('[data-ev-notify-prompt]')) {
+        const prompt = window.EvonicNotify.promptElement(
+            'mt-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline');
+        if (prompt) header.after(prompt);
+    }
     _open = true;
     _modalRoot.classList.remove('hidden');
     requestAnimationFrame(function() {

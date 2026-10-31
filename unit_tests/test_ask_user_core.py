@@ -84,3 +84,25 @@ def test_agent_page_loads_question_card_and_settings_toggle():
 def test_core_routes_answer_pending_questions():
     body = _client().get('/api/ask_user/pending?session_id=nope').get_json()
     assert body == {'questions': [], 'resolved': {}}
+
+
+def test_realtime_snapshot_lists_open_questions_for_notifications():
+    from backend.ask_user_store import normalize_questions, question_registry
+    from routes.realtime import _ALLOWED_CHANNELS, _build_snapshot
+
+    assert 'questions' in _ALLOWED_CHANNELS
+    _agent()
+    questions, _ = normalize_questions([{'question': 'Ship it?', 'header': 'Release',
+                                         'options': ['Yes', 'No']}])
+    pending = question_registry.create('sess-9', 'ask_agent', questions)
+    try:
+        events = [e for e in _build_snapshot({'questions'}) if e[0] == 'questions']
+        assert events == [('questions', 'question_required', {
+            'question_id': pending.question_id, 'agent_id': 'ask_agent',
+            'agent_name': 'Ask Agent', 'session_id': 'sess-9',
+            'header': 'Release', 'question': 'Ship it?', 'count': 1,
+        })]
+        question_registry.dismiss(pending.question_id)
+        assert [e for e in _build_snapshot({'questions'}) if e[0] == 'questions'] == []
+    finally:
+        question_registry.remove(pending.question_id)

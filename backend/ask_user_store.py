@@ -283,9 +283,27 @@ class QuestionRegistry:
         return entry[0] if entry else None
 
     def pending_for_session(self, session_id: str) -> List[PendingQuestion]:
+        return [pq for pq in self.pending_all() if pq.session_id == session_id]
+
+    def pending_all(self) -> List[PendingQuestion]:
         with self._lock:
             return [pq for pq in self._pending.values()
-                    if pq.session_id == session_id and pq.answers is None and not pq.dismissed]
+                    if pq.answers is None and not pq.dismissed]
+
+
+def browser_notice(pending: PendingQuestion, agent_name: str) -> dict:
+    """Payload of ``question_required`` on the realtime ``questions`` channel,
+    which the browser turns into a notification (static/js/browser-notify.js)."""
+    first = pending.questions[0] if pending.questions else {}
+    return {
+        'question_id': pending.question_id,
+        'agent_id': pending.agent_id,
+        'agent_name': agent_name or pending.agent_id,
+        'session_id': pending.session_id,
+        'header': first.get('header', ''),
+        'question': first.get('question', ''),
+        'count': len(pending.questions),
+    }
 
 
 question_registry = QuestionRegistry()

@@ -36,6 +36,8 @@ var RealtimeClient = (function () {
         this._paused = false;
         this._onAuthExpired = opts.onAuthExpired || function () { window.location.href = '/login'; };
         this._visibilityBound = false;
+        // Hidden tabs disconnect by default; browser notifications need to stay connected.
+        this._pauseWhenHidden = opts.pauseWhenHidden !== false;
         this._unloadHandlers = [];  // cleanup hooks registered by consumers
     }
 
@@ -136,6 +138,7 @@ var RealtimeClient = (function () {
             'agent_busy_changed', 'agent_turn_complete', 'whatsapp_bridge_status',
             'panel_updated',
             'approval_required', 'approval_resolved',
+            'question_required', 'question_resolved',
             'update_status', 'update_done',
             'turn_begin', 'thinking', 'tool_call_started', 'tool_executed',
             'state:changed', 'state_changed', 'tasks:auto_transition', 'tasks:stale',
@@ -240,6 +243,11 @@ var RealtimeClient = (function () {
         if (evtName === 'approval_required' || evtName === 'approval_resolved') {
             return 'approvals';
         }
+        // Question channel events (the chat channel journals the same names,
+        // but no chat consumer listens for them)
+        if (evtName === 'question_required' || evtName === 'question_resolved') {
+            return 'questions';
+        }
         // Update channel events
         if (evtName === 'update_status' || evtName === 'update_done') {
             return 'update';
@@ -272,7 +280,7 @@ var RealtimeClient = (function () {
     // ---- Visibility change handling ----
 
     RealtimeClient.prototype._bindVisibility = function () {
-        if (this._visibilityBound) return;
+        if (this._visibilityBound || !this._pauseWhenHidden) return;
         this._visibilityBound = true;
         var self = this;
         document.addEventListener('visibilitychange', function () {

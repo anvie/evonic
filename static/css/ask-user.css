@@ -68,6 +68,12 @@ html.dark #chat-composer-wrap:has(> #ask-user-dock:not([hidden])) .chat-composer
     font-size: .75rem; font-weight: 600; color: var(--ask-accent);
 }
 .ask-card-icon { display: inline-flex; flex: none; }
+.ask-notify {
+    margin-left: auto; padding: 0; border: 0; background: none;
+    font: inherit; font-weight: 500; color: var(--ask-muted);
+}
+button.ask-notify { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+button.ask-notify:hover { color: var(--ask-accent); }
 .ask-card-icon svg { width: 1rem; height: 1rem; }
 .ask-question { border: 0; margin: .625rem 0 0; padding: 0; min-width: 0; }
 .ask-question-text {
