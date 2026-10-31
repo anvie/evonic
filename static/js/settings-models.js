@@ -371,6 +371,7 @@ window.settingsModels = {
             ollama: "ollama.chat.v1",
             anthropic: "anthropic.messages.v1",
             codex: "codex.responses.v1",
+            systemone: "systemone.questions.v1",
         }[format] || "openai.chat_completions.v1";
     },
 

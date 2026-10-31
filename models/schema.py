@@ -1704,10 +1704,13 @@ class SchemaMixin:
     def _seed_builtin_decision_models(self, cursor):
         """Make built-in decision-model metadata selectable without a connection.
 
-        Model rows are soft references to provider connections, so a catalog entry
-        can be installed before an operator configures its System One endpoint.
-        INSERT OR IGNORE preserves any administrator changes to an existing row.
+        The model and an endpoint-less SystemOne provider are installed so the
+        operator only has to fill in the endpoint under System > Models.
+        INSERT OR IGNORE preserves any administrator changes to existing rows.
         """
+        cursor.execute(
+            "INSERT OR IGNORE INTO providers (id, name, type, base_url, api_key, api_format, endpoint, adapter_key, connection_options) "
+            "VALUES ('systemone', 'SystemOne', 'remote', '', '', 'systemone', '', 'systemone.questions.v1', '{}')")
         capabilities = json.dumps({
             "version": "model-capabilities/v1",
             "operations": {

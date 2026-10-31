@@ -59,6 +59,9 @@ def test_builtin_liquidai_d1_3b_model_is_selectable_without_connection_data():
     assert model["context_window"] == 32768
     assert model["type"] == "decision"
     assert model["vision_supported"] is False
+    # Its SystemOne provider ships endpoint-less, ready for the operator to fill in.
+    provider = db.get_provider("systemone")
+    assert (provider["endpoint"], provider["adapter_key"]) == ("", "systemone.questions.v1")
     assert model["capabilities"] == {
         "version": "model-capabilities/v1",
         "operations": {"decision": "verified", "strict_output": "verified"},
@@ -319,8 +322,7 @@ def test_dmss_endpoint_gets_its_own_provider_when_systemone_points_elsewhere(mon
     from models.db import db
 
     monkeypatch.delenv("DECIM_SAFETY_SYSTEMONE_ENDPOINT", raising=False)
-    db.create_provider({"id": "systemone", "name": "SystemOne", "endpoint": "https://other.example.invalid/decide",
-                        "adapter_key": "systemone.questions.v1"})
+    db.update_provider("systemone", {"endpoint": "https://other.example.invalid/decide"})
     db.set_setting("decim_safety.provider_endpoint", "https://s1.example.invalid/decide")
 
     _rerun_registry_migrations("dmss_endpoint_to_model_v1")
@@ -330,3 +332,20 @@ def test_dmss_endpoint_gets_its_own_provider_when_systemone_points_elsewhere(mon
     assert db.get_model_by_id(model_id)["type"] == "decision"
     assert db.resolve_model_route(model_id).provider.endpoint == "https://s1.example.invalid/decide"
     assert db.get_provider("systemone")["endpoint"] == "https://other.example.invalid/decide"
+
+
+def test_decision_model_without_provider_endpoint_reports_the_real_cause():
+    from backend.tools.lib.decision_runtime import DecisionRuntime, RuntimeRequest
+    from models.db import db
+
+    db.create_decision_profile({
+        "profile_key": "application.unconfigured", "display_name": "Unconfigured", "enabled": True,
+        "mode": "shadow", "primary_model_id": "systemone/LiquidAI-d1-3B", "timeout_ms": 1000,
+        "retry_limit": 0, "minimum_confidence": 0.5, "policy_version": "p/v1", "schema_version": "decision-schema/v1",
+        "schema": {"version": "decision-schema/v1", "fields": [{"key": "approved", "kind": "boolean"}]},
+    })
+    result = DecisionRuntime(db).invoke(RuntimeRequest(
+        profile_key="application.unconfigured", profile_version="p/v1", input_context={"x": 1}))
+    assert result.error.code.value == "provider_unavailable"
+    assert "provider 'systemone'" in result.error.message
+    assert "base_url" not in result.error.message
