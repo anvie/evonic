@@ -1653,6 +1653,7 @@ class SchemaMixin:
             ("registry_endpoint_v1_model_capabilities", self._migrate_model_capabilities),
             ("model_type_split_v1", self._migrate_model_type_split),
             ("dmss_endpoint_to_model_v1", self._migrate_dmss_endpoint_to_model),
+            ("hmads_git_staging_user_rules_v1", self._migrate_git_staging_to_user_rules),
         )
         for migration_id, migration in migrations:
             cursor.execute("SELECT 1 FROM registry_migration_ledger WHERE migration_id = ?", (migration_id,))
@@ -1788,6 +1789,26 @@ class SchemaMixin:
             )
             updated += cursor.rowcount
         return {"models_normalized": updated, "precondition": "model capability and provenance columns present"}
+
+    def _migrate_git_staging_to_user_rules(self, cursor):
+        """Install the git staging checks as editable user HMADS rules.
+
+        ``git add -A`` / ``git add .`` are local workflow policy, not built-in
+        security rules: as user rules they can be edited or deleted, and only
+        user rules may floor a confident DMSS decision. Runs once, so a rule the
+        operator later deletes stays deleted.
+        """
+        rules = (
+            ("hmads-user-git-add-all", "Git add all files (git add -A)", r"\bgit\s+add\s+-A\b"),
+            ("hmads-user-git-add-dot", "Git add all files (git add .)", r"\bgit\s+add\s+\.(?:\s|$)"),
+        )
+        for rule_id, description, pattern in rules:
+            cursor.execute(
+                "INSERT OR IGNORE INTO safety_rules (id, name, description, pattern, pattern_type, weight, "
+                "category, tool_scope, scope, enabled, is_system) "
+                "VALUES (?, ?, ?, ?, 'regex', 8, 'git_staging', 'all', 'global', 1, 0)",
+                (rule_id, description, description, pattern))
+        return {"rules": [rule_id for rule_id, _, _ in rules]}
 
     def _migrate_model_type_split(self, cursor):
         """Turn ``type`` from locality (remote/local) into the model kind (llm/decision).

@@ -175,3 +175,70 @@ def test_floor_setting_round_trips_through_persistence(raw, expected):
 
     values = {"mode": "enforce", "hmads_floor": raw}
     assert _parse_settings(values, strict=False).hmads_floor is expected
+
+
+# ---------------------------------------------------------------------------
+# Only user-defined HMADS rules may floor a confident DMSS decision
+# ---------------------------------------------------------------------------
+
+# Matches the built-in "file_destruction" rule (requires approval on its own).
+BUILTIN_ONLY = "cd /srv/app && rm -f envtest.out && tmux -V"
+
+
+def _invalidate_user_rules():
+    from backend.tools.lib.custom_rule_checker import custom_rule_checker
+    custom_rule_checker.invalidate_cache()
+
+
+def test_builtin_rules_never_floor_a_confident_allow():
+    pipeline, recorder = _pipeline("allow")
+    assert pipeline.check_deterministic(BUILTIN_ONLY, "bash")["level"] == "requires_approval"
+
+    result = pipeline.check(BUILTIN_ONLY, tool_type="bash",
+                            agent_context=None, decim_settings=_settings(hmads_floor=True))
+
+    assert result["level"] == "safe"
+    assert result["decision_source"] == "decim"
+    # The full HMADS verdict is still recorded for the audit trail.
+    assert recorder.calls[0]["deterministic"]["level"] == "requires_approval"
+
+
+def test_git_staging_is_a_user_rule_not_a_builtin():
+    from backend.tools.lib.heuristic_safety import heuristic_checker
+    from models.db import db
+
+    assert heuristic_checker.check(GIT_ADD_ALL, "bash").get("score", 0) == 0
+    rule = db.get_safety_rule("hmads-user-git-add-all")
+    assert rule["is_system"] == 0 and rule["category"] == "git_staging"
+
+
+def test_deleting_the_user_rule_removes_its_floor():
+    from models.db import db
+
+    db.delete_safety_rule("hmads-user-git-add-all")
+    _invalidate_user_rules()
+    try:
+        pipeline, _ = _pipeline("allow")
+        result = pipeline.check(GIT_ADD_ALL, tool_type="bash",
+                                agent_context=None, decim_settings=_settings(hmads_floor=True))
+        assert result["level"] == "safe"
+        assert result["decision_source"] == "decim"
+    finally:
+        _invalidate_user_rules()
+
+
+def test_user_rule_floor_uses_only_user_rule_score():
+    from models.db import db
+
+    db.update_safety_rule("hmads-user-git-add-all", {"weight": 4})
+    _invalidate_user_rules()
+    try:
+        pipeline, _ = _pipeline("allow")
+        # Built-in rm -f plus a weight-4 user rule: the full HMADS score is
+        # dangerous territory, but the user rules alone only reach "warning".
+        result = pipeline.check("rm -f out.log && " + GIT_ADD_ALL, tool_type="bash",
+                                agent_context=None, decim_settings=_settings(hmads_floor=True))
+        assert result["level"] == "warning"
+        assert result["decision_source"] == "decim_floor"
+    finally:
+        _invalidate_user_rules()
