@@ -279,7 +279,7 @@ def record_comparison(
                     event_id, occurred, epoch, mode, tool_type, _execution_boundary(agent_context),
                     1 if getattr(settings, "enabled", False) else 0,
                     1 if attempted else 0, 1 if accepted else 0,
-                    provider_key or getattr(settings, "provider", None),
+                    provider_key,
                     model_id, policy_version or POLICY_VERSION,
                     model_decision, confidence, latency_ms,
                     det_level, deterministic.get("score"), ",".join(sorted(categories)),

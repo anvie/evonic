@@ -33,14 +33,7 @@ window.decisionModels = {
     },
 
     _supportsDecision(model) {
-        // UI vocabulary mirrors the canonical model-capabilities/v1 contract.
-        const operations = (model.capabilities && model.capabilities.operations) || {};
-        const schemaVersions = (model.capabilities && model.capabilities.schema_versions) || [];
-        return Boolean(
-            operations.decision && operations.decision !== "unsupported" &&
-            operations.strict_output && operations.strict_output !== "unsupported" &&
-            Array.isArray(schemaVersions) && schemaVersions.includes("decision-schema/v1"),
-        );
+        return model.type === "decision";
     },
 
     render() {

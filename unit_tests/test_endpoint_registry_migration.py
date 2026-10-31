@@ -40,6 +40,8 @@ def test_fresh_database_has_endpoint_registry_ledger_and_additive_fields():
     assert set(ledger) == {
         "registry_endpoint_v1_provider_fields",
         "registry_endpoint_v1_model_capabilities",
+        "model_type_split_v1",
+        "dmss_endpoint_to_model_v1",
     }
     assert ledger["registry_endpoint_v1_provider_fields"]["precondition"] == "provider connection columns present"
 
@@ -55,7 +57,8 @@ def test_builtin_liquidai_d1_3b_model_is_selectable_without_connection_data():
     assert model["base_url"] == model["api_key"] == ""
     assert model["api_format"] == "systemone"
     assert model["context_window"] == 32768
-    assert model["vision_supported"] is True
+    assert model["type"] == "decision"
+    assert model["vision_supported"] is False
     assert model["capabilities"] == {
         "version": "model-capabilities/v1",
         "operations": {"decision": "verified", "strict_output": "verified"},
@@ -96,13 +99,15 @@ def test_upgrade_migration_is_idempotent_and_normalizes_legacy_rows():
 
     model = db.get_model_by_id("legacy/model")
     assert model["legacy_override_provenance"] == "legacy_model_override"
+    # Decision-capable and unused for chat: it becomes a decision model.
+    assert model["type"] == "decision"
     assert model["capabilities"]["version"] == "model-capabilities/v1"
     assert model["capabilities"]["operations"]["decision"] == "advertised"
     assert model["capabilities"]["schema_versions"] == ["decision-schema/v1"]
 
     with db._connect() as conn:
         ledger_count = conn.execute("SELECT COUNT(*) FROM registry_migration_ledger").fetchone()[0]
-    assert ledger_count == 2
+    assert ledger_count == 4
 
     # Legacy override stays operational through the compatibility resolver only.
     config = db.resolve_model_config(model)
@@ -212,12 +217,20 @@ def test_new_models_cannot_set_connection_overrides_and_capabilities_are_validat
     assert invalid.status_code == 400
     assert invalid.get_json()["code"] == "invalid_capability"
 
+    unknown_type = client.post("/api/models", json={
+        "name": "Bad type", "type": "private-network", "provider": provider_id, "model_name": "bad-type",
+    })
+    assert unknown_type.status_code == 400
+
     created = client.post("/api/models", json={
-        "name": "Good", "type": "private-network", "provider": provider_id, "model_name": "good",
+        "name": "Good", "type": "llm", "provider": provider_id, "model_name": "good",
         "capabilities": CANONICAL_CAPABILITIES,
     })
     assert created.status_code == 200
-    assert db.get_model_by_id(created.get_json()["model_id"])["capabilities"] == CANONICAL_CAPABILITIES
+    # An LLM never carries decision operations; capabilities follow the type.
+    assert db.get_model_by_id(created.get_json()["model_id"])["capabilities"] == {
+        **CANONICAL_CAPABILITIES, "operations": {"chat": "verified"}, "schema_versions": [],
+    }
 
 
 def test_provider_api_redacts_credentials_and_model_delete_reports_soft_references(client):
@@ -247,3 +260,73 @@ def test_provider_api_redacts_credentials_and_model_delete_reports_soft_referenc
     references = response.get_json()["affected_references"]
     assert "model_id:test_super_agent" in references["agents"]
     assert "agent.task_complexity" in references["profiles"]
+
+
+def _rerun_registry_migrations(*migration_ids):
+    from models.db import db
+
+    with db._connect() as conn:
+        conn.executemany("DELETE FROM registry_migration_ledger WHERE migration_id = ?",
+                         [(m,) for m in migration_ids])
+        conn.commit()
+    db._init_tables()
+    db.invalidate_settings_cache()
+
+
+def test_type_split_keeps_chat_models_and_moves_profiles_to_a_decision_copy():
+    from models.db import db
+
+    decision_caps = json.dumps({**CANONICAL_CAPABILITIES, "operations": {"chat": "verified", "decision": "advertised", "strict_output": "advertised"}})
+    with db._connect() as conn:
+        conn.execute("INSERT INTO llm_models (id, name, type, provider, model_name, capabilities) "
+                     "VALUES ('mixed/m', 'Mixed', 'remote', 'mixed', 'm', ?)", (decision_caps,))
+        conn.execute("INSERT INTO llm_models (id, name, type, provider, model_name, capabilities) "
+                     "VALUES ('plain/m', 'Plain', 'local', 'plain', 'm', '{}')")
+        conn.execute("UPDATE agents SET model_id = 'mixed/m' WHERE id = 'test_super_agent'")
+        conn.execute("INSERT INTO decision_profiles (profile_key, display_name, schema_version, policy_version, "
+                     "schema_json, primary_model_id, timeout_ms) VALUES ('application.mixed', 'Mixed', "
+                     "'decision-schema/v1', 'p/v1', '{}', 'mixed/m', 1000)")
+        conn.commit()
+
+    _rerun_registry_migrations("model_type_split_v1")
+
+    mixed, plain = db.get_model_by_id("mixed/m"), db.get_model_by_id("plain/m")
+    assert (mixed["type"], plain["type"]) == ("llm", "llm")
+    assert "decision" not in mixed["capabilities"]["operations"]
+    copy = db.get_model_by_id("mixed/m-decision")
+    assert copy["type"] == "decision"
+    assert db.get_decision_profile("application.mixed")["primary_model_id"] == "mixed/m-decision"
+
+
+def test_dmss_endpoint_moves_into_a_systemone_provider_and_model(monkeypatch):
+    from models.db import db
+
+    monkeypatch.delenv("DECIM_SAFETY_SYSTEMONE_ENDPOINT", raising=False)
+    db.set_setting("decim_safety.provider", "systemone")
+    db.set_setting("decim_safety.provider_endpoint", "https://s1.example.invalid/decide")
+
+    _rerun_registry_migrations("dmss_endpoint_to_model_v1")
+
+    assert db.get_setting("decim_safety.model_id") == "systemone/LiquidAI-d1-3B"
+    assert db.get_setting("decim_safety.provider_endpoint", None) is None
+    assert db.get_setting("decim_safety.provider", None) is None
+    route = db.resolve_model_route("systemone/LiquidAI-d1-3B")
+    assert route.provider.endpoint == "https://s1.example.invalid/decide"
+    assert route.provider.adapter_key.value == "systemone.questions.v1"
+
+
+def test_dmss_endpoint_gets_its_own_provider_when_systemone_points_elsewhere(monkeypatch):
+    from models.db import db
+
+    monkeypatch.delenv("DECIM_SAFETY_SYSTEMONE_ENDPOINT", raising=False)
+    db.create_provider({"id": "systemone", "name": "SystemOne", "endpoint": "https://other.example.invalid/decide",
+                        "adapter_key": "systemone.questions.v1"})
+    db.set_setting("decim_safety.provider_endpoint", "https://s1.example.invalid/decide")
+
+    _rerun_registry_migrations("dmss_endpoint_to_model_v1")
+
+    model_id = db.get_setting("decim_safety.model_id")
+    assert model_id == "systemone-dmss/LiquidAI-d1-3B"
+    assert db.get_model_by_id(model_id)["type"] == "decision"
+    assert db.resolve_model_route(model_id).provider.endpoint == "https://s1.example.invalid/decide"
+    assert db.get_provider("systemone")["endpoint"] == "https://other.example.invalid/decide"

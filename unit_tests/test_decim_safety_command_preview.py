@@ -9,7 +9,7 @@ from backend.services import decim_safety_telemetry as telemetry
 
 
 def _settings(**overrides):
-    base = dict(enabled=True, mode="shadow", provider="systemone", retention_days=30)
+    base = dict(enabled=True, mode="shadow", model_id="systemone/test-model", retention_days=30)
     base.update(overrides)
     return SimpleNamespace(**base)
 

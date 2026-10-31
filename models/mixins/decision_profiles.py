@@ -96,6 +96,8 @@ class DecisionProfilesMixin:
         model = self.get_model_by_id(model_id)
         if not model:
             _fail("unknown_model", path, "does not reference a configured model")
+        if model.get("type") != "decision":
+            _fail("incompatible_model", path, "must reference a decision model")
         capabilities = model.get("capabilities") or {}
         if not isinstance(capabilities, dict):
             _fail("incompatible_model", path, "must reference a model enabled for Decision Models")

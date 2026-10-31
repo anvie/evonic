@@ -20,7 +20,7 @@ def _model(model_id="test/profile-primary"):
     return db.create_model({
         "id": model_id,
         "name": model_id,
-        "type": "remote",
+        "type": "decision",
         "provider": "test",
         "model_name": model_id.rsplit("/", 1)[-1],
         "capabilities": {"decision": {"enabled": True, "schema_versions": ["decision-schema/v1"]}},
@@ -204,5 +204,5 @@ def test_api_rejects_models_without_decision_capability(client):
     assert response.get_json()["error"] == {
         "code": "incompatible_model",
         "path": "primary_model_id",
-        "message": "must reference a model enabled for Decision Models",
+        "message": "must reference a decision model",
     }

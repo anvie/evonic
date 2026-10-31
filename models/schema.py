@@ -1494,6 +1494,8 @@ class SchemaMixin:
             # configure a compatible provider endpoint and credentials separately.
             self._seed_builtin_decision_models(cursor)
             conn.commit()
+        # Registry migrations may rewrite decim_safety.* settings directly.
+        self.invalidate_settings_cache()
 
         # Migrate chat data from main DB to per-agent DBs
         self._migrate_chat_to_agent_dbs()
@@ -1649,6 +1651,8 @@ class SchemaMixin:
         migrations = (
             ("registry_endpoint_v1_provider_fields", self._migrate_provider_endpoint_fields),
             ("registry_endpoint_v1_model_capabilities", self._migrate_model_capabilities),
+            ("model_type_split_v1", self._migrate_model_type_split),
+            ("dmss_endpoint_to_model_v1", self._migrate_dmss_endpoint_to_model),
         )
         for migration_id, migration in migrations:
             cursor.execute("SELECT 1 FROM registry_migration_ledger WHERE migration_id = ?", (migration_id,))
@@ -1726,7 +1730,7 @@ class SchemaMixin:
             (
                 "systemone/LiquidAI-d1-3B",
                 "LiquidAI d1-3B",
-                "remote",
+                "decision",
                 "systemone",
                 "",
                 "",
@@ -1739,7 +1743,7 @@ class SchemaMixin:
                 0,
                 3,
                 "systemone",
-                1,
+                0,
                 next_shortcode,
                 32768,
                 capabilities,
@@ -1781,6 +1785,95 @@ class SchemaMixin:
             )
             updated += cursor.rowcount
         return {"models_normalized": updated, "precondition": "model capability and provenance columns present"}
+
+    def _migrate_model_type_split(self, cursor):
+        """Turn ``type`` from locality (remote/local) into the model kind (llm/decision).
+
+        A row advertising decision operations becomes a decision model. If agents
+        or the global default also use it as a chat model, it stays an LLM and a
+        decision copy takes over its Decision Profile references.
+        """
+        from models.mixins.models import _MODEL_COLUMNS, _decode_capabilities, capabilities_for_type
+        cursor.execute(f"SELECT {_MODEL_COLUMNS} FROM llm_models")
+        names = [col[0] for col in cursor.description]
+        rows = [_decode_capabilities(dict(zip(names, row))) for row in cursor.fetchall()]
+        agent_columns = {row[1] for row in cursor.execute("PRAGMA table_info(agents)")}
+        chat_refs = [c for c in ("model_id", "fallback_model_id", "vision_model_id", "default_model_id") if c in agent_columns]
+        converted = split = 0
+        for model in rows:
+            operations = model["capabilities"].get("operations") or {}
+            is_decision = operations.get("decision") not in (None, "unsupported")
+            used_for_chat = bool(model.get("is_default")) or any(
+                cursor.execute(f"SELECT 1 FROM agents WHERE {c} = ? LIMIT 1", (model["id"],)).fetchone()
+                for c in chat_refs)
+            model_type = "decision" if is_decision and not used_for_chat else "llm"
+            cursor.execute(
+                "UPDATE llm_models SET type = ?, capabilities = ? WHERE id = ?",
+                (model_type, json.dumps(capabilities_for_type(model_type, model.get("vision_supported"), model["capabilities"]), sort_keys=True), model["id"]))
+            converted += 1
+            if not (is_decision and used_for_chat):
+                continue
+            referenced = cursor.execute(
+                "SELECT 1 FROM decision_profiles WHERE primary_model_id = ? OR fallback_model_id = ? LIMIT 1",
+                (model["id"], model["id"])).fetchone()
+            if not referenced:
+                continue
+            copy_id = f"{model['id']}-decision"
+            cursor.execute("SELECT COALESCE(MAX(shortcode), 0) FROM llm_models")
+            shortcode = cursor.fetchone()[0] + 1
+            cursor.execute(
+                """INSERT OR IGNORE INTO llm_models (id, name, type, provider, model_name, max_tokens,
+                    timeout, enabled, is_default, model_max_concurrent, api_format, shortcode, capabilities)
+                   VALUES (?, ?, 'decision', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
+                (copy_id, f"{model['name']} (decision)", model["provider"], model["model_name"], model.get("max_tokens") or 32768,
+                 model.get("timeout") or 60, model.get("enabled", 1), model.get("model_max_concurrent") or 3,
+                 model.get("api_format") or "openai", shortcode,
+                 json.dumps(capabilities_for_type("decision", 0, model["capabilities"]), sort_keys=True)))
+            for column in ("primary_model_id", "fallback_model_id"):
+                cursor.execute(f"UPDATE decision_profiles SET {column} = ? WHERE {column} = ?", (copy_id, model["id"]))
+            split += 1
+        return {"models_typed": converted, "decision_copies": split}
+
+    def _migrate_dmss_endpoint_to_model(self, cursor):
+        """Move a raw DMSS endpoint into a SystemOne provider and select its decision model."""
+        settings = dict(cursor.execute(
+            "SELECT key, value FROM app_settings WHERE key IN "
+            "('decim_safety.provider_endpoint', 'decim_safety.model_id')").fetchall())
+        endpoint = (settings.get("decim_safety.provider_endpoint")
+                    or os.getenv("DECIM_SAFETY_SYSTEMONE_ENDPOINT", "")).strip()
+        cursor.execute("DELETE FROM app_settings WHERE key IN ('decim_safety.provider_endpoint', 'decim_safety.provider')")
+        if not endpoint or settings.get("decim_safety.model_id"):
+            return {"migrated": False}
+
+        self._seed_builtin_decision_models(cursor)
+        seed_id, provider_id = "systemone/LiquidAI-d1-3B", "systemone"
+        existing = cursor.execute("SELECT endpoint FROM providers WHERE id = ?", (provider_id,)).fetchone()
+        if existing and (existing[0] or "").rstrip("/") not in ("", endpoint.rstrip("/")):
+            # The SystemOne provider already points elsewhere: give DMSS its own.
+            provider_id = "systemone-dmss"
+        cursor.execute(
+            "INSERT OR IGNORE INTO providers (id, name, type, base_url, api_key, api_format, endpoint, adapter_key, connection_options) "
+            "VALUES (?, ?, 'remote', ?, '', 'systemone', ?, 'systemone.questions.v1', '{}')",
+            (provider_id, "SystemOne" if provider_id == "systemone" else "SystemOne (DMSS)", endpoint, endpoint))
+        cursor.execute(
+            "UPDATE providers SET base_url = ?, endpoint = ?, adapter_key = 'systemone.questions.v1', api_format = 'systemone' "
+            "WHERE id = ? AND COALESCE(endpoint, '') = ''", (endpoint, endpoint, provider_id))
+        model_id = seed_id
+        if provider_id != "systemone":
+            model_id = f"{provider_id}/LiquidAI-d1-3B"
+            cursor.execute("SELECT COALESCE(MAX(shortcode), 0) FROM llm_models")
+            shortcode = cursor.fetchone()[0] + 1
+            cursor.execute(
+                """INSERT OR IGNORE INTO llm_models (id, name, type, provider, base_url, api_key, model_name, max_tokens,
+                    timeout, thinking, thinking_budget, enabled, is_default, model_max_concurrent, api_format,
+                    vision_supported, shortcode, context_window, capabilities)
+                   SELECT ?, name, 'decision', ?, '', '', model_name, max_tokens, timeout, 0, 0, 1, 0,
+                          model_max_concurrent, api_format, 0, ?, context_window, capabilities
+                   FROM llm_models WHERE id = ?""", (model_id, provider_id, shortcode, seed_id))
+        cursor.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('decim_safety.model_id', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (model_id,))
+        return {"migrated": True, "provider_id": provider_id, "model_id": model_id}
 
     def _populate_session_index(self):
         """One-time migration: populate session_index from all per-agent chat DBs.

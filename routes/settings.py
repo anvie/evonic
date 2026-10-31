@@ -50,16 +50,11 @@ def _coerce_boolean(value: Any) -> bool:
 
 
 def _decim_settings_public(settings) -> Dict[str, Any]:
-    """Serialize provider-neutral Decim Safety settings (never transport data).
-
-    ``provider_endpoint`` is plain configuration and is returned verbatim so the
-    admin surface can display and edit it.
-    """
+    """Serialize provider-neutral Decim Safety settings (never transport data)."""
     return {
         'enabled': settings.enabled,
         'mode': settings.mode,
-        'provider': settings.provider,
-        'provider_endpoint': getattr(settings, 'provider_endpoint', '') or '',
+        'model_id': settings.model_id,
         'request_timeout_ms': settings.request_timeout_ms,
         'minimum_confidence': settings.minimum_confidence,
         'max_payload_chars': settings.max_payload_chars,
@@ -695,27 +690,35 @@ def api_root_fs_scan_guard():
 def api_decim_safety_settings():
     """Read or update Decim Safety settings.
 
-    ``provider_endpoint`` is plain configuration: GET returns it verbatim and a
-    PUT replaces it with the submitted value (an empty string clears it).
+    ``model_id`` must reference an enabled decision model whose provider speaks
+    a protocol DMSS supports; an empty string clears the selection.
     """
+    from models.db import db
     from backend.tools.lib.decim_safety import (
-        load_decim_settings, validate_decim_settings, save_decim_settings,
+        DMSS_ADAPTER_KEYS, load_decim_settings, validate_decim_settings, save_decim_settings,
     )
 
     if request.method == 'PUT':
         data = request.get_json() or {}
         current = load_decim_settings()
-        endpoint = current.provider_endpoint
-        if 'provider_endpoint' in data:
-            submitted = data.get('provider_endpoint')
+        model_id = current.model_id
+        if 'model_id' in data:
+            submitted = data.get('model_id')
             if not isinstance(submitted, str):
-                return jsonify({'success': False, 'error': 'provider_endpoint must be a string'}), 400
-            endpoint = submitted.strip()
+                return jsonify({'success': False, 'error': 'model_id must be a string'}), 400
+            model_id = submitted.strip()
+            if model_id:
+                model = db.get_model_by_id(model_id)
+                if not model or model.get('type') != 'decision':
+                    return jsonify({'success': False, 'error': 'model_id must reference a decision model'}), 400
+                route = db.resolve_model_route(model['id'])
+                if route is None or route.provider.adapter_key.value not in DMSS_ADAPTER_KEYS:
+                    return jsonify({'success': False, 'error': "the model's provider must use a protocol DMSS supports"}), 400
+                model_id = model['id']
         merged = {
             'enabled': data.get('enabled', current.enabled),
             'mode': data.get('mode', current.mode),
-            'provider': data.get('provider', current.provider),
-            'provider_endpoint': endpoint,
+            'model_id': model_id,
             'request_timeout_ms': data.get('request_timeout_ms', current.request_timeout_ms),
             'minimum_confidence': data.get('minimum_confidence', current.minimum_confidence),
             'max_payload_chars': data.get('max_payload_chars', current.max_payload_chars),
@@ -981,6 +984,8 @@ def api_set_default_model():
     model = db.get_model_by_id(model_id)
     if not model:
         return jsonify({'success': False, 'error': 'Model not found'}), 404
+    if model.get('type') == 'decision':
+        return jsonify({'success': False, 'error': 'a decision model cannot be the default chat model'}), 400
     
     try:
         old_model = db.get_default_model()
@@ -1249,7 +1254,9 @@ def api_batch_save():
         model_id = settings['default_model_id']
         if model_id:
             model = db.get_model_by_id(model_id)
-            if model:
+            if model and model.get('type') == 'decision':
+                errors.append('default_model_id: a decision model cannot be the default chat model')
+            elif model:
                 with db._connect() as conn:
                     conn.execute("UPDATE llm_models SET is_default = 0")
                     conn.execute("UPDATE llm_models SET is_default = 1 WHERE id = ?", (model['id'],))

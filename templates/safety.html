@@ -65,7 +65,7 @@
             </div>
             <dl id="sg-status" class="sg-facts" hidden>
                 <div class="sg-fact">
-                    <dt>Provider</dt>
+                    <dt>Decision model</dt>
                     <dd><span id="sg-provider">—</span> <span id="sg-circuit-badge" class="sf-badge sf-badge-muted">closed</span></dd>
                 </div>
                 <div class="sg-fact">
@@ -248,7 +248,7 @@
                 <div class="sf-kpi-sub" id="kpi-mode">—</div>
             </div>
             <div class="sf-kpi">
-                <div class="sf-kpi-label">Provider</div>
+                <div class="sf-kpi-label">Decision model</div>
                 <div class="sf-kpi-value" id="kpi-provider">—</div>
                 <div class="sf-kpi-sub">
                     <span id="kpi-circuit" class="sf-badge sf-badge-muted">circuit —</span>
@@ -284,39 +284,23 @@
             <!-- Connection -->
             <fieldset class="dc-group">
                 <legend class="dc-group-title"><i data-lucide="plug"></i>Connection</legend>
-                <div class="dc-row">
-                    <div class="dc-row-text">
-                        <div class="dc-label-row">
-                            <label class="dc-label" for="dc-provider">Provider</label>
-                            <span class="save-status" id="dc-status-provider" aria-live="polite"></span>
-                        </div>
-                        <span class="dc-desc">The registered decision service.</span>
-                    </div>
-                    <div class="dc-row-control">
-                        <select id="dc-provider" class="sf-select dc-select"><option value="systemone">SystemOne</option></select>
-                        <span class="sf-field-err" id="dc-err-provider" hidden></span>
-                    </div>
-                </div>
                 <div class="dc-row dc-row-wide">
                     <div class="dc-row-text">
                         <div class="dc-label-row">
-                            <label class="dc-label" for="dc-endpoint">Provider endpoint</label>
-                            <span class="save-status" id="dc-status-endpoint" aria-live="polite"></span>
+                            <label class="dc-label" for="dc-model">Decision model</label>
+                            <span class="save-status" id="dc-status-model" aria-live="polite"></span>
                         </div>
-                        <span class="dc-desc">Absolute http(s) URL of the provider decision service. Stored as plain configuration and shown here in full.</span>
+                        <span class="dc-desc">A decision model from <a href="/system#models">System &rsaquo; Models</a>. Its provider supplies the endpoint and credentials.</span>
                     </div>
                     <div class="dc-row-control">
                         <div class="dc-endpoint-row">
-                            <div class="dc-affix">
-                                <i data-lucide="globe" aria-hidden="true"></i>
-                                <input id="dc-endpoint" class="sf-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://…">
-                            </div>
-                            <button type="button" class="sf-btn dc-test-btn" id="dc-endpoint-test">
+                            <select id="dc-model" class="sf-select dc-select"><option value="">None (HMADS only)</option></select>
+                            <button type="button" class="sf-btn dc-test-btn" id="dc-model-test">
                                 <i data-lucide="plug-zap" aria-hidden="true"></i><span>Test</span>
                             </button>
                         </div>
-                        <span class="sf-field-err" id="dc-err-endpoint" hidden></span>
-                        <div id="dc-endpoint-test-result" class="dc-test-result" role="status" aria-live="polite" hidden></div>
+                        <span class="sf-field-err" id="dc-err-model" hidden></span>
+                        <div id="dc-model-test-result" class="dc-test-result" role="status" aria-live="polite" hidden></div>
                     </div>
                 </div>
             </fieldset>

@@ -467,7 +467,7 @@
                 shadow: "HMADS decides; model decisions are recorded and compared.",
                 enforce: "The model decides when it can; HMADS is the exact fallback.",
             }[state]);
-            this._set("#sg-provider", dmssOn ? (settings.provider || "—") : "— (disabled)");
+            this._set("#sg-provider", dmssOn ? (settings.model_id || "—") : "— (disabled)");
             this._set("#sg-fallback",
                 (health.fallback_rate_24h === null || health.fallback_rate_24h === undefined)
                     ? "—" : (Math.round(health.fallback_rate_24h * 1000) / 10) + "%");
@@ -814,8 +814,7 @@
          * each other's read-modify-write on the server. Feedback mirrors the
          * System Settings AutoSave: spinner -> check beside the field label. */
         CONFIG_FIELDS: {
-            provider: { sel: "#dc-provider", key: "provider", kind: "select" },
-            endpoint: { sel: "#dc-endpoint", key: "provider_endpoint", kind: "text" },
+            model: { sel: "#dc-model", key: "model_id", kind: "select" },
             timeout: { sel: "#dc-timeout", key: "request_timeout_ms", kind: "num" },
             confidence: { sel: "#dc-confidence", key: "minimum_confidence", kind: "num" },
             payload: { sel: "#dc-payload", key: "max_payload_chars", kind: "num" },
@@ -851,15 +850,15 @@
                 }
             });
 
-            // One-click connectivity check beside the endpoint field (task #895).
-            var testBtn = qs("#dc-endpoint-test");
+            // One-click connectivity check beside the model field (task #895).
+            var testBtn = qs("#dc-model-test");
             if (testBtn) {
                 testBtn.addEventListener("click", function () { self.testEndpoint(); });
             }
-            // A new URL invalidates the previous verdict.
-            var endpointInput = qs("#dc-endpoint");
-            if (endpointInput) {
-                endpointInput.addEventListener("input", function () { self._clearEndpointTest(); });
+            // A new model invalidates the previous verdict.
+            var modelSelect = qs("#dc-model");
+            if (modelSelect) {
+                modelSelect.addEventListener("change", function () { self._clearEndpointTest(); });
             }
         },
 
@@ -870,7 +869,7 @@
         _endpointTesting: false,
 
         _clearEndpointTest() {
-            var out = qs("#dc-endpoint-test-result");
+            var out = qs("#dc-model-test-result");
             if (!out) return;
             out.hidden = true;
             out.className = "dc-test-result";
@@ -879,7 +878,7 @@
 
         /* state: "pending" | "ok" | "err" */
         _renderEndpointTest(state, message, detail) {
-            var out = qs("#dc-endpoint-test-result");
+            var out = qs("#dc-model-test-result");
             if (!out) return;
             out.hidden = false;
             out.className = "dc-test-result is-" + state;
@@ -898,29 +897,24 @@
 
         testEndpoint() {
             if (this._endpointTesting) return;
-            var input = qs("#dc-endpoint");
-            var btn = qs("#dc-endpoint-test");
-            var value = input ? input.value.trim() : "";
-            var invalid = value ? this._fieldError("endpoint", value) : "";
-            if (invalid) {
-                this._setConfigError("endpoint", invalid);
-                this._renderEndpointTest("err", invalid);
-                if (input) input.focus();
+            var input = qs("#dc-model");
+            var btn = qs("#dc-model-test");
+            var value = input ? input.value : "";
+            if (!value) {
+                this._renderEndpointTest("err", "Select a decision model to test.");
                 return;
             }
-            this._setConfigError("endpoint", "");
 
             var self = this;
             this._endpointTesting = true;
             if (btn) { btn.disabled = true; btn.classList.add("is-busy"); }
-            this._renderEndpointTest("pending", "Checking the provider endpoint\u2026");
+            this._renderEndpointTest("pending", "Checking the decision model\u2026");
 
             fetch(this.API + "/endpoint/test", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                // An empty field means "test whatever is configured" (the probe
-                // then reads the saved value, including any environment default).
-                body: JSON.stringify(value ? { endpoint: value } : {}),
+                // The selection is probed as-is, even before it is saved.
+                body: JSON.stringify({ model_id: value }),
             }).then(function (r) {
                 // A non-JSON body (for example the HTML 404 returned when the API
                 // route is missing from the running build) must never be reported
@@ -964,7 +958,7 @@
                 self._endpointTesting = false;
                 if (btn) { btn.disabled = false; btn.classList.remove("is-busy"); }
                 self._renderEndpointTest("err",
-                    "Network error \u2014 the Evonic API could not be reached, so the provider endpoint was never contacted.");
+                    "Network error \u2014 the Evonic API could not be reached, so the decision model was never contacted.");
             });
         },
 
@@ -979,8 +973,6 @@
         _fieldError(name, v) {
             function intIn(lo, hi) { return Number.isInteger(v) && v >= lo && v <= hi; }
             switch (name) {
-                case "provider": return v === "systemone" ? "" : "Choose a registered provider.";
-                case "endpoint": return (!v || /^https?:\/\/[^/]+/i.test(v)) ? "" : "Enter an absolute http(s) URL.";
                 case "timeout": return intIn(100, 10000) ? "" : "Use 100–10,000 ms.";
                 case "confidence": return (Number.isFinite(v) && v >= 0 && v <= 1) ? "" : "Use a value from 0 to 1.";
                 case "payload": return intIn(1, 120000) ? "" : "Use 1–120,000 characters.";
@@ -993,8 +985,7 @@
         _sameAsSaved(name, v) {
             var saved = (this._config || {})[this.CONFIG_FIELDS[name].key];
             if (this.CONFIG_FIELDS[name].kind === "switch") return !!v === !!saved;
-            if (name === "endpoint") return (v || "") === (saved || "");
-            if (name === "provider") return v === saved;
+            if (name === "model") return (v || "") === (saved || "");
             return Number.isFinite(v) && Number(saved) === v;
         },
 
@@ -1122,10 +1113,29 @@
             });
         },
 
+        /* Decision models for the DMSS dropdown; the saved one stays listed even
+         * if it was since disabled, so the select never silently changes. */
+        _populateModels(models, selected) {
+            var el = qs("#dc-model");
+            if (!el) return;
+            var opts = '<option value="">None (HMADS only)</option>';
+            (models || []).forEach(function (m) {
+                if (m.type !== "decision" || (!m.enabled && m.id !== selected)) return;
+                opts += '<option value="' + esc(m.id) + '">' + esc(m.name || m.id) +
+                    (m.enabled ? "" : " (disabled)") + "</option>";
+            });
+            el.innerHTML = opts;
+        },
+
         loadConfig() {
             var self = this;
-            return fetch("/api/settings/decim-safety").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (data) {
+            return Promise.all([
+                fetch("/api/settings/decim-safety").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }),
+                fetch("/api/models").then(function (r) { return r.ok ? r.json() : { models: [] }; }),
+            ]).then(function (res) {
+                var data = res[0];
                 self._config = data.settings || {};
+                self._populateModels(res[1].models, self._config.model_id);
                 self._applyConfig(self._config);
             }).catch(function () { window.safetyDmss._setError(true, "Failed to load DMSS configuration."); return false; });
         },
@@ -1181,9 +1191,9 @@
                     shadow: "Recorded only, HMADS decides",
                     enforce: "Model decides, HMADS fallback",
                 }[state]);
-                var provider = qs("#dc-provider");
-                var providerOpt = provider && Array.prototype.find.call(provider.options, function (o) { return o.value === d.provider; });
-                text("#kpi-provider", providerOpt ? providerOpt.textContent : (d.provider || "—"));
+                var model = qs("#dc-model");
+                var modelOpt = model && Array.prototype.find.call(model.options, function (o) { return o.value && o.value === d.model_id; });
+                text("#kpi-provider", modelOpt ? modelOpt.textContent : (d.model_id || "—"));
                 // Recording indicator (was lost in the dashboard redesign): it
                 // answers "will this decision leave a trace?" at a glance.
                 var rec = qs("#kpi-recording");
@@ -1553,8 +1563,8 @@
             }
             row("confidence", d.confidence == null ? "—" : (Math.round(d.confidence * 1000) / 10) + "%");
             row("latency", d.latency_ms == null ? "—" : d.latency_ms + " ms");
-            row("provider", d.provider || "—");
-            row("model", d.model || "—");
+            row("model", d.model_id || "—");
+            if (d.model && d.model !== d.model_id) row("served as", d.model);
             row("payload", (d.payload_chars != null ? d.payload_chars : 0) + " chars · " + (d.tool_type || "bash"));
 
             var notes = [];

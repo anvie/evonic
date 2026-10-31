@@ -9,13 +9,14 @@ sidebar:
 
 Open **System Settings → Decision Models** to manage reusable, structured decision configuration. This area keeps model configuration in the existing **Models** registry; it does not create a second model catalogue.
 
-## Configure a compatible model
+## Configure a decision model
 
-1. Open **System Settings → Models** and edit the existing provider-backed model.
-2. In **Decision Models capability**, enable **Compatible with structured Decision Profiles**.
-3. Keep `decision-schema/v1` in **Supported schema versions** and save.
+Every model has a **Type**: **LLM** (chat and agents) or **Decision** (structured Decision Profiles only). A model is never both.
 
-A compatible model shows a **Decision ready** badge. Models without that capability remain visible in the normal registry but cannot be selected for a Decision Profile. This prevents incompatible model/schema pairs from being saved.
+1. Open **System Settings → Models** and add a model under the provider that serves decisions (a SystemOne provider defaults to **Decision**).
+2. Set **Type** to **Decision** and save. Chat-only fields (tokens, temperature, thinking, vision, global default) are hidden for decision models.
+
+A decision model shows a **Decision** badge and supports `decision-schema/v1`. Only enabled decision models can be selected for a Decision Profile or for DMSS on the **Safety** page, and decision models never appear in agent or chat model pickers. To use the same provider model for both roles, add it twice: once as an LLM and once as a decision model.
 
 ## Create or edit a profile
 

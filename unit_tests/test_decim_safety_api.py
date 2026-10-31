@@ -26,6 +26,26 @@ def _clear_tester_rate_limit():
     decim_safety._reset_tester_rate_limit()
 
 
+DMSS_PROVIDER = "systemone-test"
+DMSS_MODEL = "systemone-test/d1"
+
+
+@pytest.fixture(autouse=True)
+def _decision_model():
+    """Register a SystemOne decision model and select it for DMSS.
+
+    Mirrors a configured install: the endpoint lives on the provider, and
+    DMSS only references the model.
+    """
+    db.create_provider({"id": DMSS_PROVIDER, "name": "SystemOne test",
+                        "base_url": "https://provider.example/decision",
+                        "adapter_key": "systemone.questions.v1"})
+    db.create_model({"id": DMSS_MODEL, "name": "d1", "type": "decision",
+                     "provider": DMSS_PROVIDER, "model_name": "LiquidAI/d1-3B"})
+    db.set_setting("decim_safety.model_id", DMSS_MODEL)
+    db.invalidate_settings_cache()
+
+
 def _client():
     client = app.test_client()
     with client.session_transaction() as session:
@@ -42,7 +62,7 @@ def test_settings_default_to_off_and_provider_neutral():
     body = client.get("/api/settings/decim-safety").get_json()["settings"]
     assert body["enabled"] is False
     assert body["mode"] == "off"
-    assert body["provider"] == "systemone"
+    assert body["model_id"] == DMSS_MODEL
     # No endpoint/credential fields may leak through the public surface.
     assert "endpoint" not in body
     assert "model_allowlist" not in body
@@ -53,7 +73,7 @@ def test_settings_round_trip_writes_and_reads_back():
     response = client.put("/api/settings/decim-safety", json={
         "enabled": True,
         "mode": "shadow",
-        "provider": "systemone",
+        "model_id": DMSS_MODEL,
         "request_timeout_ms": 2000,
         "minimum_confidence": 0.95,
         "max_payload_chars": 8000,
@@ -81,10 +101,25 @@ def test_settings_reject_invalid_mode():
     assert response.get_json()["success"] is False
 
 
-def test_settings_reject_unregistered_provider():
+def test_settings_reject_unknown_or_non_decision_models():
     client = _client()
-    response = client.put("/api/settings/decim-safety", json={"provider": "vendor-x"})
+    db.create_model({"id": "openai/gpt-chat", "name": "chat", "type": "llm",
+                     "provider": DMSS_PROVIDER, "model_name": "gpt"})
+    for model_id in ("missing/model", "openai/gpt-chat", 5):
+        response = client.put("/api/settings/decim-safety", json={"model_id": model_id})
+        assert response.status_code == 400
+    assert db.get_setting("decim_safety.model_id") == DMSS_MODEL
+
+
+def test_settings_reject_decision_model_on_unsupported_protocol():
+    client = _client()
+    db.create_provider({"id": "openai-like", "name": "OpenAI-like",
+                        "base_url": "https://llm.example/v1", "adapter_key": "openai.chat_completions.v1"})
+    db.create_model({"id": "openai-like/judge", "name": "judge", "type": "decision",
+                     "provider": "openai-like", "model_name": "judge"})
+    response = client.put("/api/settings/decim-safety", json={"model_id": "openai-like/judge"})
     assert response.status_code == 400
+    assert "protocol" in response.get_json()["error"]
 
 
 def test_settings_reject_out_of_range_confidence():
@@ -185,7 +220,7 @@ def _fake_provider(calls, decision="allow", confidence=0.99):
     class FakeProvider:
         key = "systemone"
 
-        def decide(self, packet, settings):
+        def decide(self, packet, settings, route=None):
             calls.append(1)
             return DecimDecision(
                 decision=decision, confidence=confidence, model_id="m-1",
@@ -205,11 +240,11 @@ def test_resolver_hmads_only_never_calls_provider():
     class NeverProvider:
         key = "systemone"
 
-        def decide(self, packet, settings):
+        def decide(self, packet, settings, route=None):
             calls.append(1)
             raise AssertionError("provider must not be called in HMADS-only mode")
 
-    resolver = DecimSafetyResolver(providers={"systemone": NeverProvider()})
+    resolver = DecimSafetyResolver(providers={"systemone.questions.v1": NeverProvider()})
     for settings in (DecimSettings(enabled=False, mode="off"),
                      DecimSettings(enabled=True, mode="off")):
         result = resolver.resolve("echo hello", "bash", settings=settings)
@@ -225,9 +260,9 @@ def test_resolver_dmss_enabled_calls_provider():
     from backend.tools.lib.decim_safety import DecimSafetyResolver, DecimSettings
 
     calls = []
-    resolver = DecimSafetyResolver(providers={"systemone": _fake_provider(calls)})
+    resolver = DecimSafetyResolver(providers={"systemone.questions.v1": _fake_provider(calls)})
     for mode in ("shadow", "enforce"):
-        settings = DecimSettings(enabled=True, mode=mode, minimum_confidence=0.90)
+        settings = DecimSettings(enabled=True, mode=mode, minimum_confidence=0.90, model_id=DMSS_MODEL)
         result = resolver.resolve("echo hello", "bash", settings=settings)
         assert result.attempted is True
         assert result.decision is not None
@@ -241,8 +276,8 @@ def test_resolver_low_confidence_falls_back_to_hmads():
     from backend.tools.lib.decim_safety import DecimSafetyResolver, DecimSettings
 
     calls = []
-    resolver = DecimSafetyResolver(providers={"systemone": _fake_provider(calls, confidence=0.40)})
-    settings = DecimSettings(enabled=True, mode="enforce", minimum_confidence=0.90)
+    resolver = DecimSafetyResolver(providers={"systemone.questions.v1": _fake_provider(calls, confidence=0.40)})
+    settings = DecimSettings(enabled=True, mode="enforce", minimum_confidence=0.90, model_id=DMSS_MODEL)
     result = resolver.resolve("echo hello", "bash", settings=settings)
     assert result.attempted is True
     assert result.decision is None
@@ -250,63 +285,36 @@ def test_resolver_low_confidence_falls_back_to_hmads():
     assert calls == [1]
 
 # ---------------------------------------------------------------------------
-# DMSS provider configuration (task #840: endpoint is plain configuration)
+# DMSS decision model selection
 # ---------------------------------------------------------------------------
 
 
-def test_provider_endpoint_round_trips_as_plain_configuration():
-    """The endpoint is stored and returned verbatim; it is no longer a secret."""
+def test_model_id_round_trips_and_canonicalizes():
     client = _client()
-    endpoint = "https://provider.internal.example:9443/decision/very-secret"
-    response = client.put("/api/settings/decim-safety", json={"provider_endpoint": endpoint})
+    client.put("/api/settings/decim-safety", json={"model_id": ""})
+    response = client.put("/api/settings/decim-safety", json={"model_id": f" {DMSS_MODEL} "})
     assert response.status_code == 200
-    assert response.get_json()["settings"]["provider_endpoint"] == endpoint
-
-    body = client.get("/api/settings/decim-safety").get_json()["settings"]
-    assert body["provider_endpoint"] == endpoint
-    # Stored verbatim under the system-settings key.
-    assert db.get_setting("decim_safety.provider_endpoint") == endpoint
+    assert response.get_json()["settings"]["model_id"] == DMSS_MODEL
+    assert db.get_setting("decim_safety.model_id") == DMSS_MODEL
+    # The provider endpoint is never part of the DMSS settings surface.
+    assert "provider.example" not in str(client.get("/api/settings/decim-safety").get_json())
 
 
-def test_provider_endpoint_put_replaces_stored_value():
-    """A PUT replaces the stored endpoint; no masked-placeholder preservation."""
+def test_model_id_can_be_cleared_with_empty_string():
     client = _client()
-    client.put("/api/settings/decim-safety", json={"provider_endpoint": "https://old.example/decision"})
-    response = client.put("/api/settings/decim-safety", json={
-        "provider_endpoint": "https://new.example/decision",
-        "request_timeout_ms": 2400,
-    })
+    response = client.put("/api/settings/decim-safety", json={"model_id": ""})
     assert response.status_code == 200
-    assert response.get_json()["settings"]["provider_endpoint"] == "https://new.example/decision"
-    assert db.get_setting("decim_safety.provider_endpoint") == "https://new.example/decision"
-    assert db.get_setting("decim_safety.request_timeout_ms") == "2400"
-
-
-def test_provider_endpoint_can_be_cleared_with_empty_string():
-    client = _client()
-    client.put("/api/settings/decim-safety", json={"provider_endpoint": "https://old.example/decision"})
-    response = client.put("/api/settings/decim-safety", json={"provider_endpoint": ""})
-    assert response.status_code == 200
-    assert response.get_json()["settings"]["provider_endpoint"] == ""
-    assert db.get_setting("decim_safety.provider_endpoint") == ""
-
-
-def test_provider_endpoint_rejects_non_http_url():
-    client = _client()
-    response = client.put("/api/settings/decim-safety", json={"provider_endpoint": "file:///etc/passwd"})
-    assert response.status_code == 400
-    assert "absolute http(s) URL" in response.get_json()["error"]
+    assert response.get_json()["settings"]["model_id"] == ""
+    assert db.get_setting("decim_safety.model_id") == ""
 
 
 def test_health_stays_provider_neutral_without_endpoint():
     client = _client()
-    endpoint = "https://provider.internal.example:9443/decision/very-secret"
-    client.put("/api/settings/decim-safety", json={"provider_endpoint": endpoint})
+    endpoint = "https://provider.example/decision"
     body = client.get("/api/admin/decim-safety/health").get_json()
     assert body["latency_ms"] == {"count": 0, "p50": None, "p95": None, "max": None}
     # The health surface stays provider-neutral: it never echoes the endpoint.
     assert endpoint not in str(body)
-    assert "internal.example" not in str(body)
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +329,7 @@ def _fake_provider_class(calls, decision="allow", confidence=0.99, reason=None):
     class FakeProvider:
         key = "systemone"
 
-        def decide(self, packet, settings):
+        def decide(self, packet, settings, route=None):
             calls.append(packet)
             return DecimDecision(
                 decision=decision, confidence=confidence, model_id="m-1",
@@ -346,7 +354,7 @@ def test_tester_returns_provider_decision_with_timing():
     assert body["diagnostic"] is True
     assert body["decision"] == "allow"
     assert body["confidence"] == 0.99
-    assert body["provider"] == "systemone"
+    assert body["model_id"] == DMSS_MODEL
     assert body["model"] == "m-1"
     assert body["latency_ms"] == 12
     assert body["fallback_reason"] is None
@@ -445,12 +453,6 @@ def test_tester_requires_payload_and_valid_tool():
                        json={"payload": "x", "tool_type": "java"}).status_code == 400
 
 
-def _configure_tester_endpoint(client):
-    """Point the real provider at a (faked) endpoint so probes reach decide()."""
-    client.put("/api/settings/decim-safety",
-               json={"provider_endpoint": "https://provider.example/decision"})
-
-
 def test_tester_provider_timeout_maps_to_transport_error():
     """A provider request that times out (socket.timeout) is reported as transport_error."""
     import socket
@@ -461,12 +463,11 @@ def test_tester_provider_timeout_maps_to_transport_error():
             raise socket.timeout("read timed out")
 
     class TimingOutProvider(SystemOneDecisionProvider):
-        def __init__(self, endpoint=None, *, transport=None):
-            super().__init__(endpoint,
+        def __init__(self, *, transport=None):
+            super().__init__(
                              transport=transport or _TimingOutOpener())
 
     client = _client()
-    _configure_tester_endpoint(client)
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", TimingOutProvider):
         body = client.post("/api/admin/decim-safety/test",
                            json={"payload": "echo hi"}).get_json()
@@ -497,12 +498,11 @@ def test_tester_provider_http_error_maps_to_http_error():
             return _FakeResponse()
 
     class Http503Provider(SystemOneDecisionProvider):
-        def __init__(self, endpoint=None, *, transport=None):
-            super().__init__(endpoint,
+        def __init__(self, *, transport=None):
+            super().__init__(
                              transport=transport or _FakeOpener())
 
     client = _client()
-    _configure_tester_endpoint(client)
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", Http503Provider):
         response = client.post("/api/admin/decim-safety/test",
                                json={"payload": "echo hi"})
@@ -522,7 +522,6 @@ def test_tester_malformed_provider_response_maps_to_invalid_response():
             return b"not-json"
 
     client = _client()
-    _configure_tester_endpoint(client)
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", GarbageProvider):
         body = client.post("/api/admin/decim-safety/test",
                            json={"payload": "echo hi"}).get_json()
@@ -533,9 +532,9 @@ def test_tester_malformed_provider_response_maps_to_invalid_response():
 
 def test_tester_unconfigured_provider_reports_fallback():
     client = _client()
-    with patch.dict(os.environ, {"DECIM_SAFETY_SYSTEMONE_ENDPOINT": ""}):
-        body = client.post("/api/admin/decim-safety/test",
-                           json={"payload": "echo hi"}).get_json()
+    client.put("/api/settings/decim-safety", json={"model_id": ""})
+    body = client.post("/api/admin/decim-safety/test",
+                       json={"payload": "echo hi"}).get_json()
     assert body["success"] is True
     assert body["decision"] is None
     assert body["fallback_reason"] == "provider_unconfigured"
@@ -559,7 +558,7 @@ def test_tester_does_not_trip_production_circuit_breaker():
     class FailingProvider:
         key = "systemone"
 
-        def decide(self, packet, settings):
+        def decide(self, packet, settings, route=None):
             raise DecimProviderError("transport_error")
 
     client = _client()
@@ -575,7 +574,7 @@ def test_tester_does_not_trip_production_circuit_breaker():
 def test_tester_response_does_not_include_provider_endpoint():
     client = _client()
     endpoint = "https://provider.internal.example:9443/decision/very-secret"
-    client.put("/api/settings/decim-safety", json={"provider_endpoint": endpoint})
+    db.update_provider(DMSS_PROVIDER, {"base_url": endpoint})
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
                _fake_provider_class([])):
         body = client.post("/api/admin/decim-safety/test",
@@ -589,15 +588,8 @@ def test_tester_response_does_not_include_provider_endpoint():
 # Provider endpoint connectivity test (task #895)
 # ---------------------------------------------------------------------------
 
-def _configure_endpoint(client):
-    """Persist a provider endpoint so the probe has something to call."""
-    client.put("/api/settings/decim-safety",
-               json={"provider_endpoint": "https://provider.example/decision"})
-
-
 def test_endpoint_test_reports_ok_for_a_healthy_provider():
     client = _client()
-    _configure_endpoint(client)
     calls = []
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
                _fake_provider_class(calls)):
@@ -619,15 +611,17 @@ def test_endpoint_test_reports_ok_for_a_healthy_provider():
 
 def test_endpoint_test_probes_an_override_without_persisting_it():
     client = _client()
+    client.put("/api/settings/decim-safety", json={"model_id": ""})
     calls = []
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
                _fake_provider_class(calls)):
         body = client.post("/api/admin/decim-safety/endpoint/test",
-                           json={"endpoint": "https://typed.example/decision"}).get_json()
+                           json={"model_id": DMSS_MODEL}).get_json()
     assert body["ok"] is True
+    assert body["model_id"] == DMSS_MODEL
     assert calls, "the override must reach the provider adapter"
-    # The typed value never becomes configuration.
-    assert db.get_setting("decim_safety.provider_endpoint", "") == ""
+    # The selection being tested never becomes configuration.
+    assert db.get_setting("decim_safety.model_id", "") == ""
 
 
 def test_endpoint_test_reports_unreachable_provider():
@@ -636,11 +630,10 @@ def test_endpoint_test_reports_unreachable_provider():
     class FailingProvider:
         key = "systemone"
 
-        def decide(self, packet, settings):
+        def decide(self, packet, settings, route=None):
             raise DecimProviderError("transport_error")
 
     client = _client()
-    _configure_endpoint(client)
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", FailingProvider):
         body = client.post("/api/admin/decim-safety/endpoint/test", json={}).get_json()
     assert body["success"] is True   # the request was processed
@@ -653,29 +646,25 @@ def test_endpoint_test_reports_unreachable_provider():
 
 def test_endpoint_test_reports_unconfigured_provider():
     client = _client()
-    with patch.dict(os.environ, {"DECIM_SAFETY_SYSTEMONE_ENDPOINT": ""}):
-        body = client.post("/api/admin/decim-safety/endpoint/test", json={}).get_json()
-    assert body["ok"] is False
-    assert body["fallback_reason"] == "provider_unconfigured"
-    assert "no provider endpoint" in body["message"].lower()
+    for override in ({}, {"model_id": "missing/model"}):
+        if not override:
+            client.put("/api/settings/decim-safety", json={"model_id": ""})
+        body = client.post("/api/admin/decim-safety/endpoint/test", json=override).get_json()
+        assert body["ok"] is False
+        assert body["fallback_reason"] == "provider_unconfigured"
+        assert "no usable decision model" in body["message"].lower()
 
 
-def test_endpoint_test_rejects_invalid_override_url():
+def test_endpoint_test_rejects_invalid_override():
     client = _client()
-    response = client.post("/api/admin/decim-safety/endpoint/test",
-                           json={"endpoint": "file:///etc/passwd"})
-    assert response.status_code == 400
-    assert "absolute http(s) URL" in response.get_json()["error"]
-
     assert client.post("/api/admin/decim-safety/endpoint/test",
-                       json={"endpoint": 5}).status_code == 400
+                       json={"model_id": 5}).status_code == 400
     assert client.post("/api/admin/decim-safety/endpoint/test",
                        data="nope", content_type="text/plain").status_code == 400
 
 
 def test_endpoint_test_is_rate_limited_per_session():
     client = _client()
-    _configure_endpoint(client)
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
                _fake_provider_class([])):
         for _ in range(10):
@@ -694,11 +683,10 @@ def test_endpoint_test_does_not_trip_the_production_circuit_breaker():
     class FailingProvider:
         key = "systemone"
 
-        def decide(self, packet, settings):
+        def decide(self, packet, settings, route=None):
             raise DecimProviderError("transport_error")
 
     client = _client()
-    _configure_endpoint(client)
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider", FailingProvider):
         for _ in range(5):  # beyond the default 3-failure breaker threshold
             assert client.post("/api/admin/decim-safety/endpoint/test",
@@ -709,11 +697,11 @@ def test_endpoint_test_does_not_trip_the_production_circuit_breaker():
 def test_endpoint_test_does_not_echo_the_endpoint():
     client = _client()
     endpoint = "https://provider.internal.example:9443/decision/very-secret"
+    db.update_provider(DMSS_PROVIDER, {"base_url": endpoint})
     calls = []
     with patch("backend.tools.lib.decim_safety.SystemOneDecisionProvider",
                _fake_provider_class(calls)):
-        body = client.post("/api/admin/decim-safety/endpoint/test",
-                           json={"endpoint": endpoint}).get_json()
+        body = client.post("/api/admin/decim-safety/endpoint/test", json={}).get_json()
     assert body["ok"] is True
     assert endpoint not in str(body)
     assert "internal.example" not in str(body)
@@ -728,7 +716,7 @@ def _record_event(*, agent_id, decision_source, model_decision, det_level, final
     from backend.services import decim_safety_telemetry
 
     return decim_safety_telemetry.record_comparison(
-        settings=SimpleNamespace(enabled=True, mode="enforce", provider="systemone", retention_days=30),
+        settings=SimpleNamespace(enabled=True, mode="enforce", model_id=DMSS_MODEL, retention_days=30),
         code="echo hi", tool_type="bash", agent_context={"id": agent_id},
         deterministic={"level": det_level, "score": 0, "blocked_patterns": []},
         model_decision=model_decision, confidence=0.9 if model_decision else None,

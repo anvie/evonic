@@ -1309,7 +1309,7 @@ html.dark .mcd-pill.warn { color: #f2b84b; }
 .mcd-btn:focus-visible, .mcd-ib:focus-visible, .mcd-menu button:focus-visible, .mcd-copy:focus-visible, .mcd-seg button:focus-visible { outline: 2px solid var(--st-accent); outline-offset: 2px; }
 .mcd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 20.5rem), 1fr)); gap: .875rem; }
 .mcd-empty { grid-column: 1 / -1; padding: 1.25rem; text-align: center; font-size: .85rem; color: var(--text-muted); border: 1px dashed var(--st-line); border-radius: .875rem; }
-.mcd-card { position: relative; display: flex; flex-direction: column; gap: .75rem; min-width: 0; padding: .875rem .875rem .75rem; border: 1px solid var(--st-line); border-radius: 1rem; background: var(--st-surface); transition: border-color .15s, box-shadow .15s; }
+.mcd-card { cursor: pointer; position: relative; display: flex; flex-direction: column; gap: .75rem; min-width: 0; padding: .875rem .875rem .75rem; border: 1px solid var(--st-line); border-radius: 1rem; background: var(--st-surface); transition: border-color .15s, box-shadow .15s; }
 .mcd-card:hover, .mcd-card:focus-within { border-color: var(--st-accent); box-shadow: 0 10px 24px -14px rgb(0 0 0 / .45); }
 .mcd-card.is-default { border-color: var(--st-accent); box-shadow: 0 0 0 3px var(--st-accent-soft); }
 .mcd-card.is-off .mcd-head, .mcd-card.is-off .mcd-facts { opacity: .55; }

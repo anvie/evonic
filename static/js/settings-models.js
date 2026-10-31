@@ -136,14 +136,8 @@ window.settingsModels = {
         return budget > 0 ? "Thinking · " + this._fmtTokens(budget) : "Thinking";
     },
 
-    _decisionReady(model) {
-        const operations = (model.capabilities && model.capabilities.operations) || {};
-        const schemaVersions = (model.capabilities && model.capabilities.schema_versions) || [];
-        return Boolean(
-            operations.decision && operations.decision !== "unsupported" &&
-            operations.strict_output && operations.strict_output !== "unsupported" &&
-            Array.isArray(schemaVersions) && schemaVersions.includes("decision-schema/v1"),
-        );
+    _isDecision(model) {
+        return model.type === "decision";
     },
 
     _renderProvider(pid, prov, models) {
@@ -216,7 +210,7 @@ window.settingsModels = {
         const e = (v) => this._escapeHtml(v);
         const id = model.id;
         const name = model.name || model.model_name || id;
-        const ready = this._decisionReady(model);
+        const decision = this._isDecision(model);
         const ctx = this._fmtTokens(model.context_window);
         const shortcode = model.shortcode != null ? model.shortcode : "?";
 
@@ -224,7 +218,7 @@ window.settingsModels = {
         if (model.thinking) facts += `<span class="mcd-chip think">${I.brain}${e(this._thinkLabel(model))}</span>`;
         if (model.vision_supported) facts += `<span class="mcd-chip">${I.eye}Vision</span>`;
         if (ctx) facts += `<span class="mcd-chip">${ctx} context</span>`;
-        if (ready) facts += `<span class="mcd-chip ready">${I.check}Decision ready</span>`;
+        if (decision) facts += `<span class="mcd-chip ready">${I.check}Decision</span>`;
 
         const state = model.enabled
             ? (model.is_default ? "Default · enabled" : "Enabled")
@@ -232,7 +226,7 @@ window.settingsModels = {
         const search = [name, model.model_name, prov && prov.name].join(" ").toLowerCase();
 
         return `
-        <article class="mcd-card${model.is_default ? " is-default" : ""}${model.enabled ? "" : " is-off"}" data-on="${model.enabled ? 1 : 0}" data-think="${model.thinking ? 1 : 0}" data-search="${e(search)}">
+        <article class="mcd-card${model.is_default ? " is-default" : ""}${model.enabled ? "" : " is-off"}" tabindex="0" aria-label="Edit ${e(name)}" onclick="settingsModels.onCardClick(event, '${id}')" onkeydown="settingsModels.onCardKey(event, '${id}')" data-on="${model.enabled ? 1 : 0}" data-think="${model.thinking ? 1 : 0}" data-search="${e(search)}">
             <div class="mcd-head">
                 <span class="mcd-logo">${this._logo(model, 26)}${model.is_default ? `<span class="mcd-star" title="Default model">${I.star}</span>` : ""}</span>
                 <div class="mcd-title">
@@ -241,14 +235,14 @@ window.settingsModels = {
                         <button type="button" class="mcd-copy" aria-label="Copy model id" data-id="${e(model.model_name)}" onclick="settingsModels.copyId(this)">${I.copy}</button></div>
                 </div>
                 <div class="mcd-acts">
-                    <button type="button" class="mcd-ib mcd-test" aria-label="Ping ${e(name)}" title="Ping: send a short prompt to check this model answers" onclick="settingsModels.pingModel('${id}', this)">${I.bolt}</button>
+                    ${decision ? "" : `<button type="button" class="mcd-ib mcd-test" aria-label="Ping ${e(name)}" title="Ping: send a short prompt to check this model answers" onclick="settingsModels.pingModel('${id}', this)">${I.bolt}</button>`}
                     <div class="mcd-menuwrap">
                         <button type="button" class="mcd-ib" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" onclick="settingsModels.toggleMenu(event, this)">${I.dots}</button>
                         <div class="mcd-menu" role="menu">
-                            ${model.is_default ? "" : `<button role="menuitem" type="button" onclick="settingsModels.setDefault('${id}')">${I.star}Set as default</button>`}
+                            ${model.is_default || decision ? "" : `<button role="menuitem" type="button" onclick="settingsModels.setDefault('${id}')">${I.star}Set as default</button>`}
                             <button role="menuitem" type="button" onclick="settingsModels.edit('${id}')">${I.edit}Edit</button>
                             <button role="menuitem" type="button" onclick="settingsModels.clone('${id}')">${I.copy}Clone</button>
-                            ${ready ? `<button role="menuitem" type="button" onclick="decisionModels.openPlayground({model: '${id}'})">${I.play}Open playground</button>` : ""}
+                            ${decision ? `<button role="menuitem" type="button" onclick="decisionModels.openPlayground({model: '${id}'})">${I.play}Open playground</button>` : ""}
                             <hr><button role="menuitem" type="button" class="danger" onclick="settingsModels.remove('${id}')">${I.trash}Delete</button>
                         </div>
                     </div>
@@ -261,6 +255,18 @@ window.settingsModels = {
                 <span class="mcd-sc" title="Use /model ${shortcode} in chat">#${shortcode}</span>
             </div>
         </article>`;
+    },
+
+    // A click anywhere on the card edits the model; its own controls keep their actions.
+    onCardClick(event, modelId) {
+        if (event.target.closest("button, a, input, .mcd-menu")) return;
+        this.edit(modelId);
+    },
+
+    onCardKey(event, modelId) {
+        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        this.edit(modelId);
     },
 
     // ---- ping: one short prompt through the model itself ----
@@ -563,8 +569,8 @@ window.settingsModels = {
         document.getElementById("modal-title").textContent = "Add Model";
         document.getElementById("model-form").reset();
         document.getElementById("model-id").value = "";
-        document.getElementById("model-decision-schemas").value = "decision-schema/v1";
         this._populateProviderSelect();
+        this.toggleFields();
         openModal("model-modal");
     },
 
@@ -575,10 +581,11 @@ window.settingsModels = {
         document.getElementById("modal-title").textContent = "Add Model — " + (prov.name || providerId);
         document.getElementById("model-form").reset();
         document.getElementById("model-id").value = "";
-        document.getElementById("model-decision-schemas").value = "decision-schema/v1";
         this._populateProviderSelect();
         document.getElementById("model-provider").value = providerId;
-        document.getElementById("model-type").value = prov.type || "remote";
+        // SystemOne only serves structured decisions.
+        document.getElementById("model-type").value =
+            prov.adapter_key === "systemone.questions.v1" ? "decision" : "llm";
         this.toggleFields();
         openModal("model-modal");
     },
@@ -590,7 +597,7 @@ window.settingsModels = {
         document.getElementById("modal-title").textContent = "Edit Model";
         document.getElementById("model-id").value = model.id;
         document.getElementById("model-name").value = model.name || "";
-        document.getElementById("model-type").value = model.type || "remote";
+        document.getElementById("model-type").value = this._isDecision(model) ? "decision" : "llm";
         this._populateProviderSelect();
         document.getElementById("model-provider").value = model.provider || "";
         document.getElementById("model-base-url").value = model.legacy_override_provenance ? "Legacy override retained (read-only)" : "Inherited from provider";
@@ -609,40 +616,23 @@ window.settingsModels = {
         document.getElementById("model-is-default").checked = !!model.is_default;
         document.getElementById("model-vision-supported").checked =
             !!model.vision_supported;
-        const operations = (model.capabilities && model.capabilities.operations) || {};
-        const decisionEnabled = operations.decision && operations.decision !== "unsupported";
-        document.getElementById("model-decision-enabled").checked = !!decisionEnabled;
-        document.getElementById("model-decision-schemas").value = Array.isArray(model.capabilities?.schema_versions) && model.capabilities.schema_versions.length
-            ? model.capabilities.schema_versions.join(", ") : "decision-schema/v1";
-
         this.toggleFields();
         openModal("model-modal");
     },
 
     toggleFields() {
-        // Locality is display metadata only. Provider endpoint/adapter/auth own
-        // all connection behavior, so this method intentionally has no routing effects.
+        // Decision models have no chat settings (tokens, sampling, thinking, vision, default).
+        const decision = document.getElementById("model-type").value === "decision";
+        document.querySelectorAll("#model-form [data-llm-only]").forEach((el) => {
+            el.classList.toggle("hidden", decision);
+        });
     },
 
     async save(event) {
         event.preventDefault();
 
         const modelId = document.getElementById("model-id").value;
-        const existingModel = this.models.find((model) => model.id === modelId);
-        const decisionEnabled = document.getElementById("model-decision-enabled").checked;
-        const schemaVersions = document.getElementById("model-decision-schemas").value
-            .split(",").map((value) => value.trim()).filter(Boolean);
-        const capabilities = {
-            version: "model-capabilities/v1",
-            operations: {
-                chat: "advertised",
-                ...(document.getElementById("model-vision-supported").checked ? { vision: "advertised" } : {}),
-                ...(decisionEnabled ? { decision: "advertised", strict_output: "advertised" } : {}),
-            },
-            schema_versions: decisionEnabled ? schemaVersions : [],
-            confidence: "unsupported",
-            data_egress: ["public"],
-        };
+        // Capabilities are derived server-side from the model type.
         const modelData = {
             name: document.getElementById("model-name").value,
             type: document.getElementById("model-type").value,
@@ -667,7 +657,6 @@ window.settingsModels = {
             vision_supported: document.getElementById("model-vision-supported").checked
                 ? 1
                 : 0,
-            capabilities,
         };
 
         try {

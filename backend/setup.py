@@ -372,7 +372,6 @@ _DEFAULT_SETTINGS = [
     # operation always falls back to the deterministic HMADS pipeline.
     ("decim_safety.enabled", "0"),
     ("decim_safety.mode", "off"),
-    ("decim_safety.provider", "systemone"),
     ("decim_safety.request_timeout_ms", "1500"),
     ("decim_safety.minimum_confidence", "0.90"),
     ("decim_safety.max_payload_chars", "12000"),
