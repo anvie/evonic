@@ -2992,7 +2992,7 @@ document.addEventListener('evonic:agent-state-changed', function(event) {
             _sessionStateData
         );
     } else {
-        // ATG and non-stream callers still emit the legacy event without a snapshot.
+        // Non-stream callers still emit the legacy event without a snapshot.
         loadAgentState();
     }
     scheduleSessionSummaryRefresh();

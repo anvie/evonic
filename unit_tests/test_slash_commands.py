@@ -77,11 +77,10 @@ def test_exec_bypasses_plan_file_requirement_for_fresh_session():
     assert '"mode": "execute"' in saved_state
 
 
-def test_exec_preserves_atg_cmp_and_unrelated_session_state():
+def test_exec_preserves_cmp_and_unrelated_session_state():
     from backend.agent_state import AgentState
 
     state = AgentState(mode="plan")
-    state.atg = {"status": "executing", "dag": {"nodes": {}}}
     state.cmp = {"version": 1, "paths": {}}
     session_state = json.loads(state.serialize())
     session_state["workspace_marker"] = "preserve"
@@ -94,7 +93,6 @@ def test_exec_preserves_atg_cmp_and_unrelated_session_state():
 
     assert response == "Switched to execute mode."
     saved_state = json.loads(chat_db.upsert_session_state.call_args.args[1])
-    assert saved_state["atg"] == state.atg
     assert saved_state["cmp"] == state.cmp
     assert saved_state["workspace_marker"] == "preserve"
 
@@ -103,7 +101,6 @@ def test_plan_preserves_cmp_and_session_data_while_resetting_only_global_focus()
     from backend.agent_state import AgentState
 
     state = AgentState(mode="execute", plan_file="plan/current.md")
-    state.atg = {"status": "executing", "dag": {"nodes": {}}}
     state.cmp = {"version": 1, "active_id": "A1", "paths": {"A1": {}}}
     session_state = json.loads(state.serialize())
     session_state["workspace_marker"] = "preserve"
@@ -123,7 +120,6 @@ def test_plan_preserves_cmp_and_session_data_while_resetting_only_global_focus()
     saved_session = json.loads(chat_db.upsert_session_state.call_args.args[1])
     assert saved_session["mode"] == "plan"
     assert saved_session["plan_file"] == "plan/current.md"
-    assert saved_session["atg"] == state.atg
     assert saved_session["cmp"] == state.cmp
     assert saved_session["workspace_marker"] == "preserve"
 

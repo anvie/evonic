@@ -234,7 +234,6 @@ DEFAULTS: Dict[str, Any] = {
     "memory_engine": None,
     "kb_organizer_mode": None,
     # Feature gates
-    "enable_atg": 0,
     "enable_cmp": 0,
     "always_execute": 0,
 }
@@ -247,7 +246,7 @@ BOOLEAN_FIELDS = frozenset({
     "agent_messaging_enabled", "tool_compression_enabled",
     "message_wrapper_enabled", "audio_enabled", "video_enabled",
     "bash_exec_enabled", "inter_agent_clear_context", "builtin_tools_enabled",
-    "enable_atg", "enable_cmp", "always_execute", "ask_user_enabled",
+    "enable_cmp", "always_execute", "ask_user_enabled",
 })
 
 INTEGER_FIELDS = frozenset({"summarize_threshold", "summarize_tail", "attachment_max_size_mb"})

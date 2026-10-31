@@ -1,8 +1,7 @@
 """
 CMP (Context Memory Path) — cross-task context management.
 
-Session-level sibling of ATG (which structures context WITHIN one task):
-maintains a graph of task paths rendered as a navigable map, with
+Session-level context management: maintains a graph of task paths rendered as a navigable map, with
 interface-preserving path cards, 4-class boundary detection and soft
 offload. See .claude/tasks/cmp-implementation.md and the CMP paper.
 
@@ -39,8 +38,8 @@ def on_turn_boundary(agent: dict, ms, chatlog, user_text: str,
                      session_id: str = None, agent_id: str = None):
     """Per-turn CMP orchestration: first-path init, boundary detection,
     path ops (switch/branch), lifecycle decay. Called from the runtime at
-    the re-arm slot; subsumes maybe_rearm_atg for cmp agents (a new branch
-    IS the re-arm — fresh plan cycle on its own path).
+    the re-arm slot (a new branch starts a fresh plan cycle on its own
+    path).
 
     Returns the decision dict, or None when CMP does not apply.
     Mutates ms (and ms.cmp) in place; persistence rides the normal
@@ -195,11 +194,6 @@ def _apply_naming(record: dict, named) -> None:
 
 
 def _current_work_title(ms) -> str:
-    if isinstance(ms.atg, dict):
-        goal = ((ms.atg.get('dag') or {}).get('root_goal')
-                or ms.atg.get('root_goal'))
-        if goal:
-            return str(goal)[:60]
     if ms.plan_file:
         return str(ms.plan_file)[:60]
     return ''

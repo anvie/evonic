@@ -88,7 +88,6 @@ FULL_SPEC_VALUES = {
     "messaging_acl_mode": "blacklist",
     "memory_engine": "fts5",
     "kb_organizer_mode": "off",
-    "enable_atg": 1,
     "enable_cmp": 1,
     "always_execute": 1,
     "ask_user_enabled": 0,

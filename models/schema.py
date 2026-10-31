@@ -387,7 +387,6 @@ class SchemaMixin:
                 ("send_file_allowed_path_regex", "TEXT DEFAULT ''"),
                 ("audio_enabled", "BOOLEAN DEFAULT 0"),
                 ("video_enabled", "BOOLEAN DEFAULT 0"),
-                ("enable_atg", "BOOLEAN DEFAULT 0"),
                 ("enable_cmp", "BOOLEAN DEFAULT 0"),
                 # dm_only: agent hanya melayani pesan pribadi (DM); pesan grup ditolak.
                 ("dm_only", "INTEGER DEFAULT 0"),

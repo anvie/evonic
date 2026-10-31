@@ -49,9 +49,6 @@ class ToolRegistry:
         self._builtins['builtin:set_mode'] = _builtin_set_mode_factory
         self._builtins['builtin:update_tasks'] = _builtin_update_tasks_factory
         self._builtins['builtin:save_plan'] = _builtin_save_plan_factory
-        # ATG task-graph compiler — exposed only when agent_context['enable_atg']
-        # (see get_builtin_tools gate)
-        self._builtins['builtin:compile_task_graph'] = _builtin_compile_task_graph_factory
         # CMP session-path navigation — exposed only when agent_context['enable_cmp']
         self._builtins['builtin:switch_path'] = _builtin_switch_path_factory
         self._builtins['builtin:new_path'] = _builtin_new_path_factory
@@ -273,8 +270,6 @@ class ToolRegistry:
         """Return whether a feature-gated built-in is available to an agent."""
         if builtin_id in ('builtin:save_plan', 'builtin:set_mode', 'builtin:state'):
             return not bool(agent_context.get('always_execute'))
-        if builtin_id == 'builtin:compile_task_graph':
-            return bool(agent_context.get('enable_atg'))
         if builtin_id in ('builtin:switch_path', 'builtin:new_path',
                           'builtin:read_transcript', 'builtin:forget_memory'):
             return bool(agent_context.get('enable_cmp'))
@@ -752,20 +747,6 @@ def _builtin_save_plan_factory(agent_context: dict):
         if ms is None:
             return {"error": "Agent state is not enabled for this agent."}
 
-        # ATG enforcement: flagged agents on complex tasks must compile a task
-        # graph first — small models ignore the prompt instruction alone.
-        # save_plan unlocks once a compile was attempted (any atg status,
-        # including 'failed') or for trivial-classified tasks.
-        if (agent_context.get('enable_atg')
-                and not getattr(ms, 'auto_trivial', False)
-                and not getattr(ms, 'atg', None)):
-            return {"error": (
-                "This agent plans with Atomic Task Graph. Call "
-                "compile_task_graph(goal, context) with the task goal instead "
-                "of save_plan — the compiled graph becomes your plan file. "
-                "save_plan is only available if graph compilation fails."
-            )}
-
         filename = arguments.get('filename', '').strip()
         content = arguments.get('content', '')
 
@@ -789,131 +770,6 @@ def _builtin_save_plan_factory(agent_context: dict):
         return {
             "result": "Plan saved. Make sure to present this plan to user first.",
             "plan_file": relative_path
-        }
-
-    return tool_def, executor
-
-
-def _builtin_compile_task_graph_factory(agent_context: dict):
-    """Factory for the built-in 'compile_task_graph' tool (ATG).
-
-    Compiles a complex task into a DAG of atomic tool-use nodes via recursive
-    LLM decomposition (arXiv 2607.01942), stores it in agent_state.atg, and
-    writes a markdown rendering as the linked plan file — so the existing
-    save_plan/set_mode approval flow works unchanged. Exposed only when
-    agent_context['enable_atg'] (gated in get_builtin_tools).
-    """
-    import os
-    import re as _re
-
-    agent_id = agent_context.get('id', '')
-    _base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    plan_dir = os.path.join(_base_dir, 'agents', agent_id, 'plan')
-
-    tool_def = {
-        "type": "function",
-        "function": {
-            "name": "compile_task_graph",
-            "description": (
-                "Compile a complex multi-step task into an executable task graph "
-                "(DAG of atomic tool-use steps with explicit dependencies). "
-                "Prefer this over a free-form save_plan for complex tasks: after "
-                "exploring, call compile_task_graph with the task goal. The graph "
-                "is saved as your plan file — present it to the user and wait for "
-                "approval before set_mode('execute'). Independent steps will run "
-                "in parallel and failures are repaired locally during execution."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "goal": {
-                        "type": "string",
-                        "description": "The full task goal to compile, in one or two sentences."
-                    },
-                    "context": {
-                        "type": "string",
-                        "description": (
-                            "Optional findings from your exploration that the compiler "
-                            "should know (relevant file paths, constraints, decisions)."
-                        )
-                    }
-                },
-                "required": ["goal"]
-            }
-        }
-    }
-
-    def executor(arguments: dict) -> dict:
-        if not agent_context.get('enable_atg'):
-            return {"error": "ATG is not enabled for this agent."}
-        ms = agent_context.get('agent_state')
-        if ms is None:
-            return {"error": "Agent state is not enabled for this agent."}
-        runtime = agent_context.get('_atg_runtime')
-        if not runtime:
-            return {"error": "ATG runtime is not available in this context."}
-
-        goal = (arguments.get('goal') or '').strip()
-        if not goal:
-            return {"error": "'goal' must be a non-empty string."}
-
-        from backend.agent_runtime.atg.compiler import (
-            CompilationError, compile_task_graph, render_markdown)
-        try:
-            dag, history = compile_task_graph(
-                goal,
-                runtime.get('tools') or [],
-                runtime['llm'],
-                runtime['llm_lock'],
-                log_file=runtime.get('llm_log_path'),
-                context_excerpt=(arguments.get('context') or '')[:4000],
-            )
-        except CompilationError as e:
-            # Mark the attempt so save_plan's ATG redirect unlocks as fallback.
-            # root_goal kept for the re-arm continuation check.
-            ms.atg = {"status": "failed", "error": str(e)[:500], "root_goal": goal}
-            return {"error": f"Task graph compilation failed: {e}. "
-                             "You can retry with a clearer goal, or fall back to save_plan."}
-
-        waves = dag.waves()
-        ms.atg = {
-            "status": "compiled",
-            "dag": dag.to_dict(),
-            "history": history.to_dict(),
-            "repair_attempts": 0,
-            "stats": {"nodes_total": len(dag.nodes), "waves": len(waves)},
-        }
-
-        try:
-            from backend.event_stream import event_stream
-            event_stream.emit('atg_compiled', {
-                'agent_id': agent_id,
-                'session_id': agent_context.get('session_id'),
-                'nodes': len(dag.nodes), 'waves': len(waves),
-                'refinements': max(0, len(history.entries) - 1),
-            })
-        except Exception:
-            pass
-
-        slug = _re.sub(r'[^a-z0-9]+', '-', goal.lower()).strip('-')[:40] or 'task'
-        filename = f"atg-{slug}.md"
-        os.makedirs(plan_dir, exist_ok=True)
-        try:
-            with open(os.path.join(plan_dir, filename), 'w', encoding='utf-8') as f:
-                f.write(render_markdown(dag, history))
-        except Exception as e:
-            return {"error": f"Failed to write plan file: {e}"}
-        ms.set_plan_file(f"plan/{filename}")
-
-        return {
-            "result": (
-                f"Task graph compiled: {len(dag.nodes)} nodes in {len(waves)} waves. "
-                "Saved as your plan file — present the plan to the user and wait "
-                "for approval before set_mode('execute')."
-            ),
-            "plan_file": f"plan/{filename}",
-            "nodes": len(dag.nodes),
-            "waves": len(waves),
         }
 
     return tool_def, executor
@@ -1060,11 +916,7 @@ def _builtin_new_path_factory(agent_context: dict):
         from backend.agent_runtime.cmp import store as cmp_store
         if ms.cmp is None or not ms.cmp.get("paths"):
             # Adopt the ongoing work as P1 before branching off it.
-            prev_title = None
-            if isinstance(ms.atg, dict):
-                prev_title = ((ms.atg.get('dag') or {}).get('root_goal')
-                              or ms.atg.get('root_goal'))
-            prev_title = (prev_title or ms.plan_file or "Earlier conversation")
+            prev_title = ms.plan_file or "Earlier conversation"
             ms.cmp = cmp_store.new_cmp(ms, title=str(prev_title)[:60])
             _cmp_emit(agent_context, 'cmp_path_created',
                       {'path_id': 'P1', 'title': str(prev_title)[:60],

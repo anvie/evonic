@@ -1795,17 +1795,6 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                             <div class="adv-item adv-toggle" data-adv-item>
 <div>
                         <label class="flex items-center gap-3 cursor-pointer select-none">
-                            {{ toggle_widget(id='agent-atg-enabled', checked=agent.enable_atg) }}
-                            <div>
-                                <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Atomic Task Graph (experimental)</span>
-                                <p class="text-xs text-gray-400 mt-0.5">Compile complex tasks into a dependency graph with parallel execution and localized error repair. Requires Agent State; only applies to tasks classified as complex.</p>
-                            </div>
-                        </label>
-                    </div>
-                            </div>
-                            <div class="adv-item adv-toggle" data-adv-item>
-<div>
-                        <label class="flex items-center gap-3 cursor-pointer select-none">
                             {{ toggle_widget(id='agent-cmp-enabled', checked=agent.enable_cmp) }}
                             <div>
                                 <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Context Memory Path (experimental)</span>
@@ -1820,7 +1809,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                             {{ toggle_widget(id='agent-always-execute', checked=agent.always_execute) }}
                             <div>
                                 <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Always Execute</span>
-                                <p class="text-xs text-gray-400 mt-0.5">Force agent to stay in execute mode — bypasses plan/execute blocking. Write tools are always available while CMP and ATG remain active. Requires Agent State.</p>
+                                <p class="text-xs text-gray-400 mt-0.5">Force agent to stay in execute mode — bypasses plan/execute blocking. Write tools are always available while CMP remains active. Requires Agent State.</p>
                             </div>
                         </label>
                     </div>
@@ -4171,7 +4160,6 @@ const AgentAutoSave = {
         { id: 'agent-buffer-seconds', key: 'message_buffer_seconds', type: 'float' },
         { id: 'agent-send-intermediate', key: 'send_intermediate_responses', type: 'bool' },
         { id: 'agent-state-enabled', key: 'enable_agent_state', type: 'bool' },
-        { id: 'agent-atg-enabled', key: 'enable_atg', type: 'bool' },
         { id: 'agent-cmp-enabled', key: 'enable_cmp', type: 'bool' },
         { id: 'agent-always-execute', key: 'always_execute', type: 'bool' },
         { id: 'agent-parallel-exec', key: 'disable_parallel_tool_execution', type: 'bool' },

@@ -4,8 +4,7 @@ CMP (Context Memory Path) — path store.
 Pure functions over the `ms.cmp` dict (persisted inside session_state).
 No I/O, no LLM calls. Each path record is a "path card" plus transcript
 segments (chatlog ts ranges) plus a snapshot of the per-task AgentState
-fields (mode/plan_file/auto_trivial/atg) — restoring these on switch is
-what fixes the single-slot `ms.atg` limitation.
+fields (mode/plan_file/auto_trivial) — restored on switch.
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ ARTIFACTS_MAX = 8
 VALID_STATUSES = {"active", "preserved", "archived"}
 
 # AgentState fields snapshotted per path (the single-slot per-task state)
-SNAPSHOT_FIELDS = ("mode", "plan_file", "auto_trivial", "atg")
+SNAPSHOT_FIELDS = ("mode", "plan_file", "auto_trivial")
 
 
 def _now_ms() -> int:
@@ -340,7 +339,6 @@ def _new_path_record(pid: str, title: str, goal: str, now_ts: int,
         "mode": None,
         "plan_file": None,
         "auto_trivial": False,
-        "atg": None,
     })
 
 
@@ -381,7 +379,6 @@ def create_path(cmp: dict, ms, title: str, goal: str = "",
     ms.mode = "execute" if trivial else "plan"
     ms.plan_file = None
     ms.auto_trivial = trivial
-    ms.atg = None
 
     cmp["stats"]["branches"] = cmp["stats"].get("branches", 0) + 1
     restore_lineage(cmp, pid, now_ts)
@@ -411,12 +408,10 @@ def switch_to(cmp: dict, ms, target_id: str, now_ts: int = None) -> dict:
     ms.mode = target.get("mode") or "execute"
     ms.plan_file = target.get("plan_file")
     ms.auto_trivial = bool(target.get("auto_trivial"))
-    ms.atg = target.get("atg")
     # Clear the stored snapshot while live (avoids stale double-truth)
     target["mode"] = None
     target["plan_file"] = None
     target["auto_trivial"] = False
-    target["atg"] = None
 
     _set_status(target, "active", now_ts)  # reactivation resets the clock
     target["last_active"] = now_ts
@@ -436,7 +431,6 @@ def _suspend_active(cmp: dict, ms, now_ts: int) -> dict:
     path["mode"] = ms.mode
     path["plan_file"] = ms.plan_file
     path["auto_trivial"] = ms.auto_trivial
-    path["atg"] = ms.atg
     _set_status(path, "preserved", now_ts)
     path["last_active"] = now_ts
     # card_stale untouched: the compactor finalizes the card right before
@@ -526,7 +520,6 @@ def tick_lifecycle(cmp: dict, now_ts: int = None) -> dict:
     # archives 1, collapsing the map to a single preserved node).
     for pid, path in preserved_unprotected[:max(0, overflow)]:
         _set_status(path, "archived", now_ts)
-        path["atg"] = None  # heavy snapshot never survives archiving
         archived.append(pid)
 
     # --- archived TTL → prune --------------------------------------------
@@ -541,13 +534,8 @@ def tick_lifecycle(cmp: dict, now_ts: int = None) -> dict:
 
 
 def enforce_caps(cmp: dict) -> None:
-    """Backstop: archived paths drop their atg snapshot (facts live in the
-    card), and beyond MAX_PATHS the oldest archived paths are fully removed
+    """Backstop: beyond MAX_PATHS the oldest archived paths are fully removed
     (prune semantics, including the depends_on reference protection)."""
-    for path in cmp["paths"].values():
-        if path_status(path) == "archived" and path.get("atg") is not None:
-            path["atg"] = None
-
     to_prune = len(cmp["paths"]) - MAX_PATHS
     if to_prune <= 0:
         return

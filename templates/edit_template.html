@@ -286,7 +286,7 @@
         audio_enabled: 0, video_enabled: 0, run_as_user: null, bash_exec_enabled: 0,
         inter_agent_clear_context: 0, builtin_tools_enabled: 1, messaging_acl: null,
         messaging_acl_mode: "whitelist", memory_engine: null, kb_organizer_mode: null,
-        enable_atg: 0, enable_cmp: 0, always_execute: 0,
+        enable_cmp: 0, always_execute: 0,
     };
 
     // Security-sensitive defaults: force-safe during simulation.
@@ -332,7 +332,6 @@
         { key: "inter_agent_clear_context", label: "Inter-agent clear context", kind: "bool", group: "advanced" },
         { key: "memory_engine", label: "Memory engine", kind: "select", group: "advanced", options: ["evomem", "fts5"] },
         { key: "kb_organizer_mode", label: "KB organizer mode", kind: "select", group: "advanced", options: ["agentic", "non-agentic", "sefton", "off"] },
-        { key: "enable_atg", label: "Enable ATG", kind: "bool", group: "advanced" },
         { key: "enable_cmp", label: "Enable CMP", kind: "bool", group: "advanced" },
         { key: "always_execute", label: "Always execute", kind: "bool", group: "advanced" },
     ];

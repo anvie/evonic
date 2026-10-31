@@ -2579,7 +2579,6 @@ class AgentRuntime:
                 'audio_enabled': agent.get('audio_enabled', 0),
                 'messaging_acl': agent.get('messaging_acl'),
                 'messaging_acl_mode': agent.get('messaging_acl_mode', 'whitelist'),
-                'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
                 'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
                 'workplace_switch_enabled': bool(agent.get('workplace_switch_enabled')),
             }
@@ -2697,8 +2696,7 @@ class AgentRuntime:
                         ms = AgentState(always_execute=bool(agent.get('always_execute')))
             # Cross-task boundary handling. CMP (when enabled) owns it: the
             # detector routes the turn (continue/return/branch) and a branch
-            # IS the ATG re-arm — a fresh plan cycle on its own path. Agents
-            # with ATG but not CMP keep the original 2-way re-arm.
+            # starts a fresh plan cycle on its own path.
             _boundary_text = ""
             if not agent.get('is_subagent'):
                 for _msg in reversed(messages):
@@ -2713,7 +2711,6 @@ class AgentRuntime:
             # late slot only covers turns it skipped — e.g. brand-new sessions
             # where agent state didn't exist yet at assembly time (first-path
             # init happens here, after the classifier created ms).
-            _cmp_handled = _cmp_early_handled
             if (not _cmp_early_handled
                     and agent.get('enable_cmp') and agent.get('enable_agent_state')
                     and not agent.get('is_subagent')):
@@ -2723,26 +2720,12 @@ class AgentRuntime:
                     _cmp_res = _cmp_pkg.on_turn_boundary(
                         agent, ms, _cmp_chatlog, _boundary_text,
                         session_id=ctx.session_id, agent_id=agent['id'])
-                    _cmp_handled = _cmp_res is not None
                     if _cmp_res and _cmp_res.get('decision') not in ('continue', 'init'):
                         _logger.info("CMP boundary: %s -> %s (layer %s) for session %s",
                                      _cmp_res.get('decision'), _cmp_res.get('target'),
                                      _cmp_res.get('layer'), ctx.session_id)
                 except Exception:
                     _logger.exception("CMP boundary check failed — keeping current state")
-
-            # ATG re-arm (atg-only agents): when the previous task graph is
-            # finished and this message is a brand-new complex task, re-enter
-            # the plan/compile cycle so the new task gets its own graph.
-            if (not _cmp_handled and not is_new_session and ms.mode == 'execute'
-                    and agent.get('enable_atg') and not agent.get('is_subagent')):
-                try:
-                    from backend.agent_runtime import atg as _atg_pkg
-                    if _atg_pkg.maybe_rearm_atg(agent, ms, _boundary_text):
-                        _logger.info("ATG re-armed for session %s — new complex task detected",
-                                     ctx.session_id)
-                except Exception:
-                    _logger.exception("ATG re-arm check failed — keeping current state")
 
             # Sub-agents receive delegated tasks from their parent and
             # should never require plan/approval cycles. Force execute mode.

@@ -84,12 +84,6 @@ def _render_cards_for_llm(cmp: dict, ms=None, recent_tail: str = '') -> tuple:
         if ms.mode == 'plan':
             active += ("\nstate: this path's plan is AWAITING USER APPROVAL — "
                        "approval or consent replies mean CONTINUE")
-        if isinstance(getattr(ms, 'atg', None), dict):
-            atg_status = ms.atg.get('status')
-            if atg_status in ('done', 'fallback', 'failed'):
-                active += f"\nstate: this task's work is FINISHED (task graph {atg_status})"
-            elif atg_status:
-                active += f"\nstate: task graph {atg_status}"
     if recent_tail:
         active += f"\nlast assistant reply (what was just delivered): {recent_tail}"
     others = '\n\n'.join(card_text(p) for pid, p in sorted(cmp['paths'].items())

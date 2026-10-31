@@ -1,5 +1,4 @@
-"""Tests for the CMP per-turn orchestrator (on_turn_boundary) and its
-coexistence with the ATG re-arm."""
+"""Tests for the CMP per-turn orchestrator (on_turn_boundary)."""
 
 import pytest
 from unittest.mock import patch
@@ -59,14 +58,14 @@ def test_none_when_not_enabled():
 
 def test_first_turn_initializes_p1_from_current_work():
     ms = AgentState(mode='execute')
-    ms.atg = {'status': 'executing', 'dag': {'root_goal': 'build the website'}}
+    ms.plan_file = 'plan/website.md'
     result = on_turn_boundary(AGENT, ms, FakeChatlog(user_ts=7000), 'lanjutkan')
     assert result['decision'] == 'init'
     p1 = ms.cmp['paths']['A1']
-    assert p1['title'] == 'build the website'
+    assert p1['title'] == 'plan/website.md'
     assert p1['segments'] == [[6999, None]]
     # init adopts, never disturbs, the live task state
-    assert ms.atg['status'] == 'executing'
+    assert ms.plan_file == 'plan/website.md' and ms.mode == 'execute'
 
 
 def test_first_turn_names_p1_from_the_turn_envelope():
@@ -150,7 +149,6 @@ def test_card_delta_lands_on_outgoing_path_before_switch():
 
 def test_dep_branch_creates_dependent_plan_mode_path():
     ms = _session_with_two_paths()
-    ms.atg = {'status': 'done'}
     with _detect('dep_branch', 'A1'):
         result = on_turn_boundary(AGENT, ms, FakeChatlog(user_ts=9000),
                                   'sekarang buatkan invoice untuk client A dari project itu')
@@ -158,7 +156,7 @@ def test_dep_branch_creates_dependent_plan_mode_path():
     new_id = result['target']
     assert ms.cmp['paths'][new_id]['depends_on'] == ['A1']
     # fresh plan cycle (this IS the re-arm)
-    assert ms.mode == 'plan' and ms.atg is None and ms.plan_file is None
+    assert ms.mode == 'plan' and ms.plan_file is None
     assert ms.auto_trivial is False
 
 
@@ -171,7 +169,7 @@ def test_trivial_branch_starts_in_execute_mode_and_restores_state():
                                   'now please push to origin dev')
     trivial_id = result['target']
     assert ms.mode == 'execute' and ms.auto_trivial is True
-    assert ms.plan_file is None and ms.atg is None
+    assert ms.plan_file is None
 
     store.switch_to(ms.cmp, ms, 'A2', now_ts=10000)
     assert ms.mode == 'execute' and ms.auto_trivial is False
@@ -274,15 +272,3 @@ def test_lifecycle_archives_then_prunes_on_turn_boundaries():
                          FakeChatlog(user_ts=t_prune),
                          'lanjutkan lagi kerjaan server config ini ya')
     assert 'A1' not in ms.cmp['paths']
-
-
-# ── Coexistence with ATG-only re-arm (runtime routing) ───────────────────────
-
-def test_atg_only_agents_still_use_rearm():
-    # the runtime gate: cmp handled → skip re-arm; cmp off → re-arm runs.
-    # Verified structurally: on_turn_boundary returns None for non-cmp agents,
-    # so _cmp_handled stays False and the ATG block executes.
-    ms = AgentState(mode='execute')
-    ms.atg = {'status': 'done', 'dag': {'root_goal': 'g'}}
-    assert on_turn_boundary({'id': 'a1', 'enable_atg': 1}, ms,
-                            FakeChatlog(), LONG_NEW_TASK) is None
