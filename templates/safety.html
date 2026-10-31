@@ -441,10 +441,10 @@
                             <span class="save-status" id="dc-status-floor" aria-live="polite"></span>
                         </div>
                         <span class="dc-desc">
-                            Score every command with HMADS as well, and let that verdict raise the DMSS
-                            severity when it is stricter. The floor can only make a decision stricter,
-                            never more permissive — it is how local rules such as
-                            <code>git add -A</code> still apply in enforce mode.
+                            Let your own HMADS rules raise the DMSS severity when they are stricter.
+                            Built-in rules never override a confident DMSS decision. The floor can only
+                            make a decision stricter, never more permissive — it is how local rules such
+                            as <code>git add -A</code> still apply in enforce mode.
                         </span>
                     </div>
                     <div class="dc-row-control">

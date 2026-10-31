@@ -42,6 +42,7 @@ def test_fresh_database_has_endpoint_registry_ledger_and_additive_fields():
         "registry_endpoint_v1_model_capabilities",
         "model_type_split_v1",
         "dmss_endpoint_to_model_v1",
+        "hmads_git_staging_user_rules_v1",
     }
     assert ledger["registry_endpoint_v1_provider_fields"]["precondition"] == "provider connection columns present"
 
@@ -110,7 +111,7 @@ def test_upgrade_migration_is_idempotent_and_normalizes_legacy_rows():
 
     with db._connect() as conn:
         ledger_count = conn.execute("SELECT COUNT(*) FROM registry_migration_ledger").fetchone()[0]
-    assert ledger_count == 4
+    assert ledger_count == 5
 
     # Legacy override stays operational through the compatibility resolver only.
     config = db.resolve_model_config(model)

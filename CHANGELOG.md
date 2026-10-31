@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- The HMADS safety floor now applies only to user-defined HMADS rules: built-in rules never override a confident DMSS decision. `git add -A` and `git add .` moved from the built-in rules into user rules (installed once on upgrade), so they can be edited or deleted and still require approval in enforce mode when the floor is on.
+
 ## [1.6.0] - 2026-10-31
 
 ### Features

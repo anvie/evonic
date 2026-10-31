@@ -104,6 +104,46 @@ def _generate_approval_info(blocked_patterns: list[str], matched_count: int) -> 
     }
 
 
+def _threshold_verdict(code: str, total_score: int, all_reasons: list[str],
+                       all_blocked: list[str], all_matched: list[dict]) -> dict:
+    """Map an aggregated HMADS score onto the legacy verdict thresholds."""
+    blocked_deduped = list(set(all_blocked))
+
+    # Determine level using the same thresholds as the legacy system
+    if total_score >= 15:
+        level = "dangerous"
+        requires_approval = False
+        approval_info = None
+    elif total_score >= 8:
+        level = "requires_approval"
+        requires_approval = True
+        approval_info = _generate_approval_info(blocked_deduped, len(all_matched))
+        # Locate the dangerous spans so every surface (web modal, chat card, and
+        # messaging channels) can highlight / focus on the risky code instead of
+        # showing it as undifferentiated (and head-truncated) text.
+        from backend.tools.lib.snippet_focus import build_focus_snippet, compute_highlights
+        highlights = compute_highlights(code, all_matched)
+        approval_info["highlights"] = highlights
+        approval_info["focus_snippet"] = build_focus_snippet(code, highlights)
+    elif total_score >= 4:
+        level = "warning"
+        requires_approval = False
+        approval_info = None
+    else:
+        level = "safe"
+        requires_approval = False
+        approval_info = None
+
+    return {
+        "level": level,
+        "score": total_score,
+        "reasons": all_reasons,
+        "blocked_patterns": blocked_deduped,
+        "requires_approval": requires_approval,
+        "approval_info": approval_info,
+    }
+
+
 class SafetyPipeline:
     """Run all registered checkers and merge into a single verdict."""
 
@@ -135,6 +175,8 @@ class SafetyPipeline:
         all_reasons: list[str] = []
         all_blocked: list[str] = []
         all_matched: list[dict] = []
+        # score, reasons, blocked_patterns, matched_patterns from user rules only
+        user_parts: list[Any] = [0, [], [], []]
 
         for checker in self._checkers:
             try:
@@ -147,47 +189,22 @@ class SafetyPipeline:
             all_reasons.extend(result.get("reasons", []))
             all_blocked.extend(result.get("blocked_patterns", []))
             all_matched.extend(result.get("matched_patterns", []))
+            if getattr(checker, "user_defined", False):
+                user_parts[0] += result.get("score", 0)
+                user_parts[1].extend(result.get("reasons", []))
+                user_parts[2].extend(result.get("blocked_patterns", []))
+                user_parts[3].extend(result.get("matched_patterns", []))
 
-        # Deduplicate blocked_patterns
-        blocked_deduped = list(set(all_blocked))
-
-        # Determine level using the same thresholds as the legacy system
-        if total_score >= 15:
-            level = "dangerous"
-            requires_approval = False
-            approval_info = None
-        elif total_score >= 8:
-            level = "requires_approval"
-            requires_approval = True
-            approval_info = _generate_approval_info(blocked_deduped, len(all_matched))
-            # Locate the dangerous spans so every surface (web modal, chat card, and
-            # messaging channels) can highlight / focus on the risky code instead of
-            # showing it as undifferentiated (and head-truncated) text.
-            from backend.tools.lib.snippet_focus import build_focus_snippet, compute_highlights
-            highlights = compute_highlights(code, all_matched)
-            approval_info["highlights"] = highlights
-            approval_info["focus_snippet"] = build_focus_snippet(code, highlights)
-        elif total_score >= 4:
-            level = "warning"
-            requires_approval = False
-            approval_info = None
-        else:
-            level = "safe"
-            requires_approval = False
-            approval_info = None
-
-        result_dict = {
-            "level": level,
-            "score": total_score,
-            "reasons": all_reasons,
-            "blocked_patterns": blocked_deduped,
-            "requires_approval": requires_approval,
-            "approval_info": approval_info,
-            # Legacy callers keep their keys unchanged; the source label is
-            # additive and lets tool boundaries and telemetry distinguish the
-            # deterministic path from a model decision.
-            "decision_source": "deterministic",
-        }
+        result_dict = _threshold_verdict(code, total_score, all_reasons, all_blocked, all_matched)
+        blocked_deduped = result_dict["blocked_patterns"]
+        level = result_dict["level"]
+        # Legacy callers keep their keys unchanged; the source label is
+        # additive and lets tool boundaries and telemetry distinguish the
+        # deterministic path from a model decision.
+        result_dict["decision_source"] = "deterministic"
+        # The same verdict from user-defined rules alone: only these may floor
+        # an accepted DMSS decision (see _apply_hmads_floor).
+        result_dict["user_rules"] = _threshold_verdict(code, *user_parts)
 
         if level != "safe":
             categories = ", ".join(blocked_deduped) or "-"
@@ -560,23 +577,25 @@ _LEVEL_RANK = {"safe": 0, "warning": 1, "requires_approval": 2, "dangerous": 3}
 
 
 def _apply_hmads_floor(result: dict, deterministic: dict) -> dict:
-    """Raise *result* to the deterministic verdict when HMADS is stricter.
+    """Raise *result* to the user-rule verdict when it is stricter.
 
     The HMADS floor exists because a model cannot know platform-local policy
-    (``git add -A`` is a local staging rule, not a general security rule).  A
-    floored verdict keeps the DMSS metadata for auditing but is attributed to
-    the rules (`decision_source="decim_floor"`), and it can never be *more*
-    permissive than the DMSS decision.
+    (``git add -A`` is a local staging rule, not a general security rule), so
+    only rules the user defined in HMADS may floor a confident DMSS decision;
+    built-in rules never do.  A floored verdict keeps the DMSS metadata for
+    auditing but is attributed to the rules (`decision_source="decim_floor"`),
+    and it can never be *more* permissive than the DMSS decision.
     """
     model_level = result.get("level") or "safe"
-    floor_level = (deterministic or {}).get("level") or "safe"
+    user_verdict = (deterministic or {}).get("user_rules") or {}
+    floor_level = user_verdict.get("level") or "safe"
     meta = dict(result.get("decim_safety") or {})
     if _LEVEL_RANK.get(floor_level, 0) <= _LEVEL_RANK.get(model_level, 0):
         meta["hmads_floor"] = floor_level
         result["decim_safety"] = meta
         return result
 
-    floored = dict(deterministic)
+    floored = dict(user_verdict)
     floored["decision_source"] = "decim_floor"
     floored["decim_safety"] = {
         **meta,
@@ -584,13 +603,13 @@ def _apply_hmads_floor(result: dict, deterministic: dict) -> dict:
         "model_level": model_level,
         "hmads_floor": floor_level,
     }
-    floored["reasons"] = list(deterministic.get("reasons") or []) + [
-        f"Deterministic HMADS floor raised the DMSS verdict ({model_level} → {floor_level})."
+    floored["reasons"] = list(user_verdict.get("reasons") or []) + [
+        f"User HMADS rule raised the DMSS verdict ({model_level} → {floor_level})."
     ]
     floored["requires_approval"] = floor_level in {"requires_approval", "dangerous"}
     logger.warning(
-        "[dmss] HMADS floor raised the model verdict: model=%s floor=%s categories=%s",
-        model_level, floor_level, ",".join(deterministic.get("blocked_patterns") or []),
+        "[dmss] User HMADS rule raised the model verdict: model=%s floor=%s categories=%s",
+        model_level, floor_level, ",".join(user_verdict.get("blocked_patterns") or []),
     )
     return floored
 
