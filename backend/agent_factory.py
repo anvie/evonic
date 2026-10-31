@@ -215,6 +215,7 @@ DEFAULTS: Dict[str, Any] = {
     "agent_messaging_enabled": 1,
     "tool_compression_enabled": 1,
     "message_wrapper_enabled": 1,
+    "ask_user_enabled": 1,
     # Models
     "fallback_model_id": None,
     "model_id": None,
@@ -246,7 +247,7 @@ BOOLEAN_FIELDS = frozenset({
     "agent_messaging_enabled", "tool_compression_enabled",
     "message_wrapper_enabled", "audio_enabled", "video_enabled",
     "bash_exec_enabled", "inter_agent_clear_context", "builtin_tools_enabled",
-    "enable_atg", "enable_cmp", "always_execute",
+    "enable_atg", "enable_cmp", "always_execute", "ask_user_enabled",
 })
 
 INTEGER_FIELDS = frozenset({"summarize_threshold", "summarize_tail", "attachment_max_size_mb"})

@@ -2505,6 +2505,10 @@ class AgentRuntime:
             if agent.get('vision_enabled', 1) and 'describe_image' not in assigned_tool_ids:
                 assigned_tool_ids.append('describe_image')
 
+            # ask_user_question is on unless the agent turned it off.
+            if agent.get('ask_user_enabled', 1) and 'ask_user_question' not in assigned_tool_ids:
+                assigned_tool_ids.append('ask_user_question')
+
             # Agents with audio_enabled automatically get transcribe_audio.
             if agent.get('audio_enabled') and 'transcribe_audio' not in assigned_tool_ids:
                 assigned_tool_ids.append('transcribe_audio')

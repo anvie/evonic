@@ -199,6 +199,7 @@ Every agent is configured through a set of properties stored in the `agents` dat
 | `enabled`                       | Whether the agent processes messages                                    |
 | `is_super`                      | Whether this is the super admin agent                                   |
 | `vision_enabled`                | Whether the agent can process images                                   |
+| `ask_user_enabled`              | Whether the agent can ask the user multiple-choice questions (default on) |
 | `sandbox_enabled`               | Execute tools inside a Docker container (local workplaces only)          |
 | `safety_checker_enabled`        | Enable HMADS safety checking on bash/runpy tools                        |
 | `agent_messaging_enabled`       | Allow this agent to send messages to other agents                       |

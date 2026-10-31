@@ -91,6 +91,7 @@ FULL_SPEC_VALUES = {
     "enable_atg": 1,
     "enable_cmp": 1,
     "always_execute": 1,
+    "ask_user_enabled": 0,
 }
 
 

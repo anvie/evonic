@@ -37,6 +37,10 @@ _logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGINS_DIR = os.path.join(BASE_DIR, 'plugins')
 
+# Plugins that became core features. A leftover copy in plugins/ is ignored and
+# cannot be reinstalled, so it never registers a second copy of the feature.
+RETIRED_PLUGIN_IDS = frozenset({'ask_user'})
+
 # Supported events
 VALID_EVENTS = {
     'turn_complete', 'message_received', 'session_created', 'summary_updated',
@@ -419,6 +423,8 @@ class PluginManager:
         if not os.path.isdir(PLUGINS_DIR):
             return plugins
         for name in sorted(os.listdir(PLUGINS_DIR)):
+            if name in RETIRED_PLUGIN_IDS:
+                continue
             plugin_dir = os.path.join(PLUGINS_DIR, name)
             manifest_path = os.path.join(plugin_dir, 'plugin.json')
             if not os.path.isfile(manifest_path):
@@ -676,6 +682,8 @@ class PluginManager:
             plugin_id = manifest.get('id', '')
             if not re.match(r'^[a-zA-Z0-9_-]+$', plugin_id):
                 return {'error': f'Invalid plugin id: {plugin_id}'}
+            if plugin_id in RETIRED_PLUGIN_IDS:
+                return {'error': f'Plugin "{plugin_id}" is now built into Evonic and cannot be installed.'}
 
             plugin_src = os.path.dirname(manifest_path)
             plugin_dest = os.path.join(PLUGINS_DIR, plugin_id)
@@ -702,6 +710,8 @@ class PluginManager:
         plugin_id = manifest.get('id', '')
         if not re.match(r'^[a-zA-Z0-9_-]+$', plugin_id):
             return {'error': f'Invalid plugin id: {plugin_id}'}
+        if plugin_id in RETIRED_PLUGIN_IDS:
+            return {'error': f'Plugin "{plugin_id}" is now built into Evonic and cannot be installed.'}
 
         plugin_dest = os.path.join(PLUGINS_DIR, plugin_id)
         source_norm = os.path.normpath(os.path.abspath(source_dir))

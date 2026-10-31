@@ -1,10 +1,10 @@
 """
-Ask User Question — shared state for the ask_user plugin.
+Ask User Question — shared state for the ask_user_question tool.
 
 The ask_user_question tool (running on the agent loop thread) registers a
 PendingQuestion here and blocks on its event; the answer route (running on a
 request thread) resolves it. Both import this module by its absolute name
-(``plugins.ask_user.store``) so they share one registry instance.
+(``backend.ask_user_store``) so they share one registry instance.
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ def build_result(status: str, questions: List[dict], answers: Optional[List[dict
         return {
             'status': 'disabled',
             'questions': [{'header': q['header'], 'question': q['question']} for q in questions],
-            'error': 'The Ask User Question plugin was disabled before the user answered. '
+            'error': 'Ask User Question was disabled for this agent before the user answered. '
                      'Do not assume an answer and do not call ask_user_question again; '
                      'ask the user in plain text instead.',
         }

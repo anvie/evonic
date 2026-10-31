@@ -982,6 +982,12 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
     if agent.get('audio_enabled'):
         assigned_ids.add('transcribe_audio')
 
+    # ask_user_question follows the agent's setting, even if assigned by hand.
+    if agent.get('ask_user_enabled', 1):
+        assigned_ids.add('ask_user_question')
+    else:
+        assigned_ids.discard('ask_user_question')
+
     # Auto-assign monitor wherever bash is available — it is the opt-in way to
     # be notified about background processes, which only bash can start.
     if 'bash' in assigned_ids:

@@ -5,6 +5,7 @@
 ### Features
 
 - ask_user questions now work on Telegram: each question arrives as a message with inline-keyboard buttons (tap an option, tick several and tap Done for multi-select, or Cancel), and typing a message answers in your own words. Tools can declare `"channels": [...]` to be listed only on those channel types. Disabling the plugin now closes any open question in both the web chat and Telegram.
+- Ask User Question is now built into Evonic instead of a plugin. Every agent has an **Ask User Questions** toggle under *Tools & capabilities* (on by default), and no tool assignment is needed. Turning it off removes the tool and closes any open question. On upgrade, the old plugin's tool assignments and enable setting are removed, and a leftover `plugins/ask_user/` folder is ignored.
 - With DMSS enabled in enforce mode, the DMSS model now checks a command first and a confident decision is final. HMADS runs only as the fallback when DMSS is unusable (timeout, provider error, open circuit breaker, malformed answer, or confidence below `minimum_confidence`). HMADS no longer acts as a floor on DMSS decisions. Shadow mode is unchanged.
 
 ### Bug Fixes

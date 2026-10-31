@@ -1,5 +1,5 @@
 /*
- * Ask User Question plugin — web UI styles (loaded by routes.inject_assets on agent pages).
+ * Ask User Question — web UI styles for the agent chat page's question card.
  * The pending card docks in the slash-command menu's slot: a panel fused to the chat
  * composer's top edge, with the menu's row, tint and fillet language and the composer's
  * button styles. Light by default; dark keys off html.dark like the rest of Evonic.

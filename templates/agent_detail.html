@@ -3,6 +3,7 @@
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/state-ui.css') }}?v=18">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ask-user.css') }}?v=1">
 <!-- Toast Container -->
 <style>
 footer { display: none; }
@@ -1884,6 +1885,17 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                         </label>
                     </div>
                             </div>
+                            <div class="adv-item adv-toggle" data-adv-item>
+<div>
+                        <label class="flex items-center gap-3 cursor-pointer select-none">
+                            {{ toggle_widget(id='agent-ask-user-enabled', checked=(agent.ask_user_enabled is none or agent.ask_user_enabled)) }}
+                            <div>
+                                <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Ask User Questions</span>
+                                <p class="text-xs text-gray-400 mt-0.5">Let the agent pause mid-turn and ask you multiple-choice questions with the <code>ask_user_question</code> tool. Questions show as a card above the chat input in the web chat, or as buttons on Telegram. Turning this off closes any question that is still open. Default ON.</p>
+                            </div>
+                        </label>
+                    </div>
+                            </div>
                         </div>
                     </section>
                     <section class="adv-sec" data-adv-group>
@@ -3149,6 +3161,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=12" defer></script>
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
+<script src="{{ url_for('static', filename='js/ask-user.js') }}?v=1" defer></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 // AGENT_ID/ENABLE_AGENT_STATE are mutable: softSwitchAgent() retargets the page
@@ -4168,6 +4181,7 @@ const AgentAutoSave = {
         { id: 'agent-artifacts', key: 'artifacts_enabled', type: 'bool' },
         { id: 'agent-safety-checker', key: 'safety_checker_enabled', type: 'bool' },
         { id: 'agent-bash-exec', key: 'bash_exec_enabled', type: 'bool' },
+        { id: 'agent-ask-user-enabled', key: 'ask_user_enabled', type: 'bool' },
         { id: 'agent-message-wrapper', key: 'message_wrapper_enabled', type: 'bool' },
         { id: 'agent-run-as-user', key: 'run_as_user', type: 'strnull' },
         { id: 'agent-memory-engine', key: 'memory_engine', type: 'selnull' },

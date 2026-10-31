@@ -1197,6 +1197,15 @@ class SchemaMixin:
                 cursor.execute("ALTER TABLE agents ADD COLUMN help_enabled BOOLEAN DEFAULT 1")
             except sqlite3.OperationalError:
                 pass
+            # Migration: ask_user moved from a plugin into core, gated per agent
+            # (1 = the agent gets ask_user_question). The first time the column is
+            # added, drop the plugin's tool assignments and enable setting.
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN ask_user_enabled BOOLEAN DEFAULT 1")
+                cursor.execute("DELETE FROM agent_tools WHERE tool_id = 'plugin:ask_user:ask_user_question'")
+                cursor.execute("DELETE FROM app_settings WHERE key = 'plugin_enabled:ask_user'")
+            except sqlite3.OperationalError:
+                pass
 
             # Migration: relax connector_token NOT NULL so NULL is allowed before pairing completes
             try:

@@ -26,6 +26,7 @@ CONFIG_KEYS = frozenset({
     "bash_exec_enabled", "vision_model_id", "inter_agent_clear_context",
     "builtin_tools_enabled", "messaging_acl", "messaging_acl_mode", "memory_engine",
     "kb_organizer_mode", "enable_atg", "enable_cmp", "always_execute",
+    "ask_user_enabled",
 })
 
 

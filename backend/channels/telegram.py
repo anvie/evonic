@@ -403,14 +403,6 @@ def _split_message(text: str, max_len: int = 4050) -> list:
     return chunks
 
 
-def _ask_user_enabled() -> bool:
-    try:
-        from models.db import db
-        return db.get_setting('plugin_enabled:ask_user') == '1'
-    except Exception:
-        return False
-
-
 def _ask_user_view(question_id: str, prompt: dict):
     """Text and inline keyboard for the current step of an ask_user prompt.
 
@@ -775,11 +767,11 @@ class TelegramChannel(BaseChannel):
             parts = raw.split(':')
             question_id = parts[1] if len(parts) >= 3 else ''
             prompt = _ask_user_prompts.get(question_id)
-            if prompt is None or not _ask_user_enabled():
+            if prompt is None:
                 await query.answer()
                 await _edit_query_text(query, 'This question is no longer open.')
                 return
-            from plugins.ask_user.store import question_registry
+            from backend.ask_user_store import question_registry
             action = parts[2]
             if action == 'x':
                 # Pop before resolving so the ask_user_resolved handler skips its edit.
@@ -975,7 +967,7 @@ class TelegramChannel(BaseChannel):
 
         # EventStream listeners: show ask_user questions as inline-keyboard buttons
         def _on_ask_user_required(data):
-            if data.get('channel_id') != channel_id or not _ask_user_enabled():
+            if data.get('channel_id') != channel_id:
                 return
             user_id = data.get('external_user_id')
             question_id = data.get('question_id')

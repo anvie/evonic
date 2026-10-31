@@ -12,7 +12,7 @@ from telegram.ext import CallbackQueryHandler
 
 from backend.channels import telegram as tg
 from backend.event_stream import event_stream
-from plugins.ask_user.store import normalize_questions, question_registry
+from backend.ask_user_store import normalize_questions, question_registry
 
 
 def _questions():
@@ -40,8 +40,6 @@ def harness(monkeypatch):
     monkeypatch.setattr('telegram.ext.ApplicationBuilder', lambda: builder)
     monkeypatch.setattr(tg.threading, 'Thread', lambda **kwargs: MagicMock())
     monkeypatch.setattr(event_stream, 'on', lambda *args: None)
-    enabled = {'value': True}
-    monkeypatch.setattr(tg, '_ask_user_enabled', lambda: enabled['value'])
 
     channel = tg.TelegramChannel('tg-chan', 'agent-1', {'bot_token': 'x'})
     channel.start()
@@ -62,7 +60,7 @@ def harness(monkeypatch):
         })
         return pending
 
-    yield SimpleNamespace(channel=channel, bot=bot, tap=tap, ask=ask, enabled=enabled)
+    yield SimpleNamespace(channel=channel, bot=bot, tap=tap, ask=ask)
 
 
 def _button_data(markup):
@@ -134,18 +132,19 @@ def test_resolution_elsewhere_updates_the_message(harness):
     question_registry.remove(pending.question_id, 'replied_in_chat')
 
 
-def test_disabled_plugin_shows_nothing_and_ignores_taps(harness):
+def test_disabled_for_agent_closes_message_and_ignores_taps(harness):
+    # Turning ask_user off for the agent ends the question as 'disabled'.
     pending = harness.ask(_questions())
-    harness.enabled['value'] = False
+    harness.channel._ask_user_resolved_handler({
+        'question_id': pending.question_id, 'channel_id': 'tg-chan',
+        'status': 'disabled', 'answers': [],
+    })
+    kwargs = harness.bot.edit_message_text.call_args.kwargs
+    assert kwargs['text'] == 'This question is no longer open.'
     query = harness.tap(f'aq:{pending.question_id}:o:0:0')
     query.edit_message_text.assert_awaited_with('This question is no longer open.')
     assert not pending.event.is_set()
-
-    harness.bot.send_message.reset_mock()
-    other = harness.ask(_questions())
-    harness.bot.send_message.assert_not_called()
     question_registry.remove(pending.question_id, 'disabled')
-    question_registry.remove(other.question_id, 'disabled')
 
 
 def test_other_channels_are_ignored(harness):
