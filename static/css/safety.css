@@ -1141,9 +1141,8 @@ html.dark [data-policy="dmss"][data-mode="enforce"] .sg-step-dmss .sg-step-dot {
     padding: 0.875rem 0;
     border-top: 1px solid var(--st-line);
 }
-.dc-row-wide { grid-template-columns: minmax(0, 1fr) minmax(16rem, 30rem); }
 @container (max-width: 680px) {
-    .dc-row, .dc-row-wide { grid-template-columns: minmax(0, 1fr); }
+    .dc-row { grid-template-columns: minmax(0, 1fr); }
 }
 .dc-row-text { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; padding-top: 0.3rem; }
 /* Label + auto-save status (spinner while saving, then a check) */
@@ -1242,7 +1241,8 @@ html.dark [data-policy="dmss"][data-mode="enforce"] .sg-step-dmss .sg-step-dot {
 
 /* endpoint row: input + one-click connectivity test (task #895) */
 .dc-endpoint-row { display: flex; align-items: stretch; gap: 0.5rem; }
-.dc-endpoint-row .dc-affix { flex: 1 1 auto; min-width: 0; }
+.dc-endpoint-row .dc-affix,
+.dc-endpoint-row .dc-select { flex: 1 1 auto; min-width: 0; }
 .dc-test-btn { flex: 0 0 auto; height: 2.5rem; padding: 0 0.9rem; white-space: nowrap; }
 .dc-test-btn.is-busy { opacity: 0.7; cursor: progress; }
 .dc-test-btn .spinner { width: 14px; height: 14px; }
