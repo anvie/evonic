@@ -2499,6 +2499,7 @@ def pass_setup():
         new_hash = generate_password_hash(pw1, method="pbkdf2:sha256")
         _update_env_var(env_path, "ADMIN_PASSWORD_HASH", new_hash)
         print("Password set successfully.")
+        _warn_password_needs_restart()
     else:
         print("Admin password is already configured.")
         # Rebind stdin to /dev/tty so input() works when called via
@@ -2536,6 +2537,24 @@ def pass_setup():
         new_hash = generate_password_hash(pw1, method="pbkdf2:sha256")
         _update_env_var(env_path, "ADMIN_PASSWORD_HASH", new_hash)
         print("Password changed successfully.")
+        _warn_password_needs_restart()
+
+
+def _warn_password_needs_restart():
+    """Tell the operator how to make the new password effective.
+
+    The server reads ADMIN_PASSWORD_HASH once at start-up, so a running instance
+    keeps authenticating against the old hash until it is restarted.
+    """
+    pid = _get_pid()
+    if pid is not None and _is_running(pid):
+        print(
+            f"\nThe server is running (PID {pid}) and still uses the previous "
+            "password.\nRestart it to apply the change: evonic restart"
+        )
+    else:
+        print("\nThe next server start will use the new password.")
+
 
 def _update_env_var(env_path, key, value):
     """Update or add an environment variable in a .env file.

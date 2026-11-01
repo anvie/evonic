@@ -8,6 +8,9 @@
 
 ### Bug Fixes
 
+- Login no longer loops back to the login page on a plain-HTTP deployment. The session and CSRF cookies used to be marked `Secure` unconditionally, so a browser talking to `http://<host>:8080` (anything but `localhost`) discarded them and `POST /login` silently returned to the login form with no error. The `Secure` flag now follows the request scheme: HTTPS (including a TLS-terminating proxy via `X-Forwarded-Proto`) gets `Secure` cookies, plain HTTP gets the same cookies without it. `FORCE_INSECURE_COOKIES` remains the explicit opt-out and is now documented in `.env.example` and the configuration reference.
+- The admin password set in the setup wizard now works immediately: the hash is applied to the running process instead of only being written to `.env` (which is read once at import). The wizard waits for the server restart and then sends you to `/login`; `evonic pass` now tells you a restart is required while the server is running.
+- `.env` is resolved against the project root instead of the process working directory, so a server started from another directory no longer boots without `ADMIN_PASSWORD_HASH` and no longer writes a fresh `SECRET_KEY` (invalidating sessions) on every start.
 - Evonic raises its soft open-file limit to 10240 at startup (capped at the hard limit). The macOS default of 256 was exhausted by persistent per-agent chat database connections, which caused "Too many open files" errors.
 - The HMADS safety floor now applies only to user-defined HMADS rules: built-in rules never override a confident DMSS decision. `git add -A` and `git add .` moved from the built-in rules into user rules (installed once on upgrade), so they can be edited or deleted and still require approval in enforce mode when the floor is on.
 

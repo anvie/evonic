@@ -16,16 +16,29 @@ from typing import Optional
 
 __all__ = ["load_dotenv"]
 
+# Project root = parent of this package, so the .env lookup does not depend on
+# the process working directory. The launcher script never chdirs, so a server
+# started from another directory used to boot with an empty environment
+# (no ADMIN_PASSWORD_HASH, a fresh SECRET_KEY written on every start).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_DOTENV_PATH = os.path.join(_PROJECT_ROOT, ".env")
+
 
 def load_dotenv(dotenv_path: Optional[str] = None, *, override: bool = False) -> bool:
-    """Parse *dotenv_path* (default ``.env`` in the calling directory) and set
+    """Parse *dotenv_path* (default: ``.env`` at the project root) and set
     the resulting key=value pairs on ``os.environ``.
+
+    Falls back to ``<cwd>/.env`` when the project-root file is absent, so
+    deployments that keep their .env elsewhere keep working.
 
     Returns ``True`` if the file was found and read, ``False`` otherwise.
     """
     if dotenv_path is None:
-        # Heuristic: caller's working directory — same as python-dotenv default.
-        dotenv_path = os.path.join(os.getcwd(), ".env")
+        dotenv_path = DEFAULT_DOTENV_PATH
+        if not os.path.isfile(dotenv_path):
+            cwd_env = os.path.join(os.getcwd(), ".env")
+            if os.path.isfile(cwd_env):
+                dotenv_path = cwd_env
 
     if not os.path.isfile(dotenv_path):
         return False

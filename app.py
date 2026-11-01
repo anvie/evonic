@@ -160,7 +160,25 @@ from datetime import timedelta
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+# Static default; the effective value per request is decided by the adaptive
+# session interface installed below (and by backend.cookie_policy.cookie_secure).
 app.config['SESSION_COOKIE_SECURE'] = config.SESSION_COOKIE_SECURE
+
+# Cookies must only be marked Secure when the request really arrived over HTTPS.
+# Browsers silently discard Secure cookies delivered over plain HTTP (anything
+# but localhost), so the session never persists and login loops without errors.
+from backend.cookie_policy import cookie_secure as _cookie_secure  # noqa: E402
+from flask.sessions import SecureCookieSessionInterface as _SCSessionInterface  # noqa: E402
+
+
+class _AdaptiveSessionInterface(_SCSessionInterface):
+    """Session cookie whose ``Secure`` flag follows the request scheme."""
+
+    def get_cookie_secure(self, app):  # noqa: ARG002 - signature matches Flask
+        return _cookie_secure()
+
+
+app.session_interface = _AdaptiveSessionInterface()
 
 # Global upload size limit (defense-in-depth for all endpoints)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
@@ -757,7 +775,7 @@ def set_csrf_cookie(response):
             'csrf_token', token,
             httponly=False,
             samesite='Lax',
-            secure=not config.FORCE_INSECURE_COOKIES,
+            secure=_cookie_secure(),
             path='/',
             max_age=604800,
         )
@@ -843,6 +861,23 @@ if __name__ == '__main__':
 #        _log.info("LLM API Key  : %s", masked_key)
 #    else:
 #        _log.info("LLM Model    : No default model configured in database")
+    if not config.FORCE_INSECURE_COOKIES:
+        _log.info(
+            "Cookie security: Secure cookies are issued for HTTPS requests only. "
+            "Reach the dashboard over HTTPS (or through a TLS-terminating proxy) — "
+            "plain HTTP works but leaves the session cookie unprotected."
+        )
+    else:
+        _log.warning(
+            "FORCE_INSECURE_COOKIES=1: session and CSRF cookies are sent without "
+            "the Secure flag. Do not expose this instance to untrusted networks."
+        )
+    if not config.ADMIN_PASSWORD_HASH:
+        _log.warning(
+            "ADMIN_PASSWORD_HASH is empty — web login will fail until a password is "
+            "set (run `evonic pass`, then restart)."
+        )
+
     app.run(
         host=config.HOST,
         port=config.PORT,

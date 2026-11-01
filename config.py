@@ -16,10 +16,14 @@ sys.path.append(_envcrypt_path)
 # the loader defaults to override=False, so a second call is a no-op for
 # variables that already exist in os.environ. No duplicate work, no surprises.
 _envcrypt_config = os.path.join(os.path.expanduser('~'), '.envcrypt.yaml')
+# Resolve .env against this file, never against the process cwd: the launcher
+# does not chdir, so a server started from elsewhere used to boot with an empty
+# environment (no ADMIN_PASSWORD_HASH, a new SECRET_KEY written every start).
+_ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
 if os.path.exists(_envcrypt_config):
     try:
         import envcrypt
-        envcrypt.load(".env")
+        envcrypt.load(_ENV_FILE)
     except Exception:
         from backend.dotenv_loader import load_dotenv
         load_dotenv()

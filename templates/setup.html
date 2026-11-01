@@ -258,6 +258,9 @@
                 </div>
                 <div class="p-6 space-y-5">
                     <div id="s4-error" class="hidden bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-lg px-4 py-3 text-sm"></div>
+                    <div id="create-status" class="hidden bg-indigo-50 dark:bg-indigo-950 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 rounded-lg px-4 py-3 text-sm">
+                        Creating your platform and restarting the server&hellip; you will be taken to the login page.
+                    </div>
 
                     <!-- Password -->
                     <div>
@@ -473,7 +476,7 @@ function submitSetup() {
         contentType: 'application/json',
         data: JSON.stringify(payload),
         success: function(data) {
-            window.location.href = '/agents/' + data.agent_id;
+            waitForRestart();
         },
         error: function(xhr) {
             const msg = (xhr.responseJSON || {}).error || 'Unexpected error. Please try again.';
@@ -482,6 +485,36 @@ function submitSetup() {
             $('#create-spinner').addClass('hidden');
         }
     });
+}
+
+// The server re-execs itself right after setup (config values such as
+// ADMIN_PASSWORD_HASH are read once at import time), so wait for the new
+// process before showing the login form instead of racing against the restart.
+function waitForRestart() {
+    const startedAt = Date.now();
+    let firstUptime = null;
+    let sawDowntime = false;
+    $('#create-status').removeClass('hidden');
+
+    function toLogin() { window.location.href = '/login?ready=1'; }
+
+    function poll() {
+        if (Date.now() - startedAt > 180000) { toLogin(); return; }
+        $.ajax({ url: '/api/health', method: 'GET', cache: false, timeout: 3000 })
+            .done(function(d) {
+                if (d && typeof d.uptime === 'number') {
+                    if (firstUptime === null) firstUptime = d.uptime;
+                    // uptime goes backwards only when a fresh process answered
+                    if (sawDowntime || d.uptime < firstUptime - 0.5) { toLogin(); return; }
+                }
+                setTimeout(poll, 800);
+            })
+            .fail(function() {
+                sawDowntime = true;
+                setTimeout(poll, 800);
+            });
+    }
+    setTimeout(poll, 800);
 }
 
 // ---- Step transitions ----
