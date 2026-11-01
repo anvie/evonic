@@ -224,6 +224,29 @@ def delete_doc(agent_id: str, slug: str) -> bool:
     return True
 
 
+def list_docs(agent_id: str, limit: int = 0) -> list:
+    """The agent's knowledge documents, most recently updated first: ``[{slug, title, description, tags, updated,
+    body}]``. Collection indexes, hidden folders and ``inbox`` are skipped. ``limit`` 0 means all."""
+    root = os.path.abspath(_get_evomem_dir(agent_id))
+    docs = []
+    for dirpath, dirnames, files in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "inbox"]
+        for f in files:
+            if not f.endswith(".md") or f == "index.md":
+                continue
+            try:
+                with open(os.path.join(dirpath, f), encoding="utf-8") as fh:
+                    fm, body = _parse_frontmatter(fh.read())
+            except OSError:
+                continue
+            slug = os.path.relpath(os.path.join(dirpath, f), root)[:-3].replace(os.sep, "/")
+            docs.append({"slug": slug, "title": fm.get("title") or slug.rsplit("/", 1)[-1],
+                         "description": fm.get("description", ""), "tags": fm.get("tags", []) or [],
+                         "updated": fm.get("updated", ""), "body": body.strip()})
+    docs.sort(key=lambda d: d["updated"], reverse=True)
+    return docs[:limit] if limit else docs
+
+
 def parse_expiry(value) -> "datetime | None":
     """A doc's ``expires`` as a UTC datetime. A bare date means the end of that day. None when absent or unreadable
     (an unreadable value never makes a doc expire)."""

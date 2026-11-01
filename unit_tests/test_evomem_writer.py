@@ -347,3 +347,21 @@ class TestKbListShowsTheLifetime:
         tree = {n["name"]: n["expires"] for n in _build_kb_tree(str(tmp_path))}
         assert tree == {"a.md": "2026-12-01", "b.md": None, "c.md": None, "d.txt": None}
         assert _kb_expiry(str(tmp_path / "missing.md")) is None
+
+
+class TestListDocs:
+    def test_lists_documents_newest_first_and_skips_indexes_hidden_and_inbox(self, brain):
+        with patch.object(W, "mark_dirty", lambda a: None):
+            W.upsert_doc("a1", title="Old", body="old body")
+            W.upsert_doc("a1", title="New", body="new body", folder="pring", tags=["ingested"])
+        (brain / "inbox").mkdir(exist_ok=True)
+        (brain / "inbox" / "mail.md").write_text("---\ntitle: M\n---\nx")
+        (brain / ".trash").mkdir(exist_ok=True)
+        (brain / ".trash" / "t.md").write_text("---\ntitle: T\n---\nx")
+        for path, stamp in (("old.md", "2026-01-01T00:00:00+00:00"), ("pring/new.md", "2026-06-01T00:00:00+00:00")):
+            text = (brain / path).read_text()
+            (brain / path).write_text(__import__("re").sub(r"updated: .*", f"updated: {stamp}", text))
+        docs = W.list_docs("a1")
+        assert [d["slug"] for d in docs] == ["pring/new", "old"]
+        assert docs[0]["tags"] == ["ingested"] and docs[0]["body"] == "new body" and docs[0]["title"] == "New"
+        assert [d["slug"] for d in W.list_docs("a1", limit=1)] == ["pring/new"]
