@@ -904,6 +904,11 @@ class PluginManager:
             if var_type == 'boolean':
                 db.set_setting(key, '1' if val else '0')
             else:
+                if var_type == 'select':
+                    allowed = [str(o['value'] if isinstance(o, dict) else o)
+                               for o in var_def.get('options') or []]
+                    if str(val) not in allowed:
+                        return {'error': f"Invalid value for {name}: must be one of {', '.join(allowed)}"}
                 db.set_setting(key, str(val))
         return {'success': True}
 
