@@ -3474,6 +3474,7 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
         from models.db import db
         from backend.tools.registry import ToolRegistry, BUILTIN_TOOL_IDS
         from backend.skills_manager import SkillsManager
+        from models.schema import LEGACY_TOOL_IDS
 
         agents = db.get_agents()
         _tr = ToolRegistry()
@@ -3525,6 +3526,15 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
                 if fix:
                     for tool_id in orphans:
                         try:
+                            new_id = LEGACY_TOOL_IDS.get(tool_id)
+                            if new_id:
+                                db.add_agent_tool(aid, new_id)
+                                db.remove_agent_tool(aid, tool_id)
+                                fixes_applied.append(
+                                    f"Renamed tool '{tool_id}' to '{new_id}' for agent "
+                                    f"'{aname}' ({aid})"
+                                )
+                                continue
                             db.remove_agent_tool(aid, tool_id)
                             fixes_applied.append(
                                 f"Removed orphaned tool '{tool_id}' from agent "

@@ -6,8 +6,6 @@ import json
 from backend.plugin_lifecycle import PluginManager
 from models.db import db
 
-PLUGIN_TOOL_ID = 'plugin:ask_user:ask_user_question'
-
 
 def _agent(agent_id='ask_agent', **extra):
     db.create_agent({'id': agent_id, 'name': 'Ask Agent', **extra})
@@ -26,11 +24,9 @@ def test_create_agent_honours_explicit_off():
     assert _agent(ask_user_enabled=0)['ask_user_enabled'] == 0
 
 
-def test_first_migration_drops_plugin_assignment_and_setting():
+def test_first_migration_drops_plugin_setting():
     _agent()
     with db._connect() as conn:
-        conn.execute("INSERT INTO agent_tools (agent_id, tool_id) VALUES ('ask_agent', ?)", (PLUGIN_TOOL_ID,))
-        conn.execute("INSERT INTO agent_tools (agent_id, tool_id) VALUES ('ask_agent', 'bash')")
         conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('plugin_enabled:ask_user', '1')")
         # A database from before the move has no ask_user_enabled column yet.
         conn.execute("ALTER TABLE agents DROP COLUMN ask_user_enabled")
@@ -38,18 +34,17 @@ def test_first_migration_drops_plugin_assignment_and_setting():
 
     db._init_tables()
 
-    assert db.get_agent_tools('ask_agent') == ['bash']
     assert db.get_setting('plugin_enabled:ask_user') is None
     assert db.get_agent('ask_agent')['ask_user_enabled'] == 1
 
 
-def test_later_startups_leave_assignments_alone():
+def test_startup_renames_legacy_tool_assignment():
     _agent()
     with db._connect() as conn:
-        conn.execute("INSERT INTO agent_tools (agent_id, tool_id) VALUES ('ask_agent', ?)", (PLUGIN_TOOL_ID,))
+        conn.execute("INSERT INTO agent_tools (agent_id, tool_id) VALUES ('ask_agent', 'ask_user_question')")
         conn.commit()
     db._init_tables()
-    assert db.get_agent_tools('ask_agent') == [PLUGIN_TOOL_ID]
+    assert db.get_agent_tools('ask_agent') == ['ask_user']
 
 
 def test_retired_plugin_is_not_listed_or_installable(tmp_path, monkeypatch):

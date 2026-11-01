@@ -48,7 +48,7 @@ On a Telegram session the tool emits `ask_user_required` / `ask_user_resolved` o
 
 Every agent has **Ask User Questions** under *Tools & capabilities* in its settings, on by default (`ask_user_enabled`). While it is on the agent gets `ask_user` without a tool assignment. When it is off the tool is left out of the agent's tool list (even if assigned by hand), refuses to run, and a question that is already open ends as `disabled` within a second, which closes the web card and the Telegram message.
 
-Upgrading from the plugin: the first start after the upgrade removes the agents' `plugin:ask_user:ask_user_question` assignments and the plugin's enable setting. A leftover `plugins/ask_user/` folder is ignored and the plugin id can no longer be installed.
+Upgrading from the plugin: the first start after the upgrade removes the plugin's enable setting, and `evonic doctor --fix` (run by `evonic update`) removes the agents' leftover `plugin:ask_user:ask_user_question` assignments as orphaned tools. A leftover `plugins/ask_user/` folder is ignored and the plugin id can no longer be installed.
 
 ## Web UI
 

@@ -4,6 +4,15 @@ import shutil
 import json
 import config
 
+# Tool ids that were renamed: old id -> new id. Assignments are moved on startup
+# and by `evonic doctor --fix`. Retired ids that have no successor need no entry:
+# the doctor's orphaned-tool check removes them.
+# TODO(cleanup): drop an entry once every install has run past the release that
+# renamed the tool (check CHANGELOG), and this whole table once it is empty.
+LEGACY_TOOL_IDS = {
+    'ask_user_question': 'ask_user',  # renamed in the ask_user simplification
+}
+
 
 def _migrate_db_to_subdir(target_path: str):
     """Move evonic.db (or legacy evaluation.db) from project root to db/ subdir on first run after upgrade."""
@@ -1192,18 +1201,21 @@ class SchemaMixin:
                 cursor.execute("ALTER TABLE agents ADD COLUMN help_enabled BOOLEAN DEFAULT 1")
             except sqlite3.OperationalError:
                 pass
+            # TODO(cleanup): obsolete once no install can still be upgrading from the
+            # ask_user plugin; remove this block (and the unit test for it) then.
             # Migration: ask_user moved from a plugin into core, gated per agent
             # (1 = the agent gets ask_user). The first time the column is
-            # added, drop the plugin's tool assignments and enable setting.
+            # added, drop the plugin's enable setting.
             try:
                 cursor.execute("ALTER TABLE agents ADD COLUMN ask_user_enabled BOOLEAN DEFAULT 1")
-                cursor.execute("DELETE FROM agent_tools WHERE tool_id = 'plugin:ask_user:ask_user_question'")
                 cursor.execute("DELETE FROM app_settings WHERE key = 'plugin_enabled:ask_user'")
             except sqlite3.OperationalError:
                 pass
-            # Migration: tool renamed ask_user_question -> ask_user
-            cursor.execute("UPDATE OR IGNORE agent_tools SET tool_id = 'ask_user' WHERE tool_id = 'ask_user_question'")
-            cursor.execute("DELETE FROM agent_tools WHERE tool_id = 'ask_user_question'")
+            # Migration: move assignments of renamed tools to their new id
+            # TODO(cleanup): obsolete together with LEGACY_TOOL_IDS entries; remove when it is empty.
+            for old_id, new_id in LEGACY_TOOL_IDS.items():
+                cursor.execute("UPDATE OR IGNORE agent_tools SET tool_id = ? WHERE tool_id = ?", (new_id, old_id))
+                cursor.execute("DELETE FROM agent_tools WHERE tool_id = ?", (old_id,))
 
             # Migration: relax connector_token NOT NULL so NULL is allowed before pairing completes
             try:
