@@ -1,6 +1,6 @@
 """
 Tests for ask_user: question/answer validation, the answer route, and the
-blocking ask_user_question tool (with the runtime, realtime journal and the
+blocking ask_user tool (with the runtime, realtime journal and the
 agents DB stubbed out).
 """
 
@@ -251,8 +251,8 @@ class TestAskUserQuestionTool(unittest.TestCase):
             'backend.event_stream': types.SimpleNamespace(event_stream=self.event_stream),
         })
         self.modules.start()
-        from backend.tools import ask_user_question
-        self.tool = ask_user_question
+        from backend.tools import ask_user
+        self.tool = ask_user
 
     def tearDown(self):
         self.modules.stop()
@@ -378,7 +378,7 @@ class TestAskUserQuestionTool(unittest.TestCase):
         ):
             result = self.tool.execute(agent, {'questions': [_q()]})
             self.assertEqual(result['status'], 'unavailable', agent)
-            self.assertIn('Do not call ask_user_question again', result['error'])
+            self.assertIn('Do not call ask_user again', result['error'])
         self.assertEqual(self.realtime.events, [])
 
     def test_web_chat_does_not_notify_channels(self):
@@ -413,7 +413,7 @@ class TestAskUserQuestionTool(unittest.TestCase):
         self.enabled = False
         thread.join(5)
         self.assertEqual(result['value']['status'], 'disabled')
-        self.assertIn('do not call ask_user_question again', result['value']['error'])
+        self.assertIn('do not call ask_user again', result['value']['error'])
         # Both UIs drop it: the web card polls the registry, Telegram edits its message.
         self.assertIsNone(question_registry.get(question_id))
         self.assertEqual(question_registry.resolved_status(question_id), 'disabled')

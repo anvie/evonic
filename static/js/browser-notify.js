@@ -6,7 +6,7 @@
  * realtime connection on the 'questions' and 'approvals' channels open, even
  * while hidden (the shared client disconnects hidden tabs). It notifies when:
  *
- *   - an agent asks a question (ask_user_question), unless a focused Evonic tab
+ *   - an agent asks a question (ask_user), unless a focused Evonic tab
  *     is already showing that agent's chat;
  *   - a command needs approval, unless an Evonic tab is focused (the approval
  *     modal is already on screen there).

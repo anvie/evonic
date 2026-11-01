@@ -1,5 +1,5 @@
 """
-ask_user_question.py — pause the agent loop and ask the user multiple-choice questions.
+ask_user.py — pause the agent loop and ask the user multiple-choice questions.
 
 Registers the question (the agent page's web UI polls /api/ask_user/pending
 and renders it as a card above the chat input; on Telegram the channel shows it as
@@ -95,7 +95,7 @@ def execute(agent: dict, args: dict) -> Any:
         return {
             'status': 'unavailable',
             'error': f'Interactive questions are unavailable: {reason}. '
-                     'Do not call ask_user_question again in this conversation; '
+                     'Do not call ask_user again in this conversation; '
                      'ask the user in plain text instead.',
         }
 

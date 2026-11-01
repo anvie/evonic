@@ -1,9 +1,9 @@
 {
-    "id": "ask_user_question",
+    "id": "ask_user",
     "name": "Ask User Question",
     "description": "Ask the user multiple-choice questions and wait for the answer.",
     "function": {
-        "name": "ask_user_question",
+        "name": "ask_user",
         "description": "Ask the user 1-4 multiple-choice questions during your turn and wait for their answer. Use it only when blocked on a decision that is the user's to make (ambiguous requirement, choice between approaches, preference); never for things you can decide or look up. The user can always pick 'Other', so do not add an 'Other' option. If one option is your recommendation, put it first with recommended: true. If status is 'dismissed' the user closed the card: do not assume answers. Web chat and Telegram only: if it returns status 'unavailable', do not call it again; ask in plain text.",
         "parameters": {
             "type": "object",

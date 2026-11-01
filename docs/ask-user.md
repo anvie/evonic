@@ -4,7 +4,7 @@ A core Evonic feature (formerly the `ask_user` plugin) that lets an agent pause 
 
 ## How it works
 
-The agent calls `ask_user_question` with:
+The agent calls `ask_user` with:
 
 ```json
 {
@@ -38,7 +38,7 @@ The tool registers the question and blocks. It has no timeout; it ends in one of
 
 While it waits, the tool journals a small heartbeat event every minute so the stale-turn reaper does not kill the turn. It also journals `question_required` / `question_resolved` on the session's chat stream for any client that wants them. Once the card is answered, closed or no longer open, it simply leaves the dock and the input unlocks. The answer shows in the thinking timeline as the tool's result.
 
-Interactive questions work in the Evonic web chat and on Telegram. The tool is declared `"channels": ["web", "telegram"]` in `tools/ask_user_question.json`, so on WhatsApp/Discord sessions Evonic leaves it out of the agent's tool list entirely (no schema tokens, no call). API sessions, scheduler runs, agent-to-agent messages and simulations have no `channel_id`, so the tool is still listed there but returns `status: "unavailable"` and tells the agent not to call it again, so it asks in plain text.
+Interactive questions work in the Evonic web chat and on Telegram. The tool is declared `"channels": ["web", "telegram"]` in `tools/ask_user.json`, so on WhatsApp/Discord sessions Evonic leaves it out of the agent's tool list entirely (no schema tokens, no call). API sessions, scheduler runs, agent-to-agent messages and simulations have no `channel_id`, so the tool is still listed there but returns `status: "unavailable"` and tells the agent not to call it again, so it asks in plain text.
 
 ## Telegram
 
@@ -46,7 +46,7 @@ On a Telegram session the tool emits `ask_user_required` / `ask_user_resolved` o
 
 ## Enabling and disabling
 
-Every agent has **Ask User Questions** under *Tools & capabilities* in its settings, on by default (`ask_user_enabled`). While it is on the agent gets `ask_user_question` without a tool assignment. When it is off the tool is left out of the agent's tool list (even if assigned by hand), refuses to run, and a question that is already open ends as `disabled` within a second, which closes the web card and the Telegram message.
+Every agent has **Ask User Questions** under *Tools & capabilities* in its settings, on by default (`ask_user_enabled`). While it is on the agent gets `ask_user` without a tool assignment. When it is off the tool is left out of the agent's tool list (even if assigned by hand), refuses to run, and a question that is already open ends as `disabled` within a second, which closes the web card and the Telegram message.
 
 Upgrading from the plugin: the first start after the upgrade removes the agents' `plugin:ask_user:ask_user_question` assignments and the plugin's enable setting. A leftover `plugins/ask_user/` folder is ignored and the plugin id can no longer be installed.
 
