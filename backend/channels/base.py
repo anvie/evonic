@@ -141,6 +141,24 @@ class BaseChannel(ABC):
         except Exception as e:
             self._store_send_error(external_user_id, str(e))
 
+    def send_message_with_actions(self, external_user_id: str, text: str,
+                                  actions: list, session_id: str = None):
+        """Send a message carrying interactive actions (see backend.channel_actions).
+
+        Default: numbered text options; a reply with the number selects one.
+        Channels with native buttons override this.
+        """
+        from backend.channel_actions import (
+            normalize_actions, remember_text_options, render_text_options,
+        )
+        actions = normalize_actions(actions)
+        if not actions:
+            self.send_message(external_user_id, text, session_id=session_id)
+            return
+        remember_text_options(self.channel_id, external_user_id, actions)
+        self.send_message(external_user_id, render_text_options(text, actions),
+                          session_id=session_id)
+
     @abstractmethod
     def _do_send(self, external_user_id: str, text: str, session_id: str = None):
         """Actual delivery implementation — subclasses must implement this."""

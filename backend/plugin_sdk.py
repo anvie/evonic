@@ -31,7 +31,7 @@ class PluginSDK:
         self._log_callback = log_callback
 
     def send_message(self, agent_id: str, external_user_id: str,
-                     channel_id: str, text: str) -> dict:
+                     channel_id: str, text: str, actions: list = None) -> dict:
         """Send a message to a user via an agent session on a specific channel.
 
         channel_id can be either:
@@ -41,9 +41,20 @@ class PluginSDK:
 
         Resolves (or creates) a session from agent_id + external_user_id + channel_id,
         saves the message as an assistant message, and sends it via the channel.
+
+        ``actions`` is an optional list of ``{label, namespace, payload}``
+        interactive choices: buttons where the channel supports them, numbered
+        text options elsewhere. Handle them with
+        ``backend.channel_actions.register_channel_action_handler``.
         """
         from models.db import db
         from backend.agent_runtime import agent_runtime
+        from backend.channel_actions import ChannelActionError, normalize_actions
+
+        try:
+            actions = normalize_actions(actions)
+        except ChannelActionError as e:
+            return {"success": False, "error": str(e)}
 
         resolved_channel_id = self._resolve_channel_id(agent_id, channel_id)
         if not resolved_channel_id:
@@ -53,7 +64,7 @@ class PluginSDK:
 
         session_id = db.get_or_create_session(agent_id, external_user_id,
                                               resolved_channel_id)
-        success = agent_runtime.send_as_bot(session_id, text)
+        success = agent_runtime.send_as_bot(session_id, text, actions=actions or None)
         return {"success": success, "session_id": session_id}
 
     def send_file(self, agent_id: str, external_user_id: str,

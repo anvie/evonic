@@ -1357,6 +1357,15 @@ class AgentRuntime:
         if external_user_id is None:
             external_user_id = '__system__'
 
+        # A bare number answering numbered channel actions (channels without
+        # buttons) selects that action instead of starting an agent turn.
+        if channel_id and session_id is None:
+            from backend.channel_actions import handle_text_reply
+            matched, ack = handle_text_reply(channel_id, external_user_id, message,
+                                             agent_id=agent_id)
+            if matched:
+                return {"response": ack or '', "tool_trace": []}
+
         _logger.info(
             "[handle_message] agent=%s sender=%s msg_preview=%.80r",
             agent_id, external_user_id, message,
@@ -3182,8 +3191,15 @@ class AgentRuntime:
                 for sk_id, tool_defs in skills_data.items()]
 
     def send_as_bot(self, session_id: str, text: str,
-                    metadata: dict | None = None) -> bool:
-        """Admin takeover: save message as assistant and send via channel."""
+                    metadata: dict | None = None,
+                    actions: list | None = None) -> bool:
+        """Admin takeover: save message as assistant and send via channel.
+
+        ``actions`` (see backend.channel_actions) are validated up front and
+        raise ChannelActionError when malformed.
+        """
+        from backend.channel_actions import normalize_actions
+        actions = normalize_actions(actions)
         session = db.get_session_with_details(session_id)
         if not session:
             return False
@@ -3215,7 +3231,11 @@ class AgentRuntime:
             instance = channel_manager._active.get(session['channel_id'])
             if instance and instance.is_running:
                 try:
-                    instance.send_message(session['external_user_id'], text)
+                    if actions:
+                        instance.send_message_with_actions(
+                            session['external_user_id'], text, actions)
+                    else:
+                        instance.send_message(session['external_user_id'], text)
                 except Exception as e:
                     _logger.error("send_as_bot channel error: %s", e)
         return True
