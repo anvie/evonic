@@ -18,6 +18,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import backend.tools.lib.backends.bwrap_backend as bwrap_backend
 import backend.tools.lib.backends.docker_backend as docker_backend
+import backend.tools.lib.backends.podman_backend as podman_backend
+
+
+def _bind_docker(monkeypatch, fake_docker):
+    """Temporarily unbind any container-runtime hook, keeping Docker's own path.
+
+    Importing ``podman_backend`` rebinds ``docker_backend``'s module globals to
+    the Podman implementation, so a test that exercises the Docker creation path
+    must undo that binding first; restoring Docker's snapshot is exactly what
+    ``podman_backend.bind(False)`` does. ``monkeypatch`` re-binds it afterwards.
+    """
+    podman_backend.bind(False)
+    monkeypatch.setattr(docker_backend, '_docker', fake_docker)
+    monkeypatch.setattr(podman_backend, 'ensure_hooks_bound', lambda: None)
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +54,7 @@ def test_docker_container_cmd_includes_artifacts_bind(tmp_path, monkeypatch):
         calls.append(list(args))
         return _DockerResult()
 
-    monkeypatch.setattr(docker_backend, "_docker", fake_docker)
+    _bind_docker(monkeypatch, fake_docker)
     monkeypatch.setattr(docker_backend, "_list_persistent_stopped_containers", lambda: [])
     # Bump the layout version so the (empty) pool never reuses a stale entry.
     monkeypatch.setattr(docker_backend, "_MOUNT_LAYOUT_VERSION", 99)
@@ -68,7 +82,7 @@ def test_docker_container_cmd_skips_artifacts_bind_for_no_agent(monkeypatch, tmp
         calls.append(list(args))
         return _DockerResult()
 
-    monkeypatch.setattr(docker_backend, "_docker", fake_docker)
+    _bind_docker(monkeypatch, fake_docker)
     monkeypatch.setattr(docker_backend, "_MOUNT_LAYOUT_VERSION", 99)
 
     cid, err = docker_backend._get_or_create_container(
@@ -91,7 +105,10 @@ def test_docker_pool_recreates_when_layout_version_changes(monkeypatch, tmp_path
         calls.append(list(args))
         return _DockerResult()
 
-    monkeypatch.setattr(docker_backend, '_docker', fake_docker)
+    _bind_docker(monkeypatch, fake_docker)
+    # This test plants an entry in the Docker pool; the runtime claim must match
+    # it, otherwise the next container-backend test inherits the claim.
+    docker_backend._claim_runtime('docker')
 
     workspace = str(tmp_path)
     docker_backend._containers['rina'] = {
@@ -241,7 +258,7 @@ def test_docker_skips_artifacts_bind_when_workspace_is_base(monkeypatch):
         calls.append(list(args))
         return _DockerResult()
 
-    monkeypatch.setattr(docker_backend, '_docker', fake_docker)
+    _bind_docker(monkeypatch, fake_docker)
     monkeypatch.setattr(docker_backend, '_MOUNT_LAYOUT_VERSION', 99)
 
     base = docker_backend.SANDBOX_WORKSPACE  # real BASE_DIR

@@ -226,10 +226,22 @@ SANDBOX_MAX_CONTAINERS = _get_env_int("SANDBOX_MAX_CONTAINERS", 10, min_val=1, m
 SANDBOX_PERSISTENT_CONTAINER_ENABLED = _get_env_bool(
     "SANDBOX_PERSISTENT_CONTAINER_ENABLED", True)
 
-# Sandbox backend selector: 'docker' (default) or 'bwrap' (Linux-only, bubblewrap).
+# Sandbox backend selector: 'docker' (default), 'podman', or 'bwrap'
+# (Linux-only, bubblewrap).
+# 'podman' uses the same OCI container model as Docker but through the
+# daemonless, usually rootless Podman CLI — suited for hosts that cannot or do
+# not want to run a Docker daemon. Containers, labels, and mounts are identical
+# to the Docker backend, and it shares its container pool implementation.
 # 'bwrap' runs each command in a lightweight namespace sandbox (no daemon/image) —
 # suited for small VPS deployments without Docker.
 SANDBOX_BACKEND = os.getenv("SANDBOX_BACKEND", "docker").strip().lower()
+# Container image used when SANDBOX_BACKEND=podman. Rootless Podman resolves
+# locally built images under the `localhost/` prefix, so building the sandbox
+# image with `podman build -t evonic-sandbox:latest docker/tools/` yields
+# `localhost/evonic-sandbox:latest` (the default below). Set this explicitly
+# when the image lives in a different registry/tag.
+SANDBOX_PODMAN_IMAGE = os.getenv(
+    "SANDBOX_PODMAN_IMAGE", "localhost/evonic-sandbox:latest").strip()
 # Opt-in virtual-memory ulimit (MB) for bwrap sandboxes; 0 disables. Hard cgroup
 # limits (systemd-run --scope) are a follow-up.
 SANDBOX_BWRAP_ULIMIT_V_MB = _get_env_int("SANDBOX_BWRAP_ULIMIT_V_MB", 0, min_val=0, max_val=65536)
