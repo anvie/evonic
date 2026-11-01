@@ -695,6 +695,7 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
     # Bwrap sandbox awareness: agents executing inside a bubblewrap sandbox
     # (bwrap workplace, or global SANDBOX_BACKEND=bwrap) need to know its rules.
     _bwrap_active = False
+    _podman_active = False
     _wp_id = agent.get('workplace_id')
     if _wp_id:
         try:
@@ -706,6 +707,7 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
         try:
             from config import SANDBOX_BACKEND
             _bwrap_active = SANDBOX_BACKEND == 'bwrap'
+            _podman_active = SANDBOX_BACKEND == 'podman'
         except ImportError:
             pass
     if _bwrap_active:
@@ -720,6 +722,27 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
             "- Background processes (servers, tunnels, tmux) keep running between "
             "commands, but die when the platform restarts.\n"
             "- `ping` may be unavailable (no raw sockets) — use `curl` to test connectivity."
+        )
+
+    # Podman sandbox awareness: same container model as Docker, but the runtime
+    # is daemonless (usually rootless), which changes a few operational details.
+    if _podman_active:
+        prompt += (
+            "\n\n## Sandbox Environment (Podman)\n"
+            "You run inside a Linux container executed by **Podman** (daemonless, "
+            "usually rootless), not Docker.\n"
+            "- Your host workspace is mounted at `/workspace`; write project files "
+            "there so the file tools can see them. `/tmp` is a container-local "
+            "tmpfs and is invisible to the file tools.\n"
+            "- The container keeps running between commands (installed packages, "
+            "background servers and tmux sessions persist), and a persistent "
+            "container is restarted by Evonic after a platform restart.\n"
+            "- Rootless Podman has no real root: `sudo` is unavailable, ports "
+            "below 1024 cannot be bound, and memory/CPU flags are best-effort. "
+            "Install tools as the container user (package managers with a "
+            "user-prefix flag, or binaries in ~/bin).\n"
+            "- `docker` is NOT available in this environment; use `podman` if you "
+            "need to inspect containers, and `curl` to test connectivity."
         )
 
     # Dynamic enabled-agent roster for super agents.

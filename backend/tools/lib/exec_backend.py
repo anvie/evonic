@@ -268,7 +268,12 @@ class BackendRegistry:
                                        agent_name=agent_name, is_subagent=is_subagent,
                                        is_explorer=is_explorer, artifacts_root=artifacts_root)
             else:
-                from backend.tools.lib.backends.docker_backend import DockerBackend
+                # 'docker' (default) or 'podman'. Both share one container-pool
+                # implementation; only the CLI/image/restart policy differ.
+                if SANDBOX_BACKEND == 'podman':
+                    from backend.tools.lib.backends.podman_backend import PodmanBackend as ContainerBackend
+                else:
+                    from backend.tools.lib.backends.docker_backend import DockerBackend as ContainerBackend
                 from config import SANDBOX_PERSISTENT_CONTAINER_ENABLED
                 parent_session_id = (agent_context.get('_sandbox_parent_session_id')
                                      if is_explorer else None)
@@ -286,7 +291,7 @@ class BackendRegistry:
                     and not is_explorer
                     and not forced
                 )
-                backend = DockerBackend(
+                backend = ContainerBackend(
                     session_id, agent_id=agent_id, workspace=workspace,
                     is_subagent=is_subagent, is_explorer=is_explorer,
                     container_session_id=parent_session_id,
