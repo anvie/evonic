@@ -3122,33 +3122,62 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
             if a.get("sandbox_enabled") and a.get("enabled")
         ]
 
+        backend = (os.getenv("SANDBOX_BACKEND", "docker") or "docker").strip().lower()
+        runtime_label = {
+            "docker": "Docker",
+            "podman": "Podman",
+            "bwrap": "bubblewrap",
+        }.get(backend, backend)
+
         if not sandbox_agents:
-            results.append(_ok("No agents have sandbox enabled — skipping Docker check"))
+            results.append(_ok(
+                f"No agents have sandbox enabled — skipping {runtime_label} check"
+            ))
+        elif backend == "bwrap":
+            if shutil.which("bwrap"):
+                results.append(_ok(
+                    f"{runtime_label} is available (SANDBOX_BACKEND=bwrap)"
+                ))
+            else:
+                results.append(_warn(
+                    f"{runtime_label} is not installed or not in PATH "
+                    f"(SANDBOX_BACKEND=bwrap)"
+                ))
         else:
-            docker_available = False
+            runtime_bin = "podman" if backend == "podman" else "docker"
+            runtime_available = False
             try:
                 result = subprocess.run(
-                    ["docker", "info"],
+                    [runtime_bin, "info"],
                     capture_output=True, text=True, timeout=10
                 )
                 if result.returncode == 0:
-                    docker_available = True
-                    results.append(_ok("Docker is available and responsive"))
+                    runtime_available = True
+                    results.append(_ok(
+                        f"{runtime_label} is available and responsive "
+                        f"(SANDBOX_BACKEND={backend})"
+                    ))
                 else:
                     results.append(_warn(
-                        f"Docker CLI found but daemon returned exit code {result.returncode}"
+                        f"{runtime_label} CLI found but `{runtime_bin} info` returned "
+                        f"exit code {result.returncode}"
                     ))
             except FileNotFoundError:
-                results.append(_warn("Docker is not installed or not in PATH"))
+                results.append(_warn(
+                    f"{runtime_label} is not installed or not in PATH "
+                    f"(SANDBOX_BACKEND={backend})"
+                ))
             except subprocess.TimeoutExpired:
-                results.append(_warn("Docker daemon timed out — may be unresponsive"))
+                results.append(_warn(
+                    f"{runtime_label} daemon timed out — may be unresponsive"
+                ))
             except Exception as e:
-                results.append(_warn(f"Docker check failed: {e}"))
+                results.append(_warn(f"{runtime_label} check failed: {e}"))
 
-            if not docker_available:
+            if not runtime_available:
                 names = [f"{a.get('name', a.get('id'))} ({a['id']})" for a in sandbox_agents]
                 results.append(_warn(
-                    f"Docker unavailable but {len(sandbox_agents)} agent(s) have "
+                    f"{runtime_label} unavailable but {len(sandbox_agents)} agent(s) have "
                     f"sandbox enabled: {', '.join(names)}"
                 ))
     except Exception as e:
