@@ -1665,3 +1665,37 @@ html.dark .bg-amber-50.border-amber-200 :is([class*="text-gray-"], strong, b, a)
 html.dark .bg-blue-50.border-blue-200 :is([class*="text-gray-"], strong, b, a),
 html.dark .bg-red-50.border-red-200 :is([class*="text-gray-"], strong, b, a),
 html.dark .bg-green-50.border-green-200 :is([class*="text-gray-"], strong, b, a) { color: inherit !important; }
+
+
+/* Plugins dropdown: plugin pages live here unless pinned as top-level links. */
+.nav-dd { position: relative; display: flex; }
+.nav-dd-btn { display: inline-flex; align-items: center; gap: .25rem; padding: .375rem .75rem; border: 0; border-radius: 6px; background: none; cursor: pointer;
+  color: var(--nav-text); font: inherit; font-size: .875rem; font-weight: 500; transition: color .15s; }
+.nav-dd-btn:hover { color: var(--nav-hover-text); }
+.nav-dd-btn.nav-active { color: #667eea; }
+.nav-dd-caret { flex: none; opacity: .6; transition: transform .15s ease; }
+.nav-dd-open .nav-dd-caret { transform: rotate(180deg); }
+.nav-dd-menu { display: none; position: absolute; top: calc(100% + .5rem); right: 0; z-index: 60; min-width: 13rem; max-height: 70vh; overflow-y: auto; padding: .375rem;
+  border: 1px solid var(--border-color); border-radius: .75rem; background: var(--bg-card); box-shadow: 0 12px 28px -12px rgb(15 23 42 / .35); }
+.nav-dd-open .nav-dd-menu { display: block; }
+nav .nav-dd-menu a.nav-dd-item { display: block; flex: 1 1 auto; min-width: 0; padding: .4375rem .625rem; border-radius: .5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+nav .nav-dd-menu a.nav-dd-item:hover { background-color: var(--nav-hover-bg); }
+nav .nav-dd-menu a.nav-dd-current { color: #667eea; }
+.nav-dd-group { margin: .5rem .625rem .125rem; color: var(--text-muted); font-size: .6875rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.nav-dd-row { display: flex; align-items: center; gap: .125rem; padding-left: 1.25rem; }
+.nav-dd-pin { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border: 0; border-radius: .5rem;
+  background: none; color: var(--text-muted); cursor: pointer; opacity: .55; transition: opacity .15s, background-color .15s, color .15s; }
+.nav-dd-row:hover .nav-dd-pin, .nav-dd-pin:focus-visible, .nav-dd-pin.is-pinned { opacity: 1; }
+.nav-dd-pin:hover { background-color: var(--nav-hover-bg); color: var(--nav-hover-text); }
+.nav-dd-pin.is-pinned { color: #667eea; }
+.nav-dd-pin:disabled { cursor: wait; opacity: .4; }
+@media (max-width: 768px) {
+  .nav-dd { flex-direction: column; }
+  nav#site-nav .nav-dd-btn { display: flex; gap: .75rem; width: 100%; padding: .6875rem .875rem; border-radius: 9999px; font-size: .9375rem; text-align: left; }
+  nav#site-nav .nav-dd-btn .nav-ic { display: block; flex: none; opacity: .75; }
+  nav#site-nav .nav-dd-btn .nav-label { flex: 1 1 auto; }
+  nav#site-nav .nav-dd-btn.nav-active { background: rgb(99 102 241 / .12); color: #4f46e5; }
+  html.dark nav#site-nav .nav-dd-btn.nav-active { background: rgb(99 102 241 / .22); color: #c7d2fe; }
+  .nav-dd-menu { position: static; min-width: 0; max-height: none; margin: 0 0 .25rem 2.25rem; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+  nav#site-nav .nav-dd-menu a.nav-dd-item { display: block; padding: .5rem .75rem; font-size: .875rem; }
+}

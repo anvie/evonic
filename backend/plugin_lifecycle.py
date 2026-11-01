@@ -533,6 +533,7 @@ class PluginManager:
                         'label': item.get('label', ''),
                         'path': item.get('path', ''),
                         'plugin_id': plugin['id'],
+                        'plugin_name': plugin.get('name') or plugin['id'],
                     })
         self._nav_cache = items
         return items

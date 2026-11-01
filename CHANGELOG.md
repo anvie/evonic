@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+### Improvements
+
+- Navbar: plugin pages now live in a **Plugins** dropdown, grouped by plugin, instead of each adding its own top-level link, so installing plugins no longer overflows the navbar. Use the pin button next to a page to show it as a top-level link again; pins are stored in `nav.pinned_plugin_items`. **Manage plugins** at the top of the dropdown opens the plugins page.
+
 ### Bug Fixes
 
+- Evonic raises its soft open-file limit to 10240 at startup (capped at the hard limit). The macOS default of 256 was exhausted by persistent per-agent chat database connections, which caused "Too many open files" errors.
 - The HMADS safety floor now applies only to user-defined HMADS rules: built-in rules never override a confident DMSS decision. `git add -A` and `git add .` moved from the built-in rules into user rules (installed once on upgrade), so they can be edited or deleted and still require approval in enforce mode when the floor is on.
 
 ## [1.6.0] - 2026-10-31

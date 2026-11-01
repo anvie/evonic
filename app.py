@@ -20,6 +20,19 @@ for _name in (os.environ.get("EVONIC_LOG_QUIET", "").split(",") + ["httpx", "tel
         logging.getLogger(_name).setLevel(logging.ERROR)
 _log = logging.getLogger(__name__)
 
+# Raise the soft open-file limit. macOS shells default to 256, but every agent
+# whose chat.db has been touched keeps a persistent WAL connection (2-3 FDs),
+# so a busy instance exhausts 256 and fails with "Too many open files".
+if sys.platform != 'win32':
+    try:
+        import resource
+        _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        _target = 10240 if _hard == resource.RLIM_INFINITY else min(_hard, 10240)
+        if _soft != resource.RLIM_INFINITY and _soft < _target:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (_target, _hard))
+    except (ValueError, OSError) as e:
+        _log.warning("Could not raise open-file limit: %s", e)
+
 # ---------------------------------------------------------------------------
 # Single-instance guard: acquire exclusive flock on PID file.
 # Prevents a second Evonic server process from starting when invoked
@@ -92,7 +105,7 @@ from routes.history import history_bp
 from routes.sessions import sessions_bp
 from routes.settings import settings_bp
 from routes.skills import skills_bp
-from routes.plugins import plugins_bp
+from routes.plugins import plugins_bp, build_plugin_nav
 from routes.scheduler import scheduler_bp
 from routes.models import models_bp
 from routes.decision_profiles import decision_profiles_bp
@@ -639,7 +652,7 @@ def inject_config():
 
 @app.context_processor
 def inject_plugin_nav():
-    return {'plugin_nav_items': plugin_manager.get_nav_items()}
+    return {'plugin_nav': build_plugin_nav(plugin_manager.get_nav_items(), request.path)}
 
 
 @app.context_processor

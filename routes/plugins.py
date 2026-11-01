@@ -246,3 +246,55 @@ def api_set_agent_plugin_settings(agent_id, plugin_id):
     if 'error' in result:
         return jsonify(result), 400
     return jsonify(result)
+
+
+# ── Navbar: plugin pages live under the Plugins dropdown unless pinned ──
+
+NAV_PINS_KEY = 'nav.pinned_plugin_items'
+
+
+def get_nav_pins() -> list:
+    """Paths of plugin nav items pinned as top-level navbar links."""
+    from models.db import db
+    try:
+        pins = json.loads(db.get_setting(NAV_PINS_KEY) or '[]')
+    except ValueError:
+        return []
+    return [p for p in pins if isinstance(p, str)] if isinstance(pins, list) else []
+
+
+def build_plugin_nav(items: list, current_path: str) -> dict:
+    """Split plugin nav items into pinned links and dropdown groups per plugin.
+
+    ``menu_active`` marks the Plugins dropdown as the current section when the
+    page is /plugins or an unpinned plugin page (pinned pages highlight their
+    own top-level link instead).
+    """
+    pins = set(get_nav_pins())
+    pinned, groups = [], {}
+    menu_active = current_path.startswith('/plugins')
+    for item in items:
+        item = {**item, 'pinned': item['path'] in pins,
+                'current': bool(item['path']) and current_path.startswith(item['path'])}
+        if item['pinned']:
+            pinned.append(item)
+        elif item['current']:
+            menu_active = True
+        group = groups.setdefault(item['plugin_id'], {'name': item['plugin_name'], 'items': []})
+        group['items'].append(item)
+    return {'pinned': pinned, 'groups': list(groups.values()), 'menu_active': menu_active}
+
+
+@plugins_bp.route('/api/plugins/nav-pins', methods=['PUT'])
+def api_set_nav_pin():
+    """Pin or unpin a plugin page as a top-level navbar link."""
+    from models.db import db
+    data = request.get_json(silent=True) or {}
+    path = data.get('path')
+    if path not in {i['path'] for i in plugin_manager.get_nav_items()}:
+        return jsonify({'error': 'Unknown plugin navigation item'}), 400
+    pins = [p for p in get_nav_pins() if p != path]
+    if data.get('pinned'):
+        pins.append(path)
+    db.set_setting(NAV_PINS_KEY, json.dumps(pins))
+    return jsonify({'success': True, 'pinned': pins})
