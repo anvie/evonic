@@ -7,6 +7,7 @@ window.decisionModels = {
         await this.load();
         this.renderPlayground();
         this.bindPlayground();
+        this.bindProfiles();
         this.bindActivity();
         this.loadActivity();
         this.loadRecordInput();
@@ -37,29 +38,57 @@ window.decisionModels = {
         return model.type === "decision";
     },
 
+    PROFILE_PAGE_SIZE: 10,
+    profileQuery: "",
+    profilePage: 0,
+
+    filteredProfiles() {
+        const q = this.profileQuery.trim().toLowerCase();
+        if (!q) return this.profiles;
+        return this.profiles.filter((p) => [p.display_name, p.profile_key, p.description, p.primary_model_id, p.fallback_model_id]
+            .some((value) => String(value || "").toLowerCase().includes(q)));
+    },
+
+    bindProfiles() {
+        const search = document.getElementById("decision-profiles-search");
+        if (!search || search.dataset.bound) return; search.dataset.bound = "1";
+        search.addEventListener("input", () => { this.profileQuery = search.value; this.profilePage = 0; this.render(); });
+    },
+
+    profilesPage(delta) { this.profilePage += delta; this.render(); },
+
     render() {
         const status = document.getElementById("decision-profiles-status");
         const list = document.getElementById("decision-profiles-list");
+        const pager = document.getElementById("decision-profiles-pager");
         if (!this.profiles.length) {
             status.textContent = "No Decision Profiles yet. Create one to configure a reusable structured decision.";
             status.className = "rounded border border-dashed border-gray-300 dark:border-gray-600 p-5 text-sm text-gray-600 dark:text-gray-300";
-            list.innerHTML = "";
+            list.innerHTML = ""; pager.classList.add("hidden");
             return;
         }
-        status.textContent = "";
-        status.className = "hidden";
-        list.innerHTML = this.profiles.map((profile) => this.card(profile)).join("");
+        const matches = this.filteredProfiles();
+        const pages = Math.max(1, Math.ceil(matches.length / this.PROFILE_PAGE_SIZE));
+        this.profilePage = Math.max(0, Math.min(this.profilePage, pages - 1));
+        const start = this.profilePage * this.PROFILE_PAGE_SIZE, shown = matches.slice(start, start + this.PROFILE_PAGE_SIZE);
+        if (!matches.length) {
+            status.textContent = "No profiles match your search.";
+            status.className = "rounded border border-dashed border-gray-300 dark:border-gray-600 p-5 text-sm text-gray-600 dark:text-gray-300";
+        } else { status.textContent = ""; status.className = "hidden"; }
+        list.innerHTML = shown.map((profile) => this.card(profile)).join("");
+        pager.classList.toggle("hidden", pages <= 1);
+        document.getElementById("decision-profiles-range").textContent = matches.length ? `${start + 1}–${start + shown.length} of ${matches.length}` : "";
+        document.getElementById("decision-profiles-prev").disabled = this.profilePage === 0;
+        document.getElementById("decision-profiles-next").disabled = this.profilePage >= pages - 1;
     },
 
     card(profile) {
         const state = profile.enabled ? "Enabled" : "Disabled";
         const stateClass = profile.enabled ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300" : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300";
         const key = this.escape(profile.profile_key);
-        return `<article class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 space-y-3">
-          <div class="flex items-start justify-between gap-3"><div><h3 class="font-semibold text-gray-900 dark:text-gray-100">${this.escape(profile.display_name)}</h3><p class="text-xs text-gray-500 dark:text-gray-400 font-mono">${key}</p></div><span class="rounded px-2 py-1 text-xs font-medium ${stateClass}">${state} · ${this.escape(profile.mode)}</span></div>
-          <p class="text-sm text-gray-600 dark:text-gray-300">${this.escape(profile.description || "No description provided.")}</p>
-          <dl class="grid grid-cols-2 gap-2 text-xs text-gray-500 dark:text-gray-400"><div><dt>Schema</dt><dd class="font-medium text-gray-700 dark:text-gray-200">${this.escape(profile.schema_version)}</dd></div><div><dt>Policy</dt><dd class="font-medium text-gray-700 dark:text-gray-200">${this.escape(profile.policy_version)}</dd></div><div><dt>Primary</dt><dd class="font-medium text-gray-700 dark:text-gray-200 truncate">${this.escape(profile.primary_model_id)}</dd></div><div><dt>Fallback</dt><dd class="font-medium text-gray-700 dark:text-gray-200 truncate">${this.escape(profile.fallback_model_id || "None")}</dd></div></dl>
-          <div class="flex flex-wrap gap-2"><button type="button" class="btn-secondary text-sm" onclick="decisionModels.edit('${key}')">Edit</button><button type="button" class="btn-secondary text-sm" onclick="decisionModels.openPlayground({profile: '${key}'})">Open in Playground</button><button type="button" class="btn-secondary text-sm" onclick="decisionModels.toggle('${key}')">${profile.enabled ? "Deactivate" : "Enable"}</button>${!this.isBuiltin(profile.profile_key) ? `<button type="button" class="btn-secondary danger text-sm" onclick="decisionModels.remove('${key}')">Delete</button>` : ""}</div>
+        return `<article class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 space-y-1.5 cursor-pointer hover:shadow-md hover:border-indigo-300 dark:hover:border-indigo-700 transition" onclick="decisionModels.openPlayground({profile: '${key}'})">
+          <div class="flex items-center justify-between gap-2"><div class="min-w-0"><h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">${this.escape(profile.display_name)}</h3><p class="text-xs text-gray-500 dark:text-gray-400 font-mono truncate">${key}</p></div><div class="flex items-center gap-2 flex-shrink-0" onclick="event.stopPropagation()"><span class="rounded px-1.5 py-0.5 text-xs font-medium ${stateClass}">${this.escape(profile.mode)}</span>${mkToggle({ checked: !!profile.enabled, onChange: `decisionModels.toggle('${key}')`, extraClass: 'flex-shrink-0' })}<button type="button" onclick="decisionModels.edit('${key}')" class="text-gray-400 hover:text-indigo-600 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="Edit"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>${!this.isBuiltin(profile.profile_key) ? `<button type="button" onclick="decisionModels.remove('${key}')" class="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="Delete"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>` : ""}</div></div>
+          <p class="text-xs text-gray-600 dark:text-gray-300 line-clamp-2">${this.escape(profile.description || "No description provided.")}</p>
         </article>`;
     },
 

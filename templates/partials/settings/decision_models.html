@@ -7,8 +7,10 @@
     </div>
     <button type="button" class="btn-primary" onclick="decisionModels.openCreate()"><i data-lucide="plus"></i>New profile</button>
   </div>
+  <div class="mb-4"><input type="search" id="decision-profiles-search" placeholder="Search profiles by name, key, description or model…" aria-label="Search decision profiles" class="w-full sm:max-w-md border rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100"></div>
   <div id="decision-profiles-status" class="text-sm text-gray-500 dark:text-gray-400 py-6" role="status">Loading profiles…</div>
-  <div id="decision-profiles-list" class="grid grid-cols-1 lg:grid-cols-2 gap-4" aria-live="polite"></div>
+  <div id="decision-profiles-list" class="grid grid-cols-1 lg:grid-cols-2 gap-3" aria-live="polite"></div>
+  <div id="decision-profiles-pager" class="hidden mt-4"><div class="flex items-center justify-between gap-3"><span id="decision-profiles-range" class="text-sm text-gray-500 dark:text-gray-400"></span><div class="flex gap-2"><button type="button" id="decision-profiles-prev" class="btn-secondary text-sm" onclick="decisionModels.profilesPage(-1)">Previous</button><button type="button" id="decision-profiles-next" class="btn-secondary text-sm" onclick="decisionModels.profilesPage(1)">Next</button></div></div></div>
 </div>
 
 <div class="subpage" data-page="decision-playground">
@@ -38,11 +40,11 @@
           <label class="dp-label" for="playground-input">Test input JSON <button type="button" id="playground-use-sample" class="dp-ghost hidden" style="margin-left:.5rem" onclick="decisionModels.playgroundUseSample()">Use profile sample</button></label>
           <textarea id="playground-input" rows="7" spellcheck="false" class="dp-textarea">{"incident":"Payment-service outage affecting checkout"}</textarea>
           <div id="playground-error" class="dp-error hidden" role="alert" style="margin-top:.75rem;margin-bottom:0"></div>
-          <div class="dp-runbar" style="margin-top:.875rem"><button type="button" class="btn-primary dp-run" id="playground-run" onclick="decisionModels.playgroundRun()">Run safe test</button><button type="button" class="btn-secondary" onclick="decisionModels.playgroundCopy()">Copy result</button><span class="dp-kbd">Ctrl/⌘ + Enter</span></div>
+          <div class="dp-runbar" style="margin-top:.875rem"><button type="button" class="btn-primary dp-run" id="playground-run" onclick="decisionModels.playgroundRun()">Run safe test</button><span class="dp-kbd">Ctrl/⌘ + Enter</span></div>
         </section>
       </div>
       <section class="dp-card dp-result-card" aria-labelledby="dp-h-result">
-        <div class="dp-head"><h3 class="dp-title" id="dp-h-result">Result</h3></div>
+        <div class="dp-head"><h3 class="dp-title" id="dp-h-result">Result</h3><button type="button" class="btn-secondary text-sm" style="margin-left:auto" onclick="decisionModels.playgroundCopy()">Copy result</button></div>
         <div id="playground-result" aria-live="polite"><div class="dp-empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>No test has run yet.<br>Results appear here. Inputs and raw provider responses are not retained.</div></div>
       </section>
     </div>
