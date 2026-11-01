@@ -4332,6 +4332,8 @@ async function loadPluginSettings() {
         const plugins = data.plugin_settings || [];
         const container = document.getElementById('plugin-settings-container');
         const card = document.getElementById('plugin-settings-card');
+        // Safe inside a quoted attribute or element body (escapeHtml alone leaves quotes alone).
+        const attr = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const ptab = document.getElementById('gtab-plugins');
         if (ptab) ptab.classList.toggle('hidden', !plugins.length);
         if (!plugins.length) { card.classList.add('hidden'); return; }
@@ -4370,11 +4372,23 @@ async function loadPluginSettings() {
                                 onchange="savePluginSetting('${plugin.plugin_id}', '${s.name}', this.value)">${opts}</select>
                         <p class="text-xs text-gray-400 mt-1">${s.description || ''}</p>
                     </div>`;
+                } else if (s.type === 'textarea') {
+                    // Longer free text; grows with its content (up to 400px), then scrolls. `rows` sets the starting height.
+                    const rows = Math.min(Math.max(parseInt(s.rows, 10) || 4, 2), 20);
+                    container.innerHTML += `
+                    <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">${s.label} <span class="text-xs text-gray-400">(${plugin.plugin_name})</span></label>
+                        <textarea id="${id}" rows="${rows}" data-autogrow placeholder="${attr(s.placeholder || '')}"
+                                  class="w-full p-2.5 border border-gray-300 rounded-md text-sm resize-y focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+                                  oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight+2,400)+'px'"
+                                  onchange="savePluginSetting('${plugin.plugin_id}', '${s.name}', this.value)">${attr(s.value)}</textarea>
+                        <p class="text-xs text-gray-400 mt-1">${s.description || ''}</p>
+                    </div>`;
                 } else {
                     container.innerHTML += `
                     <div>
                         <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">${s.label} <span class="text-xs text-gray-400">(${plugin.plugin_name})</span></label>
-                        <input type="${s.type === 'number' ? 'number' : 'text'}" id="${id}" value="${s.value ?? ''}"
+                        <input type="${s.type === 'number' ? 'number' : s.type === 'password' ? 'password' : 'text'}" id="${id}" value="${attr(s.value)}"
                                class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
                                onchange="savePluginSetting('${plugin.plugin_id}', '${s.name}', this.value)">
                         <p class="text-xs text-gray-400 mt-1">${s.description || ''}</p>
@@ -4382,6 +4396,10 @@ async function loadPluginSettings() {
                 }
             }
         }
+        container.querySelectorAll('textarea[data-autogrow]').forEach(ta => {
+            ta.style.height = 'auto';
+            ta.style.height = Math.min(ta.scrollHeight + 2, 400) + 'px';
+        });
     } catch (e) {
         console.error('Failed to load plugin settings:', e);
     }
