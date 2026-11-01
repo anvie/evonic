@@ -212,7 +212,7 @@ def search(agent_id: str, query: str, limit: int = 8,
     if not os.path.isdir(brain_dir) or not os.path.exists(os.path.join(brain_dir, ".evomem.db")):
         return None
     return _run(brain_dir, ["search", "--mode", mode, "--limit", str(limit),
-                            "--min-score", str(min_score), query], timeout=timeout)
+                            "--min-score", str(min_score), "--", query], timeout=timeout)
 
 
 def think(agent_id: str, query: str, mode: str = "balanced",
@@ -224,7 +224,7 @@ def think(agent_id: str, query: str, mode: str = "balanced",
     brain_dir = _get_evomem_dir(agent_id)
     if not os.path.isdir(brain_dir) or not os.path.exists(os.path.join(brain_dir, ".evomem.db")):
         return None
-    return _run(brain_dir, ["think", "--mode", mode, query], timeout=timeout)
+    return _run(brain_dir, ["think", "--mode", mode, "--", query], timeout=timeout)
 
 
 def graph_query(agent_id: str, start: str, edge: str = None,
@@ -237,9 +237,9 @@ def graph_query(agent_id: str, start: str, edge: str = None,
     brain_dir = _get_evomem_dir(agent_id)
     if not os.path.isdir(brain_dir) or not os.path.exists(os.path.join(brain_dir, ".evomem.db")):
         return None
-    args = ["graph-query", "--hops", str(hops), start]
+    args = ["graph-query", "--hops", str(hops), "--", start]    # "--": a start that begins with "-" is a value, not a flag
     if edge:
-        args[1:1] = ["--edge", edge]  # insert before positional start
+        args[1:1] = ["--edge", edge]  # insert before the positional start
     return _run(brain_dir, args, timeout=timeout)
 
 

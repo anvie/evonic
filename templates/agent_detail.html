@@ -4511,13 +4511,15 @@ function renderKBFiles() {
         const ep = escapeJsPath(node.path);
         const sizeStr = (node.size != null) ? `<span class="text-xs text-gray-400">${(node.size / 1024).toFixed(1)} KB</span>` : '';
         const prefixStr = node.displayPrefix ? `<span class="text-xs text-gray-400 font-mono">${node.displayPrefix}</span>` : '';
+        const expDate = node.expires ? new Date(node.expires.length === 10 ? node.expires + 'T23:59:59' : node.expires) : null;
+        const expStr = expDate && !isNaN(expDate) ? `<span class="text-xs text-amber-500" title="This document has a lifetime: it is deleted automatically once this date has passed, unless another document links to it. Remove the expires line from its header to keep it for good.">⏳ expires ${expDate.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})}</span>` : '';
         return `<div class="flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-gray-100 transition-colors dark:hover:bg-gray-700 dark:text-gray-300"
                      onclick="editFile('${ep}')">
                     <div class="flex items-center gap-2 min-w-0 flex-1">
                         <span class="text-base flex-shrink-0">📄</span>
                         <div class="flex flex-col min-w-0">
                             <span class="text-sm font-mono text-gray-800 truncate dark:text-gray-200" title="${node.path}">${prefixStr}${node.name}</span>
-                            ${sizeStr}
+                            <span class="flex items-center gap-2">${sizeStr}${expStr}</span>
                         </div>
                     </div>
                     <div class="flex gap-1 flex-shrink-0">

@@ -2628,6 +2628,15 @@ class AgentRuntime:
                 if _att_paths:
                     agent_context['trusted_attachment_paths'] = _att_paths
 
+        # A turn started by a message marked "not to be remembered" (notify_agent save_memory=False) must not write
+        # to memory or the knowledge base either: the message's own flag only keeps it out of the summaries.
+        try:
+            _started_by = chatlog.get_last_entry(types=frozenset({'user'})) or {}
+            if isinstance(_started_by.get('metadata'), dict) and _started_by['metadata'].get('no_memory'):
+                agent_context['no_memory_turn'] = True
+        except Exception:
+            pass
+
         # Propagate agent_message_depth and from_agent_id from incoming message metadata
         if ctx.external_user_id.startswith("__agent__"):
             _last_user = chatlog.get_last_entry(types=frozenset({'user'}))

@@ -1372,6 +1372,18 @@ class SchemaMixin:
                 "ON user_escalations(originating_session_id, status, created_at)"
             )
 
+            # Flags on disposable sessions: never remembered, removed after a time (see mixins/session_flags.py).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS session_flags (
+                    session_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    no_memory INTEGER NOT NULL DEFAULT 0,
+                    expires_at REAL,
+                    created_at REAL NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_flags_expiry ON session_flags(expires_at)")
+
             # ==================== System Alerts Table ====================
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS system_alerts (

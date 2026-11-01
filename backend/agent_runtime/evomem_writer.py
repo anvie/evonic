@@ -148,7 +148,7 @@ def _parse_frontmatter(text: str):
 
 def _render_doc(title: str, doc_type: str, description: str, tags, aliases,
                 created: str, updated: str, body: str,
-                thumbnail: str = None) -> str:
+                thumbnail: str = None, expires: str = None) -> str:
     """Render a full doc (frontmatter + body). Body is used verbatim (its inline
     [[wiki-links]] are the graph edges)."""
     lines = ["---",
@@ -160,19 +160,169 @@ def _render_doc(title: str, doc_type: str, description: str, tags, aliases,
         lines.append(f"aliases: {_yaml_list(aliases)}")
     if thumbnail:
         lines.append(f"thumbnail: {_yaml_escape(thumbnail)}")
+    if expires:                                   # optional lifetime: see sweep_expired
+        lines.append(f"expires: {expires}")
     lines.append(f"created: {created}")
     lines.append(f"updated: {updated}")
     lines.append("---")
     return "\n".join(lines) + "\n\n" + (body or "").strip() + "\n"
 
 
+def _folder_title(folder: str) -> str:
+    return folder.replace("-", " ").strip().capitalize() or folder
+
+
+def _ensure_collection(agent_id: str, folder: str) -> bool:
+    """Make ``folder`` a collection if it is not one yet. Evomem only indexes the knowledge root and collection
+    folders (a folder with an ``index.md``): a document written into any other folder exists on disk and in the list
+    view but is silently left out of the index, the graph and search."""
+    folder = (folder or "").strip("/")
+    if not folder or folder == "inbox" or slugify(folder) != folder:
+        return False
+    if os.path.exists(_doc_path(agent_id, f"{folder}/index")):
+        return True
+    return bool(create_collection(agent_id, folder, _folder_title(folder), kind="group"))
+
+
+def ensure_collections(agent_id: str) -> list:
+    """Repair: every folder directly under the knowledge root that holds documents but has no ``index.md`` becomes a
+    collection, so its documents are indexed on the next sync. Hidden folders and ``inbox`` are left alone.
+    Returns the folders it fixed."""
+    root = _get_evomem_dir(agent_id)
+    fixed = []
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return fixed
+    for name in names:
+        full = os.path.join(root, name)
+        if name.startswith(".") or name == "inbox" or not os.path.isdir(full):
+            continue
+        has_docs = any(f.endswith(".md") for f in os.listdir(full))
+        if has_docs and not os.path.exists(os.path.join(full, "index.md")) and _ensure_collection(agent_id, name):
+            fixed.append(name)
+    return fixed
+
+
+def delete_doc(agent_id: str, slug: str) -> bool:
+    """Remove a document (its file) from the knowledge base and schedule a sync so it leaves the index and the graph.
+    Collection indexes are never deleted. Returns True if a file was removed."""
+    slug = (slug or "").strip("/")
+    if not slug or slug == "index" or slug.endswith("/index"):
+        return False
+    path = _doc_path(agent_id, slug)
+    root = os.path.abspath(_get_evomem_dir(agent_id))
+    if not path.startswith(root + os.sep) or not os.path.isfile(path):
+        return False
+    try:
+        os.remove(path)
+    except OSError as e:
+        logger.debug("delete_doc failed for %s/%s: %s", agent_id, slug, e)
+        return False
+    vlog("writer[%s]: delete_doc %s", agent_id, slug)
+    mark_dirty(agent_id)
+    return True
+
+
+def parse_expiry(value) -> "datetime | None":
+    """A doc's ``expires`` as a UTC datetime. A bare date means the end of that day. None when absent or unreadable
+    (an unreadable value never makes a doc expire)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 10:
+            return datetime.fromisoformat(text).replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def set_expiry(agent_id: str, slug: str, expires: str = None) -> bool:
+    """Give a doc a lifetime (an ISO date or date-time), or remove it (``None``) so the doc is kept for good."""
+    path = _doc_path(agent_id, slug)
+    try:
+        with open(path, encoding="utf-8") as f:
+            fm, body = _parse_frontmatter(f.read())
+        title = fm.get("title") or slug.rsplit("/", 1)[-1]
+        _atomic_write(path, _render_doc(title, fm.get("type") or "note", fm.get("description") or title,
+                                        fm.get("tags", []) or [], fm.get("aliases", []) or [],
+                                        fm.get("created") or _now_iso(), _now_iso(), body,
+                                        thumbnail=fm.get("thumbnail"), expires=(expires or None)))
+        return True
+    except (OSError, ValueError) as e:
+        logger.debug("set_expiry failed for %s/%s: %s", agent_id, slug, e)
+        return False
+
+
+def sweep_expired(agent_id: str, now: "datetime | None" = None) -> dict:
+    """Delete the docs whose ``expires`` has passed. Docs without one are never touched. A doc that other docs link
+    to is not deleted (that would leave dangling links): it loses its expiry and is kept for good. Collection
+    indexes, hidden folders and ``inbox`` are skipped. Returns ``{'deleted': [slugs], 'kept': [slugs]}``."""
+    now = now or datetime.now(timezone.utc)
+    root = os.path.abspath(_get_evomem_dir(agent_id))
+    out = {"deleted": [], "kept": []}
+    due = []
+    for dirpath, dirnames, files in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "inbox"]
+        for f in files:
+            if not f.endswith(".md") or f == "index.md":
+                continue
+            try:
+                with open(os.path.join(dirpath, f), encoding="utf-8") as fh:
+                    fm, _ = _parse_frontmatter(fh.read())
+            except OSError:
+                continue
+            when = parse_expiry(fm.get("expires"))
+            if when and when <= now:
+                due.append(os.path.relpath(os.path.join(dirpath, f), root)[:-3].replace(os.sep, "/"))
+    for slug in due:
+        if linked_from(agent_id, slug):
+            if set_expiry(agent_id, slug, None):
+                out["kept"].append(slug)
+        elif delete_doc(agent_id, slug):
+            out["deleted"].append(slug)
+    return out
+
+
+def linked_from(agent_id: str, slug: str) -> list:
+    """Slugs of the other documents that link to this one with ``[[wiki links]]`` (by title, alias or slug). Read from
+    the files themselves, so it works for documents that have not been indexed. Collection indexes do not count."""
+    doc = read_doc(agent_id, slug)
+    if doc is None:
+        return []
+    fm = doc.get("frontmatter") or {}
+    names = {str(n).strip().lower() for n in [doc.get("title"), slug.rsplit("/", 1)[-1], *(fm.get("aliases") or [])] if n}
+    root = os.path.abspath(_get_evomem_dir(agent_id))
+    found = []
+    for dirpath, dirnames, files in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for f in files:
+            if not f.endswith(".md") or f == "index.md":
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, f), root)[:-3].replace(os.sep, "/")
+            if rel == slug:
+                continue
+            try:
+                with open(os.path.join(dirpath, f), encoding="utf-8") as fh:
+                    text = fh.read().lower()
+            except OSError:
+                continue
+            if any(f"[[{n}]]" in text or f"[[{n}|" in text for n in names):
+                found.append(rel)
+    return found
+
+
 def upsert_doc(agent_id: str, title: str, body: str, doc_type: str = "note",
                description: str = None, folder: str = "", tags=None,
-               aliases=None, slug: str = None, thumbnail: str = None) -> str:
+               aliases=None, slug: str = None, thumbnail: str = None, expires: str = None) -> str:
     """Create or overwrite a doc. Returns its full slug (``<folder>/<slug>``) or ''.
 
     ``folder`` places the doc inside a collection (e.g. ``riset-xyz``); empty =
-    root. ``body`` is rich prose with inline ``[[Doc Title]]`` links — written
+    root. ``expires`` (an ISO date or date-time) gives the doc an optional lifetime: once it has passed,
+    :func:`sweep_expired` deletes the doc. A doc without it is never deleted; on an existing doc a missing
+    ``expires`` keeps the one it has, and ``expires=""`` removes it. ``body`` is rich prose with inline ``[[Doc Title]]`` links — written
     verbatim, with no appended link block. On an existing doc the original
     ``created`` is kept, ``updated`` is refreshed, and tags/aliases are merged
     (union); the caller supplies the already-merged body.
@@ -188,6 +338,8 @@ def upsert_doc(agent_id: str, title: str, body: str, doc_type: str = "note",
     if not base or not _ensure_brain(agent_id):
         return ""
     folder = (folder or "").strip("/")
+    if folder:
+        _ensure_collection(agent_id, folder)          # a document in a folder must not fall outside the index
     rel = f"{folder}/{base}" if folder else base
     path = _doc_path(agent_id, rel)
     tags = list(tags or [])
@@ -195,6 +347,7 @@ def upsert_doc(agent_id: str, title: str, body: str, doc_type: str = "note",
     created = _now_iso()
     # A caller-supplied thumbnail wins; otherwise preserve any existing one.
     thumbnail = (thumbnail or "").strip() or None
+    keep_expires = expires is None            # None: leave an existing doc's lifetime alone; "": remove it
 
     if os.path.exists(path):
         try:
@@ -204,6 +357,8 @@ def upsert_doc(agent_id: str, title: str, body: str, doc_type: str = "note",
             tags = sorted(set(tags) | set(fm.get("tags", []) or []))
             aliases = sorted(set(aliases) | set(fm.get("aliases", []) or []))
             thumbnail = thumbnail or (fm.get("thumbnail") or None)
+            if keep_expires:
+                expires = fm.get("expires") or None
             if description is None:
                 description = fm.get("description")
             # Don't downgrade a typed doc to a plain note on re-write — but never
@@ -219,7 +374,7 @@ def upsert_doc(agent_id: str, title: str, body: str, doc_type: str = "note",
     try:
         _atomic_write(path, _render_doc(title, doc_type, description, tags,
                                         aliases, created, _now_iso(), body,
-                                        thumbnail=thumbnail))
+                                        thumbnail=thumbnail, expires=(expires or None)))
         vlog("writer[%s]: upsert_doc %s (type=%s)", agent_id, rel, doc_type)
         return rel
     except Exception as e:
@@ -291,7 +446,7 @@ def append_to_doc(agent_id: str, slug: str, delta_prose: str,
                                         fm.get("tags", []) or [],
                                         fm.get("aliases", []) or [],
                                         created, _now_iso(), new_body,
-                                        thumbnail=final_thumb))
+                                        thumbnail=final_thumb, expires=fm.get("expires")))
         vlog("writer[%s]: append_to_doc %s (+%d chars%s)", agent_id, slug, len(delta),
              ", +thumbnail" if new_thumb and new_thumb != existing_thumb else "")
         return True
@@ -401,7 +556,7 @@ def replace_in_doc(agent_id: str, slug: str, old_str: str, new_str: str,
                                         fm.get("tags", []) or [],
                                         fm.get("aliases", []) or [],
                                         created, _now_iso(), new_body,
-                                        thumbnail=fm.get("thumbnail")))
+                                        thumbnail=fm.get("thumbnail"), expires=fm.get("expires")))
         vlog("writer[%s]: replace_in_doc %s (%s)", agent_id, slug, how)
         return True
     except Exception as e:
@@ -454,7 +609,7 @@ def link_in_doc(agent_id: str, slug: str, text: str, target: str = "") -> bool:
                                         fm.get("tags", []) or [],
                                         fm.get("aliases", []) or [],
                                         created, _now_iso(), new_body,
-                                        thumbnail=fm.get("thumbnail")))
+                                        thumbnail=fm.get("thumbnail"), expires=fm.get("expires")))
         vlog("writer[%s]: link_in_doc %s -> [[%s]]", agent_id, slug, target)
         return True
     except Exception as e:
@@ -531,7 +686,7 @@ def dedupe_doc(agent_id: str, slug: str) -> bool:
                                         fm.get("description") or title,
                                         fm.get("tags", []) or [], fm.get("aliases", []) or [],
                                         fm.get("created") or _now_iso(), _now_iso(), cleaned,
-                                        thumbnail=fm.get("thumbnail")))
+                                        thumbnail=fm.get("thumbnail"), expires=fm.get("expires")))
         vlog("writer[%s]: dedupe_doc %s (%d -> %d chars)", agent_id, slug, len(body), len(cleaned))
         return True
     except Exception as e:
@@ -596,6 +751,7 @@ def _do_sync(agent_id: str) -> None:
         _sync_timers.pop(agent_id, None)
     logger.info("evomem_writer[%s]: debounced sync firing", agent_id)
     try:
+        ensure_collections(agent_id)
         ok = _evomem_sync(agent_id)
         logger.info("evomem_writer[%s]: sync completed (ok=%s)", agent_id, ok)
     except Exception as e:
@@ -625,6 +781,7 @@ def sync_now(agent_id: str) -> bool:
             existing.cancel()
     vlog("writer[%s]: sync now (synchronous)", agent_id)
     try:
+        ensure_collections(agent_id)
         return _evomem_sync(agent_id)
     except Exception:
         logger.warning("evomem_writer[%s]: sync_now failed", agent_id, exc_info=True)

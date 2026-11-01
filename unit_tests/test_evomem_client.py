@@ -204,6 +204,30 @@ class TestGraphQuery:
             assert "--edge" in args and "works_at" in args
 
 
+class TestLeadingDashQuery:
+    """A query that starts with "-" must reach evomem as a value, not be read as a flag."""
+
+    def _args(self, fn, *a, **kw):
+        with patch("os.path.isdir", return_value=True), \
+             patch("os.path.exists", return_value=True), \
+             patch("backend.agent_runtime.evomem_client._run", return_value={}) as mock_run:
+            fn("test-agent", *a, **kw)
+            return mock_run.call_args[0][1]
+
+    def test_search_puts_the_query_after_a_separator(self):
+        args = self._args(search, "- update the server")
+        assert args[-2:] == ["--", "- update the server"]
+
+    def test_think_puts_the_query_after_a_separator(self):
+        from backend.agent_runtime.evomem_client import think
+        assert self._args(think, "-x question")[-2:] == ["--", "-x question"]
+
+    def test_graph_query_puts_the_start_after_a_separator(self):
+        from backend.agent_runtime.evomem_client import graph_query
+        args = self._args(graph_query, "-start", edge="works_at")
+        assert args[-2:] == ["--", "-start"] and args.index("--edge") < args.index("--")
+
+
 class TestModeThreading:
     def test_search_threads_mode(self):
         with patch("os.path.isdir", return_value=True), \

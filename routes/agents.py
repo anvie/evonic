@@ -710,6 +710,22 @@ def api_delete_agent_variable(agent_id, key):
 
 # ==================== Knowledge Base API ====================
 
+def _kb_expiry(path: str):
+    """The ``expires`` value in a KB doc's frontmatter, or None. Reads only the top of the file."""
+    if not path.endswith('.md'):
+        return None
+    try:
+        with open(path, encoding='utf-8') as f:
+            head = f.read(2000)
+    except OSError:
+        return None
+    m = re.match(r'^---\n(.*?)\n---', head, re.DOTALL)
+    if not m:
+        return None
+    found = re.search(r'^expires:\s*(.+?)\s*$', m.group(1), re.MULTILINE)
+    return found.group(1).strip('"\'') if found else None
+
+
 def _build_kb_tree(kb_dir: str, rel_path: str = '') -> list:
     """Recursively build a tree of KB files and directories."""
     items = []
@@ -741,7 +757,8 @@ def _build_kb_tree(kb_dir: str, rel_path: str = '') -> list:
                 'type': 'file',
                 'path': rel,
                 'size': stat.st_size,
-                'modified': stat.st_mtime
+                'modified': stat.st_mtime,
+                'expires': _kb_expiry(full_path),        # optional lifetime: the doc is deleted after it
             })
     return items
 
