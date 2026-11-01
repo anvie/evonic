@@ -901,7 +901,7 @@ html.dark #chat-room { border-color: var(--color-gray-700, #364153); background:
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=75"></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=76"></script>
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1"></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=14"></script>
 <script>
@@ -1036,11 +1036,12 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         // snapshot, so refresh the session-scoped state from the API.
         document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', {detail: data}));
     } else if (evtName === 'response_chunk') {
-        if (data.content && _sseThinkingId) {
+        if (data.content && !data.is_final) {
+            // Intermediate response: post it in the chat and continue in a fresh thinking bubble.
+            _beginSessionTurn();
+            _sseThinkingId = chatUI.splitForIntermediate(_sseThinkingId, data.content, data.timestamp);
+        } else if (data.content && _sseThinkingId) {
             chatUI.appendTimelineEntry(_sseThinkingId, {type: 'response', content: data.content});
-        }
-        if (data.send_as_message && !data.is_final && data.content) {
-            _pendingIntermediateResponse = data.content;
         }
     } else if (evtName === 'approval_required') {
         if (_sseThinkingId) {

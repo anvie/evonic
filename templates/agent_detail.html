@@ -3152,7 +3152,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=75" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=76" defer></script>
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=14" defer></script>
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
@@ -7252,6 +7252,12 @@ function _handleAgentRealtime(evtName, data, sessionId) {
     if (evtName === 'turn_split') {
         turn.ingest({event: evtName, data, seq});
         turn = chatUI.showThinkingIndicator();
+        _currentTurn.thinkingId = turn;
+        return;
+    }
+    if (evtName === 'response_chunk' && data.content && !data.is_final) {
+        // Intermediate response: post it in the chat and continue in a fresh thinking bubble.
+        turn = chatUI.splitForIntermediate(turn, data.content, data.timestamp);
         _currentTurn.thinkingId = turn;
         return;
     }
