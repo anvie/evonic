@@ -220,6 +220,15 @@ function renderSettings(variables, config) {
     const actions = document.getElementById('settings-actions');
     const noVars = document.getElementById('no-variables');
 
+    if (pluginData && pluginData.settings_url) {
+        // The plugin hosts its own settings UI; don't duplicate the form here.
+        form.innerHTML = `<p class="text-sm text-gray-500 mb-3">This plugin's settings are managed on its own page.</p>
+            <a href="${esc(pluginData.settings_url)}" class="inline-block px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Open settings</a>`;
+        actions.classList.add('hidden');
+        noVars.classList.add('hidden');
+        return;
+    }
+
     if (!variables.length) {
         form.classList.add('hidden');
         actions.classList.add('hidden');
