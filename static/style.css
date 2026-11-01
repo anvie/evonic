@@ -1432,15 +1432,17 @@ html.dark .ev-toast-info .ev-toast-ic { background: rgb(99 102 241 / .24); color
 /* ── Combobox (static/js/ev-combobox.js): themed <select> with keyword filter ── */
 .ev-cb { position: relative; display: inline-block; max-width: 100%; min-width: 0; vertical-align: middle; }
 .ev-cb-block { display: block; width: 100%; }
-.ev-cb-inline .ev-cb-trigger, .ev-cb:not(.ev-cb-block) .ev-cb-trigger { width: auto; min-width: 8rem; }
+/* Size hooks: a page that uses compact inputs sets these on a container so its comboboxes match them.
+   Unset, everything keeps the default size below. */
+.ev-cb-inline .ev-cb-trigger, .ev-cb:not(.ev-cb-block) .ev-cb-trigger { width: auto; min-width: var(--ev-cb-min-w, 8rem); }
 .ev-cb-native { display: none !important; }
-.ev-cb-trigger { display: flex; align-items: center; justify-content: space-between; gap: .5rem; width: 100%; padding: .625rem .875rem; border: 1px solid #d1d5db; border-radius: .625rem; background: #fff; color: #111827; font: inherit; font-size: .875rem; line-height: 1.25rem; text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.ev-cb-trigger { display: flex; align-items: center; justify-content: space-between; gap: var(--ev-cb-gap, .5rem); width: 100%; height: var(--ev-cb-h, auto); padding: var(--ev-cb-pad, .625rem .875rem); border: 1px solid #d1d5db; border-radius: var(--ev-cb-radius, .625rem); background: #fff; color: #111827; font: inherit; font-size: var(--ev-cb-fs, .875rem); line-height: var(--ev-cb-lh, 1.25rem); text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
 .ev-cb-trigger:hover { border-color: #94a3b8; }
 .ev-cb-trigger:focus-visible, .ev-cb.is-open .ev-cb-trigger { outline: none; border-color: #6366f1; box-shadow: none; }
 .ev-cb-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ev-cb-label.is-placeholder { color: #94a3b8; }
 .ev-cb-chev { flex: none; display: inline-flex; color: #94a3b8; transition: transform .18s ease; }
-.ev-cb-chev svg { width: 16px; height: 16px; }
+.ev-cb-chev svg { width: var(--ev-cb-chev, 16px); height: var(--ev-cb-chev, 16px); }
 .ev-cb.is-open .ev-cb-chev { transform: rotate(180deg); }
 .ev-cb.is-disabled .ev-cb-trigger { opacity: .55; cursor: not-allowed; }
 html.dark .ev-cb-trigger { background: rgb(10 15 28 / .65); border-color: rgb(148 163 184 / .28); color: #f1f5f9; }
