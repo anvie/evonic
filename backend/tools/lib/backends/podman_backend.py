@@ -19,6 +19,9 @@ inherited unchanged. What differs is rebound here:
   policy rootless Podman can honour.
 * ``_sibling_runtime_names`` — keeps the inherited sweep/reconcile loops away
   from containers owned by another runtime loaded in the same process.
+* ``_PODMAN_USERNS`` / ``_PODMAN_USER`` — the user-namespace mapping without
+  which the sandbox user cannot write to the bind-mounted workspace (see
+  *Rootless notes*).
 
 Runtime exclusivity
 -------------------
@@ -43,18 +46,24 @@ Rootless notes
   confinement for the sandbox is the same posture Docker uses on these hosts.
   Override with ``SANDBOX_PODMAN_SECURITY_OPT`` (empty value drops the flag,
   ``label=type:container_file_t`` re-enables labelling).
-* No user namespace flag is added: the sandbox image already runs as uid 1000
-  on a rootless host whose user is uid 1000, which matches the bind-mounted
-  workspace owner. ``--userns=keep-id`` is NOT used because it forces Podman to
-  build an ID-mapped copy of every image layer (slow, and it fails outright when
-  the subuid range is exhausted ``not enough unused IDs in user namespace``).
-  Override with ``SANDBOX_PODMAN_USERNS`` when the host uid differs.
+* The user namespace must be mapped explicitly. Rootless Podman maps the
+  container to a *subordinate* uid by default, so the bind-mounted workspace
+  appears owned by ``root`` inside the container and the sandbox user gets
+  ``Permission denied`` on every write, which makes the sandbox unusable. The
+  default here is ``--userns=keep-id:uid=<image uid>,gid=<image gid>``: it maps
+  the image's own uid onto the host uid, which is exactly what the bind mount
+  needs, and it does NOT force Podman to ID-map the image layers (fast start,
+  no ``not enough unused IDs in user namespace`` failure). A plain
+  ``--userns=keep-id`` is not used because it does replay the image through the
+  ID-mapping machinery. Override with ``SANDBOX_PODMAN_USERNS`` (empty value
+  drops the flag), and the ids with ``SANDBOX_PODMAN_USER`` (default ``1000``).
 * ``--memory`` / ``--cpus`` need cgroups v2; when Podman cannot enforce them the
   container still starts (Podman only warns). Use a rootful Podman setup if hard
   limits are mandatory.
 * ``--network=bridge`` maps to ``pasta`` / ``slirp4netns`` in rootless mode.
 """
 
+import atexit
 import logging
 import os
 import shutil
@@ -92,6 +101,7 @@ except ImportError:
 # Runtime identity. ``_RUNTIME_NAME`` is read by the shared pool bookkeeping in
 # the parent module; ``_RUNTIME_CLI`` is the binary this backend shells out to.
 _RUNTIME_NAME = 'podman'
+_WORKSPACE_MOUNT = '/workspace'
 _RUNTIME_CLI = os.getenv('SANDBOX_PODMAN_CLI', 'podman').strip() or 'podman'
 PODMAN_CLI = _RUNTIME_CLI
 
@@ -105,9 +115,14 @@ _PODMAN_RESTART_POLICY = 'no'
 # for the sandbox mirrors what Docker does there. Empty value drops the flag.
 _PODMAN_SECURITY_OPT = os.getenv('SANDBOX_PODMAN_SECURITY_OPT', 'label=disable').strip()
 
-# Extra user-namespace mode, empty by default (see the module docstring for why
-# keep-id is not the default). ``auto`` / ``keep-id`` are accepted values.
+# User-namespace mode. The default is the *mapped* keep-id form built from
+# ``_PODMAN_USER``: it maps the image user onto the host uid without replaying
+# the image layers, so the workspace bind mount stays writable. Set
+# SANDBOX_PODMAN_USERNS to override it, or to an empty value to fall back to
+# Podman's (broken for bind mounts) subuid mapping.
+_PODMAN_USERNS_TEMPLATE = 'keep-id:uid={uid},gid={gid}'
 _PODMAN_USERNS = os.getenv('SANDBOX_PODMAN_USERNS', '').strip()
+_PODMAN_USER = os.getenv('SANDBOX_PODMAN_USER', '1000').strip() or '1000'
 
 _ALREADY_EXISTS_MARKERS = (
     'already exists',
@@ -160,6 +175,39 @@ def _runtime_popen(*args) -> subprocess.Popen:
 def cli_available() -> bool:
     """Return True when the podman binary is on PATH."""
     return shutil.which(_RUNTIME_CLI) is not None
+
+
+def _userns_arg() -> str:
+    """Return the ``--userns`` value for new sandbox containers.
+
+    Defaults to ``keep-id:uid=<_PODMAN_USER>,gid=<_PODMAN_USER>`` so that the
+    image user maps onto the host uid and the bind-mounted workspace is
+    writable. ``SANDBOX_PODMAN_USERNS`` overrides it; an explicit empty value
+    disables the flag.
+    """
+    if _PODMAN_USERNS:
+        return _PODMAN_USERNS
+    return _PODMAN_USERNS_TEMPLATE.format(uid=_PODMAN_USER, gid=_PODMAN_USER)
+
+
+def workspace_writable(container_id: str, path: str = None, timeout: int = 20) -> tuple:
+    """Verify the sandbox user can actually write to the mounted workspace.
+
+    A rootless user-namespace mismatch shows up as a read-only workspace, not as
+    a failed ``podman run``, so the backend checks it once per container and
+    fails loudly instead of handing an unusable sandbox to the agent.
+    """
+    path = path or _WORKSPACE_MOUNT
+    probe = path + '/.evonic-write-probe'
+    try:
+        r = _runtime('exec', container_id, 'sh', '-c',
+                     f': > {probe} && rm -f {probe}', timeout=timeout)
+    except Exception as exc:  # binary missing, timeout, ...
+        return False, str(exc)
+    if r.returncode == 0:
+        return True, 'ok'
+    return False, ((r.stderr or r.stdout or '').strip()
+                   or f'sandbox user cannot write to {path}')
 
 
 def runtime_reachable(timeout: int = 10) -> tuple:
@@ -275,6 +323,49 @@ def _restart_policy(persistent: bool) -> str:
     return _PODMAN_RESTART_POLICY
 
 
+def _container_create_args() -> list:
+    """Extra ``podman run`` arguments for new sandbox containers.
+
+    The inherited ``DockerBackend`` creation path builds its own argv (it never
+    calls :func:`build_container_command`), and that argv is the one every
+    ``bash``/``runpy`` call actually goes through. Rootless Podman needs two
+    flags the Docker argv does not carry; without them the container starts
+    fine but the bind-mounted workspace is owned by ``root`` and is therefore
+    read-only for the sandbox user.
+
+    * ``--userns`` maps the image user onto the host uid (see the module
+      docstring, *Rootless notes*).
+    * ``--security-opt`` drops the SELinux label so a ``:rw`` bind mount is not
+      blocked by a label mismatch on enforcing hosts.
+    """
+    args = []
+    userns = _userns_arg()
+    if userns:
+        args.append(f'--userns={userns}')
+    if _PODMAN_SECURITY_OPT:
+        args.append(f'--security-opt={_PODMAN_SECURITY_OPT}')
+    return args
+
+
+def _get_or_create_container_hook(session_id: str, agent_id: str = '',
+                                  workspace: str = None, persistent: bool = False,
+                                  artifacts_root: str = None) -> tuple:
+    """Entry point the *parent* module uses while this runtime is bound.
+
+    ``DockerBackend`` builds its argv inline, so its creation path only knows
+    about Docker's flags. Binding this module into the parent (``bind(True)``)
+    points the inherited ``_get_or_create_container`` global at this function,
+    which routes every creation - including the ones triggered by
+    ``run_bash``/``run_python`` - through the Podman builder.
+    """
+    docker_backend._claim_runtime(_RUNTIME_NAME)
+    ensure_hooks_bound()
+    return _get_or_create_container(
+        session_id, agent_id=agent_id, workspace=workspace,
+        persistent=persistent, artifacts_root=artifacts_root,
+    )
+
+
 def _sibling_runtime_names() -> set:
     """Names of containers owned by a *loaded* sibling container runtime.
 
@@ -327,8 +418,7 @@ def build_container_command(
         f'--cpus={SANDBOX_CPU_LIMIT}',
         f'--network={SANDBOX_NETWORK}',
         '--pids-limit=256',
-        *((f'--security-opt={_PODMAN_SECURITY_OPT}',) if _PODMAN_SECURITY_OPT else ()),
-        *((f'--userns={_PODMAN_USERNS}',) if _PODMAN_USERNS else ()),
+        *_container_create_args(),
         '--tmpfs', '/tmp:rw,exec,size=3000m',
         '--tmpfs', '/root:rw,size=16m',
         '--label', 'evonic.managed=1',
@@ -336,11 +426,13 @@ def build_container_command(
         '--label', f'evonic.pid={os.getpid()}',
         '--label', f'evonic.created_at={created_at:.0f}',
         '--label', f'evonic.persistent={1 if persistent else 0}',
-        '-v', f'{workspace}:/workspace:rw',
+        '-v', f'{workspace}:{_WORKSPACE_MOUNT}:rw',
         *artifacts_mounts,
         '-v', f'{docker_backend._HELPERS_DIR}:{docker_backend._HELPERS_MOUNT}:ro',
-        '-w', '/workspace',
+        '-w', _WORKSPACE_MOUNT,
         '-e', f'SCRATCH={scratch}',
+        # The image reference must be the first non-flag token; a missing image
+        # makes Podman read `-v <workspace>:/workspace:rw` as image/volume names.
         image,
         'sh', '-c', f'mkdir -p {scratch} && exec sleep infinity',
     ]
@@ -479,6 +571,20 @@ def _get_or_create_container(
     if not container_id:
         return None, 'Failed to start container: podman returned an empty container id'
 
+    # A rootless user-namespace mismatch leaves the workspace bind mount owned by
+    # a foreign uid: the container starts fine and every write fails. Verify once
+    # here so the agent never receives a read-only sandbox.
+    writable, why = workspace_writable(container_id, _WORKSPACE_MOUNT)
+    if not writable:
+        _destroy_named(container_id)
+        logger.error('Sandbox workspace is not writable (%s): %s', container_id[:12], why)
+        return None, (
+            'Sandbox workspace is not writable inside the container: ' + str(why) +
+            '. Check SANDBOX_PODMAN_USERNS (current: ' + (_userns_arg() or '<none>') +
+            ') and SANDBOX_PODMAN_USER (current: ' + _PODMAN_USER + '); the mapping ' +
+            'must make the host uid the owner of the mounted workspace.'
+        )
+
     with _pool_lock:
         _containers[pool_key] = {
             'container_id': container_id,
@@ -536,32 +642,93 @@ _BOUND_ATTRS = (
     ('_docker_popen', '_runtime_popen'),
     ('_effective_image', '_effective_image'),
     ('_restart_policy', '_restart_policy'),
+    ('_get_or_create_container', '_get_or_create_container_hook'),
     ('_is_container_gone', 'is_container_gone'),
     ('get_pool_status', 'get_pool_status'),
     ('_sibling_container_names', '_sibling_runtime_names'),
 )
 
+# Runtime identity recorded at import time. ``bind(False)`` only restores the
+# Podman hooks while the process is still claimed by Podman (see :func:`bind`),
+# which keeps a Docker process that merely imported this module from having its
+# pool and CLI reverted behind its back.
+_IMPORT_CLAIM = docker_backend.get_active_runtime()
+
+# The parent's own pool object, captured before anything is bound. Callers that
+# resolved the pool at import time (other backends, long-lived backend instances)
+# keep working because ``bind(False)`` hands this exact object back.
+_PARENT_POOL = docker_backend._containers
+
+# Snapshot of the parent's own attributes, recorded before anything is bound.
+# It is the restore target for ``bind(False)``: a hook that was absent on the
+# parent is simply removed again.
 _PARENT_ORIGINALS = {
     attr: docker_backend.__dict__.get(attr, _MISSING) for attr, _ in _BOUND_ATTRS
 }
 
+# The pool the parent currently sees while this module is bound. It is
+# ``_containers`` itself, never a copy: the parent's cleanup must see the
+# containers Podman created.
+_bound_pool = _containers
+
+
+def _is_our_claim() -> bool:
+    """True while Podman owns (or may still take) the process-global pool."""
+    active = docker_backend.get_active_runtime()
+    if active == _RUNTIME_NAME:
+        return True
+    # An unclaimed, empty pool is the pristine state of a process whose first act
+    # was importing this module; nothing has been created yet, so nothing can be
+    # taken from another runtime either.
+    return not active and not _containers and not _PARENT_POOL
+
 
 def bind(bind: bool = True) -> None:
-    """Bind (or restore) the parent module's runtime, pool and hooks.
+    """Bind (or release) the parent module's runtime, pool and hooks.
 
     The parent resolves its pool and container CLI through module globals, which
     is what lets a subclass swap the runtime without forking the pool
-    implementation. ``bind(False)`` restores the Docker defaults, which keeps
-    the two backends usable side by side in one process (tests rely on it).
+    implementation.
+
+    Binding is only taken when no other runtime owns the pool: a Docker process,
+    a shared deployment or a test module that merely imports this module must
+    keep its own pool and CLI. Releasing is only taken while Podman still owns
+    the pool, and each hook is restored only if it still holds this module's
+    implementation, so a later ``monkeypatch`` is never reverted behind its back.
+
+    Releasing hands the parent its original pool object back (filled with the
+    containers Podman created so its cleanup can do its job), which leaves both
+    backends usable side by side in one process.
     """
-    for attr, provider in _BOUND_ATTRS:
-        if not bind:
-            value = _PARENT_ORIGINALS.get(attr, _MISSING)
-        else:
+    active = docker_backend.get_active_runtime()
+    if bind:
+        if active and active != _RUNTIME_NAME:
+            return
+        for attr, provider in _BOUND_ATTRS:
             value = globals().get(provider, _MISSING)
+            if value is _MISSING:
+                continue
+            setattr(docker_backend, attr, value)
+        return
+
+    if not _is_our_claim():
+        return
+    for attr, provider in _BOUND_ATTRS:
+        value = globals().get(provider, _MISSING)
         if value is _MISSING:
             continue
-        setattr(docker_backend, attr, value)
+        if docker_backend.__dict__.get(attr) is not value:
+            continue
+        original = _PARENT_ORIGINALS.get(attr, _MISSING)
+        if original is _MISSING:
+            docker_backend.__dict__.pop(attr, None)
+        else:
+            setattr(docker_backend, attr, original)
+    # The containers Podman created belong to this module; they are not handed to the
+    # parent. Only the parent's own pool object is restored, with its own
+    # contents, so a released module never leaves containers behind that another
+    # runtime would sweep or remove.
+    docker_backend.__dict__['_containers'] = _PARENT_POOL
 
 
 def is_bound() -> bool:
@@ -585,9 +752,20 @@ def ensure_monitor_running() -> None:
     docker_backend._ensure_monitor_running()
 
 
-# Bind at import time: importing this module means "this process runs the
-# Podman sandbox backend", matching how SANDBOX_BACKEND selection works.
-bind(True)
+def _atexit_release() -> None:
+    """Release the parent's hooks before the interpreter runs its own cleanup.
+
+    Without this the parent's atexit handler would keep the rebound Podman CLI
+    and run ``podman rm`` against containers it never created. Restoring first
+    turns it back into a no-op for a Docker process (emptied pool, Docker CLI).
+    """
+    try:
+        bind(False)
+    except Exception:  # interpreter shutdown: never raise
+        pass
+
+
+atexit.register(_atexit_release)
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +791,10 @@ class PodmanBackend(docker_backend.DockerBackend):
         # Raises a descriptive error when a *different* container runtime
         # already owns the process-global pool.
         docker_backend._claim_runtime(self.runtime_name)
+        # The claim is what authorises the hooks; re-check after winning it in
+        # case the pool was claimed elsewhere between bind and claim.
+        if not is_bound():
+            ensure_hooks_bound()
         super().__init__(
             session_id, agent_id=agent_id, workspace=workspace,
             is_subagent=is_subagent, is_explorer=is_explorer,
