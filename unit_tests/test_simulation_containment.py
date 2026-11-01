@@ -23,6 +23,20 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import backend.tools.lib.backends.docker_backend as docker_backend
+
+
+def _bind_docker(monkeypatch, fake_docker):
+    """Undo any container-runtime hook binding before testing Docker's path.
+
+    Importing ``podman_backend`` (directly or through the backend registry)
+    rebinds ``docker_backend``'s module globals to the Podman implementation, so
+    a Docker-path test must restore Docker's snapshot first - that is what
+    ``podman_backend.bind(False)`` does. ``monkeypatch`` re-binds it afterwards.
+    """
+    import backend.tools.lib.backends.podman_backend as podman_backend
+    podman_backend.bind(False)
+    monkeypatch.setattr(docker_backend, '_docker', fake_docker)
+    monkeypatch.setattr(podman_backend, 'ensure_hooks_bound', lambda: None)
 from backend.tools.lib.exec_backend import registry
 from backend.tools.lib import simulation_scope as sim
 from backend.tools import _workspace as workspace
@@ -32,7 +46,29 @@ from config import BASE_DIR
 
 _LIVE_SHARED = os.path.join(BASE_DIR, "shared", "agents")
 _LIVE_AGENTS = os.path.join(BASE_DIR, "agents")
-_SANDBOX_BACKENDS = {"DockerBackend", "BwrapBackend"}
+_SANDBOX_BACKENDS = {"DockerBackend", "BwrapBackend", "PodmanBackend"}
+
+
+def _release_container_runtimes():
+    """Return the process-global container pool to a claim-free state.
+
+    A backend claims the pool for its runtime when it is constructed, and the
+    claim is only released when the pool is empty. These tests construct
+    isolating backends (whatever SANDBOX_BACKEND happens to be) while other
+    modules may have left containers behind, so drop them and forget the claim.
+    """
+    import backend.tools.lib.backends.podman_backend as podman_backend
+    with docker_backend._pool_lock:
+        docker_backend._containers.clear()
+        docker_backend._ACTIVE_RUNTIME = ''
+    podman_backend._containers.clear()
+
+
+@pytest.fixture(autouse=True)
+def clean_runtime_claim():
+    _release_container_runtimes()
+    yield
+    _release_container_runtimes()
 
 
 def _sim_agent(sim_id, **extra):
@@ -147,7 +183,7 @@ def test_docker_container_binds_sim_artifacts_root(monkeypatch, tmp_path):
         calls.append(list(args))
         return _Result()
 
-    monkeypatch.setattr(docker_backend, "_docker", _fake_docker)
+    _bind_docker(monkeypatch, _fake_docker)
     monkeypatch.setattr(docker_backend, "_MOUNT_LAYOUT_VERSION", 99)
     monkeypatch.setattr(docker_backend, "_ensure_reaper_running", lambda: None)
     monkeypatch.setattr(docker_backend, "_ensure_monitor_running", lambda: None)
