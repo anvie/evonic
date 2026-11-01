@@ -183,6 +183,35 @@
 
     // ── Permission prompt for host UIs ──────────────────────────────────────
 
+    function requestPermission() {
+        return Notification.requestPermission().then(function (permission) {
+            document.querySelectorAll('[data-ev-notify-prompt]').forEach(function (node) { node.remove(); });
+            if (permission === 'granted') start();
+            return permission;
+        });
+    }
+
+    // Ask as soon as Evonic is open. Chrome allows this without a gesture; Firefox
+    // and Safari only honour it from one, so retry on the first interaction.
+    function autoRequest() {
+        if (!supported || Notification.permission !== 'default') return;
+        const retry = function () {
+            if (Notification.permission === 'default') requestPermission();
+        };
+        ['pointerdown', 'keydown'].forEach(function (name) {
+            document.addEventListener(name, retry, { once: true, capture: true });
+        });
+        try {
+            const pending = Notification.requestPermission(function () {});
+            if (pending && pending.then) {
+                pending.then(function (permission) {
+                    document.querySelectorAll('[data-ev-notify-prompt]').forEach(function (node) { node.remove(); });
+                    if (permission === 'granted') start();
+                });
+            }
+        } catch (_) {}
+    }
+
     function promptElement(className) {
         if (!('Notification' in window) || Notification.permission !== 'default') return null;
         const el = document.createElement(window.isSecureContext ? 'button' : 'span');
@@ -199,14 +228,12 @@
         el.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
-            Notification.requestPermission().then(function (permission) {
-                document.querySelectorAll('[data-ev-notify-prompt]').forEach(function (node) { node.remove(); });
-                if (permission === 'granted') start();
-            });
+            requestPermission();
         });
         return el;
     }
 
     window.EvonicNotify = { promptElement: promptElement };
     start();
+    autoRequest();
 })();
