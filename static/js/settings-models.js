@@ -7,6 +7,7 @@ window.settingsModels = {
     providers: [],
     searchQuery: "",
     statusFilter: "all",
+    usage: {},    // model id -> number of agents using it
     _pings: {},   // last ping result per model id, kept across re-renders
     _currentTestModelId: null,
     _fetchProviderId: null,
@@ -25,11 +26,19 @@ window.settingsModels = {
 
     async load() {
         try {
-            const [modelsData, providersData] = await Promise.all([
+            const [modelsData, providersData, agents] = await Promise.all([
                 ModelsCache.get(),
                 apiGet("/api/providers").then((d) => d.providers || []),
+                apiGet("/api/agents").then((d) => d.agents || []).catch(() => []),
             ]);
             this.models = modelsData;
+            // Usage = number of agents wired to a model (primary, fallback or vision)
+            this.usage = {};
+            for (const a of agents) {
+                for (const id of [a.model_id, a.fallback_model_id, a.vision_model_id]) {
+                    if (id) this.usage[id] = (this.usage[id] || 0) + 1;
+                }
+            }
             this.providers = providersData;
             this.render();
             this._populateProviderSelect();
@@ -89,7 +98,13 @@ window.settingsModels = {
             return;
         }
 
+        const usageOf = (pid) => groups[pid].reduce((n, m) => n + (this.usage[m.id] || 0), 0);
         const sortedProviders = Object.keys(groups).sort((a, b) => {
+            // Providers without models go last; the rest by most-used first
+            const ea = groups[a].length === 0, eb = groups[b].length === 0;
+            if (ea !== eb) return ea ? 1 : -1;
+            const ua = usageOf(a), ub = usageOf(b);
+            if (ua !== ub) return ub - ua;
             const na = (provMap[a]?.name || a).toLowerCase();
             const nb = (provMap[b]?.name || b).toLowerCase();
             return na.localeCompare(nb);
