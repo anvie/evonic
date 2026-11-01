@@ -133,6 +133,11 @@ def list_decision_activity():
     return jsonify({"events": events, "next_cursor": _next_cursor(events) if has_more else None})
 
 
+@decision_profiles_bp.route("/api/admin/decision-activity", methods=["DELETE"])
+def clear_decision_activity():
+    return jsonify({"success": True, "deleted": db.clear_decision_activity()})
+
+
 @decision_profiles_bp.route("/api/admin/decision-activity/<event_id>", methods=["GET"])
 def get_decision_activity(event_id: str):
     event = db.get_decision_activity(event_id)

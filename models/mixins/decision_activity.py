@@ -150,6 +150,11 @@ class DecisionActivityMixin:
             result = conn.execute("UPDATE decision_activity SET outcome_json = '{}', correlation_id = NULL, redacted = 1 WHERE id = ? AND redacted = 0", (event_id,))
             return result.rowcount == 1
 
+    def clear_decision_activity(self) -> int:
+        """Delete every recorded activity event, redacted ones included."""
+        with self._connect() as conn:
+            return conn.execute("DELETE FROM decision_activity").rowcount
+
     def purge_decision_activity(self, before: float) -> int:
         with self._connect() as conn:
             return conn.execute("DELETE FROM decision_activity WHERE created_at < ?", (float(before),)).rowcount

@@ -12,19 +12,40 @@
 </div>
 
 <div class="subpage" data-page="decision-playground">
-  <div class="settings-pane-head"><div><h2 class="settings-pane-title">Decision Playground</h2><p class="settings-pane-desc">Run a bounded, inference-only structured decision. Tests never execute tools, commands, webhooks, or change production configuration.</p></div></div>
-  <div id="decision-playground-context" class="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/30 p-4 text-sm text-indigo-900 dark:text-indigo-100 mb-4" role="status"></div>
-  <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-    <section class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 space-y-4">
-      <div class="flex flex-wrap gap-3 items-end"><div><label class="block text-sm font-medium mb-1" for="playground-mode">Test mode</label><select id="playground-mode" class="border rounded-lg px-3 py-2 dark:bg-gray-700"><option value="profile">Saved Profile Test</option><option value="direct">Direct Model Test</option></select></div><div id="playground-profile-wrap"><label class="block text-sm font-medium mb-1" for="playground-profile">Profile</label><select id="playground-profile" class="border rounded-lg px-3 py-2 dark:bg-gray-700"></select></div><div id="playground-model-wrap" class="hidden"><label class="block text-sm font-medium mb-1" for="playground-model">Model</label><select id="playground-model" class="border rounded-lg px-3 py-2 dark:bg-gray-700"></select></div></div>
-      <div id="playground-error" class="hidden rounded border border-red-300 bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-800 dark:text-red-200" role="alert"></div>
-      <div id="playground-schema-builder" class="space-y-3"></div>
-      <div class="flex flex-wrap gap-2"><button type="button" class="btn-secondary text-sm" onclick="decisionModels.playgroundPreset()">Outage preset</button><button type="button" class="btn-secondary text-sm" onclick="decisionModels.playgroundReset()">Reset</button><button type="button" class="btn-secondary text-sm" onclick="decisionModels.playgroundAddField()">Add field</button></div>
-      <div><label class="block text-sm font-medium mb-1" for="playground-schema">Schema JSON</label><textarea id="playground-schema" rows="10" spellcheck="false" class="font-mono text-xs w-full border rounded-lg px-3 py-2 dark:bg-gray-700" aria-describedby="playground-schema-help"></textarea><p id="playground-schema-help" class="text-xs text-gray-500 mt-1">Supported fields: choice/enum, boolean (nullable allowed), and bounded numeric score. Visual and JSON editors stay synchronized.</p></div>
-      <div><label class="block text-sm font-medium mb-1" for="playground-input">Test input JSON</label><textarea id="playground-input" rows="7" spellcheck="false" class="font-mono text-xs w-full border rounded-lg px-3 py-2 dark:bg-gray-700">{"incident":"Payment-service outage affecting checkout"}</textarea></div>
-      <div class="flex flex-wrap gap-2"><button type="button" class="btn-primary" id="playground-run" onclick="decisionModels.playgroundRun()">Run safe test</button><button type="button" class="btn-secondary" onclick="decisionModels.playgroundCopy()">Copy result</button></div>
-    </section>
-    <section class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5"><h3 class="font-semibold text-gray-900 dark:text-gray-100 mb-3">Result</h3><div id="playground-result" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite">No test has run. Input and raw provider responses are not retained.</div></section>
+  <div class="settings-pane-head"><div><h2 class="settings-pane-title">Decision Playground</h2><p class="settings-pane-desc">Try a structured decision against a saved profile or a model directly, and see how confident it is.</p></div></div>
+  <div class="dp">
+    <div class="dp-note" id="decision-playground-context" role="status"></div>
+    <div class="dp-grid">
+      <div>
+        <section class="dp-card" aria-labelledby="dp-h-setup">
+          <div class="dp-head"><span class="dp-step">1</span><h3 class="dp-title" id="dp-h-setup">What to test</h3></div>
+          <div class="dp-config">
+            <div><span class="dp-label">Test mode</span>
+              <div class="dp-seg" role="group" aria-label="Test mode"><button type="button" data-mode="profile" aria-pressed="true">Saved profile</button><button type="button" data-mode="direct" aria-pressed="false">Direct model</button></div>
+              <input type="hidden" id="playground-mode" value="profile"></div>
+            <div id="playground-profile-wrap"><label class="dp-label" for="playground-profile">Profile</label><select id="playground-profile" class="dp-select"></select><p class="dp-meta" id="playground-profile-meta"></p></div>
+            <div id="playground-model-wrap" class="hidden"><label class="dp-label" for="playground-model">Model</label><select id="playground-model" class="dp-select"></select></div>
+          </div>
+        </section>
+        <section class="dp-card" aria-labelledby="dp-h-schema">
+          <div class="dp-head"><span class="dp-step">2</span><h3 class="dp-title" id="dp-h-schema">Expected answer</h3><span class="dp-sub" id="playground-schema-mode"></span></div>
+          <div id="playground-schema-builder" class="dp-fields"></div>
+          <div class="dp-actions" id="playground-schema-actions"><button type="button" class="dp-ghost" onclick="decisionModels.playgroundAddField()">+ Add field</button><button type="button" class="dp-ghost" onclick="decisionModels.playgroundPreset()">Outage preset</button><button type="button" class="dp-ghost" onclick="decisionModels.playgroundReset()">Reset</button></div>
+          <details class="dp-details" id="playground-schema-json"><summary>Schema JSON</summary><textarea id="playground-schema" rows="10" spellcheck="false" class="dp-textarea" aria-describedby="playground-schema-help"></textarea><p id="playground-schema-help" class="dp-meta">Choice, boolean (nullable allowed) and bounded score fields. The visual editor and JSON stay in sync.</p></details>
+        </section>
+        <section class="dp-card" aria-labelledby="dp-h-input">
+          <div class="dp-head"><span class="dp-step">3</span><h3 class="dp-title" id="dp-h-input">Input</h3></div>
+          <label class="dp-label" for="playground-input">Test input JSON</label>
+          <textarea id="playground-input" rows="7" spellcheck="false" class="dp-textarea">{"incident":"Payment-service outage affecting checkout"}</textarea>
+          <div id="playground-error" class="dp-error hidden" role="alert" style="margin-top:.75rem;margin-bottom:0"></div>
+          <div class="dp-runbar" style="margin-top:.875rem"><button type="button" class="btn-primary dp-run" id="playground-run" onclick="decisionModels.playgroundRun()">Run safe test</button><button type="button" class="btn-secondary" onclick="decisionModels.playgroundCopy()">Copy result</button><span class="dp-kbd">Ctrl/⌘ + Enter</span></div>
+        </section>
+      </div>
+      <section class="dp-card dp-result-card" aria-labelledby="dp-h-result">
+        <div class="dp-head"><h3 class="dp-title" id="dp-h-result">Result</h3></div>
+        <div id="playground-result" aria-live="polite"><div class="dp-empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>No test has run yet.<br>Results appear here. Inputs and raw provider responses are not retained.</div></div>
+      </section>
+    </div>
   </div>
 </div>
 
@@ -43,13 +64,22 @@
       <label class="text-sm">Fallback<select name="fallback_used" class="mt-1 w-full border rounded-lg px-3 py-2 dark:bg-gray-700"><option value="">Any</option><option value="true">Used</option><option value="false">Not used</option></select></label>
       <label class="text-sm">Correlation ID<input name="correlation_id" class="mt-1 w-full border rounded-lg px-3 py-2 dark:bg-gray-700"></label>
       <div class="grid grid-cols-2 gap-2"><label class="text-sm">From<input name="from" type="datetime-local" class="mt-1 w-full border rounded-lg px-2 py-2 dark:bg-gray-700"></label><label class="text-sm">To<input name="to" type="datetime-local" class="mt-1 w-full border rounded-lg px-2 py-2 dark:bg-gray-700"></label></div>
-      <div class="sm:col-span-2 xl:col-span-4 flex flex-wrap gap-2"><button type="submit" class="btn-primary">Apply filters</button><button type="button" class="btn-secondary" onclick="decisionModels.clearActivityFilters()">Clear</button></div>
+      <div class="sm:col-span-2 xl:col-span-4 flex flex-wrap gap-2"><button type="submit" class="btn-primary">Apply filters</button><button type="button" class="btn-secondary" onclick="decisionModels.clearActivityFilters()">Reset filters</button><button type="button" class="btn-secondary danger ml-auto" onclick="decisionModels.clearActivity()">Clear activity</button></div>
     </form>
     <div id="decision-activity-status" class="text-sm text-gray-500 dark:text-gray-400" role="status">Loading activity…</div>
     <div id="decision-activity-list" class="space-y-2" aria-live="polite"></div>
     <div class="flex justify-between items-center gap-3"><p class="text-xs text-gray-500 dark:text-gray-400">Activity is retained only according to server policy. Redacted or expired events cannot be restored or rerun.</p><button type="button" id="decision-activity-more" class="btn-secondary text-sm hidden" onclick="decisionModels.loadActivity(true)">Load more</button></div>
   </section>
-  <section id="decision-activity-detail" class="hidden mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5" tabindex="-1" aria-live="polite"></section>
+</div>
+
+<div id="decision-activity-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="decision-activity-modal-title">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]">
+    <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 dark:border-gray-700 flex-shrink-0">
+      <div><h3 id="decision-activity-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Activity detail</h3><p class="text-xs text-gray-500">Only bounded normalized metadata is shown.</p></div>
+      <button type="button" onclick="closeModal('decision-activity-modal')" aria-label="Close activity detail" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xl leading-none">&times;</button>
+    </div>
+    <div id="decision-activity-detail" class="overflow-y-auto p-6 flex-1" aria-live="polite"></div>
+  </div>
 </div>
 
 <div id="decision-profile-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="decision-profile-modal-title">
