@@ -41,6 +41,24 @@ function closeModal(modalId) {
     document.getElementById(modalId).classList.remove("active");
 }
 
+/* A modal marked data-dismissible (read-only detail views, nothing to lose) also closes on Esc and on a click on
+ * its backdrop. Modals with forms stay as they are. A click only counts when it started and ended on the backdrop,
+ * so selecting text and releasing the mouse outside the dialog does not close it. */
+(function () {
+    const open = () => Array.from(document.querySelectorAll(".modal.active[data-dismissible]"));
+    document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const top = open().pop();
+        if (top) { e.preventDefault(); closeModal(top.id); }
+    });
+    let pressedOn = null;
+    document.addEventListener("mousedown", (e) => { pressedOn = e.target; });
+    document.addEventListener("click", (e) => {
+        const modal = e.target;
+        if (modal && modal.matches && modal.matches(".modal.active[data-dismissible]") && pressedOn === modal) closeModal(modal.id);
+    });
+})();
+
 /* ==================== Shared models cache ====================
  * One /api/models fetch shared by every pane. Models CRUD calls
  * invalidate() which re-fetches and broadcasts 'models:changed'. */
