@@ -52,7 +52,7 @@
 <div class="subpage" data-page="decision-activity">
   <div class="settings-pane-head">
     <h2 class="settings-pane-title">Decision Activity</h2>
-    <p class="settings-pane-desc">Privacy-bounded diagnostic metadata. Inputs, provider responses, and credentials are never retained.</p>
+    <p class="settings-pane-desc">What each decision was asked and answered, so a result can be reproduced. Requests that contain credentials are refused and never recorded; provider responses are never retained.</p>
   </div>
   <section class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 space-y-4">
     <form id="decision-activity-filters" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3" aria-label="Filter decision activity">
@@ -66,8 +66,12 @@
       <div class="grid grid-cols-2 gap-2"><label class="text-sm">From<input name="from" type="datetime-local" class="mt-1 w-full border rounded-lg px-2 py-2 dark:bg-gray-700"></label><label class="text-sm">To<input name="to" type="datetime-local" class="mt-1 w-full border rounded-lg px-2 py-2 dark:bg-gray-700"></label></div>
       <div class="sm:col-span-2 xl:col-span-4 flex flex-wrap gap-2"><button type="submit" class="btn-primary">Apply filters</button><button type="button" class="btn-secondary" onclick="decisionModels.clearActivityFilters()">Reset filters</button><button type="button" class="btn-secondary danger ml-auto" onclick="decisionModels.clearActivity()">Clear activity</button></div>
     </form>
+    <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" id="decision-activity-record-input" class="mt-1" checked onchange="decisionModels.setRecordInput(this.checked)"><span>Record each event's input so it can be reproduced in the Playground<span class="block text-xs text-gray-500 dark:text-gray-400">Turn off to stop recording inputs; events already recorded keep theirs until redacted, purged or cleared.</span></span></label>
     <div id="decision-activity-status" class="text-sm text-gray-500 dark:text-gray-400" role="status">Loading activity…</div>
-    <div id="decision-activity-list" class="space-y-2" aria-live="polite"></div>
+    <div class="overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400"><th class="px-3 py-2 font-medium">Time</th><th class="px-3 py-2 font-medium">Profile</th><th class="px-3 py-2 font-medium">Source</th><th class="px-3 py-2 font-medium">Model</th><th class="px-3 py-2 font-medium">Result</th><th class="px-3 py-2 font-medium text-right">Latency</th></tr></thead>
+      <tbody id="decision-activity-list" aria-live="polite"></tbody>
+    </table></div>
     <div class="flex justify-between items-center gap-3"><p class="text-xs text-gray-500 dark:text-gray-400">Activity is retained only according to server policy. Redacted or expired events cannot be restored or rerun.</p><button type="button" id="decision-activity-more" class="btn-secondary text-sm hidden" onclick="decisionModels.loadActivity(true)">Load more</button></div>
   </section>
 </div>
@@ -75,7 +79,7 @@
 <div id="decision-activity-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="decision-activity-modal-title">
   <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]">
     <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 dark:border-gray-700 flex-shrink-0">
-      <div><h3 id="decision-activity-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Activity detail</h3><p class="text-xs text-gray-500">Only bounded normalized metadata is shown.</p></div>
+      <div><h3 id="decision-activity-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Activity detail</h3><p class="text-xs text-gray-500">The recorded input and the normalized answer.</p></div>
       <button type="button" onclick="closeModal('decision-activity-modal')" aria-label="Close activity detail" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xl leading-none">&times;</button>
     </div>
     <div id="decision-activity-detail" class="overflow-y-auto p-6 flex-1" aria-live="polite"></div>

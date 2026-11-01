@@ -1,8 +1,11 @@
 """Privacy-bounded Decision Activity persistence and query helpers.
 
-Decision activity is diagnostic metadata, not an invocation transcript.  Input
-contexts, policy metadata, provider responses, credentials, and free-form error
-messages are deliberately never accepted by this repository.
+Decision activity is diagnostic metadata plus, while the ``decision_activity_record_input`` setting is on
+(the default), the *validated input* of each invocation, so an event can be reproduced in the Playground.
+Policy metadata, provider responses, credentials, and free-form error messages are never accepted here.
+
+The input is stored only if it passes the same checks the runtime applies before calling a provider
+(size and secret-like keys or values); anything else is withheld and the event says why.
 """
 from __future__ import annotations
 
@@ -17,6 +20,8 @@ _MAX_TEXT = 256
 _MAX_CORRELATION = 256
 _MAX_SUMMARY_FIELDS = 32
 _MAX_ROW_BYTES = 12 * 1024
+_MAX_INPUT_BYTES = 16 * 1024
+RECORD_INPUT_SETTING = "decision_activity_record_input"
 _SAFE_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _SOURCES = frozenset({"production", "playground", "profile_test"})
 _SECRET_KEY = re.compile(r"(?i)(?:api[_-]?key|authorization|password|secret|token)")
@@ -55,6 +60,34 @@ def _summary(value: Any) -> dict[str, Any]:
     return result
 
 
+def _looks_secret(value: Any) -> bool:
+    """True if any key or text anywhere in ``value`` resembles a credential."""
+    if isinstance(value, str):
+        return bool(_SECRET_VALUE.search(value))
+    if isinstance(value, Mapping):
+        return any((isinstance(k, str) and bool(_SECRET_KEY.search(k))) or _looks_secret(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_looks_secret(v) for v in value)
+    return False
+
+
+def _input_snapshot(value: Any) -> tuple[str | None, str | None]:
+    """(json, status) for an invocation input. status: recorded | withheld | too_large | invalid | None."""
+    if value is None:
+        return None, None
+    if not isinstance(value, Mapping):
+        return None, "invalid"
+    if _looks_secret(value):
+        return None, "withheld"
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None, "invalid"
+    if len(encoded.encode("utf-8")) > _MAX_INPUT_BYTES:
+        return None, "too_large"
+    return encoded, "recorded"
+
+
 def _public(row: Mapping[str, Any], *, detail: bool = False) -> dict[str, Any]:
     event = dict(row)
     event["fallback_used"] = bool(event["fallback_used"])
@@ -62,6 +95,10 @@ def _public(row: Mapping[str, Any], *, detail: bool = False) -> dict[str, Any]:
     event["outcome_summary"] = json.loads(event.pop("outcome_json")) if detail else None
     if not detail:
         event.pop("outcome_json", None)
+    raw_input = event.pop("input_json", None)
+    event["has_input"] = raw_input is not None
+    if detail:
+        event["input_context"] = json.loads(raw_input) if raw_input is not None else None
     return event
 
 
@@ -83,6 +120,10 @@ class DecisionActivityMixin:
             raise ValueError("decision activity requires profile identity")
         event_id = str(uuid.uuid4())
         summary = _summary(event.get("outcome_summary"))
+        if self.get_setting(RECORD_INPUT_SETTING, "1") == "0":
+            input_json, input_status = None, ("off" if event.get("input_context") is not None else None)
+        else:
+            input_json, input_status = _input_snapshot(event.get("input_context"))
         raw = {
             "id": event_id, "source": source, "profile_key": profile_key,
             "profile_version": profile_version,
@@ -104,14 +145,17 @@ class DecisionActivityMixin:
         if not isinstance(raw["attempts"], int) or raw["attempts"] < 0: raw["attempts"] = 0
         if len(json.dumps(raw, separators=(",", ":")).encode()) > _MAX_ROW_BYTES:
             raw["outcome_json"] = "{}"
+        raw["input_json"], raw["input_status"] = input_json, input_status
         with self._connect() as conn:
             conn.execute("""INSERT INTO decision_activity
                 (id, source, profile_key, profile_version, model_id, adapter_key,
                  result_class, error_code, confidence, latency_ms, attempts,
-                 fallback_used, fallback_reason, correlation_id, outcome_json, created_at)
+                 fallback_used, fallback_reason, correlation_id, outcome_json, created_at,
+                 input_json, input_status)
                 VALUES (:id, :source, :profile_key, :profile_version, :model_id, :adapter_key,
                         :result_class, :error_code, :confidence, :latency_ms, :attempts,
-                        :fallback_used, :fallback_reason, :correlation_id, :outcome_json, :created_at)""", raw)
+                        :fallback_used, :fallback_reason, :correlation_id, :outcome_json, :created_at,
+                        :input_json, :input_status)""", raw)
         return event_id
 
     def list_decision_activity(self, *, limit: int = 50, cursor: tuple[float, str] | None = None,
@@ -147,7 +191,7 @@ class DecisionActivityMixin:
 
     def redact_decision_activity(self, event_id: str) -> bool:
         with self._connect() as conn:
-            result = conn.execute("UPDATE decision_activity SET outcome_json = '{}', correlation_id = NULL, redacted = 1 WHERE id = ? AND redacted = 0", (event_id,))
+            result = conn.execute("UPDATE decision_activity SET outcome_json = '{}', correlation_id = NULL, input_json = NULL, redacted = 1 WHERE id = ? AND redacted = 0", (event_id,))
             return result.rowcount == 1
 
     def clear_decision_activity(self) -> int:

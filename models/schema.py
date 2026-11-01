@@ -1454,9 +1454,9 @@ class SchemaMixin:
                 builtin_agent_profiles,
             )
 
-            # Decision Activity deliberately holds diagnostic metadata only. It
-            # never stores invocation contexts, policy metadata, credentials,
-            # raw provider content, candidates, or provider logits.
+            # Decision Activity holds diagnostic metadata and, unless switched off, the
+            # validated, secret-free input of each invocation (bounded; redactable). It never
+            # stores policy metadata, credentials, raw provider content, candidates, or logits.
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS decision_activity (
                     id TEXT PRIMARY KEY,
@@ -1481,6 +1481,13 @@ class SchemaMixin:
                     CHECK (attempts >= 0)
                 )
             """)
+            # The validated input of an invocation, kept so an event can be reproduced in the Playground.
+            # Recording is switchable (app setting decision_activity_record_input); see DecisionActivityMixin.
+            cursor.execute("PRAGMA table_info(decision_activity)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+            for column, decl in (("input_json", "TEXT"), ("input_status", "TEXT")):
+                if column not in existing_columns:
+                    cursor.execute(f"ALTER TABLE decision_activity ADD COLUMN {column} {decl}")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_activity_time "
                            "ON decision_activity(created_at DESC, id DESC)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_activity_profile_time "

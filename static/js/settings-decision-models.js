@@ -9,6 +9,7 @@ window.decisionModels = {
         this.bindPlayground();
         this.bindActivity();
         this.loadActivity();
+        this.loadRecordInput();
     },
 
     async load() {
@@ -296,7 +297,8 @@ window.decisionModels = {
     activityRow(event) {
         const badge = event.result_class === "error" ? "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300" : event.fallback_used ? "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300";
         const state = event.result_class === "error" ? `Error: ${event.error_code || "unknown"}` : event.fallback_used ? "Fallback used" : "Success";
-        return `<button type="button" class="w-full text-left rounded-lg border border-gray-200 dark:border-gray-700 p-3 hover:border-indigo-400 dark:hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" onclick="decisionModels.openActivity('${this.escape(event.id)}')"><div class="flex flex-wrap items-center justify-between gap-2"><span class="font-medium text-gray-900 dark:text-gray-100">${this.escape(event.profile_key)} <span class="text-xs font-normal text-gray-500">${this.escape(event.profile_version)}</span></span><span class="rounded px-2 py-1 text-xs font-medium ${badge}">${this.escape(state)}</span></div><div class="mt-1 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-500 dark:text-gray-400"><span>${this.escape(event.source)}</span><span>${this.escape(event.model_id || "model unavailable")}</span><span>${event.latency_ms == null ? "latency unavailable" : this.escape(event.latency_ms + " ms")}</span><span>${this.escape(this.activityDate(event.created_at))}</span></div></button>`;
+        const cell = "px-3 py-2 align-top";
+        return `<tr tabindex="0" class="border-t border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/40 focus:outline-none focus:ring-2 focus:ring-indigo-500" onclick="decisionModels.openActivity('${this.escape(event.id)}')" onkeydown="if (event.key === 'Enter') decisionModels.openActivity('${this.escape(event.id)}')"><td class="${cell} whitespace-nowrap text-gray-500 dark:text-gray-400">${this.escape(this.activityDate(event.created_at))}</td><td class="${cell} font-medium text-gray-900 dark:text-gray-100">${this.escape(event.profile_key)} <span class="text-xs font-normal text-gray-500">${this.escape(event.profile_version)}</span></td><td class="${cell}">${this.escape(event.source)}</td><td class="${cell} text-gray-500 dark:text-gray-400">${this.escape(event.model_id || "unavailable")}</td><td class="${cell}"><span class="rounded px-2 py-0.5 text-xs font-medium ${badge}">${this.escape(state)}</span></td><td class="${cell} text-right whitespace-nowrap text-gray-500 dark:text-gray-400">${event.latency_ms == null ? "unavailable" : this.escape(event.latency_ms + " ms")}</td></tr>`;
     },
     activityDate(value) { return value ? new Date(Number(value) * 1000).toLocaleString() : "time unavailable"; },
     clearActivityFilters() { const form = document.getElementById("decision-activity-filters"); form.reset(); this.loadActivity(); },
@@ -312,21 +314,60 @@ window.decisionModels = {
         try { const response = await apiGet("/api/admin/decision-activity/" + encodeURIComponent(id)); this.renderActivityDetail(response.event); }
         catch (_) { root.innerHTML = '<p class="text-red-700 dark:text-red-300">This event is unavailable. It may have expired or been redacted under retention policy.</p>'; }
     },
+    activityInputNote(event) {
+        const why = {off: "input recording was off when this ran", withheld: "the input contained credential-like text, so it was withheld", too_large: "the input was larger than 16 KiB", invalid: "the input could not be stored"};
+        return event.input_status && why[event.input_status] ? `Not recorded: ${why[event.input_status]}.` : "Not recorded: this event predates input recording.";
+    },
     renderActivityDetail(event) {
         const root = document.getElementById("decision-activity-detail"), summary = event.outcome_summary || {};
+        this._activityDetail = event;
         const rows = [["Source", event.source], ["Profile", event.profile_key], ["Profile version", event.profile_version], ["Model", event.model_id], ["Adapter", event.adapter_key], ["Result", event.result_class], ["Typed error", event.error_code], ["Confidence", event.confidence == null ? "unavailable" : Math.round(event.confidence * 100) + "%"], ["Latency", event.latency_ms == null ? "unavailable" : event.latency_ms + " ms"], ["Attempts", event.attempts], ["Fallback", event.fallback_used ? `used${event.fallback_reason ? ": " + event.fallback_reason : ""}` : "not used"], ["Correlation ID", event.correlation_id || "unavailable"], ["Recorded", this.activityDate(event.created_at)]];
         const profile = this.profiles.find((item) => item.profile_key === event.profile_key);
-        const rerun = event.rerun && event.rerun.allowed && event.source !== "production" && profile && event.rerun.input_context;
-        root.innerHTML = `<div class="flex justify-end"><button type="button" class="btn-secondary text-sm" onclick="closeModal('decision-activity-modal'); decisionModels.openPlayground({profile: '${this.escape(event.profile_key)}'})">Open profile in Playground</button></div><dl class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">${rows.map(([key, value]) => `<div><dt class="text-gray-500 dark:text-gray-400">${this.escape(key)}</dt><dd class="font-medium text-gray-900 dark:text-gray-100 break-all">${this.escape(value == null ? "unavailable" : value)}</dd></div>`).join("")}</dl><div class="mt-4"><h4 class="font-medium">Normalized outcome summary</h4><pre class="mt-2 overflow-auto rounded bg-gray-100 dark:bg-gray-900 p-3 text-xs">${this.escape(JSON.stringify(summary, null, 2))}</pre></div><div class="mt-4 rounded border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/30 p-3 text-sm text-indigo-900 dark:text-indigo-100">${rerun ? `<button type="button" class="btn-primary text-sm" onclick="decisionModels.rerunActivity('${this.escape(event.id)}')">Rerun in Playground</button><p class="mt-2">This opens a draft only. Review it and explicitly choose Run safe test; it never runs automatically.</p>` : "Rerun unavailable: this event has no retained allowlisted input draft. Production inputs, raw provider data, and normalized outputs are never repurposed as test input."}</div>`;
+        const hasInput = event.input_context != null;
+        const canReproduce = hasInput && !!profile;
+        const changed = profile && profile.policy_version !== event.profile_version;
+        const section = "mt-4";
+        const heading = (text) => `<h4 class="font-medium text-gray-900 dark:text-gray-100">${text}</h4>`;
+        const input = hasInput
+            ? `<pre class="mt-2 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-100 dark:bg-gray-900 p-3 text-xs max-h-64">${this.escape(JSON.stringify(event.input_context, null, 2))}</pre>`
+            : `<p class="mt-2 text-sm text-gray-500 dark:text-gray-400">${this.escape(this.activityInputNote(event))}</p>`;
+        const fields = Object.keys(summary);
+        const output = event.error_code
+            ? `<p class="mt-2 text-sm text-red-700 dark:text-red-300">Error: ${this.escape(event.error_code)}. No answer was produced.</p>`
+            : fields.length
+                ? `<table class="mt-2 w-full text-sm"><thead><tr class="text-left text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400"><th class="px-3 py-1 font-medium">Field</th><th class="px-3 py-1 font-medium">Answer</th></tr></thead><tbody>${fields.map((key) => `<tr class="border-t border-gray-200 dark:border-gray-700"><td class="px-3 py-1 font-mono text-xs align-top">${this.escape(key)}</td><td class="px-3 py-1 break-all">${this.escape(summary[key])}</td></tr>`).join("")}</tbody></table>`
+                : `<p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No answer fields were returned.</p>`;
+        const action = canReproduce
+            ? `<button type="button" class="btn-primary text-sm" onclick="decisionModels.rerunActivity('${this.escape(event.id)}')">Test in Playground</button>`
+            : `<button type="button" class="btn-secondary text-sm" ${profile ? "" : "disabled"} onclick="closeModal('decision-activity-modal'); decisionModels.openPlayground({profile: '${this.escape(event.profile_key)}'})">Open profile in Playground</button>`;
+        const note = canReproduce
+            ? `Fills the Playground with exactly this input${changed ? `. The profile has changed since this event (${this.escape(event.profile_version)} to ${this.escape(profile.policy_version)}), so the result may differ` : ""}. It does not run until you choose Run safe test.`
+            : !profile ? "This profile no longer exists as a saved profile, so the event cannot be reproduced." : "No input was recorded for this event, so it cannot be reproduced exactly.";
+        root.innerHTML = `<div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-gray-500 dark:text-gray-400 flex-1 min-w-[12rem]">${note}</p>${action}</div>
+            <div class="${section}">${heading("Input")}${input}</div>
+            <div class="${section}">${heading("Output")}${output}</div>
+            <dl class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">${rows.map(([key, value]) => `<div><dt class="text-gray-500 dark:text-gray-400">${this.escape(key)}</dt><dd class="font-medium text-gray-900 dark:text-gray-100 break-all">${this.escape(value == null ? "unavailable" : value)}</dd></div>`).join("")}</dl>`;
     },
     async rerunActivity(id) {
-        const event = await apiGet("/api/admin/decision-activity/" + encodeURIComponent(id)).then((response) => response.event).catch(() => null);
-        const rerun = event && event.rerun;
-        if (!event || event.source === "production" || !rerun || !rerun.allowed || !rerun.input_context) return;
+        const cached = this._activityDetail && this._activityDetail.id === id ? this._activityDetail : null;
+        const event = cached || await apiGet("/api/admin/decision-activity/" + encodeURIComponent(id)).then((response) => response.event).catch(() => null);
+        const profile = event && this.profiles.find((item) => item.profile_key === event.profile_key);
+        if (!event || event.input_context == null || !profile) return;
         closeModal("decision-activity-modal");
         this.openPlayground({profile: event.profile_key});
-        document.getElementById("playground-input").value = JSON.stringify(rerun.input_context, null, 2);
-        document.getElementById("decision-playground-context").textContent = "Draft created from retained allowlisted test fields. Review before explicitly selecting Run safe test. It has not run automatically.";
+        document.getElementById("playground-input").value = JSON.stringify(event.input_context, null, 2);
+        this.playgroundStateSave();
+        document.getElementById("decision-playground-context").textContent = "Input copied from a Decision Activity event. Review it, then choose Run safe test; it has not run.";
         document.getElementById("playground-run").focus();
+    },
+    async loadRecordInput() {
+        const box = document.getElementById("decision-activity-record-input"); if (!box) return;
+        try { const response = await apiGet("/api/admin/decision-activity/settings"); if (typeof response.record_input === "boolean") box.checked = response.record_input; } catch (_) { /* leave the default (on) */ }
+    },
+    async setRecordInput(enabled) {
+        const box = document.getElementById("decision-activity-record-input");
+        const response = await apiPut("/api/admin/decision-activity/settings", {record_input: !!enabled}).catch(() => ({success: false}));
+        if (!response.success) { if (box) box.checked = !enabled; if (window.toast) toast.show("Could not change input recording", "error"); return; }
+        if (window.toast) toast.show(enabled ? "Inputs will be recorded" : "Inputs will no longer be recorded", "success");
     },
 };

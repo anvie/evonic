@@ -15,13 +15,25 @@ def test_activity_ui_exposes_all_observability_filters_and_states():
     assert "cursor" in SCRIPT and "next_cursor" in SCRIPT
 
 
-def test_activity_detail_does_not_repurpose_outcome_as_rerun_input():
-    assert "event.rerun && event.rerun.allowed" in SCRIPT
-    assert "JSON.stringify(rerun.input_context" in SCRIPT
-    assert "JSON.stringify(summary, null, 2)" not in SCRIPT.split("async rerunActivity", 1)[1]
-    assert "event.source === \"production\"" in SCRIPT
-    assert "it never runs automatically" in SCRIPT
-    assert "Production inputs, raw provider data, and normalized outputs" in SCRIPT
+def test_activity_events_are_a_table_not_cards():
+    assert '<tbody id="decision-activity-list"' in TEMPLATE and "<thead>" in TEMPLATE.split("decision-activity-list")[0].rsplit("<table", 1)[1]
+    row = SCRIPT.split("activityRow(event) {", 1)[1].split("activityDate(value)", 1)[0]
+    assert "<tr " in row and "<td " in row and "<button" not in row and "rounded-lg border" not in row
+
+
+def test_activity_detail_shows_input_and_output_and_reproduces_from_the_recorded_input():
+    detail = SCRIPT.split("renderActivityDetail(event) {", 1)[1].split("async rerunActivity", 1)[0]
+    assert 'heading("Input")' in detail and 'heading("Output")' in detail
+    assert "JSON.stringify(event.input_context, null, 2)" in detail and "Test in Playground" in detail
+    rerun = SCRIPT.split("async rerunActivity(id)", 1)[1].split("async loadRecordInput", 1)[0]
+    assert "JSON.stringify(event.input_context, null, 2)" in rerun and "outcome_summary" not in rerun   # the answer is never used as input
+    assert "it has not run" in rerun and "playgroundStateSave()" in rerun                              # never runs by itself
+    assert "event.source ===" not in rerun                                                                 # production events can be reproduced too
+
+
+def test_recording_inputs_can_be_switched_off_from_the_activity_page():
+    assert 'id="decision-activity-record-input"' in TEMPLATE
+    assert "/api/admin/decision-activity/settings" in SCRIPT and "setRecordInput" in SCRIPT
 
 
 def test_decision_profile_save_errors_use_global_toasts():

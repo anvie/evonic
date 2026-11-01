@@ -156,6 +156,11 @@ class DecisionRuntime:
         try:
             source = request.activity_source if request.activity_source in {"production", "playground", "profile_test"} else "production"
             fields = {field.key: field.value for field in result.fields}
+            # The input is kept so the event can be reproduced in the Playground. A request that was refused
+            # for carrying a secret-like value is never recorded, and the store applies its own checks too.
+            context = request.input_context if isinstance(request.input_context, Mapping) else None
+            if context is not None and _has_secret(context):
+                context = None
             confidences = [field.confidence for field in result.fields if field.confidence is not None]
             self.db.record_decision_activity({
                 "source": source, "profile_key": result.profile.key,
@@ -169,6 +174,7 @@ class DecisionRuntime:
                 "fallback_reason": result.fallback.reason if result.fallback else None,
                 "error_code": result.error.code.value if result.error else None,
                 "correlation_id": request.correlation_id,
+                "input_context": context,
             })
         except Exception:
             self.logger.warning("decision_runtime.activity_write_failed profile=%s", request.profile_key)
