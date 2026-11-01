@@ -124,6 +124,28 @@ docker build -t evonic-sandbox:latest docker/tools/
 
 Configure resource limits in `.env` (memory, CPU, network). If Docker is unavailable, set `sandbox_enabled=0` to fall back to local execution.
 
+### Podman Sandbox (Docker alternative)
+
+Rootless Podman works as a drop-in replacement for Docker. Build the same image
+(Podman tags it `localhost/evonic-sandbox:latest`) and select the backend:
+
+```bash
+podman build -t evonic-sandbox:latest docker/tools/
+SANDBOX_BACKEND=podman ./evonic start
+```
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SANDBOX_BACKEND` | `docker` | Sandbox backend: `docker`, `podman`, or `bwrap` |
+| `SANDBOX_PODMAN_IMAGE` | `localhost/evonic-sandbox:latest` | Image used by the Podman backend |
+
+Notes:
+
+- Rootless Podman rejects `--restart=unless-stopped`, so persistent sandbox containers use `--restart=no`; Evonic restarts surviving labeled containers itself on startup, and idle containers are reaped as usual.
+- Containers run with `--userns=keep-id` and `--security-opt label=disable`, so the bind-mounted workspace stays writable without `container_file_t` labels on the host directory.
+- `status()` reports `backend: "podman"` plus a `podman info` probe; if the runtime is missing, set `sandbox_enabled=0`.
+- The container pool is process-global: one Evonic process must use either the Docker or the Podman backend, never both.
+
 ---
 
 ## Agents
