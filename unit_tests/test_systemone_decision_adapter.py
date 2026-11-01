@@ -38,7 +38,8 @@ def test_lowering_uses_native_questions_contract_for_arbitrary_schema():
     assert set(payload) == {"state", "context", "questions"}
     assert "messages" not in payload and "response_format" not in payload
     assert payload["questions"]["disposition"]["criteria"] == {"go": "Choose a disposition.", "stop": "Choose a disposition."}
-    assert payload["questions"]["approved"]["type"] == "boolean"
+    # SystemOne's native boolean question type is "noul" (answered with P(true)).
+    assert payload["questions"]["approved"]["type"] == "noul"
     assert payload["questions"]["risk"]["minimum"] == 0.0
     assert payload["questions"]["note"]["required"] is False
     assert payload["questions"]["note"]["nullable"] is True
@@ -81,3 +82,34 @@ def test_cancelled_request_is_not_transmitted():
         result = SystemOneQuestionsDecisionAdapter(_model()).decide(invocation)
     assert result.error.code is DecisionErrorCode.CANCELLED
     post.assert_not_called()
+
+
+def _decide(answers):
+    with patch("backend.tools.lib.systemone_decision_adapter.requests.post", return_value=_response(answers)):
+        return SystemOneQuestionsDecisionAdapter(_model()).decide(_invocation())
+
+
+def _base_answers(**override):
+    answers = {"disposition": {"choice": "go"}, "approved": {"noul": 0.5}, "risk": {"score": 1}}
+    answers.update(override)
+    return answers
+
+
+def test_native_boolean_answer_is_the_probability_that_the_statement_is_true():
+    high = {f.key: f for f in _decide(_base_answers(approved={"type": "noul", "noul": 0.908})).fields}["approved"]
+    assert high.value is True and abs(high.confidence - 0.908) < 1e-9
+    assert [(c.value, round(c.probability, 3)) for c in high.candidates] == [(True, 0.908), (False, 0.092)]
+    low = {f.key: f for f in _decide(_base_answers(approved={"noul": 0.036})).fields}["approved"]
+    assert low.value is False and abs(low.confidence - 0.964) < 1e-9
+    assert {f.key: f for f in _decide(_base_answers(approved={"noul": 0.5})).fields}["approved"].value is True
+
+
+def test_native_boolean_answers_outside_zero_to_one_are_invalid_output():
+    for bad in (1.4, -0.1, "yes", True):
+        result = _decide(_base_answers(approved={"noul": bad}))
+        assert result.error is not None and result.error.code is DecisionErrorCode.PROVIDER_RESPONSE_INVALID, bad
+
+
+def test_explicit_boolean_values_are_still_accepted():
+    approved = {f.key: f for f in _decide(_base_answers(approved={"value": False, "confidence": .8})).fields}["approved"]
+    assert approved.value is False and approved.confidence == .8
