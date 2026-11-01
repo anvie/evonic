@@ -11,6 +11,7 @@ Split from the original monolith (Layout C / Pipeline):
 """
 
 import collections
+import contextvars
 import difflib
 import json
 import logging
@@ -80,6 +81,36 @@ class EffectiveRequest:
 # Short polling keeps /stop responsive while parallel tool workers are running.
 # The total wait remains bounded by AGENT_PARALLEL_TOOL_WAIT_TIMEOUT.
 _PARALLEL_TOOL_POLL_INTERVAL_SECONDS = 0.1
+
+_STOPPED = object()
+
+
+def _run_interruptible(fn, stop_event):
+    """Run ``fn()`` in a worker thread and return as soon as /stop is signalled.
+
+    Returns ``_STOPPED`` on stop; the worker is abandoned (Python cannot kill a
+    running thread) and its eventual result or exception is discarded. Used for
+    calls that can block for a long time (LLM completion, long-running tools) so
+    /stop takes effect immediately instead of at the next safe point.
+    """
+    box = {}
+    ctx = contextvars.copy_context()
+
+    def _worker():
+        try:
+            box['value'] = ctx.run(fn)
+        except BaseException as exc:  # re-raised in the caller's thread
+            box['error'] = exc
+
+    t = threading.Thread(target=_worker, daemon=True, name='interruptible-call')
+    t.start()
+    while t.is_alive():
+        t.join(_PARALLEL_TOOL_POLL_INTERVAL_SECONDS)
+        if stop_event.is_set() and t.is_alive():
+            return _STOPPED
+    if 'error' in box:
+        raise box['error']
+    return box.get('value')
 
 # Injected once per turn when implementation work happened but the agent never
 # called update_tasks — the final answer is held back until the model reconciles.
@@ -1328,16 +1359,24 @@ def run_tool_loop(agent: Dict[str, Any],
                                        path='budget_' + _budget_plan.stage)
             _required_choice = _budget_plan.tool_choice
         with llm_lock:
-            result = llm.chat_completion(
-                messages=_request.messages,
-                tools=_request.tools,
-                temperature=None,
-                enable_thinking=_enable_thinking_this_call,
-                max_tokens=None,
-                log_file=llm_log_path,
-                tool_choice=_required_choice,
-                **({'stream_callback': _thinking_stream} if _thinking_stream else {}),
-            )
+            # Interruptible so /stop doesn't wait for a long generation to finish.
+            def _chat_call():
+                # Lets the client sever a streaming request on /stop.
+                from backend.llm_client import llm_cancel_event
+                llm_cancel_event.set(stop_event)
+                return llm.chat_completion(
+                    messages=_request.messages,
+                    tools=_request.tools,
+                    temperature=None,
+                    enable_thinking=_enable_thinking_this_call,
+                    max_tokens=None,
+                    log_file=llm_log_path,
+                    tool_choice=_required_choice,
+                    **({'stream_callback': _thinking_stream} if _thinking_stream else {}),
+                )
+            result = _run_interruptible(_chat_call, stop_event)
+        if result is _STOPPED:
+            result = {'success': False, 'error_type': 'stopped'}
         if _thinking_stream:
             _thinking_stream.flush()
 
@@ -2570,9 +2609,13 @@ def run_tool_loop(agent: Dict[str, Any],
                                                       'Blocked by plugin guard'),
                             'blocked_by': 'tool_guard'}
                 else:
-                    tool_result = _execute_tool_core(fn_name, args,
-                                                     builtin_exec, real_exec,
-                                                     agent_context)
+                    tool_result = _run_interruptible(
+                        lambda: _execute_tool_core(fn_name, args,
+                                                   builtin_exec, real_exec,
+                                                   agent_context),
+                        stop_event)
+                    if tool_result is _STOPPED:
+                        tool_result = {'error': 'Execution stopped by user'}
 
             # Safety provenance rides out-of-band on the tool result.  Strip it
             # here, before the result is serialized for the LLM, logged, or shown

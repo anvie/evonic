@@ -71,6 +71,9 @@ html.dark .chat-composer #chat-input::placeholder { color: #6b7280; }
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 html.dark #chat-command-hint { color: #cbd5e1; background: rgb(17 24 39 / .85); border-color: #374151; }
 #chat-command-hint.hidden { display: none; }
+#chat-stop-hint { position: absolute; left: 1rem; bottom: calc(100% + .375rem); padding: .25rem .625rem; border-radius: .5rem; font-size: .75rem; line-height: 1rem; color: #b91c1c; background: rgb(254 242 242 / .92); border: 1px solid #fecaca; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); pointer-events: none; }
+html.dark #chat-stop-hint { color: #fca5a5; background: rgb(69 10 10 / .85); border-color: #7f1d1d; }
+#chat-stop-hint.hidden { display: none; }
 .chat-icon-btn { flex: none; width: 2.5rem; height: 2.5rem; display: inline-flex; align-items: center; justify-content: center; border-radius: .625rem;
     border: 1px solid #e5e7eb; background: transparent; color: #6b7280; cursor: pointer;
     transition: color .15s, border-color .15s, background-color .15s, transform .12s; }
@@ -2569,6 +2572,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                         <div id="chat-bash-hint" class="hidden" aria-live="polite"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg><span class="bh-label">Bash mode</span><span class="bh-sub">shell command</span><span class="bh-hist">↑↓ history</span></div>
                         <!-- Floats above the card so showing/hiding it never shifts the layout -->
                         <div id="chat-command-hint" class="hidden" aria-live="polite"></div>
+                        <div id="chat-stop-hint" class="hidden" aria-live="polite">Press Esc once more to stop the current operation</div>
                         <!-- Pending image/file attachments for the next message -->
                         <div id="chat-file-preview" class="hidden chat-anim-in flex flex-wrap gap-2 mb-2"></div>
                         <textarea id="chat-input" placeholder="Type a message..." rows="1"
@@ -7777,6 +7781,34 @@ function selectChatCommand(command) {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
 }
+
+// Esc x3 stops the running operation: the 2nd press shows a hint, the 3rd stops.
+let _escPresses = 0;
+let _escTimer = null;
+function _resetEscStop() {
+    _escPresses = 0;
+    clearTimeout(_escTimer);
+    const hint = document.getElementById('chat-stop-hint');
+    if (hint) hint.classList.add('hidden');
+}
+document.addEventListener('keydown', async function (event) {
+    if (event.key !== 'Escape' || event.repeat) return;
+    if (!(_chatBusy || _agentBusy)) { _resetEscStop(); return; }
+    _escPresses++;
+    clearTimeout(_escTimer);
+    _escTimer = setTimeout(_resetEscStop, 2000);
+    if (_escPresses === 2) {
+        document.getElementById('chat-stop-hint')?.classList.remove('hidden');
+    } else if (_escPresses >= 3) {
+        _resetEscStop();
+        try {
+            const sid = await _getChatSessionId();
+            if (sid) await fetch(`/api/sessions/${sid}/stop`, {method: 'POST'});
+        } catch (e) {
+            console.error('Stop failed:', e);
+        }
+    }
+});
 
 function chatInputKeydown(event) {
     if (window._chatBash && event.key === 'Escape' && !getVisibleChatCommands().length) {
