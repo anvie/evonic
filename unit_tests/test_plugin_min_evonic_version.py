@@ -97,3 +97,25 @@ def test_an_enabled_plugin_that_is_too_new_is_not_loaded_at_startup_and_the_log_
     manager._load_all()
     assert loaded == ['old']
     assert any('needs Evonic 3.0.0' in e['message'] for e in manager.get_logs('new'))
+
+
+# ── reload follows the database, not the "enabled" flag in plugin.json ──
+
+def test_a_reload_keeps_an_enabled_plugin_loaded_even_when_its_manifest_says_enabled_false(manager, monkeypatch):
+    _write(manager.root, _manifest('pring', enabled=False))
+    manager.saved['pring'] = '1'                                   # switched on in the database
+    loaded, unloaded = [], []
+    monkeypatch.setattr(manager, '_load_plugin', lambda pid, manifest=None: loaded.append(pid))
+    monkeypatch.setattr(manager, '_unload_plugin', lambda pid: unloaded.append(pid))
+    manager.reload_plugin('pring')
+    assert unloaded == ['pring'] and loaded == ['pring']           # before: unloaded and never loaded again
+
+
+def test_a_reload_leaves_a_disabled_plugin_unloaded_even_when_its_manifest_says_enabled_true(manager, monkeypatch):
+    _write(manager.root, _manifest('quiet', enabled=True))
+    manager.saved['quiet'] = '0'
+    loaded = []
+    monkeypatch.setattr(manager, '_load_plugin', lambda pid, manifest=None: loaded.append(pid))
+    monkeypatch.setattr(manager, '_unload_plugin', lambda pid: None)
+    manager.reload_plugin('quiet')
+    assert loaded == []

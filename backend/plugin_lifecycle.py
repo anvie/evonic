@@ -333,8 +333,10 @@ class PluginManager:
                     "Failed to clear __pycache__ for %s: %s", plugin_id, e
                 )
         
+        # The database is the authority on whether a plugin is on (as at startup); the "enabled" flag in plugin.json
+        # is only a default and can be stale, which used to leave a plugin unloaded after a settings save.
         manifest = self._read_manifest(plugin_id)
-        if manifest and manifest.get('enabled', False):
+        if manifest and self._is_plugin_enabled(plugin_id):
             self._load_plugin(plugin_id, manifest=manifest)
 
     # ── Logging ──
