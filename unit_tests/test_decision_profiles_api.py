@@ -206,3 +206,46 @@ def test_api_rejects_models_without_decision_capability(client):
         "path": "primary_model_id",
         "message": "must reference a decision model",
     }
+
+
+def test_sample_input_round_trips_and_survives_updates_that_omit_it():
+    _model()
+    sample = {"incident": "Payment-service outage", "impact": "Checkout is down", "count": 3}
+    created = db.create_decision_profile(_payload("application.sampled", sample_input=sample))
+    assert created["sample_input"] == sample
+    assert db.get_decision_profile("application.sampled")["sample_input"] == sample
+
+    # An update that does not mention the sample keeps it; an explicit value replaces it.
+    base = {k: v for k, v in created.items() if k not in {"sample_input", "revision", "created_at", "updated_at"}}
+    kept = db.update_decision_profile("application.sampled", {**base, "display_name": "Renamed"}, created["revision"])
+    assert kept["sample_input"] == sample and kept["display_name"] == "Renamed"
+    replaced = db.update_decision_profile("application.sampled", {**base, "sample_input": {"incident": "x"}}, kept["revision"])
+    assert replaced["sample_input"] == {"incident": "x"}
+    cleared = db.update_decision_profile("application.sampled", {**base, "sample_input": None}, replaced["revision"])
+    assert cleared["sample_input"] is None
+
+
+def test_profiles_without_a_sample_report_none_and_invalid_samples_are_rejected():
+    _model()
+    plain = db.create_decision_profile(_payload("application.unsampled"))
+    assert plain["sample_input"] is None
+    from models.mixins.decision_profiles import DecisionProfileValidationError
+    for bad in ("not an object", [1, 2], {"blob": "x" * 9000}):
+        with pytest.raises(DecisionProfileValidationError) as exc:
+            db.create_decision_profile(_payload("application.badsample", sample_input=bad))
+        assert exc.value.path == "sample_input"
+
+
+def test_sample_input_is_available_over_the_api(client):
+    _model()
+    db.create_decision_profile(_payload("application.apisample", sample_input={"incident": "disk full"}))
+    body = client.get("/api/admin/decision-profiles/application.apisample").get_json()
+    assert body["profile"]["sample_input"] == {"incident": "disk full"}
+
+
+def test_existing_database_gains_the_sample_column():
+    db._init_tables()
+    with sqlite3.connect(db.db_path) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(decision_profiles)")}
+    assert "sample_input_json" in cols
+    db._init_tables()                      # idempotent

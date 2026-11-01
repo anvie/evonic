@@ -35,7 +35,7 @@
         </section>
         <section class="dp-card" aria-labelledby="dp-h-input">
           <div class="dp-head"><span class="dp-step">3</span><h3 class="dp-title" id="dp-h-input">Input</h3></div>
-          <label class="dp-label" for="playground-input">Test input JSON</label>
+          <label class="dp-label" for="playground-input">Test input JSON <button type="button" id="playground-use-sample" class="dp-ghost hidden" style="margin-left:.5rem" onclick="decisionModels.playgroundUseSample()">Use profile sample</button></label>
           <textarea id="playground-input" rows="7" spellcheck="false" class="dp-textarea">{"incident":"Payment-service outage affecting checkout"}</textarea>
           <div id="playground-error" class="dp-error hidden" role="alert" style="margin-top:.75rem;margin-bottom:0"></div>
           <div class="dp-runbar" style="margin-top:.875rem"><button type="button" class="btn-primary dp-run" id="playground-run" onclick="decisionModels.playgroundRun()">Run safe test</button><button type="button" class="btn-secondary" onclick="decisionModels.playgroundCopy()">Copy result</button><span class="dp-kbd">Ctrl/⌘ + Enter</span></div>

@@ -138,6 +138,7 @@ window.decisionModels = {
         const state = this.playgroundStateLoad(); state.mode = mode.value;
         state.profile = document.getElementById("playground-profile").value; state.model = document.getElementById("playground-model").value;
         state.input = document.getElementById("playground-input").value;
+        state.inputFor = state.profile;   // which profile this input text belongs to
         if (mode.value === "direct") { try { state.schema = this.playgroundSchema(); } catch (_) {} }
         try { localStorage.setItem("evonic.decisionPlayground", JSON.stringify(state)); } catch (_) {}
     },
@@ -154,7 +155,10 @@ window.decisionModels = {
         let mode = query.model ? "direct" : query.profile ? "profile" : (saved.mode === "direct" ? "direct" : "profile");
         if (has(profileSelect, pick.profile)) profileSelect.value = pick.profile;
         if (has(modelSelect, pick.model)) modelSelect.value = pick.model;
-        if (!deepLinked && typeof saved.input === "string" && saved.input) document.getElementById("playground-input").value = saved.input;
+        // Keep the user's own edits for the profile they were made for; otherwise the profile's sample is used (see playgroundProfileChanged).
+        const keepInput = !deepLinked && typeof saved.input === "string" && saved.input && (!saved.inputFor || saved.inputFor === profileSelect.value);
+        if (keepInput) document.getElementById("playground-input").value = saved.input;
+        this._playgroundKeepInput = keepInput;
         if (!document.getElementById("playground-schema").value) {
             this.playgroundSetSchema(mode === "direct" && saved.schema && Array.isArray(saved.schema.fields) ? saved.schema : this.playgroundDefaultSchema());
         }
@@ -188,6 +192,15 @@ window.decisionModels = {
         const meta = document.getElementById("playground-profile-meta");
         if (meta) meta.textContent = profile ? [profile.description, profile.primary_model_id ? "Model: " + profile.primary_model_id : ""].filter(Boolean).join(" · ") : "";
         if (profile) this.playgroundSetSchema(profile.schema);
+        // A profile that ships a sample input prefills the (still editable) test input with it.
+        const keep = this._playgroundKeepInput; this._playgroundKeepInput = false;
+        if (profile && profile.sample_input && !keep) this.playgroundUseSample();
+        const sampleBtn = document.getElementById("playground-use-sample"); if (sampleBtn) sampleBtn.classList.toggle("hidden", !(profile && profile.sample_input));
+    },
+    playgroundUseSample() {
+        const profile = this.profiles.find(p => p.profile_key === document.getElementById("playground-profile").value);
+        if (!profile || !profile.sample_input) return;
+        document.getElementById("playground-input").value = JSON.stringify(profile.sample_input, null, 2); this.playgroundStateSave();
     },
     renderSchemaBuilder(schema) {
         const root = document.getElementById("playground-schema-builder"); if (!root || !schema || !Array.isArray(schema.fields)) return;

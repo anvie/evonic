@@ -1414,6 +1414,10 @@ class SchemaMixin:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_profiles_enabled "
                            "ON decision_profiles(enabled, profile_key)")
+            # Optional example input_context, shown prefilled when the profile is opened in the Playground.
+            cursor.execute("PRAGMA table_info(decision_profiles)")
+            if "sample_input_json" not in {row[1] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE decision_profiles ADD COLUMN sample_input_json TEXT")
 
             # Built-in agent profiles must be visible from a fresh installation,
             # even before an administrator has configured a Decision Models-capable
