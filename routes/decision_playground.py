@@ -82,6 +82,11 @@ class _PlaygroundDatabase:
     def get_model_by_id(self, model_id: str):
         return db.get_model_by_id(model_id)
 
+    def resolve_model_route(self, model_id: str):
+        # Without this the runtime falls back to the raw model row, which has no
+        # base_url when the provider owns the endpoint.
+        return db.resolve_model_route(model_id)
+
     def record_decision_activity(self, event: Mapping[str, Any]):
         return db.record_decision_activity(event)
 
