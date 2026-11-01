@@ -477,7 +477,7 @@ html.dark .adv-sec-n { color: #c7d2fe; background: rgb(99 102 241 / .22); }
 .adv-search-count:empty { display: none; }
 .adv-empty { padding: 2rem 1rem; text-align: center; font-size: .875rem; color: #94a3b8; }
 .adv-empty.hidden { display: none; }
-@media (min-width: 1024px) { .gpanel-vars:has(#plugin-settings-card.hidden) { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 1024px) { .gpanel-vars { grid-template-columns: minmax(0, 1fr); } }
 .gtab:focus { outline: none; }
 .adv-static .adv-head { cursor: default; pointer-events: none; }
 .adv-static .adv-arrow { display: none; }
@@ -1492,6 +1492,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
             <button type="button" role="tab" class="gtab" data-gp="behavior" aria-selected="false" onclick="switchGeneralTab('behavior')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg><span>Behavior</span></button>
             <button type="button" role="tab" class="gtab" data-gp="advanced" aria-selected="false" onclick="switchGeneralTab('advanced')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></svg><span>Advanced</span></button>
             <button type="button" role="tab" class="gtab" data-gp="variables" aria-selected="false" onclick="switchGeneralTab('variables')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21s-4-3-4-9 4-9 4-9"/><path d="M16 3s4 3 4 9-4 9-4 9"/></svg><span>Variables</span></button>
+            <button type="button" role="tab" class="gtab hidden" id="gtab-plugins" data-gp="plugins" aria-selected="false" onclick="switchGeneralTab('plugins')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg><span>Plugins</span></button>
         </div>
         <div class="gpanel" data-gp="general" role="tabpanel">
         <div class="gp-head"><h2>General</h2><p>Name, avatar, model and where this agent runs.</p></div>
@@ -2034,6 +2035,11 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                     </div>
                 </div>
             </div>
+        </div>
+        </div>
+        <div class="gpanel hidden" data-gp="plugins" role="tabpanel">
+        <div class="gp-head"><h2>Plugins</h2><p>Per-agent settings declared by active plugins.</p></div>
+        <div class="grid grid-cols-1 gap-6 items-start">
             <!-- Plugin Settings Card (dynamic, hidden if no plugin declares agent_settings) -->
             <div id="plugin-settings-card" class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6 hidden">
                 <div class="gcard-h"><span class="gcard-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></span><div><h3>Plugin Settings</h3><p>Per-agent settings from active plugins.</p></div></div>
@@ -3485,7 +3491,7 @@ document.addEventListener('DOMContentLoaded', () => { let k = 'general'; try { k
 
 // ---- Settings search: every page of the Settings tab (General / Behavior / Advanced / Variables) ----
 const GeneralSearch = (function () {
-    const PAGES = { general: 'General', behavior: 'Behavior', advanced: 'Advanced', variables: 'Variables' };
+    const PAGES = { general: 'General', behavior: 'Behavior', advanced: 'Advanced', variables: 'Variables', plugins: 'Plugins' };
     let items = [], sel = -1, markTimer = null, input = null, box = null;
     const clean = t => (t || '').replace(/\s+/g, ' ').trim();
     const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -4326,6 +4332,8 @@ async function loadPluginSettings() {
         const plugins = data.plugin_settings || [];
         const container = document.getElementById('plugin-settings-container');
         const card = document.getElementById('plugin-settings-card');
+        const ptab = document.getElementById('gtab-plugins');
+        if (ptab) ptab.classList.toggle('hidden', !plugins.length);
         if (!plugins.length) { card.classList.add('hidden'); return; }
         card.classList.remove('hidden');
         container.innerHTML = '';
@@ -4348,6 +4356,19 @@ async function loadPluginSettings() {
                                 <p class="text-xs text-gray-400 mt-0.5">${s.description || ''}</p>
                             </div>
                         </label>
+                    </div>`;
+                } else if (s.type === 'select') {
+                    const opts = (s.options || []).map(o => {
+                        const v = typeof o === 'object' ? o.value : o;
+                        const l = typeof o === 'object' ? (o.label || o.value) : o;
+                        return `<option value="${escapeHtml(String(v))}" ${String(v) === String(s.value) ? 'selected' : ''}>${escapeHtml(String(l))}</option>`;
+                    }).join('');
+                    container.innerHTML += `
+                    <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">${s.label} <span class="text-xs text-gray-400">(${plugin.plugin_name})</span></label>
+                        <select id="${id}" class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+                                onchange="savePluginSetting('${plugin.plugin_id}', '${s.name}', this.value)">${opts}</select>
+                        <p class="text-xs text-gray-400 mt-1">${s.description || ''}</p>
                     </div>`;
                 } else {
                     container.innerHTML += `
