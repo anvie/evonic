@@ -40,6 +40,7 @@ def test_fresh_database_has_endpoint_registry_ledger_and_additive_fields():
     assert set(ledger) == {
         "registry_endpoint_v1_provider_fields",
         "registry_endpoint_v1_model_capabilities",
+        "registry_endpoint_v1_model_provenance_backfill",
         "model_type_split_v1",
         "dmss_endpoint_to_model_v1",
         "hmads_git_staging_user_rules_v1",
@@ -111,7 +112,7 @@ def test_upgrade_migration_is_idempotent_and_normalizes_legacy_rows():
 
     with db._connect() as conn:
         ledger_count = conn.execute("SELECT COUNT(*) FROM registry_migration_ledger").fetchone()[0]
-    assert ledger_count == 5
+    assert ledger_count == 6
 
     # Legacy override stays operational through the compatibility resolver only.
     config = db.resolve_model_config(model)
@@ -368,3 +369,56 @@ def test_decision_model_without_provider_endpoint_reports_the_real_cause():
     assert result.error.code.value == "provider_unavailable"
     assert "provider 'systemone'" in result.error.message
     assert "base_url" not in result.error.message
+
+
+def test_provenance_backfill_step_marks_overrides_and_is_idempotent():
+    from models.db import db
+
+    with db._connect() as conn:
+        conn.execute("INSERT INTO providers (id, name, type) VALUES ('bp', 'BP', 'remote')")
+        conn.execute(
+            "INSERT INTO llm_models (id, name, type, provider, base_url, model_name, legacy_override_provenance) "
+            "VALUES ('bp/override', 'Override', 'llm', 'bp', 'http://override.example.invalid/v1', 'o', NULL)"
+        )
+        conn.execute(
+            "INSERT INTO llm_models (id, name, type, provider, base_url, model_name, legacy_override_provenance) "
+            "VALUES ('bp/plain', 'Plain', 'llm', 'bp', '', 'p', 'legacy_model_override')"
+        )
+        cursor = conn.cursor()
+        first = db._migrate_model_provenance_backfill(cursor)
+        second = db._migrate_model_provenance_backfill(cursor)
+        provenance = {
+            row[0]: row[1] or ""
+            for row in conn.execute("SELECT id, legacy_override_provenance FROM llm_models")
+        }
+
+    assert first["rows_fixed"] >= 1
+    assert first["precondition"] == "model connection and provenance columns present"
+    assert second["rows_fixed"] == 0
+    assert provenance["bp/override"] == "legacy_model_override"
+    # A stale mark on a row without a connection override is cleared.
+    assert provenance["bp/plain"] == ""
+
+
+def test_create_and_update_model_keep_override_provenance_truthful():
+    from models.db import db
+
+    with db._connect() as conn:
+        conn.execute("INSERT INTO providers (id, name, type, endpoint) VALUES ('pv', 'PV', 'remote', 'https://provider.example.invalid/v1')")
+
+    override_id = db.create_model({
+        "name": "Override Model", "type": "llm", "provider": "pv", "model_name": "override",
+        "base_url": "http://override.example.invalid/v1",
+    })
+    inherited_id = db.create_model({
+        "name": "Inherited Model", "type": "llm", "provider": "pv", "model_name": "inherited",
+    })
+
+    assert db.get_model_by_id(override_id)["legacy_override_provenance"] == "legacy_model_override"
+    assert db.get_model_by_id(inherited_id)["legacy_override_provenance"] is None
+
+    db.update_model(override_id, {"base_url": ""})
+    assert db.get_model_by_id(override_id)["legacy_override_provenance"] is None
+
+    db.update_model(inherited_id, {"base_url": "http://override.example.invalid/v2"})
+    assert db.get_model_by_id(inherited_id)["legacy_override_provenance"] == "legacy_model_override"

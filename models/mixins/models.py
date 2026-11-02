@@ -283,8 +283,9 @@ class ModelsMixin:
                 INSERT INTO llm_models (id, name, type, provider, base_url, api_key,
                     model_name, max_tokens, timeout, thinking, thinking_budget,
                     temperature, enabled, is_default, model_max_concurrent, api_format,
-                    vision_supported, shortcode, context_window, capabilities)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    vision_supported, shortcode, context_window, capabilities,
+                    legacy_override_provenance)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 model_id,
                 model_data.get('name'),
@@ -306,6 +307,11 @@ class ModelsMixin:
                 next_code,
                 model_data.get('context_window', 0),
                 json.dumps(model_data.get('capabilities') or {}, sort_keys=True),
+                # A model-level endpoint or credential is a retained legacy
+                # override; it must never look like a provider-inherited route.
+                'legacy_model_override'
+                if (model_data.get('base_url') or model_data.get('api_key'))
+                else None,
             ))
             conn.commit()
         return model_id
@@ -319,6 +325,14 @@ class ModelsMixin:
         updates = {k: v for k, v in model_data.items() if k in allowed}
         if not updates:
             return False
+        if updates.keys() & {'base_url', 'api_key'}:
+            # Keep provenance truthful when a connection override is set or cleared.
+            current_model = self.get_model_by_id(model_id) or {}
+            merged_base_url = updates.get('base_url', current_model.get('base_url'))
+            merged_api_key = updates.get('api_key', current_model.get('api_key'))
+            updates['legacy_override_provenance'] = (
+                'legacy_model_override' if (merged_base_url or merged_api_key) else None
+            )
         if updates.keys() & {'type', 'capabilities', 'vision_supported', 'is_default'}:
             current = self.get_model_by_id(model_id)
             if current:
