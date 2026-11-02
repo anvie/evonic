@@ -3918,7 +3918,7 @@ class ChatUI {
         // Anchor to the explicit element if given, otherwise the very last child so the
         // thinking bubble always appears at the end (not anchored to last user message,
         // which may be mid-conversation when called without an explicit anchor).
-        const $anchor = insertAfterEl ? $(insertAfterEl) : this.$container.children().last();
+        const $anchor = insertAfterEl ? $(insertAfterEl) : this.$container.children().not('#ask-user-dock').last();
         const turn = this.beginTurn($anchor);
         if (startTs) turn._startTime = startTs;
         this._lastLiveTurnId = turn.id; // track for duplicate-bubble detection

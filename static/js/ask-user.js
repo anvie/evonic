@@ -2,8 +2,8 @@
  * Ask User Question — web UI for the agent chat page.
  *
  * Loaded by templates/agent_detail.html. It polls /api/ask_user/pending for the page's
- * chat session, docks a pending question above the chat input (locking the
- * composer), and posts answers or cancels back. It only relies on the chat
+ * chat session, shows a pending question as the last item of the chat
+ * messages, after the agent's output (locking the composer), and posts answers or cancels back. It only relies on the chat
  * page's element ids: #chat-input, #chat-send-btn, #chat-attach-btn,
  * #chat-file-preview, #chat-messages.
  */
@@ -26,16 +26,17 @@
     const POLL_ACTIVE_MS = 1000;   // agent busy or a card is open
     const POLL_IDLE_MS = 4000;
     const SESSION_REFRESH_MS = 15000;
-    const LOCKED_PLACEHOLDER = 'Answer the question above, or cancel it';
+    const LOCKED_PLACEHOLDER = 'Answer the question in the chat, or cancel it';
 
     const cards = new Map();  // question_id -> $card (docked, unresolved)
     let sessionId = null;
     let sessionFetchedAt = 0;
 
-    // ── Dock + composer lock ────────────────────────────────────────────────
+    // ── Inline card holder + composer lock ──────────────────────────────────
 
-    // The dock is a panel fused to the composer's top edge; cards live in an inner
-    // scroller so the panel's concave corner fillets are not clipped by overflow.
+    // The holder is the last child of #chat-messages, so a question reads as the end of
+    // the agent's answer and scrolls with it (nothing sticks to the composer).
+    const messages = document.getElementById('chat-messages');
     const dock = document.createElement('div');
     dock.id = 'ask-user-dock';
     dock.className = 'ask-dock';
@@ -44,12 +45,22 @@
     const list = document.createElement('div');
     list.className = 'ask-dock-list';
     dock.appendChild(list);
-    // Sit on top of the composer card, outside its grid; older layouts have no card.
-    const anchor = composer.closest('.chat-composer') || document.getElementById('chat-file-preview')
-        || composer.closest('.flex') || composer;
-    anchor.parentNode.insertBefore(dock, anchor);
+    const host = messages || composer.parentNode;
+    host.appendChild(dock);
 
-    // While a question is docked the agent is blocked on it, so the composer is
+    // The chat UI appends bubbles (and clear() empties the list) after we mount, so keep
+    // the holder as the last child. Moving it only when it is not last avoids a loop.
+    function pinToEnd() {
+        if (dock.parentNode !== host || dock.nextSibling) host.appendChild(dock);
+    }
+    if (messages) new MutationObserver(pinToEnd).observe(messages, { childList: true });
+
+    // Bring a newly opened card into view (the agent is blocked until the user answers).
+    function revealDock() {
+        if (messages) messages.scrollTop = messages.scrollHeight;
+    }
+
+    // While a question is open the agent is blocked on it, so the composer is
     // locked: answering or cancelling the card is the only way forward.
     function lockComposer(locked) {
         if (locked && !composer.dataset.askLocked) {
@@ -79,7 +90,9 @@
 
     function syncDock() {
         const open = list.children.length > 0;
+        const wasHidden = dock.hidden;
         dock.hidden = !open;
+        if (open) { pinToEnd(); if (wasHidden) revealDock(); }
         lockComposer(open);
         setWaitingLabel(open);
     }
