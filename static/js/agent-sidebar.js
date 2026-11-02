@@ -441,6 +441,7 @@ function showBubblePopup(agentId, agentName, response, sessionId, externalUserId
     closeBtn.setAttribute('aria-label', 'Dismiss');
     closeBtn.addEventListener('click', function (e) {
         e.stopPropagation();
+        _clearUnread(agentId);
         dismissBubble(agentId);
     });
 
