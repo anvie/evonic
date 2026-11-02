@@ -8,15 +8,12 @@ function loadDashboard() {
     $.getJSON('/api/dashboard/data', function(data) {
         renderStats(data.stats);
         renderSecondaryStats(data.skill_stats, data.plugin_stats, data.schedule_stats);
-        renderAgents(data.recent_agents);
-        renderScheduledTasks(data.schedules);
-        renderLeaderboard(data.leaderboard);
-        renderRecentRuns(data.recent_runs);
-        renderModelUsage(data.model_usage);
+        chartLeaderboard(data.leaderboard);
         renderPluginCards(data.plugin_cards);
+        chartModelUsage(data.model_usage);
         renderAttention(data.attention);
     }).fail(function() {
-        $('#agent-empty, #schedules-empty, #leaderboard-empty, #recent-runs-empty, #model-usage-empty')
+        $('.dash-chart')
             .html('<p class="p-6 text-sm text-red-500 dark:text-red-400">Failed to load data. Please try refreshing the page.</p>');
     });
 }
@@ -36,12 +33,6 @@ function truncate(s, n) {
     return s.length > n ? s.substring(0, n) + '…' : s;
 }
 
-function scorePillClass(score) {
-    return score >= 80 ? 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300' :
-           score >= 60 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' :
-                         'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300';
-}
-
 // ── Hero + compact strip stats ────────────────────────────────────────────────
 function renderStats(stats) {
     $('#stat-agent-count').text(stats.agent_count);
@@ -56,108 +47,12 @@ function renderSecondaryStats(skillStats, pluginStats, scheduleStats) {
     $('#stat-skill-enabled').text(skillStats.enabled);
     $('#stat-skill-total').text(skillStats.total);
     var setWord = skillStats.skillset_count === 1 ? 'skillset' : 'skillsets';
-    $('#stat-skill-skillsets').text(skillStats.skillset_count + ' ' + setWord);
+    $('#stat-skill-skillsets').text(skillStats.skillset_count == null ? '\u00a0' : skillStats.skillset_count + ' ' + setWord);
     $('#stat-plugin-enabled').text(pluginStats.enabled);
     $('#stat-plugin-total').text(pluginStats.total);
     $('#stat-schedule-active').text(scheduleStats.active);
     $('#stat-schedule-total').text(scheduleStats.total);
     $('#stat-schedule-sub').text(scheduleStats.total > scheduleStats.active ? (scheduleStats.total - scheduleStats.active) + ' paused' : '\u00a0');
-}
-
-// ── Agents ────────────────────────────────────────────────────────────────────
-function renderAgents(agents) {
-    var $list = $('#agent-list'), $empty = $('#agent-empty');
-    if (!agents || agents.length === 0) {
-        $list.hide();
-        $empty.html(emptyState('No agents yet')).show();
-        return;
-    }
-    $empty.hide();
-    $list.show();
-
-    var html = '';
-    for (var i = 0; i < agents.length; i++) {
-        var a = agents[i];
-        var name = a.name || a.id;
-        var initial = name.charAt(0).toUpperCase();
-        var desc = truncate(a.description || 'No description', 48);
-        var avatar = a.avatar_path
-            ? '<img src="/api/agents/' + a.id + '/avatar?size=small" class="w-9 h-9 rounded-full object-cover flex-shrink-0" alt="">'
-            : '<div class="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-500/20 grid place-items-center flex-shrink-0 text-xs font-bold text-indigo-600 dark:text-indigo-300">' + escapeHtml(initial) + '</div>';
-        var modelBadge = a.model_id
-            ? '<span class="dash-chip hidden md:inline-block" title="' + escapeHtml(a.model_id) + '">' + escapeHtml(truncate(a.model_id, 26)) + '</span>'
-            : '';
-        var off = (a.enabled === 0 || a.enabled === false) ? ' <span class="dash-off">off</span>' : '';
-        var chans = a.channel_count > 0 ? '<span title="Channels">' + a.channel_count + (a.channel_count === 1 ? ' channel' : ' channels') + '</span>' : '';
-
-        html += '<a href="/agents/' + encodeURIComponent(a.id) + '" class="flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors no-underline text-inherit">'
-              +   '<div class="flex items-center gap-3 min-w-0">' + avatar
-              +     '<div class="min-w-0">'
-              +       '<div class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">' + escapeHtml(name) + off + '</div>'
-              +       '<div class="text-xs text-gray-400 dark:text-gray-500 truncate">' + escapeHtml(desc) + '</div>'
-              +     '</div>'
-              +   '</div>'
-              +   '<div class="flex items-center gap-3 flex-shrink-0 ml-3">' + modelBadge
-              +     '<div class="dash-meta"><span title="Tools">' + a.tool_count + (a.tool_count === 1 ? ' tool' : ' tools') + '</span>' + chans + '</div>'
-              +   '</div>'
-              + '</a>';
-    }
-    $list.html(html);
-}
-
-// ── Scheduled Tasks (replaces Todo Tasks) ─────────────────────────────────────
-function renderScheduledTasks(schedules) {
-    var $list = $('#schedules-list'), $empty = $('#schedules-empty');
-    if (!schedules || schedules.length === 0) {
-        $list.hide();
-        $empty.html(emptyState('No scheduled tasks')).show();
-        return;
-    }
-    $empty.hide();
-    $list.show();
-
-    var html = '';
-    for (var i = 0; i < schedules.length; i++) {
-        var s = schedules[i];
-        var active = !!s.enabled;
-        var pill = active
-            ? '<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300">Active</span>'
-            : '<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 dark:bg-gray-700/60 dark:text-gray-400">Paused</span>';
-        var meta = [];
-        if (s.trigger_type) meta.push(escapeHtml(s.trigger_type));
-        var next = formatNext(s.next_run_at);
-        if (next) meta.push(next.late ? 'overdue ' + next.text.replace(' ago', '') : 'next ' + next.text);
-        var dotColor = active ? 'bg-green-400 dark:bg-green-500' : 'bg-gray-300 dark:bg-gray-600';
-
-        html += '<a href="/scheduler" class="flex items-start gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors no-underline text-inherit">'
-              +   '<span class="w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ' + dotColor + '"></span>'
-              +   '<div class="min-w-0 flex-1">'
-              +     '<div class="flex items-center gap-2">'
-              +       '<span class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">' + escapeHtml(s.name || 'Untitled') + '</span>' + pill
-              +     '</div>'
-              +     (meta.length ? '<div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 truncate">' + meta.join(' · ') + '</div>' : '')
-              +   '</div>'
-              + '</a>';
-    }
-    $list.html(html);
-}
-
-// "in 3 h", "in 2 days", "overdue 12 min": relative to now, so the list answers "when does this run?" at a glance
-function toEpochMs(v) {
-    if (v == null || v === '') return null;
-    var d = new Date(typeof v === 'number' ? v * 1000 : v);
-    return isNaN(d.getTime()) ? null : d.getTime();
-}
-function formatNext(v, nowMs) {
-    var t = toEpochMs(v);
-    if (t === null) return null;
-    var diff = t - (nowMs == null ? Date.now() : nowMs), late = diff < 0, m = Math.round(Math.abs(diff) / 60000), text;
-    if (m < 1) text = late ? 'just now' : 'in <1 min';
-    else if (m < 60) text = (late ? '' : 'in ') + m + ' min';
-    else if (m < 48 * 60) { var h = Math.round(m / 60); text = (late ? '' : 'in ') + h + ' h'; }
-    else { var dd = Math.round(m / 1440); text = (late ? '' : 'in ') + dd + ' days'; }
-    if (late && text !== 'just now') text += ' ago';
-    return { text: text, late: late && m >= 15 };
 }
 
 function formatDate(v) {
@@ -169,105 +64,6 @@ function formatDate(v) {
     } catch (e) { return ''; }
 }
 
-// ── Model Leaderboard ─────────────────────────────────────────────────────────
-function renderLeaderboard(leaderboard) {
-    var $list = $('#leaderboard-list'), $empty = $('#leaderboard-empty');
-    if (!leaderboard || leaderboard.length === 0) {
-        $list.hide();
-        $empty.html(emptyState('No model scores yet')).show();
-        return;
-    }
-    $empty.hide();
-    $list.show();
-
-    var html = '';
-    for (var i = 0; i < leaderboard.length; i++) {
-        var m = leaderboard[i], idx = i + 1;
-        var medal = idx === 1 ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-300' :
-                    idx === 2 ? 'bg-gray-200 text-gray-600 dark:bg-gray-600/40 dark:text-gray-300' :
-                    idx === 3 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' :
-                                'bg-gray-100 text-gray-500 dark:bg-gray-700/50 dark:text-gray-400';
-        var score = m.best_score * 100;
-        var runWord = m.run_count === 1 ? 'run' : 'runs';
-        var href = m.best_run_id ? '/history/' + m.best_run_id : '/history';
-
-        html += '<a href="' + href + '" class="flex items-center justify-between px-5 py-3.5 no-underline hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors">'
-              +   '<div class="flex items-center gap-3 min-w-0">'
-              +     '<div class="w-7 h-7 rounded-full grid place-items-center flex-shrink-0 text-xs font-bold ' + medal + '">' + idx + '</div>'
-              +     '<div class="min-w-0">'
-              +       '<div class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate" title="' + escapeHtml(m.model_name) + '">' + escapeHtml(truncate(m.model_name, 24)) + '</div>'
-              +       '<div class="text-xs text-gray-400 dark:text-gray-500">' + m.run_count + ' ' + runWord + '</div>'
-              +     '</div>'
-              +   '</div>'
-              +   '<span class="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 ' + scorePillClass(score) + '">' + score.toFixed(0) + '%</span>'
-              + '</a>';
-    }
-    $list.html(html);
-}
-
-// ── Recent Evaluations ────────────────────────────────────────────────────────
-function renderRecentRuns(runs) {
-    var $list = $('#recent-runs-list'), $empty = $('#recent-runs-empty');
-    if (!runs || runs.length === 0) {
-        $list.hide();
-        $empty.html(emptyState('No evaluation runs yet')).show();
-        return;
-    }
-    $empty.hide();
-    $list.show();
-
-    var html = '';
-    for (var i = 0; i < runs.length; i++) {
-        var r = runs[i];
-        var modelName = r.model_name || 'Unknown model';
-        var scoreHtml;
-        if (r.overall_score !== null && r.overall_score !== undefined) {
-            var score = r.overall_score * 100;
-            scoreHtml = '<span class="text-xs font-semibold px-2.5 py-1 rounded-full ' + scorePillClass(score) + '">' + score.toFixed(0) + '%</span>';
-        } else {
-            scoreHtml = '<span class="text-xs bg-gray-100 dark:bg-gray-700/60 text-gray-500 dark:text-gray-400 px-2.5 py-1 rounded-full">--</span>';
-        }
-
-        html += '<a href="/history/' + encodeURIComponent(r.run_id) + '" class="flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors no-underline text-inherit">'
-              +   '<div class="min-w-0 mr-3">'
-              +     '<div class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate" title="' + escapeHtml(modelName) + '">' + escapeHtml(truncate(modelName, 24)) + '</div>'
-              +     '<div class="text-xs text-gray-400 dark:text-gray-500"><span class="font-mono">#' + escapeHtml(String(r.run_id)) + '</span> · ' + r.passed_count + '/' + r.test_count + ' passed</div>'
-              +   '</div>' + scoreHtml
-              + '</a>';
-    }
-    $list.html(html);
-}
-
-// ── Model Distribution ────────────────────────────────────────────────────────
-function renderModelUsage(modelUsage) {
-    var $list = $('#model-usage-list'), $empty = $('#model-usage-empty');
-    if (!modelUsage || modelUsage.length === 0) {
-        $list.hide();
-        $empty.html(emptyState('No model usage data yet')).show();
-        return;
-    }
-    $empty.hide();
-    $list.show();
-
-    var total = modelUsage.reduce(function (n, m) { return n + (m.agent_count || 0); }, 0) || 1;
-    var html = '';
-    for (var i = 0; i < modelUsage.length; i++) {
-        var item = modelUsage[i];
-        var share = item.agent_count / total * 100;
-        var pct = Math.max(4, Math.round(share));
-        html += '<div>'
-              +   '<div class="flex justify-between items-center mb-1.5 gap-2">'
-              +     '<span class="text-sm text-gray-700 dark:text-gray-300 font-medium truncate" title="' + escapeHtml(item.model) + '">' + escapeHtml(truncate(item.model, 28)) + '</span>'
-              +     '<span class="dash-share">' + item.agent_count + (item.agent_count === 1 ? ' agent' : ' agents') + ' \u00b7 ' + Math.round(share) + '%</span>'
-              +   '</div>'
-              +   '<div class="w-full bg-gray-100 dark:bg-gray-700/60 rounded-full h-2">'
-              +     '<div class="bg-indigo-500 dark:bg-indigo-400 h-2 rounded-full" style="width:' + pct + '%"></div>'
-              +   '</div>'
-              + '</div>';
-    }
-    $list.html(html);
-}
-
 // ── Plugin cards (right column; reflows main grid when present) ────────────────
 function renderPluginCards(pluginCards) {
     var $container = $('#plugin-cards-container');
@@ -277,9 +73,11 @@ function renderPluginCards(pluginCards) {
         return;
     }
 
-    var html = '';
+    var cardsHtml = [], tokenIdx = -1;
     for (var i = 0; i < pluginCards.length; i++) {
+        var html = '';
         var card = pluginCards[i];
+        if (tokenIdx < 0 && /token/i.test(card.title || '')) tokenIdx = i;
         var items = card.items || [];
         var fc = card.feature_card;
         html += '<div class="dash-card">'
@@ -315,12 +113,18 @@ function renderPluginCards(pluginCards) {
             html += '</div>';
         }
         html += '</div>';
+        cardsHtml.push(html);
     }
-    $container.html(html).show();
+    // The token card takes the top-right slot; Model distribution moves down to the plugin row.
+    if (tokenIdx >= 0) {
+        var $donut = $('#model-usage-card').detach();
+        $('#top-right').html(cardsHtml[tokenIdx]);
+        cardsHtml.splice(tokenIdx, 1);
+        $container.html(cardsHtml.join('')).prepend($donut).show();
+    } else {
+        $container.html(cardsHtml.join('')).show();
+    }
 
-    // Reflow: make room for the 3-col plugin column (default is 7 / 5 / hidden).
-    $('#agents-card').removeClass('lg:col-span-7').addClass('lg:col-span-5');
-    $('#middle-col').removeClass('lg:col-span-5').addClass('lg:col-span-4');
 }
 
 // ── Sparkline: one bar per bucket (24 hourly buckets for token usage) ─────────
@@ -350,4 +154,113 @@ function renderAttention(items) {
              +   (it.detail ? '<p class="ag-alert-s">' + escapeHtml(it.detail) + '</p>' : '') + '</div></a>';
     }).join(''));
     $sec.removeClass('hidden');
+}
+
+// ── Charts (ApexCharts) ───────────────────────────────────────────────────────
+var CHART_COLORS = ['#6366f1', '#14b8a6', '#f59e0b', '#ec4899', '#0ea5e9', '#84cc16', '#a855f7', '#f97316'];
+var _charts = {}, _chartData = {};
+
+function isDark() { return document.documentElement.classList.contains('dark'); }
+function chartEmpty(sel, msg) { destroyChart(sel); $(sel).html('<div class="dash-chart-empty">' + msg + '</div>'); }
+function destroyChart(sel) { if (_charts[sel]) { try { _charts[sel].destroy(); } catch (e) {} delete _charts[sel]; } }
+function mountChart(sel, options) {
+    destroyChart(sel);
+    var el = document.querySelector(sel);
+    if (!el || typeof ApexCharts === 'undefined') { chartEmpty(sel, 'Chart library failed to load'); return; }
+    el.innerHTML = '';
+    var dark = isDark();
+    options.chart = $.extend(true, { fontFamily: 'inherit', background: 'transparent', toolbar: { show: false },
+        animations: { enabled: true, easing: 'easeinout', speed: 600 } }, options.chart || {});
+    options.theme = { mode: dark ? 'dark' : 'light' };
+    options.grid = $.extend({ borderColor: dark ? 'rgba(148,163,184,.18)' : '#e2e8f0', strokeDashArray: 3 }, options.grid || {});
+    options.tooltip = $.extend({ theme: dark ? 'dark' : 'light' }, options.tooltip || {});
+    var c = new ApexCharts(el, options);
+    _charts[sel] = c;
+    c.render();
+}
+// Re-theme charts when the app toggles light/dark
+new MutationObserver(function () {
+    if (_chartData.usage) chartModelUsage(_chartData.usage);
+    if (_chartData.lb) chartLeaderboard(_chartData.lb);
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+// Model distribution: donut + our own legend as one centered group. The long tail beyond
+// MODEL_TOP_N is folded into one gray "Others" slice (hover its row to see what is inside).
+var MODEL_TOP_N = 7;
+function chartModelUsage(rows) {
+    destroyChart('#donut-chart');
+    if (!rows || !rows.length) return chartEmpty('#chart-model-usage', 'No model usage data yet');
+    _chartData.usage = rows;
+    var total = rows.reduce(function (n, m) { return n + m.agent_count; }, 0);
+    var sorted = rows.slice().sort(function (a, b) { return b.agent_count - a.agent_count || String(a.model).localeCompare(String(b.model)); });
+    var fold = sorted.length > MODEL_TOP_N + 1;   // 8 models still get their own color
+    var shown = sorted.slice(0, fold ? MODEL_TOP_N : sorted.length), rest = fold ? sorted.slice(MODEL_TOP_N) : [];
+    var colors = CHART_COLORS.slice(0, shown.length);
+    if (fold) {
+        shown.push({ model: 'Others (' + rest.length + ' models)', agent_count: rest.reduce(function (n, m) { return n + m.agent_count; }, 0),
+                     _tip: rest.slice(0, 25).map(function (m) { return m.model + ' (' + m.agent_count + ')'; }).join('\n') + (rest.length > 25 ? '\n\u2026' : '') });
+        colors.push('#94a3b8');
+    }
+    var legend = shown.map(function (m, i) {
+        var pct = Math.round(m.agent_count / total * 100);
+        return '<li><i style="background:' + colors[i] + '"></i>'
+             + '<span class="dash-lg-n" title="' + escapeHtml(m._tip || m.model) + '">' + escapeHtml(m.model) + '</span>'
+             + '<span class="dash-lg-v">' + m.agent_count + ' <em>' + (pct < 1 ? '<1' : pct) + '%</em></span></li>';
+    }).join('');
+    $('#chart-model-usage').html('<div class="dash-donut-row"><div id="donut-chart"></div><ul class="dash-donut-legend">' + legend + '</ul></div>');
+    mountChart('#donut-chart', {
+        chart: { type: 'donut', width: 420, height: 420 },
+        series: shown.map(function (m) { return m.agent_count; }),
+        labels: shown.map(function (m) { return truncate(m.model, 40); }),
+        colors: colors,
+        stroke: { width: 2, colors: [isDark() ? '#111827' : '#fff'] },
+        dataLabels: { enabled: false },
+        legend: { show: false },
+        plotOptions: { pie: { donut: { size: '70%', labels: { show: true,
+            name: { fontSize: '14px', offsetY: -12 }, value: { fontSize: '44px', fontWeight: 700, offsetY: 10 },
+            total: { show: true, label: 'agents', fontSize: '12px', formatter: function () { return total; } } } } } },
+        tooltip: { y: { formatter: function (v) { return v + (v === 1 ? ' agent' : ' agents'); } } }
+    });
+}
+
+// Plain horizontal bars: solid fill, score at the bar end, top model in the strong tone.
+function chartLeaderboard(lb) {
+    if (!lb || !lb.length) return chartEmpty('#chart-leaderboard', 'No model scores yet');
+    _chartData.lb = lb;
+    var dark = isDark();
+    var scores = lb.map(function (m) { return Math.round(m.best_score * 1000) / 10; });
+    var strong = dark ? '#818cf8' : '#4f46e5', soft = dark ? 'rgba(129,140,248,.4)' : 'rgba(99,102,241,.35)';
+    mountChart('#chart-leaderboard', {
+        chart: { type: 'bar', height: Math.max(150, lb.length * 40 + 36), animations: { enabled: false },
+            events: { dataPointSelection: function (e, ctx, o) {
+                var m = lb[o.dataPointIndex];
+                window.location.href = m && m.best_run_id ? '/history/' + encodeURIComponent(m.best_run_id) : '/history';
+            } } },
+        series: [{ name: 'Best score', data: scores }],
+        colors: [function (o) { return o.dataPointIndex === 0 ? strong : soft; }],
+        fill: { type: 'solid', opacity: 1 },
+        plotOptions: { bar: { horizontal: true, barHeight: lb.length < 3 ? '28%' : '50%', borderRadius: 4, borderRadiusApplication: 'end', dataLabels: { position: 'top' } } },
+        stroke: { show: false },
+        dataLabels: { enabled: true, textAnchor: 'start', offsetX: 6, formatter: function (v, o) { var m = lb[o.dataPointIndex]; return v.toFixed(0) + '%  \u00b7  ' + m.run_count + (m.run_count === 1 ? ' run' : ' runs'); },
+            style: { fontSize: '12px', fontWeight: 600, colors: [dark ? '#e2e8f0' : '#334155'] }, background: { enabled: false }, dropShadow: { enabled: false } },
+        xaxis: { categories: lb.map(function (m, i) { return (i + 1) + '. ' + truncate(m.model_name, 30); }),
+            min: 0, max: 125, tickAmount: 5, labels: { formatter: function (v) { return v > 100 ? '' : Math.round(v) + '%'; }, style: { fontSize: '11px' } },
+            axisBorder: { show: false }, axisTicks: { show: false }, tooltip: { enabled: false } },
+        yaxis: { labels: { maxWidth: 260, style: { fontSize: '12px' } } },
+        grid: { xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } }, padding: { right: 8 } },
+        legend: { show: false },
+        tooltip: { theme: 'dark', shared: false, intersect: true,
+            custom: function (o) {
+                // Inline styles on purpose: the tooltip must look right even if dashboard.css is cached/stale.
+                var i = o.dataPointIndex, m = lb[i];
+                var row = 'display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.7;color:#cbd5e1;';
+                var dot = function (c) { return '<span style="flex:none;width:8px;height:8px;border-radius:9999px;background:' + c + ';"></span>'; };
+                return '<div style="min-width:170px;padding:10px 14px;background:#0f172a;border:1px solid rgba(148,163,184,.25);border-radius:10px;box-shadow:0 10px 30px rgba(2,6,23,.45);font-family:inherit;">'
+                     + '<div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:4px;">' + escapeHtml(m.model_name) + '</div>'
+                     + '<div style="' + row + '">' + dot(i === 0 ? '#818cf8' : '#a5b4fc') + '<span>Best score</span><b style="margin-left:auto;padding-left:16px;color:#fff;">' + scores[i].toFixed(1) + '%</b></div>'
+                     + '<div style="' + row + '">' + dot('#64748b') + '<span>Runs</span><b style="margin-left:auto;padding-left:16px;color:#fff;">' + m.run_count + '</b></div>'
+                     + '<div style="' + row + '">' + dot('#64748b') + '<span>Rank</span><b style="margin-left:auto;padding-left:16px;color:#fff;">#' + (i + 1) + '</b></div>'
+                     + '</div>';
+            } }
+    });
 }

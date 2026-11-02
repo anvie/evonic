@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=25">
 <div class="p-4 md:p-6">
 
     <!-- ═══ Needs attention (filled by JS; hidden when there is nothing to flag) ═══ -->
@@ -70,106 +70,23 @@
         </a>
     </div>
 
-    <!-- ═══ Main grid: Agents | Tasks+Actions | Plugin cards ═══ -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-4 lg:items-stretch">
-
-        <!-- Agents (default wide; JS shrinks when plugin cards present) -->
-        <div id="agents-card" class="lg:col-span-7 dash-card">
-            <div class="flex justify-between items-center dash-card-h">
-                <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 m-0">Agents</h3>
-                <a href="/agents" class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white px-3.5 py-2 rounded-lg text-xs font-medium transition-colors no-underline">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>New Agent
-                </a>
-            </div>
-            <div id="agent-list" class="divide-y divide-gray-100 dark:divide-gray-700/50" style="display:none"></div>
-            <div id="agent-empty" class="divide-y divide-gray-100 dark:divide-gray-700/50">
-                {% for _ in range(4) %}
-                <div class="flex items-center gap-3 px-5 py-4">
-                    <div class="w-9 h-9 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse flex-shrink-0"></div>
-                    <div class="flex-1 space-y-2">
-                        <div class="h-3 w-2/5 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
-                        <div class="h-2.5 w-3/5 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-
-        <!-- Middle: Scheduled Tasks -->
-        <div id="middle-col" class="lg:col-span-5 flex flex-col gap-4">
-            <!-- Scheduled Tasks -->
-            <div class="dash-card">
-                <div class="flex justify-between items-center dash-card-h">
-                    <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 m-0">Scheduled Tasks</h3>
-                    <a href="/scheduler" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline no-underline">View all</a>
-                </div>
-                <div id="schedules-list" class="divide-y divide-gray-100 dark:divide-gray-700/50" style="display:none"></div>
-                <div id="schedules-empty" class="divide-y divide-gray-100 dark:divide-gray-700/50">
-                    {% for _ in range(3) %}
-                    <div class="px-5 py-3.5 space-y-2">
-                        <div class="h-3 w-1/2 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
-                        <div class="h-2.5 w-2/3 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-
-        <!-- Plugin cards column (hidden until plugins provide cards) -->
-        <div id="plugin-cards-container" class="lg:col-span-3 flex flex-col gap-4" style="display:none"></div>
-    </div>
-
-    <!-- ═══ Bottom row: Leaderboard | Recent Evaluations | Model Distribution ═══ -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <!-- Model Leaderboard -->
+    <!-- ═══ Leaderboard | model distribution ═══ -->
+    <div class="dash-row dash-row-21">
         <div class="dash-card">
-            <div class="dash-card-h">
-                <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 m-0">Model Leaderboard</h3>
-            </div>
-            <div id="leaderboard-list" class="divide-y divide-gray-100 dark:divide-gray-700/50" style="display:none"></div>
-            <div id="leaderboard-empty" class="divide-y divide-gray-100 dark:divide-gray-700/50">
-                {% for _ in range(4) %}
-                <div class="flex items-center gap-3 px-5 py-3.5">
-                    <div class="w-7 h-7 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse flex-shrink-0"></div>
-                    <div class="flex-1 space-y-2"><div class="h-3 w-3/5 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div><div class="h-2.5 w-1/4 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div></div>
-                    <div class="w-11 h-5 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse flex-shrink-0"></div>
-                </div>
-                {% endfor %}
-            </div>
+            <div class="dash-card-h"><h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 m-0">Model Leaderboard</h3></div>
+            <div id="chart-leaderboard" class="dash-chart"><div class="dash-chart-skel"></div></div>
         </div>
-
-        <!-- Recent Evaluations -->
-        <div class="dash-card">
-            <div class="dash-card-h">
-                <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 m-0">Recent Evaluations</h3>
-            </div>
-            <div id="recent-runs-list" class="divide-y divide-gray-100 dark:divide-gray-700/50" style="display:none"></div>
-            <div id="recent-runs-empty" class="divide-y divide-gray-100 dark:divide-gray-700/50">
-                {% for _ in range(4) %}
-                <div class="flex items-center justify-between px-5 py-3.5">
-                    <div class="flex-1 space-y-2 mr-3"><div class="h-3 w-3/5 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div><div class="h-2.5 w-2/5 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div></div>
-                    <div class="w-11 h-5 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse flex-shrink-0"></div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-
-        <!-- Model Distribution -->
-        <div class="dash-card">
-            <div class="dash-card-h">
-                <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 m-0">Model Distribution</h3>
-            </div>
-            <div id="model-usage-list" class="p-5 space-y-3" style="display:none"></div>
-            <div id="model-usage-empty" class="p-5 space-y-4">
-                {% for w in ['w-2/3','w-1/2','w-3/5'] %}
-                <div>
-                    <div class="flex justify-between items-center mb-1.5"><div class="h-2.5 {{ w }} rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div><div class="h-2.5 w-8 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></div></div>
-                    <div class="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
-                </div>
-                {% endfor %}
+        <div id="top-right" class="dash-slot">
+            <div id="model-usage-card" class="dash-card">
+                <div class="dash-card-h"><h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 m-0">Model distribution</h3></div>
+                <div id="chart-model-usage" class="dash-chart"><div class="dash-chart-skel"></div></div>
             </div>
         </div>
     </div>
+
+    <!-- Plugin cards: own row, one column per card (hidden until plugins provide cards) -->
+    <div id="plugin-cards-container" class="dash-plugins" style="display:none"></div>
 </div>
-<script src="{{ url_for('static', filename='js/dashboard.js') }}?v=8"></script>
+<script src="{{ url_for('static', filename='js/apexcharts.min.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}?v=38"></script>
 {% endblock %}

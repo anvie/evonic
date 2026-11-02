@@ -70,3 +70,56 @@ html.dark .dash-spark .bar.is-last { fill: #818cf8; }
 
 /* model distribution */
 .dash-share { font-size: .75rem; color: #94a3b8; flex: none; font-variant-numeric: tabular-nums; }
+
+/* charts */
+.dash-chart { padding: .75rem .75rem .5rem; min-height: 14rem; }
+.dash-chart .apexcharts-tooltip, .dash-chart .apexcharts-tooltip * { font-family: inherit; }
+.dash-chart-skel { height: 11rem; border-radius: .625rem; background: rgb(148 163 184 / .18); animation: dash-pulse 1.2s ease-in-out infinite; }
+/* chart rows (plain CSS: not dependent on the compiled Tailwind utilities) */
+.dash-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; margin-bottom: 1rem; }
+@media (min-width: 1024px) { .dash-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.dash-row[style*="display:none"] { display: none; }
+
+/* experiment layout: 2fr / 1fr rows; leaderboard bar fills the middle of each row */
+@media (min-width: 1024px) { .dash-row-21 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
+#chart-model-usage { display: flex; align-items: center; }
+#chart-model-usage > * { width: 100%; }
+
+/* leaderboard tooltip card is styled inline (see chartLeaderboard); Apex's own wrapper stays unstyled */
+.dash-chart .apexcharts-tooltip.apexcharts-theme-dark { background: transparent !important; border: 0 !important; box-shadow: none !important; }
+
+/* leaderboard card hugs its content instead of stretching to the height of the right column */
+
+#chart-leaderboard.dash-chart { min-height: 0; }
+
+/* both top cards share one height; their charts sit centered in the body */
+.dash-row-21 > .dash-card { display: flex; flex-direction: column; }
+.dash-row-21 > .dash-card > .dash-chart { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; }
+.dash-row-21 > .dash-card > .dash-chart > * { width: 100%; }
+.dash-plugins { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.dash-plugins[style*="display:none"] { display: none; }
+
+.dash-slot { display: contents; }
+
+/* token card in the top-right slot: the 24 h bars grow to fill the card (same height as the leaderboard) */
+.dash-slot > .dash-card { display: flex; flex-direction: column; }
+.dash-slot .dash-feature { flex: 1 1 auto; display: flex; flex-direction: column; }
+.dash-slot .dash-feature .dash-spark { flex: 1 1 0; height: auto; min-height: 3rem; }
+.dash-slot #chart-model-usage { flex: 1 1 auto; }
+
+/* plugin row: cards share the row height; the donut is centered in whatever room its card gets */
+.dash-plugins > .dash-card { display: flex; flex-direction: column; }
+.dash-plugins #chart-model-usage { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; }
+.dash-plugins #chart-model-usage > * { width: 100%; }
+
+/* model distribution: donut + legend as one centered group */
+.dash-donut-row { display: flex; align-items: center; justify-content: center; gap: 1.75rem; flex-wrap: wrap; padding: .5rem 1.5rem; }
+.dash-donut-row #donut-chart { flex: none; }
+.dash-donut-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; flex: 1 1 0; min-width: 11rem; max-width: 18rem; }
+.dash-donut-legend li { cursor: default; display: flex; align-items: center; gap: .625rem; font-size: .8125rem; color: #334155; }
+html.dark .dash-donut-legend li { color: #e2e8f0; }
+.dash-donut-legend i { flex: none; width: .625rem; height: .625rem; border-radius: 9999px; }
+.dash-lg-n { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-lg-v { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dash-lg-v em { font-style: normal; font-weight: 500; color: #94a3b8; margin-left: .25rem; }
+
