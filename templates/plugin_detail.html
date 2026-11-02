@@ -30,6 +30,42 @@ html.dark .ep-path { color: #e2e8f0; }
 .ep-name { margin-top: .125rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; color: #64748b; overflow-wrap: anywhere; }
 html.dark .ep-name { color: #94a3b8; }
 @media (max-width: 520px) { .ep-row { flex-direction: column; gap: .5rem; } .ep-methods { width: auto; } }
+/* Tool list: one compact clickable row per tool (signature only); the details open in a modal */
+.tool-row { display: block; width: 100%; text-align: left; cursor: pointer; padding: .75rem .875rem; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; color: inherit;
+    transition: background-color .15s, border-color .15s; }
+.tool-row:hover, .tool-row:focus-visible { border-color: #c7d2fe; background: #f5f7ff; outline: none; }
+html.dark .tool-row { border-color: rgb(148 163 184 / .16); background: rgb(148 163 184 / .06); }
+html.dark .tool-row:hover, html.dark .tool-row:focus-visible { border-color: rgb(129 140 248 / .4); background: rgb(129 140 248 / .08); }
+.tool-sig { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .875rem; line-height: 1.375rem; color: #1f2937; overflow-wrap: anywhere; }
+.tool-sig b { font-weight: 600; color: #4338ca; }
+.tool-sig i { font-style: normal; color: #94a3b8; }
+html.dark .tool-sig { color: #e2e8f0; } html.dark .tool-sig b { color: #a5b4fc; } html.dark .tool-sig i { color: #64748b; }
+.tool-badge { display: inline-flex; align-items: center; padding: .0625rem .4rem; border-radius: 6px; border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca;
+    font-size: .6875rem; font-weight: 600; line-height: 1.125rem; vertical-align: middle; }
+.tool-badge.warn { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+.tool-badge.req { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.tool-badge.mute { background: #f1f5f9; color: #475569; border-color: #e2e8f0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+html.dark .tool-badge { background: rgb(99 102 241 / .18); color: #a5b4fc; border-color: rgb(99 102 241 / .35); }
+html.dark .tool-badge.warn { background: rgb(245 158 11 / .16); color: #fcd34d; border-color: rgb(245 158 11 / .32); }
+html.dark .tool-badge.req { background: rgb(239 68 68 / .16); color: #fca5a5; border-color: rgb(239 68 68 / .32); }
+html.dark .tool-badge.mute { background: rgb(148 163 184 / .12); color: #cbd5e1; border-color: rgb(148 163 184 / .25); }
+.tool-param { padding: .625rem 0; border-top: 1px solid #e5e7eb; }
+html.dark .tool-param { border-top-color: rgb(148 163 184 / .18); }
+.tool-desc { display: block; margin-top: .125rem; font-size: .8125rem; line-height: 1.25rem; color: #64748b; overflow-wrap: anywhere; }
+html.dark .tool-desc { color: #94a3b8; }
+.ep-row[role="button"] { cursor: pointer; }
+.ep-row[role="button"]:focus-visible { border-color: #c7d2fe; background: #f5f7ff; outline: none; }
+html.dark .ep-row[role="button"]:focus-visible { border-color: rgb(129 140 248 / .4); background: rgb(129 140 248 / .08); }
+.try-result { margin-top: .5rem; max-height: 16rem; overflow: auto; padding: .625rem .75rem; border-radius: 8px; border: 1px solid #e5e7eb; background: #f9fafb; color: #374151;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; line-height: 1.125rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.try-result.err { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
+html.dark .try-result { border-color: rgb(148 163 184 / .2); background: rgb(15 23 42 / .6); color: #e2e8f0; }
+html.dark .try-result.err { border-color: rgb(239 68 68 / .35); background: rgb(239 68 68 / .12); color: #fca5a5; }
+select.try-narrow { width: auto; flex: none; }
+.try-warn { padding: .5rem .75rem; border-radius: 8px; border: 1px solid #fde68a; background: #fffbeb; color: #92400e; font-size: .75rem; line-height: 1.125rem; }
+html.dark .try-warn { border-color: rgb(245 158 11 / .32); background: rgb(245 158 11 / .12); color: #fcd34d; }
+.try-x { flex: none; padding: 0 .25rem; color: #94a3b8; cursor: pointer; }
+.try-x:hover { color: #ef4444; }
 </style>
 <div class="p-4 md:p-6">
     <!-- Header -->
@@ -63,6 +99,8 @@ html.dark .ep-name { color: #94a3b8; }
     <!-- Tabs -->
     <div class="border-b border-gray-200 mb-6 flex gap-0 overflow-x-auto">
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600" onclick="showTab('settings')" data-tab="settings">Settings</button>
+        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('endpoints')" data-tab="endpoints">Endpoints <span id="tab-endpoints-count" class="text-xs font-normal text-gray-400"></span></button>
+        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('tools')" data-tab="tools">Tools <span id="tab-tools-count" class="text-xs font-normal text-gray-400"></span></button>
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('about')" data-tab="about">About</button>
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('logs')" data-tab="logs">Logs</button>
         {% for tab in tabs %}
@@ -96,7 +134,7 @@ html.dark .ep-name { color: #94a3b8; }
                 </div>
             </div>
 
-            <!-- Right: Runtime capabilities -->
+            <!-- Right: Events -->
             <div class="space-y-6">
                 <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
                     <div class="flex justify-between items-center mb-4">
@@ -104,27 +142,6 @@ html.dark .ep-name { color: #94a3b8; }
                     </div>
                     <div id="events-list" class="space-y-2">
                         <p class="text-sm text-gray-400">Loading...</p>
-                    </div>
-                </div>
-                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">HTTP/API Endpoints <span id="endpoint-count" class="text-sm font-normal text-gray-400"></span></h3>
-                    </div>
-                    <div id="endpoints-search-wrap" class="hidden mb-3">
-                        <div class="ep-search">
-                            <svg class="ep-search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                            <input id="endpoints-search" type="search" autocomplete="off" placeholder="Search endpoints..." aria-label="Search endpoints">
-                        </div>
-                    </div>
-                    <div id="endpoints-list" class="space-y-2">
-                        <p class="text-sm text-gray-400">Loading...</p>
-                    </div>
-                    <div id="endpoints-pagination" class="hidden items-center justify-between mt-4 pt-3 border-t border-gray-100 dark:border-gray-600">
-                        <span id="endpoints-page-info" class="text-xs text-gray-400"></span>
-                        <div class="flex gap-2">
-                            <button id="endpoints-prev" type="button" aria-label="Previous page" title="Previous" class="inline-flex items-center justify-center p-2 rounded-lg cursor-pointer border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-                            <button id="endpoints-next" type="button" aria-label="Next page" title="Next" class="inline-flex items-center justify-center p-2 rounded-lg cursor-pointer border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -197,6 +214,7 @@ async function loadPlugin() {
     renderSettings(pluginData.variables || [], pluginData.config || {});
     renderEvents(pluginData.events || []);
     renderEndpoints(pluginData.endpoints || []);
+    renderTools(pluginData.tools || []);
     renderReadme(pluginData.readme);
 
     // Show token management section for agentapi plugin
@@ -366,6 +384,216 @@ let allEndpoints = [];
 let endpointsQuery = '';
 let endpointsPage = 1;
 
+const TOOL_SIG_PARAMS = 6;       // parameters named in a row; the rest become "..."
+let allTools = [];
+let toolsQuery = '';
+let currentTool = null;
+
+// The first sentence of a description, cut to one short line for a list row.
+function shortDescription(text) {
+    const flat = String(text || '').replace(/\s+/g, ' ').trim();
+    const end = flat.search(/[.!?](\s|$)/);
+    const first = end >= 0 ? flat.slice(0, end + 1) : flat;
+    return first.length > 140 ? first.slice(0, 137).trimEnd() + '...' : first;
+}
+
+function toolSignature(tool) {
+    const names = (tool.parameters || []).map(p => p.name);
+    const shown = names.slice(0, TOOL_SIG_PARAMS).map(esc).join(', ');
+    const more = names.length > TOOL_SIG_PARAMS ? (shown ? ', ' : '') + '<i>...</i>' : '';
+    return `<b>${esc(tool.name)}</b>(${shown}${more})`;
+}
+
+function renderTools(tools) {
+    allTools = tools || [];
+    toolsQuery = '';
+    const input = document.getElementById('tools-search');
+    if (input) input.value = '';
+    document.getElementById('tools-search-wrap').classList.toggle('hidden', allTools.length === 0);
+    document.getElementById('tab-tools-count').textContent = allTools.length ? `(${allTools.length})` : '';
+    renderToolsList();
+}
+
+function renderToolsList() {
+    const q = toolsQuery.trim().toLowerCase();
+    const found = allTools.filter(t => !q || [t.name, t.id, t.description, ...(t.parameters || []).map(p => p.name)]
+        .some(v => String(v || '').toLowerCase().includes(q)));
+    const list = document.getElementById('tools-list');
+    document.getElementById('tool-count').textContent = q ? `(${found.length}/${allTools.length})` : `(${allTools.length})`;
+    if (allTools.length === 0) {
+        list.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No agent tools registered</p>';
+    } else if (found.length === 0) {
+        list.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No tools match your search</p>';
+    } else {
+        list.innerHTML = found.map(tool => `
+            <button type="button" class="tool-row" data-i="${allTools.indexOf(tool)}" title="Show details">
+                <span class="tool-sig">${toolSignature(tool)}</span>
+                ${tool.implemented ? '' : ' <span class="tool-badge warn">not implemented</span>'}
+                ${tool.description ? `<span class="tool-desc">${esc(shortDescription(tool.description))}</span>` : ''}
+            </button>`).join('');
+    }
+}
+
+const INPUT_CLASS = 'w-full border border-gray-300 dark:border-gray-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 rounded-md px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10';
+let toolFields = [];          // [{param, input}] for the tool in the modal
+
+// Small DOM builder: values go in as text or properties, never as HTML, so nothing needs escaping.
+function node(tag, className, text) {
+    const n = document.createElement(tag);
+    if (className) n.className = className;
+    if (text !== undefined) n.textContent = text;
+    return n;
+}
+
+// One input for a parameter, chosen by its type.
+function paramInput(p) {
+    let input;
+    if (p.enum || p.type === 'boolean') {
+        input = node('select', INPUT_CLASS);
+        if (!p.required) input.add(new Option('(not set)', ''));
+        (p.enum || [false, true]).forEach(v => input.add(new Option(String(v), String(v))));
+    } else if (p.type === 'integer' || p.type === 'number') {
+        input = node('input', INPUT_CLASS);
+        input.type = 'number';
+        input.step = p.type === 'integer' ? '1' : 'any';
+    } else if (p.type === 'object') {
+        input = node('textarea', INPUT_CLASS + ' font-mono');
+        input.rows = 3;
+        input.placeholder = '{"key": "value"}';
+        input.spellcheck = false;
+    } else {
+        input = node('input', INPUT_CLASS);
+        input.type = 'text';
+        input.autocomplete = 'off';
+        if (p.type === 'array') input.placeholder = 'Separate values with commas';
+    }
+    return input;
+}
+
+// The value to send for a parameter: {skip}, {value} or {error}. An empty optional field is not sent.
+function readParam(p, input) {
+    const raw = input.value;
+    if (raw.trim() === '') return p.required ? {error: `${p.name} is required.`} : {skip: true};
+    if (p.type === 'boolean') return {value: raw === 'true'};
+    if (p.type === 'integer' || p.type === 'number') {
+        const n = Number(raw);
+        if (!Number.isFinite(n) || (p.type === 'integer' && !Number.isInteger(n))) return {error: `${p.name} must be ${p.type === 'integer' ? 'a whole' : 'a'} number.`};
+        return {value: n};
+    }
+    if (p.type === 'array') {
+        const numeric = p.items === 'integer' || p.items === 'number';
+        const items = raw.split(',').map(v => v.trim()).filter(Boolean).map(v => numeric ? Number(v) : v);
+        if (numeric && items.some(v => !Number.isFinite(v))) return {error: `${p.name} must be a list of numbers.`};
+        return {value: items};
+    }
+    if (p.type === 'object') {
+        try {
+            const v = JSON.parse(raw);
+            if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new Error('not an object');
+            return {value: v};
+        } catch (e) { return {error: `${p.name} must be a JSON object, like {"key": "value"}.`}; }
+    }
+    if (p.enum && (p.enum.some(v => typeof v === 'number'))) return {value: Number(raw)};
+    return {value: raw};
+}
+
+function buildToolForm(tool) {
+    const box = document.getElementById('tool-modal-params');
+    box.replaceChildren();
+    toolFields = [];
+    const params = tool.parameters || [];
+    if (!params.length) { box.append(node('p', 'text-sm text-gray-400', 'This tool takes no parameters.')); return; }
+    params.forEach((p, i) => {
+        const row = node('div', 'tool-param');
+        const head = node('div', 'flex flex-wrap items-center gap-1.5 mb-1');
+        const label = node('label', 'font-mono text-sm font-semibold text-gray-800 dark:text-gray-100', p.name);
+        const input = paramInput(p);
+        input.id = label.htmlFor = `tool-arg-${i}`;
+        head.append(label);
+        if (p.type) head.append(node('span', 'tool-badge mute', p.type === 'array' && p.items ? `${p.items}[]` : p.type));
+        head.append(p.required ? node('span', 'tool-badge req', 'required') : node('span', 'text-xs text-gray-400', 'optional'));
+        row.append(head, input);
+        if (p.description) row.append(node('div', 'mt-1 text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap', p.description));
+        box.append(row);
+        toolFields.push({param: p, input});
+    });
+}
+
+function collectToolArgs() {
+    const args = {}, errors = [];
+    for (const {param, input} of toolFields) {
+        const got = readParam(param, input);
+        input.style.borderColor = got.error ? '#ef4444' : '';
+        if (got.error) errors.push(got.error);
+        else if (!got.skip) args[param.name] = got.value;
+    }
+    return {args, errors};
+}
+
+function openTool(tool) {
+    if (!tool) return;
+    document.getElementById('tool-modal-title').innerHTML = `<span class="tool-sig">${toolSignature({...tool, parameters: []}).replace('()', '')}</span>`;
+    document.getElementById('tool-modal-id').textContent = tool.id;
+    document.getElementById('tool-modal-warn').classList.toggle('hidden', tool.implemented);
+    document.getElementById('tool-modal-warn-file').textContent = `backend/tools/${tool.name}.py`;
+    document.getElementById('tool-modal-desc').textContent = tool.description || 'No description.';
+    currentTool = tool;
+    buildToolForm(tool);
+    document.getElementById('tool-test-status').textContent = '';
+    document.getElementById('tool-test-result').classList.add('hidden');
+    document.getElementById('tool-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function showTryResult(el, text, isError) {
+    el.textContent = text;
+    el.classList.toggle('err', !!isError);
+    el.classList.remove('hidden');
+    el.scrollIntoView({block: 'nearest'});     // the result sits below the button, often past the bottom of the modal
+}
+
+async function runTool() {
+    const tool = currentTool;
+    if (!tool) return;
+    const result = document.getElementById('tool-test-result'), status = document.getElementById('tool-test-status');
+    const {args, errors} = collectToolArgs();
+    if (errors.length) { showTryResult(result, errors.join('\n'), true); return; }
+    const button = document.getElementById('tool-test-run');
+    button.disabled = true; status.textContent = 'Running...'; result.classList.add('hidden');
+    try {
+        const res = await fetch(`/api/plugins/${encodeURIComponent(PLUGIN_ID)}/tools/${encodeURIComponent(tool.name)}/test`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({args, agent_id: document.getElementById('tool-test-agent').value.trim()}),
+        });
+        const data = await res.json();
+        if (data.error) showTryResult(result, 'Error: ' + data.error, true);
+        else showTryResult(result, JSON.stringify(data.result, null, 2), !!(data.result && data.result.error));
+    } catch (e) {
+        showTryResult(result, 'Network error: ' + e.message, true);
+    } finally {
+        button.disabled = false; status.textContent = '';
+    }
+}
+
+function closeTool() {
+    document.getElementById('tool-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+function setupToolsControls() {
+    document.getElementById('tools-search').addEventListener('input', e => { toolsQuery = e.target.value; renderToolsList(); });
+    document.getElementById('tools-list').addEventListener('click', e => {
+        const row = e.target.closest('.tool-row');
+        if (row) openTool(allTools[Number(row.dataset.i)]);
+    });
+}
+document.addEventListener('DOMContentLoaded', setupToolsControls);
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (!document.getElementById('tool-modal').classList.contains('hidden')) closeTool();
+    else if (!document.getElementById('ep-modal').classList.contains('hidden')) closeEndpoint();
+});
+
 function renderEndpoints(endpoints) {
     allEndpoints = endpoints || [];
     endpointsQuery = '';
@@ -393,6 +621,7 @@ function filteredEndpoints() {
 function renderEndpointsPage() {
     const list = document.getElementById('endpoints-list');
     const count = document.getElementById('endpoint-count');
+    document.getElementById('tab-endpoints-count').textContent = allEndpoints.length ? `(${allEndpoints.length})` : '';
     const pager = document.getElementById('endpoints-pagination');
     const info = document.getElementById('endpoints-page-info');
     const prevBtn = document.getElementById('endpoints-prev');
@@ -421,7 +650,7 @@ function renderEndpointsPage() {
 
     const start = (endpointsPage - 1) * ENDPOINTS_PER_PAGE;
     list.innerHTML = filtered.slice(start, start + ENDPOINTS_PER_PAGE).map(item => `
-        <div class="ep-row">
+        <div class="ep-row" role="button" tabindex="0" data-i="${allEndpoints.indexOf(item)}" title="Show details and test">
             <div class="ep-methods">
                 ${(item.methods || []).map(method => `<span class="ep-badge ${esc(String(method).toLowerCase())}">${esc(method)}</span>`).join('')}
             </div>
@@ -444,7 +673,165 @@ function renderEndpointsPage() {
     }
 }
 
+const BODY_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+const MAX_RESULT_CHARS = 50000;
+
+let currentEndpoint = null;
+let epPathFields = [];        // [{name, converter, input}]
+
+// <name> and <converter:name> in a Flask rule.
+const PATH_PARAM = /<(?:([a-z_]+):)?([A-Za-z_][A-Za-z0-9_]*)>/g;
+
+function openEndpoint(item) {
+    if (!item) return;
+    currentEndpoint = item;
+    const methods = item.methods && item.methods.length ? item.methods : ['GET'];
+    document.getElementById('ep-modal-title').innerHTML =
+        methods.map(m => `<span class="ep-badge ${esc(String(m).toLowerCase())}">${esc(m)}</span>`).join('') +
+        ` <span class="font-mono text-sm break-all">${esc(item.path)}</span>`;
+    document.getElementById('ep-modal-name').textContent = item.endpoint || '';
+    const select = document.getElementById('ep-test-method');
+    select.replaceChildren(...methods.map(m => new Option(m, m)));
+    select.value = methods.includes('GET') ? 'GET' : methods[0];
+    if (window.EvCombobox) EvCombobox.refresh(select);      // Evonic shows selects as comboboxes; repaint after a script sets the value
+
+    const fields = document.getElementById('ep-path-fields');
+    fields.replaceChildren();
+    epPathFields = [...item.path.matchAll(PATH_PARAM)].map(m => {
+        const converter = m[1] || 'string', name = m[2];
+        const input = node('input', INPUT_CLASS + ' font-mono');
+        input.type = converter === 'int' ? 'number' : 'text';
+        input.autocomplete = 'off';
+        input.id = `ep-path-${name}`;
+        input.addEventListener('input', refreshEndpointUrl);
+        const label = node('label', 'block mb-1 text-xs font-medium text-gray-600 dark:text-gray-300');
+        label.htmlFor = input.id;
+        label.append(node('span', 'font-mono', name), ' ', node('span', 'tool-badge mute', converter), ' ', node('span', 'tool-badge req', 'required'));
+        const wrap = node('div');
+        wrap.append(label, input);
+        fields.append(wrap);
+        return {name, converter, input};
+    });
+    document.getElementById('ep-path-wrap').classList.toggle('hidden', epPathFields.length === 0);
+    document.getElementById('ep-query-rows').replaceChildren();
+    document.getElementById('ep-body-rows').replaceChildren();
+    document.getElementById('ep-test-status').textContent = '';
+    document.getElementById('ep-test-result').classList.add('hidden');
+    syncEndpointMethod();
+    refreshEndpointUrl();
+    document.getElementById('ep-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+// A key/value row for the query string, or (with a type) for a JSON body.
+function addEndpointRow(containerId, typed) {
+    const row = node('div', 'flex items-center gap-2');
+    const key = node('input', INPUT_CLASS + ' font-mono'); key.placeholder = 'name'; key.autocomplete = 'off'; key.setAttribute('aria-label', 'Name');
+    const value = node('input', INPUT_CLASS + ' font-mono'); value.placeholder = 'value'; value.autocomplete = 'off'; value.setAttribute('aria-label', 'Value');
+    row.append(key);
+    if (typed) {
+        const type = node('select', INPUT_CLASS.replace('w-full ', '') + ' try-narrow flex-shrink-0'); type.setAttribute('aria-label', 'Type');
+        [['text', 'text'], ['number', 'number'], ['boolean', 'true / false'], ['json', 'JSON']].forEach(([v, l]) => type.add(new Option(l, v)));
+        row.append(type);
+        row._type = type;
+    }
+    const remove = node('button', 'try-x', '✕');
+    remove.type = 'button'; remove.title = 'Remove'; remove.setAttribute('aria-label', 'Remove');
+    remove.addEventListener('click', () => { row.remove(); refreshEndpointUrl(); });
+    key.addEventListener('input', refreshEndpointUrl); value.addEventListener('input', refreshEndpointUrl);
+    row.append(value, remove);
+    row._key = key; row._value = value;
+    document.getElementById(containerId).append(row);
+    key.focus();
+}
+
+// The address to call, from the path parameters and the query rows. ``error`` says what is still missing.
+function buildEndpointUrl() {
+    const values = {};
+    let error = null;
+    for (const f of epPathFields) {
+        const v = f.input.value.trim();
+        if (!v && !error) error = `${f.name} is required.`;
+        values[f.name] = f.converter === 'path' ? v.split('/').map(encodeURIComponent).join('/') : encodeURIComponent(v);
+    }
+    let url = currentEndpoint.path.replace(PATH_PARAM, (all, conv, name) => values[name] || all);
+    const query = new URLSearchParams();
+    for (const row of document.getElementById('ep-query-rows').children) {
+        if (row._key.value.trim()) query.append(row._key.value.trim(), row._value.value);
+    }
+    if (query.toString()) url += '?' + query.toString();
+    return {url, error};
+}
+
+function refreshEndpointUrl() {
+    if (currentEndpoint) document.getElementById('ep-test-url').textContent = buildEndpointUrl().url;
+}
+
+// The JSON body from the field rows: {body} (undefined when there are none) or {error}.
+function buildEndpointBody() {
+    const body = {};
+    let count = 0;
+    for (const row of document.getElementById('ep-body-rows').children) {
+        const name = row._key.value.trim();
+        if (!name) continue;
+        const raw = row._value.value, type = row._type.value;
+        try {
+            if (type === 'number') { const n = Number(raw); if (raw.trim() === '' || !Number.isFinite(n)) throw new Error('not a number'); body[name] = n; }
+            else if (type === 'boolean') { if (!['true', 'false'].includes(raw.trim().toLowerCase())) throw new Error('not true or false'); body[name] = raw.trim().toLowerCase() === 'true'; }
+            else if (type === 'json') body[name] = JSON.parse(raw);
+            else body[name] = raw;
+        } catch (e) { return {error: `${name} must be ${type === 'json' ? 'valid JSON' : type === 'number' ? 'a number' : 'true or false'}.`}; }
+        count++;
+    }
+    return {body: count ? body : undefined};
+}
+
+function syncEndpointMethod() {
+    const method = document.getElementById('ep-test-method').value;
+    document.getElementById('ep-test-body-wrap').classList.toggle('hidden', !BODY_METHODS.includes(method));
+    document.getElementById('ep-test-warn').classList.toggle('hidden', method === 'GET');
+}
+
+function closeEndpoint() {
+    document.getElementById('ep-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+async function sendEndpoint() {
+    const method = document.getElementById('ep-test-method').value;
+    const result = document.getElementById('ep-test-result'), status = document.getElementById('ep-test-status');
+    const built = buildEndpointUrl();
+    epPathFields.forEach(f => { f.input.style.borderColor = f.input.value.trim() ? '' : '#ef4444'; });
+    if (built.error) { showTryResult(result, built.error, true); return; }
+    const init = {method, credentials: 'same-origin', headers: {}};
+    if (BODY_METHODS.includes(method)) {
+        const got = buildEndpointBody();
+        if (got.error) { showTryResult(result, got.error, true); return; }
+        if (got.body !== undefined) { init.body = JSON.stringify(got.body); init.headers['Content-Type'] = 'application/json'; }
+    }
+    const button = document.getElementById('ep-test-send');
+    button.disabled = true; status.textContent = 'Sending...'; result.classList.add('hidden');
+    const started = performance.now();
+    try {
+        const res = await fetch(built.url, init);
+        const raw = await res.text();
+        let text = raw;
+        try { text = JSON.stringify(JSON.parse(raw), null, 2); } catch (e) {}
+        if (text.length > MAX_RESULT_CHARS) text = text.slice(0, MAX_RESULT_CHARS) + '\n... (cut)';
+        const type = (res.headers.get('content-type') || '').split(';')[0];
+        showTryResult(result, `${res.status} ${res.statusText} · ${Math.round(performance.now() - started)} ms${type ? ' · ' + type : ''}\n\n${text || '(empty body)'}`, !res.ok);
+    } catch (e) {
+        showTryResult(result, 'Network error: ' + e.message, true);
+    } finally {
+        button.disabled = false; status.textContent = '';
+    }
+}
+
 function setupEndpointsControls() {
+    const epList = document.getElementById('endpoints-list');
+    const openRow = e => { const row = e.target.closest('.ep-row'); if (row) openEndpoint(allEndpoints[Number(row.dataset.i)]); };
+    epList.addEventListener('click', openRow);
+    epList.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRow(e); } });
     const searchInput = document.getElementById('endpoints-search');
     if (searchInput) {
         searchInput.addEventListener('input', () => {
@@ -459,7 +846,8 @@ function setupEndpointsControls() {
     if (nextBtn) nextBtn.addEventListener('click', () => { endpointsPage += 1; renderEndpointsPage(); });
 }
 
-setupEndpointsControls();
+// The Endpoints and Tools tabs are in the page after this script, so bind their controls once it is parsed.
+document.addEventListener('DOMContentLoaded', setupEndpointsControls);
 
 // ==================== About / README ====================
 
@@ -733,6 +1121,50 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
     </div>
     {% endfor %}
 
+    <!-- Tab: Endpoints -->
+    <div id="tab-endpoints" class="tab-content hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">HTTP/API Endpoints <span id="endpoint-count" class="text-sm font-normal text-gray-400"></span></h3>
+                    </div>
+                    <div id="endpoints-search-wrap" class="hidden mb-3">
+                        <div class="ep-search">
+                            <svg class="ep-search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                            <input id="endpoints-search" type="search" autocomplete="off" placeholder="Search endpoints..." aria-label="Search endpoints">
+                        </div>
+                    </div>
+                    <div id="endpoints-list" class="space-y-2">
+                        <p class="text-sm text-gray-400">Loading...</p>
+                    </div>
+                    <div id="endpoints-pagination" class="hidden items-center justify-between mt-4 pt-3 border-t border-gray-100 dark:border-gray-600">
+                        <span id="endpoints-page-info" class="text-xs text-gray-400"></span>
+                        <div class="flex gap-2">
+                            <button id="endpoints-prev" type="button" aria-label="Previous page" title="Previous" class="inline-flex items-center justify-center p-2 rounded-lg cursor-pointer border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+                            <button id="endpoints-next" type="button" aria-label="Next page" title="Next" class="inline-flex items-center justify-center p-2 rounded-lg cursor-pointer border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>
+                </div>
+    </div>
+
+    <!-- Tab: Tools -->
+    <div id="tab-tools" class="tab-content hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+            <div class="flex justify-between items-center mb-1">
+                <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">Agent Tools <span id="tool-count" class="text-sm font-normal text-gray-400"></span></h3>
+            </div>
+            <p class="text-xs text-gray-400 mb-4">Tools this plugin adds for agents to call. Click one for its details.</p>
+            <div id="tools-search-wrap" class="hidden mb-3">
+                <div class="ep-search">
+                    <svg class="ep-search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input id="tools-search" type="search" autocomplete="off" placeholder="Search tools..." aria-label="Search tools">
+                </div>
+            </div>
+            <div id="tools-list" class="space-y-2">
+                <p class="text-sm text-gray-400">Loading...</p>
+            </div>
+        </div>
+    </div>
+
     <!-- Tab: About -->
     <div id="tab-about" class="tab-content hidden">
         <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
@@ -790,6 +1222,87 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
         </div>
     </div>
 </div>
+
+<!-- Tool details modal -->
+<div id="tool-modal" class="hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="tool-modal-title">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeTool()"></div>
+    <div class="relative flex flex-col h-full items-center justify-center p-4">
+        <div class="relative w-full max-w-2xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-600 flex flex-col max-h-[85vh]">
+            <div class="flex items-start justify-between gap-4 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+                <div class="min-w-0">
+                    <h3 id="tool-modal-title" class="text-base font-semibold text-gray-800 dark:text-gray-100 break-all"></h3>
+                    <p id="tool-modal-id" class="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono break-all"></p>
+                </div>
+                <button onclick="closeTool()" aria-label="Close" title="Close (Esc)" class="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 py-4">
+                <div id="tool-modal-warn" class="try-warn hidden mb-4">
+                    Not implemented: <code id="tool-modal-warn-file" class="font-mono"></code> is missing, so an agent calling this tool gets an error.
+                </div>
+                <p id="tool-modal-desc" class="text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap"></p>
+                <h4 class="mt-5 mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Parameters</h4>
+                <div id="tool-modal-params"></div>
+                <h4 class="mt-5 mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Test</h4>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">Runs the tool for real, as the agent below, so it can change data. Fields you leave empty are not sent.</p>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1" for="tool-test-agent">Run as agent ID</label>
+                <input id="tool-test-agent" class="w-full border border-gray-300 dark:border-gray-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 rounded-md px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 font-mono" placeholder="test" autocomplete="off">
+                <div class="mt-3 flex items-center gap-3">
+                    <button id="tool-test-run" onclick="runTool()" class="px-4 py-2 text-sm bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md font-medium transition-colors">Run</button>
+                    <span id="tool-test-status" class="text-sm text-gray-500 dark:text-gray-400"></span>
+                </div>
+                <pre id="tool-test-result" class="try-result hidden"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="ep-modal" class="hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="ep-modal-title">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeEndpoint()"></div>
+    <div class="relative flex flex-col h-full items-center justify-center p-4">
+        <div class="relative w-full max-w-2xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-600 flex flex-col max-h-[85vh]">
+            <div class="flex items-start justify-between gap-4 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+                <div class="min-w-0">
+                    <h3 id="ep-modal-title" class="flex flex-wrap items-center gap-1.5 text-base font-semibold text-gray-800 dark:text-gray-100"></h3>
+                    <p id="ep-modal-name" class="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono break-all"></p>
+                </div>
+                <button onclick="closeEndpoint()" aria-label="Close" title="Close (Esc)" class="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 py-4">
+                <h4 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Test</h4>
+                <p id="ep-test-warn" class="try-warn hidden mb-2">This sends a real request, signed in as you, and can change data.</p>
+                <div class="mb-3">
+                    <select id="ep-test-method" aria-label="Method" onchange="syncEndpointMethod()" class="border border-gray-300 dark:border-gray-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 rounded-md px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 font-mono"></select>
+                    <div id="ep-test-url" aria-label="Request URL" class="mt-2 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/60 text-sm font-mono break-all text-gray-700 dark:text-gray-200"></div>
+                </div>
+                <div id="ep-path-wrap" class="hidden mb-3">
+                    <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Path parameters</div>
+                    <div id="ep-path-fields" class="space-y-2"></div>
+                </div>
+                <div class="mb-3">
+                    <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Query parameters</div>
+                    <div id="ep-query-rows" class="space-y-2"></div>
+                    <button type="button" class="mt-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline" onclick="addEndpointRow('ep-query-rows', false)">+ Add query parameter</button>
+                </div>
+                <div id="ep-test-body-wrap" class="hidden mb-3">
+                    <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">JSON body</div>
+                    <div id="ep-body-rows" class="space-y-2"></div>
+                    <button type="button" class="mt-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline" onclick="addEndpointRow('ep-body-rows', true)">+ Add field</button>
+                </div>
+                <div class="mt-3 flex items-center gap-3">
+                    <button id="ep-test-send" onclick="sendEndpoint()" class="px-4 py-2 text-sm bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md font-medium transition-colors">Send</button>
+                    <span id="ep-test-status" class="text-sm text-gray-500 dark:text-gray-400"></span>
+                </div>
+                <pre id="ep-test-result" class="try-result hidden"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+
 
 <!-- Text Editor Modal -->
 <div id="text-editor-modal" class="hidden fixed inset-0 z-50" role="dialog">
