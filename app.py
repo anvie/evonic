@@ -183,9 +183,47 @@ app.session_interface = _AdaptiveSessionInterface()
 # Global upload size limit (defense-in-depth for all endpoints)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
 
-# Trust proxy headers from Cloudflare / nginx / any reverse proxy
+# Trust proxy headers only when the direct peer is a configured reverse proxy
+# (config.TRUSTED_PROXIES). Honouring them from anyone lets a client forge its IP.
+import ipaddress
 from werkzeug.middleware.proxy_fix import ProxyFix
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+
+def _parse_trusted_proxies(raw):
+    nets = []
+    for item in (raw or '').split(','):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            print(f"[config] Ignoring invalid TRUSTED_PROXIES entry: {item!r}")
+    return nets
+
+
+class _TrustedProxyFix:
+    def __init__(self, wsgi_app, trusted):
+        self._app = wsgi_app
+        self._fixed = ProxyFix(wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+        self._trusted = trusted
+
+    def _is_trusted(self, peer):
+        try:
+            addr = ipaddress.ip_address(peer)
+        except ValueError:
+            return False
+        if addr.version == 6 and addr.ipv4_mapped:
+            addr = addr.ipv4_mapped
+        return any(addr in net for net in self._trusted)
+
+    def __call__(self, environ, start_response):
+        if self._is_trusted(environ.get('REMOTE_ADDR', '')):
+            return self._fixed(environ, start_response)
+        return self._app(environ, start_response)
+
+
+app.wsgi_app = _TrustedProxyFix(app.wsgi_app, _parse_trusted_proxies(config.TRUSTED_PROXIES))
 
 # Response compression. COMPRESS_STREAMS must stay False so SSE endpoints
 # (/api/realtime/stream, chat streams) are never buffered by compression.

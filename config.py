@@ -180,6 +180,11 @@ if not _SECRET_KEY_ENV:
 
 SECRET_KEY = _SECRET_KEY_ENV
 HOST = os.getenv("HOST", "0.0.0.0")
+# Peers allowed to set X-Forwarded-* headers (comma-separated IPs/CIDRs). Requests
+# from any other peer have those headers ignored, so a client reaching the port
+# directly cannot spoof its IP past the login rate limit. Default: a reverse
+# proxy on the same host; add the proxy's address for a remote proxy.
+TRUSTED_PROXIES = os.getenv("TRUSTED_PROXIES", "127.0.0.1,::1")
 PORT = _get_env_int("PORT", 8080, min_val=1, max_val=65535)
 
 # Default avatars for agents without an uploaded image (generated from the agent's name, Boring Avatars style).
