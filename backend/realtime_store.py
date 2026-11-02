@@ -782,6 +782,25 @@ class RealtimeStore:
 realtime_store = RealtimeStore()
 
 
+def should_notify_sidebar(data: dict) -> bool:
+    """Whether a finished turn may raise a sidebar bubble / unread state.
+
+    Background work that nobody is waiting for in the UI — a one-shot question asked by a plugin or
+    another agent (``__agent__oneshot__*`` sessions) — must not pop up as an unread agent. The session
+    still receives its own ``chat/done`` event, so its page renders normally.
+    """
+    if data.get('silent') or data.get('notify_sidebar') is False:
+        return False
+    external_user_id = str(data.get('external_user_id') or '')
+    if not external_user_id:
+        return True
+    try:
+        from backend.agent_oneshot import is_oneshot_external_id
+        return not is_oneshot_external_id(external_user_id)
+    except Exception:                                  # never silence a real user turn on import trouble
+        return True
+
+
 def record_internal_event(event_name: str, data: dict) -> list[int]:
     """Normalize one raw runtime event into durable public SSE events."""
     session_id = data.get('session_id') or None
@@ -824,7 +843,7 @@ def record_internal_event(event_name: str, data: dict) -> list[int]:
             'reason': data.get('reason'),
         }
         specs.append(('chat', 'done', done))
-        if data.get('response') and not data.get('is_error'):
+        if data.get('response') and not data.get('is_error') and should_notify_sidebar(data):
             specs.append(('status', 'agent_turn_complete', {
                 'agent_id': agent_id or '',
                 'agent_name': data.get('agent_name', ''),
