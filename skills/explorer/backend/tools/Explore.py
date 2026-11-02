@@ -6,6 +6,7 @@ back to the caller's session via agent messaging.
 """
 
 import json
+import os
 import posixpath
 import logging
 import threading
@@ -91,6 +92,24 @@ def execute(agent: dict, args: dict) -> dict:
     if not raw_path:
         return {'error': 'A "path" is required. Use Explore({path: "/abs/dir", ...}).'}
 
+    # Expand '~' / '~user' BEFORE the workspace logic below: posixpath.isabs()
+    # reports tilde paths as relative, so they would otherwise be joined to the
+    # workspace with the literal '~' kept (e.g. /home/<user>/~/dev/proj, which
+    # is reported as "path is not an existing directory"). This mirrors the shared
+    # helper backend.tools._workspace.resolve_workspace_path, which every other
+    # file tool goes through. Expansion uses the Evonic process HOME (the local
+    # user); remote/SSH workplaces with a different home should pass an
+    # absolute path instead.
+    if raw_path.startswith('~'):
+        expanded = os.path.expanduser(raw_path)
+        if not expanded or expanded == raw_path or expanded.startswith('~'):
+            return {'error': (
+                f'cannot resolve home directory in path: {raw_path}. '
+                'Pass an absolute path (e.g. /home/<user>/dev/project), "~/" for '
+                'your own home, a "~user/" home, or "/workspace" for your workspace.'
+            )}
+        raw_path = expanded
+
     # Resolve like the other file tools: the sandbox alias '/workspace' and
     # relative paths map to the caller's workspace; absolute host paths pass
     # through unchanged (exploring outside the workspace is the whole point).
@@ -104,10 +123,29 @@ def execute(agent: dict, args: dict) -> dict:
     host_path = posixpath.abspath(path)
     backend = registry.get_backend(agent.get('session_id') or 'default', agent)
     path = backend.resolve_path(host_path)
-    check = backend.run_python(
-        f'import json, os; p={path!r}; print(json.dumps({{"path": os.path.realpath(p), "is_dir": os.path.isdir(p)}}))',
-        30, {},
-    )
+    # Validate inside the execution environment. When the path is missing, also
+    # report the nearest existing ancestor and up to 10 of its entries so the
+    # caller can self-correct instead of blindly retrying the same wrong path.
+    check_code = f"""import json, os
+p={path!r}
+p = os.path.realpath(p)
+info = {{"path": p, "is_dir": os.path.isdir(p)}}
+if not info["is_dir"]:
+    probe = p
+    while True:
+        parent = os.path.dirname(probe)
+        if parent == probe or os.path.isdir(parent):
+            probe = parent
+            break
+        probe = parent
+    info["nearest"] = probe
+    try:
+        info["entries"] = sorted(os.listdir(probe))[:10]
+    except OSError:
+        info["entries"] = []
+print(json.dumps(info))
+"""
+    check = backend.run_python(check_code, 30, {})
     if check.get('error') or check.get('exit_code', 0) != 0:
         return {'error': f"cannot validate path in execution workplace: {check.get('error') or check.get('stderr', 'unknown error')}"}
     try:
@@ -117,7 +155,19 @@ def execute(agent: dict, args: dict) -> dict:
     path = path_info.get('path', path)
     if not path_info.get('is_dir'):
         suffix = f' (resolved to: {path})' if path != raw_path else ''
-        return {'error': f'path is not an existing directory: {raw_path}{suffix}'}
+        lines = [f'path is not an existing directory: {raw_path}{suffix}']
+        nearest = path_info.get('nearest') or ''
+        if nearest and nearest != path:
+            entries = path_info.get('entries') or []
+            listing = ', '.join(str(e) for e in entries) if entries else '(empty or unreadable)'
+            lines.append(f'nearest existing parent: {nearest}  (contains: {listing})')
+        if caller_ws:
+            lines.append(f'your workspace: {caller_ws}')
+        lines.append(
+            'Pass an absolute path (e.g. /home/<user>/dev/project), "~/" for your '
+            'own home, or a path relative to your workspace.'
+        )
+        return {'error': '\n'.join(lines)}
 
     context_vars, cv_err = _sanitize_context_vars(args.get('context_vars'))
     if cv_err:

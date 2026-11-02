@@ -530,3 +530,92 @@ class TestPathResolutionRegression:
 
             result = explore_module.execute(agent, {"path": str(remote_workspace), "query": "test"})
             assert "error" not in result
+
+
+# ---------------------------------------------------------------------------
+# Tilde expansion (regression: '~/proj' was joined to the workspace as
+# '/home/<user>/~/proj' and reported as "not an existing directory")
+# ---------------------------------------------------------------------------
+
+class LocalPythonBackend:
+    """Backend that really executes the validation script on the local host."""
+
+    def resolve_path(self, path):
+        return path
+
+    def run_python(self, code, timeout, env):
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                exec(code, {})
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"stdout": "", "stderr": str(exc), "exit_code": 1}
+        return {"stdout": buf.getvalue(), "stderr": "", "exit_code": 0}
+
+
+def _run(explore_module, agent, backend, path):
+    with patch("backend.tools.lib.exec_backend.registry.get_backend", return_value=backend), \
+         patch("models.db.db.get_agent", return_value=agent), \
+         patch("backend.agent_runtime.explorer.worker_skill_enabled", return_value=True), \
+         patch("backend.skills_manager.skills_manager.get_skill_config", return_value={"tool_ids": ""}), \
+         patch("backend.subagent_manager.subagent_manager.spawn_explorer", return_value="explorer-1"), \
+         patch("backend.agent_report_to.resolve_report_to_for_subagent_spawn", return_value=("test-agent", None, None)), \
+         patch("backend.agent_runtime.notifier.notify_agent", return_value={"session_id": "sess-1"}):
+        return explore_module.execute(agent, {"path": path, "query": "test"})
+
+
+class TestTildePath:
+    """'~' must be expanded before workspace resolution, never joined to it."""
+
+    def test_tilde_relative_to_home_not_workspace(
+            self, explore_module, agent, tmp_workspace, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        home_project = tmp_path / "proj"
+        home_project.mkdir()
+
+        result = _run(explore_module, agent, LocalPythonBackend(), "~/proj")
+
+        assert "error" not in result
+        assert result["path"] == os.path.realpath(str(home_project))
+        assert "/~/" not in result["path"]
+        assert str(tmp_workspace) not in result["path"]
+
+    def test_bare_tilde_resolves_to_home(
+            self, explore_module, agent, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        result = _run(explore_module, agent, LocalPythonBackend(), "~")
+
+        assert "error" not in result
+        assert result["path"] == os.path.realpath(str(tmp_path))
+
+    def test_unknown_user_tilde_returns_actionable_error(
+            self, explore_module, agent):
+        result = _run(explore_module, agent, LocalPythonBackend(), "~nosuchuser12345/x")
+
+        assert "error" in result
+        assert "cannot resolve home directory" in result["error"]
+        assert "/~/" not in result["error"]
+
+    def test_plain_relative_path_still_joins_workspace(
+            self, explore_module, agent, tmp_workspace):
+        result = _run(explore_module, agent, LocalPythonBackend(), "src")
+
+        assert "error" not in result
+        assert result["path"] == os.path.realpath(str(tmp_workspace / "src"))
+
+    def test_missing_path_reports_nearest_parent_and_workspace(
+            self, explore_module, agent, tmp_workspace):
+        result = _run(explore_module, agent, LocalPythonBackend(),
+                      str(tmp_workspace / "does_not_exist"))
+
+        assert "error" in result
+        err = result["error"]
+        assert "not an existing directory" in err
+        assert "nearest existing parent:" in err
+        assert str(tmp_workspace) in err
+        assert "src" in err          # entry listing of the nearest parent
+        assert "your workspace:" in err
