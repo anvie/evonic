@@ -677,6 +677,11 @@ html.dark .adv-head:hover .adv-arrow { color: #e2e8f0; }
 #tab-general div.rounded-lg.border,        /* Settings: left card, Advanced Settings, Variables, Plugin settings */
 #kb-graph-svg { border-radius: 1.5rem; }
 #kb-graph-svg > svg { display: block; width: 100%; height: 100%; }
+/* The custom ✕ button replaces the browser's native search-cancel control (prevents a duplicate ✕) */
+#kb-graph-search::-webkit-search-cancel-button,
+#kb-graph-search::-webkit-search-decoration,
+#kb-graph-search::-webkit-search-results-button,
+#kb-graph-search::-webkit-search-results-decoration { -webkit-appearance: none; appearance: none; display: none; }
 /* ── Mobile state sheet: same canvas/cards/typography as the desktop cards and the mobile menu drawer ── */
 #mobile-chat-summary-overlay .msheet-backdrop { background: rgb(0 0 0 / .5); animation: msheet-fade .3s ease both; }
 #mobile-chat-summary-overlay .msheet { position: absolute; top: 0; right: 0; bottom: 0; width: min(88vw, 360px); display: flex; flex-direction: column;
@@ -2064,9 +2069,10 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
             <div class="kb-ov-left absolute top-4 left-4 z-10 flex flex-col items-start gap-1.5">
                 <div class="relative">
                     <input type="search" id="kb-graph-search" name="agent_kb_graph_query" placeholder="Search nodes..." autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"
+                           onkeydown="if (event.key === 'Escape') { clearKBGraphSearch(); event.preventDefault(); }"
                            class="pl-3 pr-8 py-2 w-48 sm:w-64 bg-white/80 dark:bg-gray-800 backdrop-blur-sm border border-gray-200 dark:border-gray-600 rounded-lg text-sm shadow-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/50 dark:text-gray-100 dark:placeholder-gray-400"
                            oninput="searchKBGraph(this.value)">
-                    <button id="kb-graph-search-clear" onclick="clearKBGraphSearch()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer hidden" type="button">
+                    <button id="kb-graph-search-clear" onclick="clearKBGraphSearch()" aria-label="Clear search" title="Clear search" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer hidden" type="button">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                     </button>
                 </div>
