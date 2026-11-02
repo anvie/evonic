@@ -1,17 +1,17 @@
 /*
  * Ask User Question — web UI styles for the agent chat page's question card.
- * The pending card docks in the slash-command menu's slot: a panel fused to the chat
- * composer's top edge, with the menu's row, tint and fillet language and the composer's
- * button styles. Light by default; dark keys off html.dark like the rest of Evonic.
+ * The pending card is the last item of the message list (#chat-messages), right after the
+ * agent's output, and scrolls with it. It is not docked or sticky; while it is open only the
+ * composer is locked. Light by default; dark keys off html.dark like the rest of Evonic.
  */
 
-/* ── Dock: panel fused to the composer's top edge (mirrors #chat-command-menu) ── */
+/* ── Dock: an inline block at the end of the chat messages ── */
 .ask-dock {
     --ask-fill: #ffffff; --ask-line: #818cf8; --ask-r: .625rem;
     --ask-hair: rgb(148 163 184 / .2); --ask-muted: #6b7280; --ask-accent: #4f46e5;
     --ask-hover: rgb(99 102 241 / .06); --ask-tint: rgb(99 102 241 / .1);
-    position: relative; margin: 0 2.5rem; transform-origin: 50% 100%;
-    border: 1px solid var(--ask-line); border-bottom: 0; border-radius: 1rem 1rem 0 0;
+    position: relative; margin: 0; padding-bottom: .375rem;
+    border: 1px solid var(--ask-line); border-radius: 1rem;
     background: var(--ask-fill); color: #1f2937;
     animation: ask-in .24s cubic-bezier(.2, .8, .2, 1) both;
 }
@@ -21,42 +21,16 @@ html.dark .ask-dock {
     color: #e5e7eb;
 }
 .ask-dock[hidden] { display: none !important; }
-.ask-dock::before, .ask-dock::after {
-    content: ""; position: absolute; bottom: 0; pointer-events: none;
-    width: calc(var(--ask-r) + 1px); height: calc(var(--ask-r) + 1px);
-}
-.ask-dock::before {
-    right: 100%;
-    background: radial-gradient(circle at 0 0, transparent var(--ask-r), var(--ask-line) var(--ask-r),
-        var(--ask-line) calc(var(--ask-r) + 1px), var(--ask-fill) calc(var(--ask-r) + 1px));
-}
-.ask-dock::after {
-    left: 100%;
-    background: radial-gradient(circle at 100% 0, transparent var(--ask-r), var(--ask-line) var(--ask-r),
-        var(--ask-line) calc(var(--ask-r) + 1px), var(--ask-fill) calc(var(--ask-r) + 1px));
-}
-/* Scrolls internally so a long card never pushes the composer off screen; the footer stays in view. */
-.ask-dock-list {
-    max-height: min(55vh, 30rem); overflow-y: auto; overscroll-behavior: contain; padding: 0 .375rem;
-    border-radius: calc(1rem - 1px) calc(1rem - 1px) 0 0;
-    scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / .35) transparent;
-}
-@keyframes ask-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
-@media (max-width: 767.98px) { .ask-dock { margin: 0 1.25rem; --ask-r: .5rem; } }
+.ask-dock-list { padding: 0 .375rem; }
+@keyframes ask-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .ask-dock { animation: none; } }
 /* Arrow-key navigation swaps the chosen option at once instead of cross-fading. */
 .ask-keynav .ask-option,
 .ask-keynav .ask-option input,
 .ask-keynav .ask-option input::before { transition: none; }
 
-/* While a card is docked the composer is locked (ask_user.js lockComposer): outline it in the
-   dock's line colour, as the focused composer is under the slash menu, and keep that menu away. */
-#chat-composer-wrap:has(> #ask-user-dock:not([hidden])) .chat-composer { border-color: #818cf8; }
-html.dark #chat-composer-wrap:has(> #ask-user-dock:not([hidden])) .chat-composer { border-color: #6366f1; }
-#chat-composer-wrap:has(> #ask-user-dock:not([hidden])) :is(#chat-command-hint, #chat-command-menu) { display: none !important; }
+/* While a question is open the composer is locked (ask-user.js lockComposer). */
 #chat-send-btn:disabled, #chat-attach-btn:disabled { opacity: .45; cursor: not-allowed; }
-/* Let the message list shrink (it has an inline 300px floor) so short viewports keep the dock in view. */
-#chat-panel:has(#ask-user-dock:not([hidden])) #chat-messages { min-height: 6rem !important; }
 
 /* ── Card: text sits on the option rows' content edge (row padding .625rem) ── */
 .ask-card { padding-top: .75rem; font-size: .875rem; line-height: 1.45; }
@@ -157,9 +131,8 @@ html.dark .ask-option-other:has(.ask-other-toggle:checked) input.ask-other-text:
     border-color: #818cf8 !important; background-color: var(--ask-fill) !important;
 }
 
-/* ── Footer: sticky inside the scroller; buttons are the composer's icon button and send pill ── */
+/* ── Footer: buttons are the composer's icon button and send pill ── */
 .ask-footer {
-    position: sticky; bottom: 0; z-index: 1;
     display: flex; align-items: center; justify-content: flex-end; gap: .5rem;
     margin-top: .5rem; padding: .625rem 0 .5rem;
     background: var(--ask-fill); border-top: 1px solid var(--ask-hair);
