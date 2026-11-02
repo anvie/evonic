@@ -410,6 +410,45 @@ class PluginManager:
             })
         return sorted(endpoints, key=lambda item: (item['path'], item['methods'], item['endpoint']))
 
+    def get_plugin_tools(self, plugin_id: str) -> List[Dict[str, Any]]:
+        """Return the agent tools a plugin declares in its ``tools_file``, for display.
+
+        Read from the file whether or not the plugin is enabled, so an admin can see what enabling it would add.
+        ``implemented`` says whether ``backend/tools/<name>.py`` exists, which a tool needs in order to run.
+        """
+        manifest = self._read_manifest(plugin_id) or {}
+        tools_file = manifest.get('tools_file')
+        if not tools_file:
+            return []
+        plugin_dir = os.path.join(PLUGINS_DIR, plugin_id)
+        data = self._read_json_cached(os.path.join(plugin_dir, tools_file))
+        if not isinstance(data, list):
+            return []
+        tools = []
+        for item in data:
+            fn = item.get('function') if isinstance(item, dict) else None
+            name = fn.get('name') if isinstance(fn, dict) else None
+            if not name:
+                continue
+            schema = fn.get('parameters') if isinstance(fn.get('parameters'), dict) else {}
+            required = set(schema.get('required') or [])
+            parameters = [{'name': pname,
+                           'type': pdef.get('type', '') if isinstance(pdef, dict) else '',
+                           'description': pdef.get('description', '') if isinstance(pdef, dict) else '',
+                           'enum': pdef.get('enum') if isinstance(pdef, dict) else None,
+                           'items': (pdef.get('items') or {}).get('type') if isinstance(pdef, dict) and isinstance(pdef.get('items'), dict) else None,
+                           'required': pname in required}
+                          for pname, pdef in (schema.get('properties') or {}).items()]
+            tools.append({
+                'id': f'plugin:{plugin_id}:{name}',
+                'name': name,
+                'description': fn.get('description', ''),
+                'parameters': parameters,
+                'implemented': bool(re.match(r'^[A-Za-z0-9_]+$', name)) and os.path.isfile(
+                    os.path.join(plugin_dir, 'backend', 'tools', f'{name}.py')),
+            })
+        return tools
+
     def dispatch(self, event_name: str, event_data: dict):
         """Dispatch an event via the event stream (non-blocking). Backward compat."""
         from backend.event_stream import event_stream
@@ -637,6 +676,8 @@ class PluginManager:
         manifest['event_count'] = len(manifest['events'])
         manifest['endpoints'] = self.get_plugin_endpoints(plugin_id)
         manifest['endpoint_count'] = len(manifest['endpoints'])
+        manifest['tools'] = self.get_plugin_tools(plugin_id)
+        manifest['tool_count'] = len(manifest['tools'])
         manifest['variables'] = manifest.get('variables', [])
         manifest['config'] = self.get_plugin_config(plugin_id)
 

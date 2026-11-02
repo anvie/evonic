@@ -9,7 +9,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "Directory for the explorer to investigate. Accepts an absolute host path (e.g. /home/www/web-a, including paths outside your own workspace), the '/workspace' alias for your own workspace, or a path relative to your workspace. This becomes the explorer's root — its file tools are confined to this directory."
+            "description": "Directory for the explorer to investigate. Accepts an absolute host path (e.g. /home/www/web-a, including paths outside your own workspace), '~/' for your home directory or '~user/' for another user's home (both expanded before resolution), the '/workspace' alias for your own workspace, or a path relative to your workspace. This becomes the explorer's root — its file tools are confined to this directory."
           },
           "query": {
             "type": "string",

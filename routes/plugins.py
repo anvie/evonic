@@ -85,6 +85,40 @@ def api_get_plugin(plugin_id):
     return jsonify(plugin)
 
 
+@plugins_bp.route('/api/plugins/<plugin_id>/tools/<tool_name>/test', methods=['POST'])
+def api_test_plugin_tool(plugin_id, tool_name):
+    """Run one of a plugin's tools for real with the given arguments, as an agent would call it.
+
+    ``agent_id`` is the agent the tool sees as its caller (default ``test``); a tool may refuse agents it does not serve.
+    """
+    plugin = plugin_manager.get_plugin(plugin_id)
+    if not plugin:
+        return jsonify({'error': 'Plugin not found'}), 404
+    declared = {t['name']: t for t in plugin.get('tools', [])}
+    if tool_name not in declared:
+        return jsonify({'error': f"Plugin '{plugin_id}' has no tool '{tool_name}'"}), 404
+    if not plugin.get('enabled'):
+        return jsonify({'error': 'Enable the plugin first: its tools only run while it is enabled.'}), 400
+
+    data = request.get_json(silent=True) or {}
+    args = data.get('args') or {}
+    if not isinstance(args, dict):
+        return jsonify({'error': 'args must be a JSON object'}), 400
+    agent_id = str(data.get('agent_id') or 'test').strip()
+
+    from backend.tools.registry import ToolRegistry
+    context = {
+        'id': agent_id, 'agent_id': agent_id, 'agent_name': agent_id,
+        'user_id': 'test_user', 'channel_id': None, 'session_id': 'test_session',
+        # The executor only runs tools that are assigned to the caller.
+        'assigned_tool_ids': [declared[tool_name]['id']],
+    }
+    try:
+        return jsonify({'result': ToolRegistry().get_real_executor(context)(tool_name, args)})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
 @plugins_bp.route('/api/plugins/upload', methods=['POST'])
 def api_upload_plugin():
     """Upload and install a plugin from a zip file."""

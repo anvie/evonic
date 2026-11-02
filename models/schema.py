@@ -1689,6 +1689,7 @@ class SchemaMixin:
         migrations = (
             ("registry_endpoint_v1_provider_fields", self._migrate_provider_endpoint_fields),
             ("registry_endpoint_v1_model_capabilities", self._migrate_model_capabilities),
+            ("registry_endpoint_v1_model_provenance_backfill", self._migrate_model_provenance_backfill),
             ("model_type_split_v1", self._migrate_model_type_split),
             ("dmss_endpoint_to_model_v1", self._migrate_dmss_endpoint_to_model),
             ("hmads_git_staging_user_rules_v1", self._migrate_git_staging_to_user_rules),
@@ -1827,6 +1828,31 @@ class SchemaMixin:
             )
             updated += cursor.rowcount
         return {"models_normalized": updated, "precondition": "model capability and provenance columns present"}
+
+    def _migrate_model_provenance_backfill(self, cursor):
+        """Backfill retained-override provenance for rows written without it.
+
+        Older write paths stored a model-level ``base_url``/``api_key`` but left
+        ``legacy_override_provenance`` empty, so the UI reported such rows as
+        provider-inherited while the resolver kept routing to the override.
+        """
+        required = {"base_url", "api_key", "legacy_override_provenance"}
+        actual = {row[1] for row in cursor.execute("PRAGMA table_info(llm_models)")}
+        missing = required - actual
+        if missing:
+            raise RuntimeError(f"llm_models schema missing required columns: {', '.join(sorted(missing))}")
+        cursor.execute(
+            "UPDATE llm_models SET legacy_override_provenance = CASE "
+            "WHEN COALESCE(base_url, '') <> '' OR COALESCE(api_key, '') <> '' "
+            "THEN 'legacy_model_override' ELSE NULL END "
+            "WHERE COALESCE(legacy_override_provenance, '') <> CASE "
+            "WHEN COALESCE(base_url, '') <> '' OR COALESCE(api_key, '') <> '' "
+            "THEN 'legacy_model_override' ELSE '' END"
+        )
+        return {
+            "rows_fixed": cursor.rowcount,
+            "precondition": "model connection and provenance columns present",
+        }
 
     def _migrate_git_staging_to_user_rules(self, cursor):
         """Install the git staging checks as editable user HMADS rules.

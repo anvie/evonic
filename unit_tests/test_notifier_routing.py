@@ -302,3 +302,54 @@ def test_inactive_explicit_channel_route_falls_back_without_creating_session(rou
     assert result["route"] == "web_fallback"
     fake_db.get_or_create_session.assert_not_called()
     assert event_stream.emit.call_args.args[1]["external_user_id"] == "web-user"
+
+
+def test_shared_channel_explicit_session_is_available_without_a_warning(routing_env):
+    """A shared channel has no owner agent; an approved session on it is a valid route."""
+    fake_db, channel_manager, event_stream = routing_env
+    fake_db.get_session_with_details.return_value = {
+        "id": "shared-session",
+        "agent_id": "target_agent",
+        "external_user_id": "shared-user",
+        "channel_id": "shared-channel",
+    }
+    fake_db.get_channel.return_value = {
+        "id": "shared-channel",
+        "agent_id": None,
+        "type": "whatsapp_shared",
+        "enabled": True,
+    }
+    channel_manager.is_running.return_value = True
+
+    result = _notify(session_id="shared-session")
+
+    assert result["success"] is True and result["session_id"] == "shared-session"
+    assert result["fallback_reason"] is None
+    fake_db.get_web_fallback_session.assert_not_called()
+    assert "notification_channel_unavailable" not in (
+        fake_db.add_chat_message.call_args.kwargs.get("metadata") or {})
+    assert event_stream.emit.call_args.args[1]["channel_id"] == "shared-channel"
+
+
+def test_disabled_shared_channel_is_still_reported(routing_env):
+    fake_db, channel_manager, event_stream = routing_env
+    fake_db.get_session_with_details.return_value = {
+        "id": "shared-session",
+        "agent_id": "target_agent",
+        "external_user_id": "shared-user",
+        "channel_id": "shared-channel",
+    }
+    fake_db.get_channel.return_value = {
+        "id": "shared-channel",
+        "agent_id": None,
+        "type": "whatsapp_shared",
+        "enabled": False,
+    }
+    channel_manager.is_running.return_value = True
+
+    result = _notify(session_id="shared-session")
+
+    assert result["success"] is True and result["fallback_reason"] == "inactive_channel"
+    assert fake_db.add_chat_message.call_args.kwargs["metadata"] == {
+        "notification_channel_unavailable": True,
+    }

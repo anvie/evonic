@@ -160,16 +160,23 @@ function makeEl(id) {
 
 const ids = ['endpoints-list', 'endpoint-count', 'endpoints-pagination',
              'endpoints-page-info', 'endpoints-prev', 'endpoints-next',
-             'endpoints-search', 'endpoints-search-wrap'];
+             'endpoints-search', 'endpoints-search-wrap', 'tab-endpoints-count'];
 const reg = {};
 ids.forEach(i => { reg[i] = makeEl(i); });
 
-globalThis.document = { getElementById: id => reg[id] || null, createElement: () => makeEl('tmp') };
+// The page binds its endpoint controls on DOMContentLoaded; capture those handlers and run them below.
+const domReady = [];
+globalThis.document = {
+  getElementById: id => reg[id] || (reg[id] = makeEl(id)),  // unknown ids (e.g. the Tools tab) get inert stubs
+  createElement: () => makeEl('tmp'),
+  addEventListener: (ev, fn) => { if (ev === 'DOMContentLoaded') domReady.push(fn); },
+};
 globalThis.esc = s => String(s == null ? '' : s);
 
 const block = fs.readFileSync(process.argv[2], 'utf8');
 const fn = new Function(block + '\nreturn { renderEndpoints, renderEndpointsPage };');
 const api = fn();
+domReady.forEach(f => f());
 api.renderEndpoints(JSON.parse(fs.readFileSync(process.argv[3], 'utf8')));
 
 function count() { return (reg['endpoints-list'].innerHTML.match(/plugin\/demo\//g) || []).length; }

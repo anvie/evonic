@@ -116,7 +116,7 @@ def notify_agent(agent_id: str, tag: str, message: str,
             channel_id = session_info.get('channel_id')
             target_session_id = session_id
 
-            if channel_id and not _is_channel_route_available(channel_id, agent_id):
+            if channel_id and not _is_channel_route_available(channel_id, agent_id, allow_shared=True):
                 # An explicit, ownership-validated session is a caller's context
                 # contract.  Keep it intact even when its external channel is down;
                 # moving it to an unrelated web session contaminates that conversation.
@@ -316,12 +316,18 @@ def _resolve_web_fallback(agent_id: str, exclude_session_id: str = None):
     return None
 
 
-def _is_channel_route_available(channel_id: str, agent_id: str = None) -> bool:
-    """Return whether an owned persisted channel is enabled and running."""
+def _is_channel_route_available(channel_id: str, agent_id: str = None, allow_shared: bool = False) -> bool:
+    """Return whether an owned persisted channel is enabled and running.
+
+    ``allow_shared`` also accepts a shared channel (one with no owner agent). A caller that
+    passes an explicit, ownership-validated session on such a channel has already been told
+    which conversation it wants, so it is checked for liveness only, not for ownership.
+    """
     channel = db.get_channel(channel_id)
     if not channel or not channel.get('enabled'):
         return False
-    if agent_id and channel.get('agent_id') != agent_id:
+    owner = channel.get('agent_id')
+    if agent_id and owner != agent_id and not (allow_shared and owner is None):
         return False
 
     from backend.channels.registry import channel_manager

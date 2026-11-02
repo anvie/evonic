@@ -377,7 +377,7 @@ class ChatDelegationMixin:
 
 
     def get_all_sessions(self, search: str = None, limit: int = 50, offset: int = 0,
-                          exclude_test: bool = True) -> tuple:
+                          exclude_test: bool = True, agent_id: str = None) -> tuple:
         """Query session_index (materialized view in main DB) joined with agents/channels.
 
         Single query against the main DB — no ATTACH/DETACH, no UNION ALL,
@@ -385,6 +385,9 @@ class ChatDelegationMixin:
         where_parts = ["si.archived = 0"]
         where_params = []
 
+        if agent_id:
+            where_parts.append("si.agent_id = ?")
+            where_params.append(agent_id)
         if exclude_test:
             where_parts.append(
                 "NOT (si.external_user_id = 'web_test' AND si.channel_id IS NULL)"

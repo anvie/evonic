@@ -80,6 +80,11 @@ def _is_kb_vault_path(path: str) -> bool:
 def _resolve_workspace(agent: dict, path: str) -> str:
     """Resolve paths lexically without consulting the host filesystem."""
     workspace = (agent or {}).get('workspace', '')
+    # Expand '~' / '~user' first: posixpath.isabs() treats tilde paths as
+    # relative, so they would be joined to the workspace with the literal '~'
+    # kept. Mirrors backend.tools._workspace.resolve_workspace_path.
+    if path and path.startswith('~'):
+        path = os.path.expanduser(path)
     if path == '/workspace' or path.startswith('/workspace/'):
         path = posixpath.join(workspace, path[len('/workspace'):].lstrip('/'))
     elif workspace and not posixpath.isabs(path):

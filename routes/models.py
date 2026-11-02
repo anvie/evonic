@@ -29,6 +29,21 @@ def _sanitize_models(models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return models
 
 
+def _normalize_base_url(data: Dict[str, Any]):
+    """Normalize the optional per-model connection source in place.
+
+    Empty clears the override (the model inherits its provider's endpoint).
+    Returns an error message, or None when the value is acceptable.
+    """
+    if "base_url" not in data:
+        return None
+    value = str(data["base_url"] or "").strip().rstrip("/")
+    if value and not value.lower().startswith(("http://", "https://")):
+        return "connection source must start with http:// or https://"
+    data["base_url"] = value or None
+    return None
+
+
 @models_bp.route("/api/models", methods=["GET"])
 def api_list_models():
     """List all models."""
@@ -68,8 +83,11 @@ def api_create_model():
         return jsonify({"success": False, "error": f"type must be one of: {', '.join(MODEL_TYPES)}"}), 400
     data["type"] = normalize_model_type(data["type"])
 
-    if "base_url" in data or "api_key" in data:
-        return jsonify({"success": False, "error": "new models must inherit endpoint and credentials from their provider"}), 400
+    if "api_key" in data:
+        return jsonify({"success": False, "error": "new models must inherit credentials from their provider"}), 400
+    error = _normalize_base_url(data)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
     try:
         data["capabilities"] = parse_capabilities(data.get("capabilities") or {
             "version": "model-capabilities/v1", "operations": {"chat": "advertised"},
@@ -134,11 +152,12 @@ def api_update_model(model_id):
         return jsonify({"success": False, "error": "Model not found"}), 404
     model_id = model["id"]
 
-    # Model connection values are migration compatibility data only. Existing
-    # overrides remain readable by the resolver but administration cannot add or
-    # alter them after the provider-owned connection migration.
-    if "base_url" in data or "api_key" in data:
-        return jsonify({"success": False, "error": "model endpoint and credentials are legacy compatibility fields; edit the provider instead"}), 400
+    # Credentials stay provider-owned; the connection source may be overridden per model.
+    if "api_key" in data:
+        return jsonify({"success": False, "error": "model credentials are provider-owned; edit the provider instead"}), 400
+    error = _normalize_base_url(data)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
     if "capabilities" in data:
         try:
             data["capabilities"] = parse_capabilities(data["capabilities"]).to_dict()
