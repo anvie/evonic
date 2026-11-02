@@ -92,3 +92,35 @@ def test_settings_api_reports_environment_override(monkeypatch):
     assert body['enabled'] is True
     assert body['stored_enabled'] is False
     assert body['env_override'] is True
+
+
+def test_totp_guesses_are_rate_limited_across_password_logins(monkeypatch):
+    """Repeated bad codes lock the second factor even if the password is re-entered."""
+    from app import app
+    from models.db import db
+    from backend import totp
+    from routes import auth
+
+    _configure_login(monkeypatch)
+    monkeypatch.delenv('ENABLE_2FA', raising=False)
+    db.set_setting('two_factor_auth_enabled', '1')
+    db.set_setting('admin_totp_secret', '')
+    db.set_setting('admin_totp_confirmed', '0')
+    auth._login_attempts.clear()
+
+    client = app.test_client()
+    client.post('/login', data={'password': 'correct-password'})
+    client.get('/two-factor')
+    secret = totp.get_secret()
+
+    for _ in range(auth._MAX_ATTEMPTS):
+        response = client.post('/two-factor', data={'code': '000000'})
+        assert response.status_code == 200
+
+    # A fresh correct-password login must not reset the guess counter.
+    client.post('/login', data={'password': 'correct-password'})
+    response = client.post('/two-factor', data={'code': _current_code(secret)})
+    assert response.status_code == 429
+    with client.session_transaction() as session:
+        assert not session.get('authenticated')
+    auth._login_attempts.clear()

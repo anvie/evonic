@@ -26,6 +26,7 @@ _WINDOW_SECONDS = 15 * 60  # 15 minutes
 
 _login_attempts: Dict[str, List[float]] = {}
 _login_attempts_lock = threading.Lock()
+_TOTP_ATTEMPT_KEY = 'totp:admin'
 
 
 def _is_rate_limited(ip: str) -> bool:
@@ -203,13 +204,27 @@ def two_factor():
         secret = totp.begin_enrollment()
 
     if request.method == 'POST':
+        # One admin account, so one shared counter. Keyed apart from the IP limiter
+        # because a correct password clears that one, which would reset the guess count.
+        if _is_rate_limited(_TOTP_ATTEMPT_KEY):
+            audit.log_login(ip=request.remote_addr or '0.0.0.0', email='admin',
+                            result='failure', reason='totp_rate_limited')
+            session.pop('pending_2fa_at', None)
+            session.pop('pending_2fa_next', None)
+            return render_template(
+                'two_factor.html', setup=setup, provisioning_uri=None,
+                action=url_for('auth.two_factor'),
+                error='Too many invalid codes. Please wait 15 minutes.',
+            ), 429
         if secret and totp.verify_code(secret, request.form.get('code', '')):
             if setup:
                 totp.confirm_enrollment()
+            _clear_attempts(_TOTP_ATTEMPT_KEY)
             next_url = session.pop('pending_2fa_next', '/')
             session.pop('pending_2fa_at', None)
             audit.log_login(ip=request.remote_addr or '0.0.0.0', email='admin', result='success')
             return _complete_login(next_url)
+        _record_failed_attempt(_TOTP_ATTEMPT_KEY)
         return render_template(
             'two_factor.html', setup=setup,
             provisioning_uri=totp.provisioning_uri(secret) if setup and secret else None,
