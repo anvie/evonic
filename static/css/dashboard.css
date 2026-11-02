@@ -75,7 +75,6 @@ html.dark .dash-spark .bar.is-last { fill: #818cf8; }
 .dash-chart { padding: .75rem .75rem .5rem; min-height: 14rem; }
 .dash-chart .apexcharts-tooltip, .dash-chart .apexcharts-tooltip * { font-family: inherit; }
 .dash-chart-skel { height: 11rem; border-radius: .625rem; background: rgb(148 163 184 / .18); animation: dash-pulse 1.2s ease-in-out infinite; }
-html.dark 
 /* chart rows (plain CSS: not dependent on the compiled Tailwind utilities) */
 .dash-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; margin-bottom: 1rem; }
 @media (min-width: 1024px) { .dash-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
