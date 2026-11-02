@@ -4,10 +4,12 @@
 
 ### Improvements
 
+- Decision model pickers now label each row as `name (provider · model name)` instead of `name (registry id)`. Ids are fixed when a model is created, so a renamed model kept its old id - a row called `Nimble-9B-v3` still displayed `systemone/LiquidAI/d1-3B` next to the built-in `LiquidAI d1-3B`, which differed by one character. The provider and upstream model name are what the endpoint actually receives.
 - Navbar: plugin pages now live in a **Plugins** dropdown, grouped by plugin, instead of each adding its own top-level link, so installing plugins no longer overflows the navbar. Use the pin button next to a page to show it as a top-level link again; pins are stored in `nav.pinned_plugin_items`. **Manage plugins** at the top of the dropdown opens the plugins page.
 
 ### Bug Fixes
 
+- The built-in `LiquidAI d1-3B` decision model is now retired once you have registered your own decision model on the same provider. The seed row is re-inserted on every start and was never disabled, so every picker offered two near-identical entries for one endpoint. It is disabled (not deleted) only when nothing references it and the replacement is actually in use, so an install that still relies on the built-in keeps it selectable.
 - Login no longer loops back to the login page on a plain-HTTP deployment. The session and CSRF cookies used to be marked `Secure` unconditionally, so a browser talking to `http://<host>:8080` (anything but `localhost`) discarded them and `POST /login` silently returned to the login form with no error. The `Secure` flag now follows the request scheme: HTTPS (including a TLS-terminating proxy via `X-Forwarded-Proto`) gets `Secure` cookies, plain HTTP gets the same cookies without it. `FORCE_INSECURE_COOKIES` remains the explicit opt-out and is now documented in `.env.example` and the configuration reference.
 - The admin password set in the setup wizard now works immediately: the hash is applied to the running process instead of only being written to `.env` (which is read once at import). The wizard waits for the server restart and then sends you to `/login`; `evonic pass` now tells you a restart is required while the server is running.
 - `.env` is resolved against the project root instead of the process working directory, so a server started from another directory no longer boots without `ADMIN_PASSWORD_HASH` and no longer writes a fresh `SECRET_KEY` (invalidating sessions) on every start.
