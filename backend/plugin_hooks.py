@@ -102,20 +102,29 @@ def run_tool_result_gates(context: dict, tool_name: str, args: dict,
 # specific tool calls. Guards are plain callables:
 #   guard(agent_id: str, tool_name: str, args: dict) -> Optional[dict]
 # Return {'block': True, 'error': '...'} to block, or None to allow.
+# ``context`` carries trusted turn data, including ``turn_metadata``: the metadata of the
+# message that started the turn (for example a plugin's notification).
 
 _tool_guards: list = []
+# Guards registered with required=True fail closed: if one raises, the call is blocked
+# instead of being allowed (a guard that is a safety boundary must not fail open).
+_required_tool_guards: list = []
 
 
-def register_tool_guard(fn: Callable) -> None:
+def register_tool_guard(fn: Callable, required: bool = False) -> None:
     """Register a synchronous pre-execution tool guard."""
     if fn not in _tool_guards:
         _tool_guards.append(fn)
+    if required and fn not in _required_tool_guards:
+        _required_tool_guards.append(fn)
 
 
 def unregister_tool_guard(fn: Callable) -> None:
     """Remove a previously registered tool guard."""
     if fn in _tool_guards:
         _tool_guards.remove(fn)
+    if fn in _required_tool_guards:
+        _required_tool_guards.remove(fn)
 
 
 def check_tool_guards(agent_id: str, tool_name: str, args: dict,
@@ -130,7 +139,9 @@ def check_tool_guards(agent_id: str, tool_name: str, args: dict,
             if result and (result.get('block') or result.get('level') == 'requires_approval'):
                 return result
         except Exception:
-            pass
+            if guard in _required_tool_guards:
+                _logger.exception("Required tool guard failed; blocking %s", tool_name)
+                return {'block': True, 'error': 'Blocked: a required safety guard failed, so this call was not allowed.'}
     return None
 
 

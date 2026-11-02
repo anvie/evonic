@@ -265,7 +265,7 @@ class TestEmptyResponseRecovery(unittest.TestCase):
             'summarize_threshold': 0,
         }
 
-    def _run_tool_loop(self, llm, messages, session_id, extra_db_attrs=None):
+    def _run_tool_loop(self, llm, messages, session_id, extra_db_attrs=None, tools=None, tool_registry=None):
         """Run run_tool_loop with patched db/tool_registry/LLMClient/event_stream."""
         run_tool_loop = _llm_loop_mod.run_tool_loop
         mock_db = MagicMock()
@@ -276,9 +276,10 @@ class TestEmptyResponseRecovery(unittest.TestCase):
         if extra_db_attrs:
             for k, v in extra_db_attrs.items():
                 setattr(mock_db, k, v)
-        mock_tr = MagicMock()
-        mock_tr.get_builtin_executor.return_value = lambda n, a: None
-        mock_tr.get_real_executor.return_value = lambda n, a: None
+        mock_tr = tool_registry or MagicMock()
+        if tool_registry is None:
+            mock_tr.get_builtin_executor.return_value = lambda n, a: None
+            mock_tr.get_real_executor.return_value = lambda n, a: None
         import backend.event_stream as _es_mod
         with patch.object(_llm_loop_mod, 'db', mock_db), \
              patch.object(_llm_loop_mod, 'tool_registry', mock_tr), \
@@ -289,7 +290,7 @@ class TestEmptyResponseRecovery(unittest.TestCase):
                 agent=self._make_agent(),
                 agent_context=self._make_agent_context(),
                 messages=messages,
-                tools=[],
+                tools=tools or [],
                 session_id=session_id,
                 llm_lock=threading.Lock(),
                 stop_event=threading.Event(),
@@ -297,6 +298,40 @@ class TestEmptyResponseRecovery(unittest.TestCase):
                 session_skill_tools={},
                 llm_log_path=None,
             )
+
+    def test_tool_guard_sees_the_metadata_of_the_message_that_started_the_turn(self):
+        """A plugin's guard can tell a turn the plugin started from one a person started, and its block stops the call."""
+        import backend.plugin_hooks as _ph
+        seen = []
+
+        def guard(agent_id, tool_name, args, context):
+            seen.append((tool_name, context.get('turn_metadata')))
+            return {'block': True, 'error': 'no writes in this turn'}
+
+        llm = MagicMock()
+        llm.chat_completion.side_effect = [
+            {'success': True, 'response': {'choices': [{'message': {'content': '', 'tool_calls': [
+                {'id': 'c1', 'type': 'function', 'function': {'name': 'bash', 'arguments': '{"script": "touch x"}'}}]},
+                'finish_reason': 'tool_calls'}]}, 'duration_ms': 10},
+            _ok('Blocked, so I only looked.'),
+        ]
+        ran = []
+        mock_tr = MagicMock()
+        mock_tr.get_builtin_executor.return_value = lambda n, a: ran.append(n)
+        mock_tr.get_real_executor.return_value = lambda n, a: ran.append(n)
+        _ph.register_tool_guard(guard, required=True)
+        try:
+            with patch.object(self, '_make_agent_context',
+                              return_value={'user_id': 'u1', 'channel_id': 'ch1', 'is_super': False, 'agent_state': None,
+                                            'trusted_turn_metadata': {'pring_notify': True}}):
+                self._run_tool_loop(llm, [{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}], 'sess-guard',
+                                    tools=[{'type': 'function', 'function': {'name': 'bash', 'description': 'run a script',
+                                                                             'parameters': {'type': 'object', 'properties': {'script': {'type': 'string'}}}}}],
+                                    tool_registry=mock_tr)
+        finally:
+            _ph.unregister_tool_guard(guard)
+        self.assertEqual(seen, [('bash', {'pring_notify': True})])
+        self.assertEqual(ran, [])
 
     def test_trivial_response_treated_as_empty(self):
         """'>' response should be treated as empty and trigger recovery sentinel."""

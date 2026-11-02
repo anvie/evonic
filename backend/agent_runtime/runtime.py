@@ -2610,6 +2610,7 @@ class AgentRuntime:
         # attested message/attachment identifiers.
         _trusted_meta = (_last_user or {}).get('metadata') or {}
         if isinstance(_trusted_meta, dict):
+            agent_context['trusted_turn_metadata'] = dict(_trusted_meta)
             if _trusted_meta.get('channel_message_id'):
                 agent_context['trusted_message_id'] = str(_trusted_meta['channel_message_id'])
             if _trusted_meta.get('attachment_info'):

@@ -569,6 +569,10 @@ def run_tool_loop(agent: Dict[str, Any],
         'turn_index': _turn_index,
     }
 
+    # Only tool guards get the metadata of the message that started the turn; it stays out of emitted events.
+    _guard_context = {**_gate_context,
+                      'turn_metadata': dict(agent_context.get('trusted_turn_metadata') or {})}
+
     def _finalize_gate_response(response: str, source: str):
         duration = round(time.time() - _loop_start_time, 1)
         metadata = {'plugin_gate': source, 'thinking_duration': duration}
@@ -2512,7 +2516,7 @@ def run_tool_loop(agent: Dict[str, Any],
             try:
                 for p_idx in sorted(_parallel_indices):
                     _tc_p, _fn_p, _args_p, _pt_p = _tool_records[p_idx]
-                    _gr = _guard_p2(agent_id, _fn_p, _args_p, _gate_context)
+                    _gr = _guard_p2(agent_id, _fn_p, _args_p, _guard_context)
                     if _gr:
                         _parallel_jobs[p_idx] = {
                             'error': _gr.get('error', 'Blocked by plugin guard'),
@@ -2599,7 +2603,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 tool_result = _parallel_results[i]
             else:
                 from backend.plugin_manager import check_tool_guards
-                guard_result = check_tool_guards(agent_id, fn_name, args, _gate_context)
+                guard_result = check_tool_guards(agent_id, fn_name, args, _guard_context)
                 if guard_result:
                     if guard_result.get('level') == 'requires_approval':
                         tool_result = guard_result  # handled by approval flow below
