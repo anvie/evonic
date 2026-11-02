@@ -20,6 +20,7 @@ _MAX_DISPLAY_NAME_LENGTH = 160
 _MAX_DESCRIPTION_LENGTH = 4000
 _MAX_TIMEOUT_MS = 300_000
 _MAX_RETRY_LIMIT = 10
+_MAX_SAMPLE_INPUT_BYTES = 8 * 1024
 
 
 class DecisionProfileValidationError(ValueError):
@@ -41,7 +42,28 @@ def _public(row: Mapping[str, Any]) -> Dict[str, Any]:
     profile["enabled"] = bool(profile["enabled"])
     profile["minimum_confidence"] = float(profile["minimum_confidence"])
     profile["schema"] = json.loads(profile.pop("schema_json"))
+    raw_sample = profile.pop("sample_input_json", None)
+    try:
+        sample = json.loads(raw_sample) if raw_sample else None
+    except ValueError:
+        sample = None
+    profile["sample_input"] = sample if isinstance(sample, dict) else None
     return profile
+
+
+def _sample_input(value: Any) -> Optional[Dict[str, Any]]:
+    """An optional example ``input_context`` (a small JSON object) for testing the profile."""
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        _fail("invalid_sample_input", "sample_input", "must be a JSON object")
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        _fail("invalid_sample_input", "sample_input", "must be valid JSON")
+    if len(encoded.encode("utf-8")) > _MAX_SAMPLE_INPUT_BYTES:
+        _fail("too_long", "sample_input", f"must be at most {_MAX_SAMPLE_INPUT_BYTES} bytes")
+    return dict(value)
 
 
 def _text(value: Any, path: str, *, required: bool, maximum: int) -> str:
@@ -96,6 +118,8 @@ class DecisionProfilesMixin:
         model = self.get_model_by_id(model_id)
         if not model:
             _fail("unknown_model", path, "does not reference a configured model")
+        if model.get("type") != "decision":
+            _fail("incompatible_model", path, "must reference a decision model")
         capabilities = model.get("capabilities") or {}
         if not isinstance(capabilities, dict):
             _fail("incompatible_model", path, "must reference a model enabled for Decision Models")
@@ -173,6 +197,7 @@ class DecisionProfilesMixin:
         merged["timeout_ms"] = _integer(merged.get("timeout_ms"), "timeout_ms", 1, _MAX_TIMEOUT_MS)
         merged["retry_limit"] = _integer(merged.get("retry_limit", 0), "retry_limit", 0, _MAX_RETRY_LIMIT)
         merged["minimum_confidence"] = _confidence(merged.get("minimum_confidence", 0.0))
+        merged["sample_input"] = _sample_input(merged.get("sample_input"))
         return merged
 
     def create_decision_profile(self, data: Mapping[str, Any]) -> Dict[str, Any]:
@@ -182,13 +207,14 @@ class DecisionProfilesMixin:
                 conn.execute("""INSERT INTO decision_profiles (
                     profile_key, display_name, description, enabled, mode, schema_version,
                     policy_version, schema_json, primary_model_id, fallback_model_id, timeout_ms,
-                    retry_limit, minimum_confidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                    retry_limit, minimum_confidence, sample_input_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                     profile["profile_key"], profile["display_name"], profile["description"],
                     int(profile["enabled"]), profile["mode"], profile["schema_version"],
                     profile["policy_version"], json.dumps(profile["schema"], sort_keys=True, separators=(",", ":")),
                     profile["primary_model_id"], profile["fallback_model_id"], profile["timeout_ms"],
                     profile["retry_limit"], profile["minimum_confidence"],
+                    json.dumps(profile["sample_input"], ensure_ascii=False) if profile["sample_input"] else None,
                 ))
         except sqlite3.IntegrityError as exc:
             _fail("already_exists", "profile_key", "already exists")
@@ -205,14 +231,16 @@ class DecisionProfilesMixin:
             cursor = conn.execute("""UPDATE decision_profiles SET
                 display_name = ?, description = ?, enabled = ?, mode = ?, schema_version = ?,
                 policy_version = ?, schema_json = ?, primary_model_id = ?, fallback_model_id = ?,
-                timeout_ms = ?, retry_limit = ?, minimum_confidence = ?, revision = revision + 1,
+                timeout_ms = ?, retry_limit = ?, minimum_confidence = ?, sample_input_json = ?, revision = revision + 1,
                 updated_at = CURRENT_TIMESTAMP
                 WHERE profile_key = ? AND revision = ?""", (
                 profile["display_name"], profile["description"], int(profile["enabled"]), profile["mode"],
                 profile["schema_version"], profile["policy_version"],
                 json.dumps(profile["schema"], sort_keys=True, separators=(",", ":")),
                 profile["primary_model_id"], profile["fallback_model_id"], profile["timeout_ms"],
-                profile["retry_limit"], profile["minimum_confidence"], profile_key, revision,
+                profile["retry_limit"], profile["minimum_confidence"],
+                json.dumps(profile["sample_input"], ensure_ascii=False) if profile["sample_input"] else None,
+                profile_key, revision,
             ))
             if not cursor.rowcount:
                 _fail("conflict", "revision", "does not match the latest profile revision")

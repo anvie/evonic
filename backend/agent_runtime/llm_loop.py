@@ -11,6 +11,7 @@ Split from the original monolith (Layout C / Pipeline):
 """
 
 import collections
+import contextvars
 import difflib
 import json
 import logging
@@ -80,6 +81,36 @@ class EffectiveRequest:
 # Short polling keeps /stop responsive while parallel tool workers are running.
 # The total wait remains bounded by AGENT_PARALLEL_TOOL_WAIT_TIMEOUT.
 _PARALLEL_TOOL_POLL_INTERVAL_SECONDS = 0.1
+
+_STOPPED = object()
+
+
+def _run_interruptible(fn, stop_event):
+    """Run ``fn()`` in a worker thread and return as soon as /stop is signalled.
+
+    Returns ``_STOPPED`` on stop; the worker is abandoned (Python cannot kill a
+    running thread) and its eventual result or exception is discarded. Used for
+    calls that can block for a long time (LLM completion, long-running tools) so
+    /stop takes effect immediately instead of at the next safe point.
+    """
+    box = {}
+    ctx = contextvars.copy_context()
+
+    def _worker():
+        try:
+            box['value'] = ctx.run(fn)
+        except BaseException as exc:  # re-raised in the caller's thread
+            box['error'] = exc
+
+    t = threading.Thread(target=_worker, daemon=True, name='interruptible-call')
+    t.start()
+    while t.is_alive():
+        t.join(_PARALLEL_TOOL_POLL_INTERVAL_SECONDS)
+        if stop_event.is_set() and t.is_alive():
+            return _STOPPED
+    if 'error' in box:
+        raise box['error']
+    return box.get('value')
 
 # Injected once per turn when implementation work happened but the agent never
 # called update_tasks — the final answer is held back until the model reconciles.
@@ -295,7 +326,6 @@ def _persist_agent_state_split(ms, agent_id, session_id, db_agent_id=None):
         'plan_file': data.get('plan_file'),
         'states': data.get('states', {}),
         'auto_trivial': data.get('auto_trivial', False),
-        'atg': data.get('atg'),
         'cmp': data.get('cmp'),
     })
     db.upsert_session_state(session_id, json.dumps(session_data), agent_id=agent_id)
@@ -486,7 +516,7 @@ def run_tool_loop(agent: Dict[str, Any],
         """Return whether a tool represents implementation work."""
         return tool_name not in _READ_ONLY_TOOLS and tool_name not in {
             'set_mode', 'save_plan', 'update_tasks', 'state',
-            'compile_task_graph', 'switch_path', 'new_path',
+            'switch_path', 'new_path',
             'use_skill', 'unload_skill', 'remember', 'recall',
         }
 
@@ -896,14 +926,6 @@ def run_tool_loop(agent: Dict[str, Any],
     if agent_model_config and session_id:
         llm.session_id = session_id
 
-    # ATG: give the compile_task_graph builtin access to the resolved LLM.
-    # Compiler calls acquire llm_lock per call (same discipline as the main call).
-    if agent_context.get('enable_atg'):
-        agent_context['_atg_runtime'] = {
-            'llm': llm, 'llm_lock': llm_lock,
-            'llm_log_path': llm_log_path, 'tools': tools,
-        }
-
     # Resolve thinking budget: only active when explicitly set per-model (thinking_budget > 0).
     # Models with thinking_budget=0 have no cap — intended for large models that benefit
     # from extended reasoning. Set thinking_budget per-model in Settings for small models.
@@ -1049,68 +1071,6 @@ def run_tool_loop(agent: Dict[str, Any],
     # to avoid redundant DB reads in the loop iterations and tool result scans.
     _agent_ig_config = _get_agent_config_ig(agent_id)
 
-    # ── ATG branch point ──────────────────────────────────────────────────
-    # When the agent has a compiled task graph awaiting execution, run it
-    # first: the executor front-loads the tool work (parallel waves, per-node
-    # state) and hands a summary to this loop, whose next LLM call composes
-    # the final answer. Any failure degrades to the plain loop below —
-    # this block never replaces the loop's exit paths.
-    _atg_ms = agent_context.get('agent_state')
-    if (agent_context.get('enable_atg') and _atg_ms is not None
-            and not getattr(_atg_ms, 'auto_trivial', False)
-            and _atg_ms.mode == 'execute'
-            and isinstance(getattr(_atg_ms, 'atg', None), dict)
-            and _atg_ms.atg.get('status') in ('compiled', 'executing')):
-        _atg_outcome = None
-        try:
-            from backend.agent_runtime import atg as _atg_pkg
-            _atg_outcome = _atg_pkg.run_dag_execution(
-                agent=agent, agent_context=agent_context, ms=_atg_ms,
-                stop_event=stop_event, builtin_exec=builtin_exec,
-                real_exec=real_exec, chatlog=chatlog, tool_trace=tool_trace,
-                timeline=timeline, session_id=session_id,
-                persist_cb=lambda: _persist_agent_state_split(
-                    _atg_ms, agent_id, session_id, db_agent_id))
-        except Exception:
-            _logger.exception("ATG execution crashed — falling back to plain loop")
-        if _atg_outcome is not None:
-            _atg_ms.sync_completed_atg_tasks()
-            try:
-                _persist_agent_state_split(_atg_ms, agent_id, session_id, db_agent_id)
-            except Exception:
-                _logger.exception("ATG state persist failed")
-            if _atg_outcome.stopped:
-                stop_event.clear()
-                _logger.info("Stop signal received during ATG execution for session %s", session_id)
-                stop_msg = "Agent stopped by user request."
-                _atg_stop_dur = round(time.time() - _loop_start_time, 1)
-                message_id = _message_id(db.add_chat_message(
-                    session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                    metadata={"timeline": timeline, "stopped": True,
-                              "thinking_duration": _atg_stop_dur},
-                ))
-                chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                                'metadata': {'stopped': True, 'thinking_duration': _atg_stop_dur},
-                                'message_id': message_id})
-                chatlog.append({'type': 'turn_end', 'session_id': session_id,
-                                'thinking_duration': _atg_stop_dur})
-                event_stream.emit('final_answer', {
-                    'agent_id': agent_id, 'session_id': session_id,
-                    'external_user_id': external_user_id, 'channel_id': channel_id,
-                    'answer': stop_msg, 'tool_trace': tool_trace, 'timeline': timeline,
-                })
-                return stop_msg, tool_trace, timeline
-            if _atg_outcome.summary_for_llm:
-                # user role with [SYSTEM] prefix (same pattern as force-stop
-                # injection): strict chat templates (e.g. evomodel on llama.cpp)
-                # reject system messages that are not in leading position.
-                messages.append({"role": "user",
-                                 "content": "[SYSTEM] " + _atg_outcome.summary_for_llm})
-            # Stats land in the final assistant message metadata (timeline) so
-            # A/B evaluation and the UI can read per-run ATG figures.
-            timeline.append({"type": "atg_stats", "status": _atg_outcome.status,
-                             **_atg_outcome.stats})
-
     while _iteration < max_tool_iterations:
         _llm_call_count += 1
         # Hard cap on total LLM API calls (safety net for non-tool loops like
@@ -1160,7 +1120,6 @@ def run_tool_loop(agent: Dict[str, Any],
         if ms is not None:
             state_msg = {"role": "system",
                          "content": ms.render(agent_id=agent_id,
-                                              atg_enabled=bool(agent_context.get('enable_atg')),
                                               cmp_enabled=bool(agent_context.get('enable_cmp')),
                                               agent_name=agent_context.get('agent_name')
                                                          or agent_context.get('name'),
@@ -1400,16 +1359,24 @@ def run_tool_loop(agent: Dict[str, Any],
                                        path='budget_' + _budget_plan.stage)
             _required_choice = _budget_plan.tool_choice
         with llm_lock:
-            result = llm.chat_completion(
-                messages=_request.messages,
-                tools=_request.tools,
-                temperature=None,
-                enable_thinking=_enable_thinking_this_call,
-                max_tokens=None,
-                log_file=llm_log_path,
-                tool_choice=_required_choice,
-                **({'stream_callback': _thinking_stream} if _thinking_stream else {}),
-            )
+            # Interruptible so /stop doesn't wait for a long generation to finish.
+            def _chat_call():
+                # Lets the client sever a streaming request on /stop.
+                from backend.llm_client import llm_cancel_event
+                llm_cancel_event.set(stop_event)
+                return llm.chat_completion(
+                    messages=_request.messages,
+                    tools=_request.tools,
+                    temperature=None,
+                    enable_thinking=_enable_thinking_this_call,
+                    max_tokens=None,
+                    log_file=llm_log_path,
+                    tool_choice=_required_choice,
+                    **({'stream_callback': _thinking_stream} if _thinking_stream else {}),
+                )
+            result = _run_interruptible(_chat_call, stop_event)
+        if result is _STOPPED:
+            result = {'success': False, 'error_type': 'stopped'}
         if _thinking_stream:
             _thinking_stream.flush()
 
@@ -2642,9 +2609,13 @@ def run_tool_loop(agent: Dict[str, Any],
                                                       'Blocked by plugin guard'),
                             'blocked_by': 'tool_guard'}
                 else:
-                    tool_result = _execute_tool_core(fn_name, args,
-                                                     builtin_exec, real_exec,
-                                                     agent_context)
+                    tool_result = _run_interruptible(
+                        lambda: _execute_tool_core(fn_name, args,
+                                                   builtin_exec, real_exec,
+                                                   agent_context),
+                        stop_event)
+                    if tool_result is _STOPPED:
+                        tool_result = {'error': 'Execution stopped by user'}
 
             # Safety provenance rides out-of-band on the tool result.  Strip it
             # here, before the result is serialized for the LLM, logged, or shown
@@ -3090,7 +3061,7 @@ def run_tool_loop(agent: Dict[str, Any],
             # push the fresh per-session snapshot. event_stream.emit only mutates its
             # in-memory buffers here; listener work is delegated to its executor.
             if fn_name in ('save_plan', 'set_mode', 'update_tasks', 'state',
-                           'compile_task_graph', 'switch_path', 'new_path'):
+                           'switch_path', 'new_path'):
                 _ms = agent_context.get('agent_state')
                 if _ms is not None:
                     _persist_agent_state_split(_ms, agent_id, session_id, db_agent_id)

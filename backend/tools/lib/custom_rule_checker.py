@@ -25,6 +25,9 @@ _CACHE_TTL_SECONDS = 5
 class CustomRuleChecker(SafetyCheckerBase):
     """Evaluates user-defined regex rules stored in the database."""
 
+    # Only user-defined rules may floor an accepted DMSS decision.
+    user_defined = True
+
     def __init__(self):
         self._cache: dict[str, Any] = {}  # key → {rules, ts}
 

@@ -6,8 +6,11 @@ including standard XML thinking tags, Gemma 4, and Qwen formats.
 
 """
 
+import contextvars
 import json
 import re
+import socket
+import threading
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -281,6 +284,40 @@ def _convert_multimodal_to_claude(messages: List[Dict[str, Any]]) -> List[Dict[s
     return result
 
 
+# Set by the agent loop (inside the worker thread running the call) so a /stop
+# can sever a streaming request instead of letting the provider keep generating.
+llm_cancel_event: "contextvars.ContextVar[Optional[threading.Event]]" = contextvars.ContextVar(
+    "llm_cancel_event", default=None)
+
+
+def _abort_stream_on_cancel(response: Any, cancel_event: threading.Event,
+                            finished: threading.Event) -> None:
+    """Block until cancelled or ``finished``; on cancel, drop the connection.
+
+    ``response.close()`` alone does not wake a thread blocked in ``recv``, so the
+    underlying socket is shut down first (best effort across urllib3 versions).
+    """
+    while not finished.is_set():
+        if cancel_event.wait(0.1):
+            if finished.is_set():
+                return
+            raw = getattr(response, "raw", None)
+            for path in (("_connection", "sock"), ("_fp", "fp", "raw", "_sock")):
+                try:
+                    obj = raw
+                    for attr in path:
+                        obj = getattr(obj, attr)
+                    obj.shutdown(socket.SHUT_RDWR)
+                    break
+                except Exception:
+                    continue
+            try:
+                response.close()
+            except Exception:
+                pass
+            return
+
+
 def _iter_sse_lines(response: Any):
     """Yield raw lines from a streamed response as soon as they arrive.
 
@@ -420,6 +457,16 @@ def _consume_openai_stream(
     if usage:
         result["usage"] = usage
     return result
+
+
+def _stopped_result(duration_ms: int) -> Dict[str, Any]:
+    return {
+        "response": {"error": "Request cancelled by user"},
+        "duration_ms": duration_ms,
+        "success": False,
+        "error_type": "stopped",
+        "error_detail": "cancelled by /stop",
+    }
 
 
 class LLMClient:
@@ -846,7 +893,8 @@ class LLMClient:
             tool_choice=tool_choice,
             stream_callback=stream_callback,
         )
-        if result.get("success") or not self._allow_fallback:
+        if (result.get("success") or not self._allow_fallback
+                or result.get("error_type") == "stopped"):
             return result
 
         fallback = self._get_fallback_client()
@@ -1264,7 +1312,23 @@ class LLMClient:
                     }
 
                 if use_stream and "text/event-stream" in (response.headers.get("Content-Type") or "").lower():
-                    result = _consume_openai_stream(response, stream_callback)
+                    _cancel = llm_cancel_event.get()
+                    _finished = threading.Event()
+                    if _cancel is not None:
+                        threading.Thread(
+                            target=_abort_stream_on_cancel,
+                            args=(response, _cancel, _finished), daemon=True,
+                        ).start()
+                    try:
+                        result = _consume_openai_stream(response, stream_callback)
+                    except Exception:
+                        if _cancel is not None and _cancel.is_set():
+                            return _stopped_result(int((time.time() - start_time) * 1000))
+                        raise
+                    finally:
+                        _finished.set()
+                    if _cancel is not None and _cancel.is_set():
+                        return _stopped_result(int((time.time() - start_time) * 1000))
                     duration_ms = int((time.time() - start_time) * 1000)
                 else:
                     result = response.json()

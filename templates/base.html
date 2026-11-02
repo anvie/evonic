@@ -36,8 +36,9 @@
     <script src="{{ url_for('static', filename='js/marked.min.js') }}?v=1" defer></script>
     <script src="{{ url_for('static', filename='js/highlight.min.js') }}?v=1" defer></script>
     <script src="{{ url_for('static', filename='js/ui-utils.js') }}?v=3" defer></script>
-    <script src="{{ url_for('static', filename='js/realtime.js') }}?v=3" defer></script>
-    <script src="{{ url_for('static', filename='js/approval-modal.js') }}?v=2" defer></script>
+    <script src="{{ url_for('static', filename='js/realtime.js') }}?v=4" defer></script>
+    <script src="{{ url_for('static', filename='js/approval-modal.js') }}?v=3" defer></script>
+    <script src="{{ url_for('static', filename='js/browser-notify.js') }}?v=2" defer></script>
     <script src="{{ url_for('static', filename='js/katex.min.js') }}?v=1" defer></script>
     <!-- Synchronous: page scripts (chat-ui.js, inline renderers) must see
          EvMarkdownMath at parse time; it reads window.katex lazily on each call. -->
@@ -54,7 +55,7 @@
         return html;
     }
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=55">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=58">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/recap-prose.css') }}?v=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/hljs-chat.css') }}?v=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/agent-sidebar.css') }}?v=23">
@@ -141,11 +142,29 @@
                 {% if session.get('authenticated') %}
                 <a href="/system" class="{{ 'nav-active' if request.path == '/system' or request.path.startswith('/system/') else '' }}">{{ nav_ic('<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/>') }}<span class="nav-label">System</span></a>
                 <a href="/skills" class="{{ 'nav-active' if request.path.startswith('/skills') else '' }}">{{ nav_ic('<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/>') }}<span class="nav-label">Skills</span></a>
-                <a href="/plugins" class="{{ 'nav-active' if request.path.startswith('/plugins') else '' }}">{{ nav_ic('<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>') }}<span class="nav-label">Plugins</span></a>
                 <a href="/scheduler" class="{{ 'nav-active' if request.path.startswith('/scheduler') else '' }}">{{ nav_ic('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>') }}<span class="nav-label">Scheduler</span></a>
-                {% for _nav_item in plugin_nav_items %}
-                <a href="{{ _nav_item.path }}" class="{{ 'nav-active' if request.path.startswith(_nav_item.path) else '' }}">{{ nav_ic('<path d="M12 3v3"/><path d="M18.5 7.5l-2.1 2.1"/><path d="M21 14h-3"/><path d="M12 21a9 9 0 1 1 9-9"/><path d="m12 14 3-3"/>') }}<span class="nav-label">{{ _nav_item.label }}</span></a>
+                {% for _nav_item in plugin_nav.pinned %}
+                <a href="{{ _nav_item.path }}" class="{{ 'nav-active' if _nav_item.current else '' }}">{{ nav_ic('<path d="M12 3v3"/><path d="M18.5 7.5l-2.1 2.1"/><path d="M21 14h-3"/><path d="M12 21a9 9 0 1 1 9-9"/><path d="m12 14 3-3"/>') }}<span class="nav-label">{{ _nav_item.label }}</span></a>
                 {% endfor %}
+                {% if plugin_nav.groups %}
+                <div class="nav-dd">
+                    <button type="button" class="nav-dd-btn {{ 'nav-active' if plugin_nav.menu_active else '' }}" aria-haspopup="true" aria-expanded="false" onclick="toggleNavDropdown(this)">{{ nav_ic('<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>') }}<span class="nav-label">Plugins</span><svg class="nav-dd-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                    <div class="nav-dd-menu" role="menu">
+                        <a href="/plugins" role="menuitem" class="nav-dd-item {{ 'nav-dd-current' if request.path == '/plugins' else '' }}"><span class="nav-label">Manage plugins</span></a>
+                        {% for _group in plugin_nav.groups %}
+                        <div class="nav-dd-group">{{ _group.name }}</div>
+                        {% for _nav_item in _group['items'] %}
+                        <div class="nav-dd-row">
+                            <a href="{{ _nav_item.path }}" role="menuitem" class="nav-dd-item {{ 'nav-dd-current' if _nav_item.current else '' }}"><span class="nav-label">{{ _nav_item.label }}</span></a>
+                            <button type="button" class="nav-dd-pin {{ 'is-pinned' if _nav_item.pinned else '' }}" data-path="{{ _nav_item.path }}" data-pinned="{{ '1' if _nav_item.pinned else '0' }}" onclick="toggleNavPin(this)" title="{{ 'Unpin from navbar' if _nav_item.pinned else 'Pin to navbar' }}" aria-label="{{ 'Unpin' if _nav_item.pinned else 'Pin' }} {{ _nav_item.label }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="{{ 'currentColor' if _nav_item.pinned else 'none' }}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg></button>
+                        </div>
+                        {% endfor %}
+                        {% endfor %}
+                    </div>
+                </div>
+                {% else %}
+                <a href="/plugins" class="{{ 'nav-active' if request.path.startswith('/plugins') else '' }}">{{ nav_ic('<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>') }}<span class="nav-label">Plugins</span></a>
+                {% endif %}
                 {% endif %}
                 {% if session.get('authenticated') %}
                 <hr class="nav-divider">
@@ -339,18 +358,53 @@ document.addEventListener('click', function (e) {
 });
 window.addEventListener('resize', function () { if (window.innerWidth > 768) toggleNav(false); else syncNavExtra(); });
 
+// Plugins dropdown: plugin pages live here; the pin button promotes one to a top-level navbar link.
+function toggleNavDropdown(btn, force) {
+    var dd = btn.closest('.nav-dd');
+    var open = typeof force === 'boolean' ? force : !dd.classList.contains('nav-dd-open');
+    dd.classList.toggle('nav-dd-open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    syncNavExtra();
+}
+function toggleNavPin(btn) {
+    btn.disabled = true;
+    fetch('/api/plugins/nav-pins', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: btn.dataset.path, pinned: btn.dataset.pinned !== '1' })
+    }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        window.location.reload();
+    }).catch(function () { btn.disabled = false; });
+}
+document.addEventListener('click', function (e) {
+    document.querySelectorAll('.nav-dd.nav-dd-open').forEach(function (dd) {
+        if (!dd.contains(e.target)) toggleNavDropdown(dd.querySelector('.nav-dd-btn'), false);
+    });
+});
+document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    document.querySelectorAll('.nav-dd.nav-dd-open').forEach(function (dd) {
+        var btn = dd.querySelector('.nav-dd-btn');
+        toggleNavDropdown(btn, false);
+        btn.focus();
+    });
+});
+
 // Desktop navbar: one underline that slides to the hovered / focused link and returns to the current page's link.
 (function () {
     var nav = document.getElementById('site-nav'), ink = nav && nav.querySelector('.nav-ink');
     if (!nav || !ink) return;
-    var links = Array.prototype.slice.call(nav.querySelectorAll('a'));
-    function active() { return nav.querySelector('a.nav-active'); }
+    var links = Array.prototype.slice.call(nav.querySelectorAll(':scope > a, :scope > .nav-dd > .nav-dd-btn'));
+    function active() { return nav.querySelector(':scope > a.nav-active, :scope > .nav-dd > .nav-dd-btn.nav-active'); }
     function place(link, animate) {
         if (!link || window.innerWidth <= 768) { ink.classList.remove('is-on'); return; }
         var pad = parseFloat(getComputedStyle(link).paddingLeft) || 12;
         if (!animate) ink.style.transition = 'none';
         ink.style.width = Math.max(link.offsetWidth - pad * 2, 8) + 'px';
-        ink.style.transform = 'translate(' + (link.offsetLeft + pad) + 'px,' + (link.offsetTop + link.offsetHeight - 1) + 'px)';
+        // Measure against the nav: the Plugins button sits inside the positioned .nav-dd, so offsetLeft would be 0.
+        var r = link.getBoundingClientRect(), n = nav.getBoundingClientRect();
+        ink.style.transform = 'translate(' + (r.left - n.left + pad) + 'px,' + (r.bottom - n.top - 1) + 'px)';
         ink.classList.add('is-on');
         if (!animate) { void ink.offsetWidth; ink.style.transition = ''; }
     }

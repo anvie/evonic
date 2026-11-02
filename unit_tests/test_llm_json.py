@@ -35,33 +35,6 @@ def test_non_dict_top_level_skipped():
     assert extract_first_json(None) is None
 
 
-def test_thought_experiment_regression():
-    """The executor's simulator must survive verdict JSON with trailing prose."""
-    import threading
-    from unittest.mock import MagicMock
-    from backend.agent_runtime.atg.executor import _ExecCtx, _thought_experiment
-    from backend.agent_runtime.atg.graph import TaskDAG, TaskNode
-
-    dag = TaskDAG(root_goal='g')
-    node = TaskNode(id='n1', goal='write file', tool='write_file',
-                    args_template={'file_path': 'x', 'content': 'y'},
-                    outputs=['result'])
-    dag.add_node(node)
-
-    llm = MagicMock()
-    llm.chat_completion.return_value = {
-        'success': True,
-        'response': {'choices': [{'message': {'content':
-            '{"n1": {"verdict": "proceed", "reason": "ok"}} Everything checks out {fine}.'}}]}}
-    ctx = _ExecCtx(agent={'id': 'a'}, agent_context={'id': 'a'},
-                   runtime={'llm': llm, 'llm_lock': threading.Lock()},
-                   builtin_exec=None, real_exec=None, chatlog=[], tool_trace=[],
-                   timeline=[], session_id='s', stop_event=threading.Event())
-    verdicts = _thought_experiment(ctx, dag, [(node, 'write_file',
-                                               {'file_path': 'x', 'content': 'y'})], {})
-    assert verdicts == {'n1': {'verdict': 'proceed', 'reason': 'ok'}}
-
-
 # ── complete_truncated_json ──────────────────────────────────────────────────
 
 def test_truncated_after_nested_object_and_comma():

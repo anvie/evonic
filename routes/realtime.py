@@ -17,7 +17,7 @@ realtime_bp = Blueprint('realtime', __name__)
 
 HEARTBEAT_INTERVAL = 15
 SQLITE_MAX_ID = 2**63 - 1
-_ALLOWED_CHANNELS = {'chat', 'status', 'approvals', 'update', 'workplace', 'kanban'}
+_ALLOWED_CHANNELS = {'chat', 'status', 'approvals', 'questions', 'update', 'workplace', 'kanban'}
 
 
 def _json_default(value):
@@ -108,6 +108,17 @@ def _build_snapshot(channels: set[str], session_id: str | None = None,
                 }))
         except Exception as exc:
             log.warning('realtime approval snapshot failed: %s', exc)
+
+    if 'questions' in channels:
+        try:
+            from backend.ask_user_store import browser_notice, question_registry
+            from models.db import db
+            for pending in question_registry.pending_all():
+                agent = db.get_agent(pending.agent_id) or {}
+                events.append(('questions', 'question_required',
+                               browser_notice(pending, agent.get('name', ''))))
+        except Exception as exc:
+            log.warning('realtime question snapshot failed: %s', exc)
 
     if 'update' in channels:
         try:

@@ -917,7 +917,6 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
         'workplace_id': agent.get('workplace_id'),
         'workplace_switch_enabled': bool(agent.get('workplace_switch_enabled')),
         'send_file_allowed_path_regex': agent.get('send_file_allowed_path_regex', ''),
-        'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
         'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
         'always_execute': bool(agent.get('always_execute')),
     }
@@ -981,6 +980,12 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
     # Auto-assign transcribe_audio for audio-enabled agents.
     if agent.get('audio_enabled'):
         assigned_ids.add('transcribe_audio')
+
+    # ask_user follows the agent's setting, even if assigned by hand.
+    if agent.get('ask_user_enabled', 1):
+        assigned_ids.add('ask_user')
+    else:
+        assigned_ids.discard('ask_user')
 
     # Auto-assign monitor wherever bash is available — it is the opt-in way to
     # be notified about background processes, which only bash can start.

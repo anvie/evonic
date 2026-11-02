@@ -12,7 +12,7 @@ from app import app
 
 def _model(model_id="test/playground"):
     return db.create_model({
-        "id": model_id, "name": model_id, "type": "remote", "provider": "test",
+        "id": model_id, "name": model_id, "type": "decision", "provider": "test",
         "model_name": "playground", "enabled": True,
         "capabilities": {"decision": {"enabled": True, "structured_output": True,
             "schema_versions": ["decision-schema/v1"],

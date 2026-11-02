@@ -565,7 +565,7 @@ def _format_messages_for_summary(messages: list) -> str:
             continue
         # Skip bash_exec and slash_command — these are direct executions handled
         # outside the LLM and must not leak into the recap/summary context.
-        if isinstance(meta, dict) and (meta.get('bash_exec') or meta.get('slash_command')):
+        if isinstance(meta, dict) and (meta.get('bash_exec') or meta.get('slash_command') or meta.get('no_memory')):
             continue
         lines.append(f"{role}: {content}")
     return "\n".join(lines)
@@ -587,7 +587,7 @@ def _tail_messages_from_entries(entries: list) -> list:
     for entry in entries:
         etype = entry.get('type', '')
         meta = entry.get('metadata') or {}
-        if meta.get('bash_exec') or meta.get('slash_command'):
+        if meta.get('bash_exec') or meta.get('slash_command') or meta.get('no_memory'):     # no_memory: not to be remembered
             continue
         if etype == 'user':
             role = 'user'
@@ -610,7 +610,7 @@ def _format_entries_for_summary(entries: list) -> str:
         # Skip bash_exec and slash_command — these are direct executions handled
         # outside the LLM and must not leak into the recap/summary context.
         meta = entry.get('metadata') or {}
-        if meta.get('bash_exec') or meta.get('slash_command'):
+        if meta.get('bash_exec') or meta.get('slash_command') or meta.get('no_memory'):     # no_memory: not to be remembered
             continue
         if etype == 'user':
             lines.append(f"USER: {content}")

@@ -49,7 +49,7 @@ MAX_INJECTIONS_PER_LOOP = 5
 #
 # The interceptor runs at the *single* tool-execution chokepoint
 # (``llm_call._execute_tool_core``) so every execution path (serial loop,
-# parallel pool, ATG DAG nodes) is covered.  It returns a synthetic success so
+# parallel pool) is covered.  It returns a synthetic success so
 # the loop behaves as if the effect happened, while recording the call in a
 # "simulated outbox" surface the UI can display.  It is a strict no-op for
 # normal (non-simulation) agents.

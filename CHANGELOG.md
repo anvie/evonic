@@ -2,14 +2,72 @@
 
 ## [Unreleased]
 
-### Features
+### Improvements
 
-- ask_user questions now work on Telegram: each question arrives as a message with inline-keyboard buttons (tap an option, tick several and tap Done for multi-select, or Cancel), and typing a message answers in your own words. Tools can declare `"channels": [...]` to be listed only on those channel types. Disabling the plugin now closes any open question in both the web chat and Telegram.
-- With DMSS enabled in enforce mode, the DMSS model now checks a command first and a confident decision is final. HMADS runs only as the fallback when DMSS is unusable (timeout, provider error, open circuit breaker, malformed answer, or confidence below `minimum_confidence`). HMADS no longer acts as a floor on DMSS decisions. Shadow mode is unchanged.
+- Navbar: plugin pages now live in a **Plugins** dropdown, grouped by plugin, instead of each adding its own top-level link, so installing plugins no longer overflows the navbar. Use the pin button next to a page to show it as a top-level link again; pins are stored in `nav.pinned_plugin_items`. **Manage plugins** at the top of the dropdown opens the plugins page.
 
 ### Bug Fixes
 
+- Login no longer loops back to the login page on a plain-HTTP deployment. The session and CSRF cookies used to be marked `Secure` unconditionally, so a browser talking to `http://<host>:8080` (anything but `localhost`) discarded them and `POST /login` silently returned to the login form with no error. The `Secure` flag now follows the request scheme: HTTPS (including a TLS-terminating proxy via `X-Forwarded-Proto`) gets `Secure` cookies, plain HTTP gets the same cookies without it. `FORCE_INSECURE_COOKIES` remains the explicit opt-out and is now documented in `.env.example` and the configuration reference.
+- The admin password set in the setup wizard now works immediately: the hash is applied to the running process instead of only being written to `.env` (which is read once at import). The wizard waits for the server restart and then sends you to `/login`; `evonic pass` now tells you a restart is required while the server is running.
+- `.env` is resolved against the project root instead of the process working directory, so a server started from another directory no longer boots without `ADMIN_PASSWORD_HASH` and no longer writes a fresh `SECRET_KEY` (invalidating sessions) on every start.
+- Evonic raises its soft open-file limit to 10240 at startup (capped at the hard limit). The macOS default of 256 was exhausted by persistent per-agent chat database connections, which caused "Too many open files" errors.
+- The HMADS safety floor now applies only to user-defined HMADS rules: built-in rules never override a confident DMSS decision. `git add -A` and `git add .` moved from the built-in rules into user rules (installed once on upgrade), so they can be edited or deleted and still require approval in enforce mode when the floor is on.
+
+## [1.6.0] - 2026-10-31
+
+### Features
+
+- ask_user questions now work on Telegram: each question arrives as a message with inline-keyboard buttons (tap an option, tick several and tap Done for multi-select, or Cancel), and typing a message answers in your own words. Tools can declare `"channels": [...]` to be listed only on those channel types. Disabling the plugin now closes any open question in both the web chat and Telegram.
+- Browser notifications when an agent asks a question or a command needs approval, so you hear about it while Evonic is in a background tab. Enable them with **Notify me in this browser** on the question card or the approval modal. A question doesn't notify while you are watching that agent's chat, and an approval doesn't notify while an Evonic tab is focused. Needs HTTPS or localhost and at least one open Evonic tab.
+- Ask User Question is now built into Evonic instead of a plugin. Every agent has an **Ask User Questions** toggle under *Tools & capabilities* (on by default), and no tool assignment is needed. Turning it off removes the tool and closes any open question. On upgrade, the old plugin's tool assignments and enable setting are removed, and a leftover `plugins/ask_user/` folder is ignored.
+- Models now have a **Type**, either **LLM** or **Decision**, replacing the descriptive Remote/Local field and the separate "Decision Models capability" checkbox. Decision models only serve Decision Profiles and DMSS, and they are hidden from agent and chat model pickers. On upgrade, models that advertised decision support become decision models; a model that agents also used for chat stays an LLM, and a decision copy takes over its Decision Profile references.
+- DMSS now uses a decision model from **System › Models** instead of a raw provider endpoint URL. Pick it on the Safety page; the endpoint and credentials come from the model's provider. On upgrade, a configured `decim_safety.provider_endpoint` (or `DECIM_SAFETY_SYSTEMONE_ENDPOINT`) moves into a SystemOne provider and the built-in LiquidAI d1-3B decision model is selected.
+- Clicking a model card in **System › Models** opens its edit dialog.
+- The HMADS safety floor now applies only to user-defined HMADS rules: built-in rules never override a confident DMSS decision. `git add -A` and `git add .` moved from the built-in rules into user rules (installed once on upgrade), so they can be edited or deleted and still require approval in enforce mode when the floor is on.
+- With DMSS enabled in enforce mode, the DMSS model now checks a command first and a confident decision is final. HMADS runs only as the fallback when DMSS is unusable (timeout, provider error, open circuit breaker, malformed answer, or confidence below `minimum_confidence`). HMADS does not act as a floor on DMSS decisions unless the new `hmads_floor` switch is turned on. Shadow mode is unchanged.
+- Safety: DMSS enforce mode takes two explicit switches under "Enforce behaviour" — "Record allowed decisions" (store every allowed check in the activity table, refusals are always stored) and "HMADS safety floor" (score every command with HMADS and let its verdict raise the DMSS severity, never lower it). The floor is off by default so model-first enforcement stays the default; enable it where local rules such as `git add -A` must still require approval. The Provider card again shows a `recording` indicator.
+- Kanban: the board now has a table view with column filters, pagination and bulk actions, so large boards can be reviewed and edited in a dense grid alongside the card view.
+- Safety: a command that would scan the whole root filesystem is now auto-rejected instead of prompting for approval, so a runaway `find /` can no longer stall a session on an approval dialog.
+- The task tool gained an `update` action, so specific tasks can be patched by ID instead of replacing the whole list.
+
+### Improvements
+
+- Model switcher: the model search input takes focus whenever the dialog opens, so typing starts filtering immediately.
+- Tooling: SSH and Evonet `bash` and `runpy` calls resolve the host `PATH`, so commands and interpreters are found the same way as in a normal login shell.
+- Safety: the DMSS activity table is simplified, the telemetry API exposes agent, `decided_by` and verdict filters, and each row records the agent id and per-engine check time.
+- Chat: the `/goal` `[SYSTEM]` event renders before the thinking bubble.
+- Kanban: tidied Add Task modal layout and dropzone, pointer cursors on all board buttons, and the Create Task button aligned to the right.
+- Agents: attachment notes are kept on messages injected mid-loop, and background job logs are readable on macOS hosts.
+- Evonet: the desktop GUI records crashes, can no longer leave the server-switch guard stuck, and no longer freezes on macOS during long sessions.
+- Scheduler: run dates are shown in the browser local timezone.
+
+### Removed
+
+- **`evonic backup --encrypt` has been removed, together with the `cli/backup_crypto.py` module behind it.** The module was a hand-written "AES-256-GCM" implementation with no test coverage, and it did not produce AES at all: the computed S-box collapsed to a single constant value (256 identical entries, not a bijection) because `_gf28_inv()` returned `a^127` instead of `a^254` and the affine transform was chained on already-mutated values. Files it wrote were effectively XOR-masked rather than encrypted, while the FIPS-197 AES-256 block vector and the NIST GCM test vector both failed. It was also unusably slow (about 18.6 KB/s, roughly 22 hours for a 1.4 GB archive). `--encrypt` now fails with an explanatory error that points to file-level encryption with `gpg` or `age`, so existing scripts break loudly instead of silently writing an unencrypted backup. `evonic restore` rejects any archive that is not plain gzip, bzip2 or zip and explains that encrypted archives are no longer supported. Backups created earlier with `--encrypt` can no longer be restored by this tool. Plain backups are unaffected.
+- **The Atomic Task Graph (ATG) has been removed.** ATG compiled a task into a fixed DAG before any context was gathered, which fits poorly with exploratory coding and ops work, and its benefit was never measured. The `atg` package, the `compile_task_graph` builtin, the `enable_atg` flag, and CMP's dependence on ATG state are gone; persisted session state that still carries an `atg` key deserializes unchanged, and the unused `enable_atg` column is left in place.
+- **The `sshc` tool has been removed**, together with its per-session SSH connection backend. Use the SSH workplace and the regular bash tool instead.
+
+### Bug Fixes
+
+- Safety telemetry no longer goes silently empty: `decim_safety_events` rows written by older builds were unreadable (and new rows unwritable) because the additive migration only covered `agent_id` and `hmads_duration_ms`, while the DDL and the code use `detection_type` and `detection_command`. The migration now covers both, and an unreadable store reports "activity storage unavailable" (with the reason) instead of an empty activity list. Every DMSS decision also writes one `[dmss-audit]` log line stating whether and why it was recorded.
 - Fixed the Evonet desktop GUI freezing on macOS during long sessions: the log view kept the entire history in a single rich-text segment and the vendored Fyne re-converted that text once per rendered line, making every refresh quadratic (about 168 ms and 250 MiB at 1,000 lines). The conversion now happens once per segment, and log renders are coalesced so at most one update is queued on the UI thread.
+- Safety: environment-prefixed credentials are now redacted, and redaction runs before truncation, so a secret can no longer survive inside a truncated command preview.
+- Safety: refusals that never reach Decim are recorded, so a blocked command can no longer leave no trace.
+- DMSS: the calibrated answer confidence is read from the decision model and truncated states abstain instead of deciding, while `safety.command` outcomes record both HMADS and DMSS output.
+- Models: the endpoint ping now reports thinking models as reachable, and an unconfigured decision model provider is reported clearly instead of failing silently.
+- Escalations: an auto-forwarded agent reply no longer consumes a pending user escalation, and auto-forwarding is suppressed while a human escalation is pending.
+- Providers: saving a provider from the form keeps `api_format=claude_cli`.
+- Runtime: an invalid tool-call state is no longer reported as a context overflow.
+- Image generator: restored the missing `openrouter_enabled` toggle.
+
+### Tests
+
+- Stabilised the test suite for pytest 9.2 and macOS.
+
+### Release Notes
+
+- Version 1.5.7 was never published; this release supersedes it and is numbered 1.6.0 because it carries a breaking surface change (model types, DMSS configuration, and the removal of `evonic backup --encrypt`, ATG and `sshc`).
 
 ## [1.5.6] - 2026-10-24
 

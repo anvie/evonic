@@ -26,6 +26,57 @@ def _decode_capabilities(model: Dict[str, Any]) -> Dict[str, Any]:
     return model
 
 
+# A model is either a chat LLM or a structured decision model, never both.
+# Pre-split rows stored descriptive text (e.g. "remote"/"local") here; read as LLM.
+MODEL_TYPES = ("llm", "decision")
+LEGACY_MODEL_TYPES = ("remote", "local")
+_DECISION_OPERATIONS = ("decision", "strict_output")
+
+
+def normalize_model_type(value: Any) -> str:
+    return "decision" if value == "decision" else "llm"
+
+
+def capabilities_for_type(model_type: str, vision_supported: Any, current: Any = None) -> Dict[str, Any]:
+    """Derive model-capabilities/v1 from the model type.
+
+    Existing evidence (e.g. a seeded ``verified`` decision model) is kept where
+    it agrees with the type; operations belonging to the other type are dropped.
+    """
+    current = current if isinstance(current, dict) else {}
+    operations = dict(current.get("operations") or {})
+    if model_type == "decision":
+        operations = {key: operations.get(key) or "advertised" for key in _DECISION_OPERATIONS}
+        operations = {key: "advertised" if value == "unsupported" else value for key, value in operations.items()}
+        schema_versions = current.get("schema_versions") or ["decision-schema/v1"]
+    else:
+        operations = {key: value for key, value in operations.items() if key not in _DECISION_OPERATIONS}
+        operations.setdefault("chat", "advertised")
+        if vision_supported:
+            operations.setdefault("vision", "advertised")
+        else:
+            operations.pop("vision", None)
+        schema_versions = []
+    return {
+        "version": "model-capabilities/v1",
+        "operations": operations,
+        "schema_versions": schema_versions,
+        "confidence": current.get("confidence") or "unsupported",
+        "data_egress": current.get("data_egress") or ["public"],
+    }
+
+
+def _normalize_model_data(model_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply type-derived invariants before a full-row insert."""
+    data = dict(model_data)
+    data["type"] = normalize_model_type(data.get("type"))
+    if data["type"] == "decision":
+        # Chat-only settings have no meaning for a decision model.
+        data.update(is_default=0, thinking=0, thinking_budget=0, vision_supported=0)
+    data["capabilities"] = capabilities_for_type(data["type"], data.get("vision_supported"), data.get("capabilities"))
+    return data
+
+
 class ModelsMixin:
     """LLM model CRUD and model selection. Requires self._connect() from the host class."""
 
@@ -38,11 +89,11 @@ class ModelsMixin:
             return [_decode_capabilities(dict(row)) for row in cursor.fetchall()]
 
     def get_enabled_llm_models(self) -> List[Dict[str, Any]]:
-        """Return list of only enabled model configs (enabled=1)."""
+        """Return enabled chat models (enabled=1); decision models are excluded."""
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute(f"SELECT {_MODEL_COLUMNS} FROM llm_models WHERE enabled = 1 ORDER BY name LIMIT 1000")
+            cursor.execute(f"SELECT {_MODEL_COLUMNS} FROM llm_models WHERE enabled = 1 AND COALESCE(type, '') != 'decision' ORDER BY name LIMIT 1000")
             return [_decode_capabilities(dict(row)) for row in cursor.fetchall()]
 
     def save_llm_models(self, models_list: List[Dict[str, Any]]) -> None:
@@ -51,7 +102,7 @@ class ModelsMixin:
             cursor = conn.cursor()
             # Clear existing models
             cursor.execute("DELETE FROM llm_models")
-            for m in models_list:
+            for m in map(_normalize_model_data, models_list):
                 cursor.execute("""
                     INSERT INTO llm_models (id, name, type, provider, base_url, api_key,
                         model_name, max_tokens, timeout, thinking, thinking_budget,
@@ -158,7 +209,7 @@ class ModelsMixin:
         """Set agent's primary model. model_id can be None to clear."""
         if model_id:
             model = self.get_model_by_id(model_id)
-            if not model:
+            if not model or model.get('type') == 'decision':
                 return False
             model_id = model['id']  # canonicalize legacy ids
         with self._connect() as conn:
@@ -196,7 +247,7 @@ class ModelsMixin:
         """Set agent's fallback model. model_id can be None to clear."""
         if model_id:
             model = self.get_model_by_id(model_id)
-            if not model:
+            if not model or model.get('type') == 'decision':
                 return False
             model_id = model['id']  # canonicalize legacy ids
         with self._connect() as conn:
@@ -214,6 +265,7 @@ class ModelsMixin:
         Without an explicit id, generates 'provider/model_name'.
         Raises ValueError if an explicit id is already taken.
         """
+        model_data = _normalize_model_data(model_data)
         model_id = model_data.get('id')
         if model_id:
             if self._model_id_exists(model_id):
@@ -267,6 +319,14 @@ class ModelsMixin:
         updates = {k: v for k, v in model_data.items() if k in allowed}
         if not updates:
             return False
+        if updates.keys() & {'type', 'capabilities', 'vision_supported', 'is_default'}:
+            current = self.get_model_by_id(model_id)
+            if current:
+                merged = _normalize_model_data({**current, **updates})
+                updates['type'] = merged['type']
+                updates['capabilities'] = merged['capabilities']
+                if merged['type'] == 'decision':
+                    updates.update({k: merged[k] for k in ('is_default', 'thinking', 'thinking_budget', 'vision_supported')})
         if 'capabilities' in updates:
             updates['capabilities'] = json.dumps(updates['capabilities'] or {}, sort_keys=True)
         set_clause = ", ".join(f"{k} = ?" for k in updates)

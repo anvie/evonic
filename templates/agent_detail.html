@@ -3,6 +3,7 @@
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/state-ui.css') }}?v=18">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ask-user.css') }}?v=2">
 <!-- Toast Container -->
 <style>
 footer { display: none; }
@@ -70,6 +71,9 @@ html.dark .chat-composer #chat-input::placeholder { color: #6b7280; }
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 html.dark #chat-command-hint { color: #cbd5e1; background: rgb(17 24 39 / .85); border-color: #374151; }
 #chat-command-hint.hidden { display: none; }
+#chat-stop-hint { position: absolute; left: 1rem; bottom: calc(100% + .375rem); padding: .25rem .625rem; border-radius: .5rem; font-size: .75rem; line-height: 1rem; color: #b91c1c; background: rgb(254 242 242 / .92); border: 1px solid #fecaca; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); pointer-events: none; }
+html.dark #chat-stop-hint { color: #fca5a5; background: rgb(69 10 10 / .85); border-color: #7f1d1d; }
+#chat-stop-hint.hidden { display: none; }
 .chat-icon-btn { flex: none; width: 2.5rem; height: 2.5rem; display: inline-flex; align-items: center; justify-content: center; border-radius: .625rem;
     border: 1px solid #e5e7eb; background: transparent; color: #6b7280; cursor: pointer;
     transition: color .15s, border-color .15s, background-color .15s, transform .12s; }
@@ -476,7 +480,7 @@ html.dark .adv-sec-n { color: #c7d2fe; background: rgb(99 102 241 / .22); }
 .adv-search-count:empty { display: none; }
 .adv-empty { padding: 2rem 1rem; text-align: center; font-size: .875rem; color: #94a3b8; }
 .adv-empty.hidden { display: none; }
-@media (min-width: 1024px) { .gpanel-vars:has(#plugin-settings-card.hidden) { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 1024px) { .gpanel-vars { grid-template-columns: minmax(0, 1fr); } }
 .gtab:focus { outline: none; }
 .adv-static .adv-head { cursor: default; pointer-events: none; }
 .adv-static .adv-arrow { display: none; }
@@ -1491,6 +1495,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
             <button type="button" role="tab" class="gtab" data-gp="behavior" aria-selected="false" onclick="switchGeneralTab('behavior')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg><span>Behavior</span></button>
             <button type="button" role="tab" class="gtab" data-gp="advanced" aria-selected="false" onclick="switchGeneralTab('advanced')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></svg><span>Advanced</span></button>
             <button type="button" role="tab" class="gtab" data-gp="variables" aria-selected="false" onclick="switchGeneralTab('variables')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21s-4-3-4-9 4-9 4-9"/><path d="M16 3s4 3 4 9-4 9-4 9"/></svg><span>Variables</span></button>
+            <button type="button" role="tab" class="gtab hidden" id="gtab-plugins" data-gp="plugins" aria-selected="false" onclick="switchGeneralTab('plugins')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg><span>Plugins</span></button>
         </div>
         <div class="gpanel" data-gp="general" role="tabpanel">
         <div class="gp-head"><h2>General</h2><p>Name, avatar, model and where this agent runs.</p></div>
@@ -1794,17 +1799,6 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                             <div class="adv-item adv-toggle" data-adv-item>
 <div>
                         <label class="flex items-center gap-3 cursor-pointer select-none">
-                            {{ toggle_widget(id='agent-atg-enabled', checked=agent.enable_atg) }}
-                            <div>
-                                <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Atomic Task Graph (experimental)</span>
-                                <p class="text-xs text-gray-400 mt-0.5">Compile complex tasks into a dependency graph with parallel execution and localized error repair. Requires Agent State; only applies to tasks classified as complex.</p>
-                            </div>
-                        </label>
-                    </div>
-                            </div>
-                            <div class="adv-item adv-toggle" data-adv-item>
-<div>
-                        <label class="flex items-center gap-3 cursor-pointer select-none">
                             {{ toggle_widget(id='agent-cmp-enabled', checked=agent.enable_cmp) }}
                             <div>
                                 <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Context Memory Path (experimental)</span>
@@ -1819,7 +1813,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                             {{ toggle_widget(id='agent-always-execute', checked=agent.always_execute) }}
                             <div>
                                 <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Always Execute</span>
-                                <p class="text-xs text-gray-400 mt-0.5">Force agent to stay in execute mode — bypasses plan/execute blocking. Write tools are always available while CMP and ATG remain active. Requires Agent State.</p>
+                                <p class="text-xs text-gray-400 mt-0.5">Force agent to stay in execute mode — bypasses plan/execute blocking. Write tools are always available while CMP remains active. Requires Agent State.</p>
                             </div>
                         </label>
                     </div>
@@ -1880,6 +1874,17 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                             <div>
                                 <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Bash Exec (web <code>!</code>)</span>
                                 <p class="text-xs text-gray-400 mt-0.5">Let web users run a shell command directly by prefixing the message with <code>!</code> (e.g. <code>!ls -la</code>). Runs immediately, bypassing the agent — its output is hidden from the agent's context. Not available on channels (Telegram/WhatsApp). Default ON for the super agent.</p>
+                            </div>
+                        </label>
+                    </div>
+                            </div>
+                            <div class="adv-item adv-toggle" data-adv-item>
+<div>
+                        <label class="flex items-center gap-3 cursor-pointer select-none">
+                            {{ toggle_widget(id='agent-ask-user-enabled', checked=(agent.ask_user_enabled is none or agent.ask_user_enabled)) }}
+                            <div>
+                                <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Ask User Questions</span>
+                                <p class="text-xs text-gray-400 mt-0.5">Let the agent pause mid-turn and ask you multiple-choice questions with the <code>ask_user</code> tool. Questions show as a card above the chat input in the web chat, or as buttons on Telegram. Turning this off closes any question that is still open. Default ON.</p>
                             </div>
                         </label>
                     </div>
@@ -2033,6 +2038,11 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                     </div>
                 </div>
             </div>
+        </div>
+        </div>
+        <div class="gpanel hidden" data-gp="plugins" role="tabpanel">
+        <div class="gp-head"><h2>Plugins</h2><p>Per-agent settings declared by active plugins.</p></div>
+        <div class="grid grid-cols-1 gap-6 items-start">
             <!-- Plugin Settings Card (dynamic, hidden if no plugin declares agent_settings) -->
             <div id="plugin-settings-card" class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6 hidden">
                 <div class="gcard-h"><span class="gcard-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></span><div><h3>Plugin Settings</h3><p>Per-agent settings from active plugins.</p></div></div>
@@ -2562,6 +2572,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                         <div id="chat-bash-hint" class="hidden" aria-live="polite"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg><span class="bh-label">Bash mode</span><span class="bh-sub">shell command</span><span class="bh-hist">↑↓ history</span></div>
                         <!-- Floats above the card so showing/hiding it never shifts the layout -->
                         <div id="chat-command-hint" class="hidden" aria-live="polite"></div>
+                        <div id="chat-stop-hint" class="hidden" aria-live="polite">Press Esc once more to stop the current operation</div>
                         <!-- Pending image/file attachments for the next message -->
                         <div id="chat-file-preview" class="hidden chat-anim-in flex flex-wrap gap-2 mb-2"></div>
                         <textarea id="chat-input" placeholder="Type a message..." rows="1"
@@ -3145,10 +3156,11 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=75" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=76" defer></script>
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1" defer></script>
-<script src="{{ url_for('static', filename='js/agent-state.js') }}?v=12" defer></script>
+<script src="{{ url_for('static', filename='js/agent-state.js') }}?v=14" defer></script>
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
+<script src="{{ url_for('static', filename='js/ask-user.js') }}?v=2" defer></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 // AGENT_ID/ENABLE_AGENT_STATE are mutable: softSwitchAgent() retargets the page
@@ -3483,7 +3495,7 @@ document.addEventListener('DOMContentLoaded', () => { let k = 'general'; try { k
 
 // ---- Settings search: every page of the Settings tab (General / Behavior / Advanced / Variables) ----
 const GeneralSearch = (function () {
-    const PAGES = { general: 'General', behavior: 'Behavior', advanced: 'Advanced', variables: 'Variables' };
+    const PAGES = { general: 'General', behavior: 'Behavior', advanced: 'Advanced', variables: 'Variables', plugins: 'Plugins' };
     let items = [], sel = -1, markTimer = null, input = null, box = null;
     const clean = t => (t || '').replace(/\s+/g, ' ').trim();
     const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -4158,7 +4170,6 @@ const AgentAutoSave = {
         { id: 'agent-buffer-seconds', key: 'message_buffer_seconds', type: 'float' },
         { id: 'agent-send-intermediate', key: 'send_intermediate_responses', type: 'bool' },
         { id: 'agent-state-enabled', key: 'enable_agent_state', type: 'bool' },
-        { id: 'agent-atg-enabled', key: 'enable_atg', type: 'bool' },
         { id: 'agent-cmp-enabled', key: 'enable_cmp', type: 'bool' },
         { id: 'agent-always-execute', key: 'always_execute', type: 'bool' },
         { id: 'agent-parallel-exec', key: 'disable_parallel_tool_execution', type: 'bool' },
@@ -4168,6 +4179,7 @@ const AgentAutoSave = {
         { id: 'agent-artifacts', key: 'artifacts_enabled', type: 'bool' },
         { id: 'agent-safety-checker', key: 'safety_checker_enabled', type: 'bool' },
         { id: 'agent-bash-exec', key: 'bash_exec_enabled', type: 'bool' },
+        { id: 'agent-ask-user-enabled', key: 'ask_user_enabled', type: 'bool' },
         { id: 'agent-message-wrapper', key: 'message_wrapper_enabled', type: 'bool' },
         { id: 'agent-run-as-user', key: 'run_as_user', type: 'strnull' },
         { id: 'agent-memory-engine', key: 'memory_engine', type: 'selnull' },
@@ -4324,6 +4336,10 @@ async function loadPluginSettings() {
         const plugins = data.plugin_settings || [];
         const container = document.getElementById('plugin-settings-container');
         const card = document.getElementById('plugin-settings-card');
+        // Safe inside a quoted attribute or element body (escapeHtml alone leaves quotes alone).
+        const attr = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const ptab = document.getElementById('gtab-plugins');
+        if (ptab) ptab.classList.toggle('hidden', !plugins.length);
         if (!plugins.length) { card.classList.add('hidden'); return; }
         card.classList.remove('hidden');
         container.innerHTML = '';
@@ -4347,11 +4363,36 @@ async function loadPluginSettings() {
                             </div>
                         </label>
                     </div>`;
+                } else if (s.type === 'select') {
+                    const opts = (s.options || []).map(o => {
+                        const v = typeof o === 'object' ? o.value : o;
+                        const l = typeof o === 'object' ? (o.label || o.value) : o;
+                        return `<option value="${escapeHtml(String(v))}" ${String(v) === String(s.value) ? 'selected' : ''}>${escapeHtml(String(l))}</option>`;
+                    }).join('');
+                    container.innerHTML += `
+                    <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">${s.label} <span class="text-xs text-gray-400">(${plugin.plugin_name})</span></label>
+                        <select id="${id}" class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+                                onchange="savePluginSetting('${plugin.plugin_id}', '${s.name}', this.value)">${opts}</select>
+                        <p class="text-xs text-gray-400 mt-1">${s.description || ''}</p>
+                    </div>`;
+                } else if (s.type === 'textarea') {
+                    // Longer free text; grows with its content (up to 400px), then scrolls. `rows` sets the starting height.
+                    const rows = Math.min(Math.max(parseInt(s.rows, 10) || 4, 2), 20);
+                    container.innerHTML += `
+                    <div>
+                        <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">${s.label} <span class="text-xs text-gray-400">(${plugin.plugin_name})</span></label>
+                        <textarea id="${id}" rows="${rows}" data-autogrow placeholder="${attr(s.placeholder || '')}"
+                                  class="w-full p-2.5 border border-gray-300 rounded-md text-sm resize-y focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+                                  oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight+2,400)+'px'"
+                                  onchange="savePluginSetting('${plugin.plugin_id}', '${s.name}', this.value)">${attr(s.value)}</textarea>
+                        <p class="text-xs text-gray-400 mt-1">${s.description || ''}</p>
+                    </div>`;
                 } else {
                     container.innerHTML += `
                     <div>
                         <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">${s.label} <span class="text-xs text-gray-400">(${plugin.plugin_name})</span></label>
-                        <input type="${s.type === 'number' ? 'number' : 'text'}" id="${id}" value="${s.value ?? ''}"
+                        <input type="${s.type === 'number' ? 'number' : s.type === 'password' ? 'password' : 'text'}" id="${id}" value="${attr(s.value)}"
                                class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
                                onchange="savePluginSetting('${plugin.plugin_id}', '${s.name}', this.value)">
                         <p class="text-xs text-gray-400 mt-1">${s.description || ''}</p>
@@ -4359,6 +4400,10 @@ async function loadPluginSettings() {
                 }
             }
         }
+        container.querySelectorAll('textarea[data-autogrow]').forEach(ta => {
+            ta.style.height = 'auto';
+            ta.style.height = Math.min(ta.scrollHeight + 2, 400) + 'px';
+        });
     } catch (e) {
         console.error('Failed to load plugin settings:', e);
     }
@@ -4470,13 +4515,15 @@ function renderKBFiles() {
         const ep = escapeJsPath(node.path);
         const sizeStr = (node.size != null) ? `<span class="text-xs text-gray-400">${(node.size / 1024).toFixed(1)} KB</span>` : '';
         const prefixStr = node.displayPrefix ? `<span class="text-xs text-gray-400 font-mono">${node.displayPrefix}</span>` : '';
+        const expDate = node.expires ? new Date(node.expires.length === 10 ? node.expires + 'T23:59:59' : node.expires) : null;
+        const expStr = expDate && !isNaN(expDate) ? `<span class="text-xs text-amber-500" title="This document has a lifetime: it is deleted automatically once this date has passed, unless another document links to it. Remove the expires line from its header to keep it for good.">⏳ expires ${expDate.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})}</span>` : '';
         return `<div class="flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-gray-100 transition-colors dark:hover:bg-gray-700 dark:text-gray-300"
                      onclick="editFile('${ep}')">
                     <div class="flex items-center gap-2 min-w-0 flex-1">
                         <span class="text-base flex-shrink-0">📄</span>
                         <div class="flex flex-col min-w-0">
                             <span class="text-sm font-mono text-gray-800 truncate dark:text-gray-200" title="${node.path}">${prefixStr}${node.name}</span>
-                            ${sizeStr}
+                            <span class="flex items-center gap-2">${sizeStr}${expStr}</span>
                         </div>
                     </div>
                     <div class="flex gap-1 flex-shrink-0">
@@ -7232,6 +7279,12 @@ function _handleAgentRealtime(evtName, data, sessionId) {
         _currentTurn.thinkingId = turn;
         return;
     }
+    if (evtName === 'response_chunk' && data.content && !data.is_final) {
+        // Intermediate response: post it in the chat and continue in a fresh thinking bubble.
+        turn = chatUI.splitForIntermediate(turn, data.content, data.timestamp);
+        _currentTurn.thinkingId = turn;
+        return;
+    }
     turn.ingest({event: evtName, data, seq});
     // The agent moved itself mid-turn: break the chat here with the "Workplace switched" divider and
     // carry on in a fresh bubble. Only the display splits; the backend turn is still one chain.
@@ -7728,6 +7781,34 @@ function selectChatCommand(command) {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
 }
+
+// Esc x3 stops the running operation: the 2nd press shows a hint, the 3rd stops.
+let _escPresses = 0;
+let _escTimer = null;
+function _resetEscStop() {
+    _escPresses = 0;
+    clearTimeout(_escTimer);
+    const hint = document.getElementById('chat-stop-hint');
+    if (hint) hint.classList.add('hidden');
+}
+document.addEventListener('keydown', async function (event) {
+    if (event.key !== 'Escape' || event.repeat) return;
+    if (!(_chatBusy || _agentBusy)) { _resetEscStop(); return; }
+    _escPresses++;
+    clearTimeout(_escTimer);
+    _escTimer = setTimeout(_resetEscStop, 2000);
+    if (_escPresses === 2) {
+        document.getElementById('chat-stop-hint')?.classList.remove('hidden');
+    } else if (_escPresses >= 3) {
+        _resetEscStop();
+        try {
+            const sid = await _getChatSessionId();
+            if (sid) await fetch(`/api/sessions/${sid}/stop`, {method: 'POST'});
+        } catch (e) {
+            console.error('Stop failed:', e);
+        }
+    }
+});
 
 function chatInputKeydown(event) {
     if (window._chatBash && event.key === 'Escape' && !getVisibleChatCommands().length) {

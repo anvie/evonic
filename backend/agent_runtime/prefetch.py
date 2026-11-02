@@ -150,6 +150,10 @@ class TurnPrefetcher:
             if agent.get('vision_enabled', 1) and 'describe_image' not in assigned_tool_ids:
                 assigned_tool_ids.append('describe_image')
 
+            # ask_user is on unless the agent turned it off.
+            if agent.get('ask_user_enabled', 1) and 'ask_user' not in assigned_tool_ids:
+                assigned_tool_ids.append('ask_user')
+
             # Agents with audio_enabled automatically get transcribe_audio.
             if agent.get('audio_enabled') and 'transcribe_audio' not in assigned_tool_ids:
                 assigned_tool_ids.append('transcribe_audio')
@@ -195,7 +199,6 @@ class TurnPrefetcher:
                 'audio_enabled': agent.get('audio_enabled', 0),
                 'messaging_acl': agent.get('messaging_acl'),
                 'messaging_acl_mode': agent.get('messaging_acl_mode', 'whitelist'),
-                'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
                 'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
                 'workplace_switch_enabled': bool(agent.get('workplace_switch_enabled')),
             }

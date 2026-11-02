@@ -26,6 +26,7 @@ from typing import Dict, Any, List, Optional, Callable, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 from backend.plugin_sdk import PluginSDK
+from backend.version import minimum_version_error
 from backend.plugin_hooks import (
     _tool_guards, _message_interceptors, _builtin_suppressors,
     _turn_gates, _tool_result_gates,
@@ -36,6 +37,10 @@ _logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGINS_DIR = os.path.join(BASE_DIR, 'plugins')
+
+# Plugins that became core features. A leftover copy in plugins/ is ignored and
+# cannot be reinstalled, so it never registers a second copy of the feature.
+RETIRED_PLUGIN_IDS = frozenset({'ask_user'})
 
 # Supported events
 VALID_EVENTS = {
@@ -89,6 +94,11 @@ class PluginManager:
         self._event_bridges.clear()
         for plugin in self.list_plugins():
             if self._is_plugin_enabled(plugin['id']):
+                too_old = minimum_version_error(plugin.get('min_evonic_version'), f'Plugin "{plugin["id"]}"')
+                if too_old:                       # e.g. Evonic was downgraded after it was enabled
+                    _logger.warning("Not loading plugin: %s", too_old)
+                    self.add_log(plugin['id'], 'error', f'Not loaded: {too_old}')
+                    continue
                 self._load_plugin(plugin['id'])
 
     def _load_plugin(self, plugin_id: str, manifest: dict = None):
@@ -323,8 +333,10 @@ class PluginManager:
                     "Failed to clear __pycache__ for %s: %s", plugin_id, e
                 )
         
+        # The database is the authority on whether a plugin is on (as at startup); the "enabled" flag in plugin.json
+        # is only a default and can be stale, which used to leave a plugin unloaded after a settings save.
         manifest = self._read_manifest(plugin_id)
-        if manifest and manifest.get('enabled', False):
+        if manifest and self._is_plugin_enabled(plugin_id):
             self._load_plugin(plugin_id, manifest=manifest)
 
     # ── Logging ──
@@ -419,6 +431,8 @@ class PluginManager:
         if not os.path.isdir(PLUGINS_DIR):
             return plugins
         for name in sorted(os.listdir(PLUGINS_DIR)):
+            if name in RETIRED_PLUGIN_IDS:
+                continue
             plugin_dir = os.path.join(PLUGINS_DIR, name)
             manifest_path = os.path.join(plugin_dir, 'plugin.json')
             if not os.path.isfile(manifest_path):
@@ -527,6 +541,7 @@ class PluginManager:
                         'label': item.get('label', ''),
                         'path': item.get('path', ''),
                         'plugin_id': plugin['id'],
+                        'plugin_name': plugin.get('name') or plugin['id'],
                     })
         self._nav_cache = items
         return items
@@ -676,6 +691,12 @@ class PluginManager:
             plugin_id = manifest.get('id', '')
             if not re.match(r'^[a-zA-Z0-9_-]+$', plugin_id):
                 return {'error': f'Invalid plugin id: {plugin_id}'}
+            if plugin_id in RETIRED_PLUGIN_IDS:
+                return {'error': f'Plugin "{plugin_id}" is now built into Evonic and cannot be installed.'}
+
+            too_old = minimum_version_error(manifest.get('min_evonic_version'), f'Plugin "{plugin_id}"')
+            if too_old:
+                return {'error': too_old}
 
             plugin_src = os.path.dirname(manifest_path)
             plugin_dest = os.path.join(PLUGINS_DIR, plugin_id)
@@ -702,6 +723,12 @@ class PluginManager:
         plugin_id = manifest.get('id', '')
         if not re.match(r'^[a-zA-Z0-9_-]+$', plugin_id):
             return {'error': f'Invalid plugin id: {plugin_id}'}
+        if plugin_id in RETIRED_PLUGIN_IDS:
+            return {'error': f'Plugin "{plugin_id}" is now built into Evonic and cannot be installed.'}
+
+        too_old = minimum_version_error(manifest.get('min_evonic_version'), f'Plugin "{plugin_id}"')
+        if too_old:
+            return {'error': too_old}
 
         plugin_dest = os.path.join(PLUGINS_DIR, plugin_id)
         source_norm = os.path.normpath(os.path.abspath(source_dir))
@@ -741,8 +768,13 @@ class PluginManager:
 
     def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> Dict[str, Any]:
         """Enable or disable a plugin. State is stored in DB, not in plugin.json."""
-        if not self._read_manifest(plugin_id):
+        manifest = self._read_manifest(plugin_id)
+        if not manifest:
             return {'error': f'Plugin not found: {plugin_id}'}
+        if enabled:
+            too_old = minimum_version_error(manifest.get('min_evonic_version'), f'Plugin "{plugin_id}"')
+            if too_old:
+                return {'error': too_old}
 
         from models.db import db
         db.set_setting(f'plugin_enabled:{plugin_id}', '1' if enabled else '0')
@@ -894,6 +926,11 @@ class PluginManager:
             if var_type == 'boolean':
                 db.set_setting(key, '1' if val else '0')
             else:
+                if var_type == 'select':
+                    allowed = [str(o['value'] if isinstance(o, dict) else o)
+                               for o in var_def.get('options') or []]
+                    if str(val) not in allowed:
+                        return {'error': f"Invalid value for {name}: must be one of {', '.join(allowed)}"}
                 db.set_setting(key, str(val))
         return {'success': True}
 

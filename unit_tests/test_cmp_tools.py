@@ -48,18 +48,17 @@ def test_executors_defend_when_disabled():
 # ── new_path ─────────────────────────────────────────────────────────────────
 
 def test_new_path_auto_inits_first_path_from_current_work():
-    ms = AgentState(mode='execute')
-    ms.atg = {'status': 'done', 'dag': {'root_goal': 'build the todoweb app'}}
+    ms = AgentState(mode='execute', plan_file='plan/todoweb.md')
     _, new = _executors(_ctx(ms))
     result = new({'title': 'Invoice for client A', 'goal': 'make invoice',
                   'depends_on': ['A1']})
     assert result.get('path_id') == 'B1'
     # P1 adopted the ongoing work's identity and snapshot
     p1 = ms.cmp['paths']['A1']
-    assert p1['title'] == 'build the todoweb app'
-    assert p1['atg']['status'] == 'done'
+    assert p1['title'] == 'plan/todoweb.md'
+    assert p1['plan_file'] == 'plan/todoweb.md'
     # fresh plan cycle for the new path
-    assert ms.mode == 'plan' and ms.atg is None and ms.plan_file is None
+    assert ms.mode == 'plan' and ms.plan_file is None
     assert ms.auto_trivial is False
 
 
@@ -73,7 +72,7 @@ def test_new_path_starts_trivial_task_in_execute_mode():
     assert result['path_id'] == 'A2'
     assert 'execute mode' in result['result']
     assert ms.mode == 'execute' and ms.auto_trivial is True
-    assert ms.plan_file is None and ms.atg is None
+    assert ms.plan_file is None
 
 
 def test_new_path_invalid_dependency():

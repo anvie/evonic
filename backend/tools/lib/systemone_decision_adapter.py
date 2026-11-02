@@ -29,9 +29,14 @@ def _error(invocation: DecisionInvocation, code: DecisionErrorCode, message: str
                           TimingMetadata(0), 1, error=DecisionError(code, message, retryable))
 
 
+# SystemOne's native question types are choice, score and ``noul``: a true/false statement that is
+# answered with the probability (0..1) that it is true. Evonic's ``boolean`` field kind maps to it.
+_NATIVE_TYPE = {FieldKind.CHOICE: "choice", FieldKind.BOOLEAN: "noul", FieldKind.SCORE: "score"}
+
+
 def _question(field: DecisionField) -> dict[str, Any]:
     question: dict[str, Any] = {
-        "type": field.kind.value,
+        "type": _NATIVE_TYPE[field.kind],
         "instructions": field.description or f"Return the {field.key} decision field.",
         "required": field.required,
         "nullable": field.nullable,
@@ -92,6 +97,16 @@ def _answer_value(answer: Mapping[str, Any], field: DecisionField) -> Any:
     return answer.get(key)
 
 
+def _noul_probability(answer: Mapping[str, Any], field: DecisionField) -> float | None:
+    """The probability that a boolean statement is true, when the provider answered natively."""
+    if field.kind is not FieldKind.BOOLEAN or "value" in answer or "boolean" in answer or "noul" not in answer:
+        return None
+    probability = _unit(answer.get("noul"))
+    if probability is None:
+        raise ValueError("noul out of range")
+    return probability
+
+
 @dataclass
 class SystemOneQuestionsDecisionAdapter:
     """Bounded native SystemOne decision client with normalized provenance."""
@@ -142,10 +157,18 @@ class SystemOneQuestionsDecisionAdapter:
                     raise ValueError("answer missing")
                 confidence = _unit(answer.get("confidence"))
                 candidates = _candidates(answer.get("candidates", answer.get("probabilities")))
-                if confidence is None:
+                probability = _noul_probability(answer, field)
+                if probability is not None:
+                    # P(true) decides the value; the confidence is how far it is from a coin flip's other side.
+                    selected = probability >= 0.5
+                    candidates = (DecisionCandidate(True, None, probability),
+                                  DecisionCandidate(False, None, 1.0 - probability))
+                    confidence = probability if selected else 1.0 - probability
+                else:
                     selected = _answer_value(answer, field)
-                    confidence = next((item.probability for item in candidates if item.value == selected and item.probability is not None), None)
-                fields.append(DecisionFieldResult(field.key, _answer_value(answer, field), confidence, candidates))
+                    if confidence is None:
+                        confidence = next((item.probability for item in candidates if item.value == selected and item.probability is not None), None)
+                fields.append(DecisionFieldResult(field.key, selected, confidence, candidates))
             model_id = body.get("model_id") if isinstance(body.get("model_id"), str) else None
             elapsed_ms = int((time.monotonic() - started) * 1000)
             result = DecisionResult(invocation.profile, invocation.schema.version, tuple(fields),

@@ -43,6 +43,10 @@ def _execute_tool_core(fn_name: str, args: dict,
     sim_result = intercept_simulation_outbound(fn_name, args, agent_context)
     if sim_result is not None:
         return sim_result
+    from backend.ephemeral_sessions import refuse_memory_write
+    refused = refuse_memory_write(fn_name, args, agent_context)
+    if refused is not None:
+        return refused
     try:
         result = builtin_exec(fn_name, args)
         if result is None:

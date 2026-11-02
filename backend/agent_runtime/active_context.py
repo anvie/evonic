@@ -33,7 +33,7 @@ _MUTATION_RECEIPT_TOOLS = frozenset({
 })
 _CONTEXT_CONTROL_TOOLS = frozenset({
     "use_skill", "unload_skill", "save_plan", "set_mode", "update_tasks",
-    "state", "compile_task_graph", "switch_path", "new_path", "reset_active_model",
+    "state", "switch_path", "new_path", "reset_active_model",
 })
 # Tools whose results must ALWAYS be retained verbatim in the LLM context.
 # use_skill/unload_skill results inform the LLM whether a skill is loaded/unloaded;

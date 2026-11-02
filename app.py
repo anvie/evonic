@@ -20,6 +20,19 @@ for _name in (os.environ.get("EVONIC_LOG_QUIET", "").split(",") + ["httpx", "tel
         logging.getLogger(_name).setLevel(logging.ERROR)
 _log = logging.getLogger(__name__)
 
+# Raise the soft open-file limit. macOS shells default to 256, but every agent
+# whose chat.db has been touched keeps a persistent WAL connection (2-3 FDs),
+# so a busy instance exhausts 256 and fails with "Too many open files".
+if sys.platform != 'win32':
+    try:
+        import resource
+        _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        _target = 10240 if _hard == resource.RLIM_INFINITY else min(_hard, 10240)
+        if _soft != resource.RLIM_INFINITY and _soft < _target:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (_target, _hard))
+    except (ValueError, OSError) as e:
+        _log.warning("Could not raise open-file limit: %s", e)
+
 # ---------------------------------------------------------------------------
 # Single-instance guard: acquire exclusive flock on PID file.
 # Prevents a second Evonic server process from starting when invoked
@@ -92,7 +105,7 @@ from routes.history import history_bp
 from routes.sessions import sessions_bp
 from routes.settings import settings_bp
 from routes.skills import skills_bp
-from routes.plugins import plugins_bp
+from routes.plugins import plugins_bp, build_plugin_nav
 from routes.scheduler import scheduler_bp
 from routes.models import models_bp
 from routes.decision_profiles import decision_profiles_bp
@@ -108,6 +121,7 @@ from routes.decim_safety import decim_safety_bp
 from routes.update import update_bp
 from routes.rtk import rtk_bp
 from routes.realtime import realtime_bp
+from routes.ask_user import ask_user_bp
 from routes.templates import templates_bp
 import config
 from backend.version import get_version
@@ -146,7 +160,25 @@ from datetime import timedelta
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+# Static default; the effective value per request is decided by the adaptive
+# session interface installed below (and by backend.cookie_policy.cookie_secure).
 app.config['SESSION_COOKIE_SECURE'] = config.SESSION_COOKIE_SECURE
+
+# Cookies must only be marked Secure when the request really arrived over HTTPS.
+# Browsers silently discard Secure cookies delivered over plain HTTP (anything
+# but localhost), so the session never persists and login loops without errors.
+from backend.cookie_policy import cookie_secure as _cookie_secure  # noqa: E402
+from flask.sessions import SecureCookieSessionInterface as _SCSessionInterface  # noqa: E402
+
+
+class _AdaptiveSessionInterface(_SCSessionInterface):
+    """Session cookie whose ``Secure`` flag follows the request scheme."""
+
+    def get_cookie_secure(self, app):  # noqa: ARG002 - signature matches Flask
+        return _cookie_secure()
+
+
+app.session_interface = _AdaptiveSessionInterface()
 
 # Global upload size limit (defense-in-depth for all endpoints)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
@@ -287,6 +319,7 @@ app.register_blueprint(decim_safety_bp)
 app.register_blueprint(update_bp)
 app.register_blueprint(rtk_bp)
 app.register_blueprint(realtime_bp)
+app.register_blueprint(ask_user_bp)
 app.register_blueprint(templates_bp)
 
 
@@ -637,7 +670,7 @@ def inject_config():
 
 @app.context_processor
 def inject_plugin_nav():
-    return {'plugin_nav_items': plugin_manager.get_nav_items()}
+    return {'plugin_nav': build_plugin_nav(plugin_manager.get_nav_items(), request.path)}
 
 
 @app.context_processor
@@ -742,7 +775,7 @@ def set_csrf_cookie(response):
             'csrf_token', token,
             httponly=False,
             samesite='Lax',
-            secure=not config.FORCE_INSECURE_COOKIES,
+            secure=_cookie_secure(),
             path='/',
             max_age=604800,
         )
@@ -828,6 +861,23 @@ if __name__ == '__main__':
 #        _log.info("LLM API Key  : %s", masked_key)
 #    else:
 #        _log.info("LLM Model    : No default model configured in database")
+    if not config.FORCE_INSECURE_COOKIES:
+        _log.info(
+            "Cookie security: Secure cookies are issued for HTTPS requests only. "
+            "Reach the dashboard over HTTPS (or through a TLS-terminating proxy) — "
+            "plain HTTP works but leaves the session cookie unprotected."
+        )
+    else:
+        _log.warning(
+            "FORCE_INSECURE_COOKIES=1: session and CSRF cookies are sent without "
+            "the Secure flag. Do not expose this instance to untrusted networks."
+        )
+    if not config.ADMIN_PASSWORD_HASH:
+        _log.warning(
+            "ADMIN_PASSWORD_HASH is empty — web login will fail until a password is "
+            "set (run `evonic pass`, then restart)."
+        )
+
     app.run(
         host=config.HOST,
         port=config.PORT,

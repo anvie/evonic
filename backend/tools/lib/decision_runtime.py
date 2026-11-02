@@ -113,6 +113,10 @@ def _has_secret(value: Any) -> bool:
     return False
 
 
+class _RouteUnavailable(Exception):
+    """The registry has no resolvable provider route for a model."""
+
+
 def _safe_error(code: DecisionErrorCode, message: str, retryable: bool = False) -> DecisionError:
     return DecisionError(code, message, retryable)
 
@@ -152,6 +156,11 @@ class DecisionRuntime:
         try:
             source = request.activity_source if request.activity_source in {"production", "playground", "profile_test"} else "production"
             fields = {field.key: field.value for field in result.fields}
+            # The input is kept so the event can be reproduced in the Playground. A request that was refused
+            # for carrying a secret-like value is never recorded, and the store applies its own checks too.
+            context = request.input_context if isinstance(request.input_context, Mapping) else None
+            if context is not None and _has_secret(context):
+                context = None
             confidences = [field.confidence for field in result.fields if field.confidence is not None]
             self.db.record_decision_activity({
                 "source": source, "profile_key": result.profile.key,
@@ -165,6 +174,7 @@ class DecisionRuntime:
                 "fallback_reason": result.fallback.reason if result.fallback else None,
                 "error_code": result.error.code.value if result.error else None,
                 "correlation_id": request.correlation_id,
+                "input_context": context,
             })
         except Exception:
             self.logger.warning("decision_runtime.activity_write_failed profile=%s", request.profile_key)
@@ -225,6 +235,13 @@ class DecisionRuntime:
                     if timeout <= 0:
                         raise TimeoutError("Decision deadline elapsed before provider invocation.")
                     route = self._resolve_route(model_id)
+                    if route is None and callable(getattr(self.db, "resolve_model_route", None)):
+                        # A registry model without a provider endpoint is a
+                        # configuration gap, not a reason to guess another adapter.
+                        raise _RouteUnavailable(
+                            f"Decision model '{model_id}' has no usable provider: "
+                            f"provider '{(model or {}).get('provider') or '?'}' is missing or has no endpoint. "
+                            "Set the endpoint under System \u203a Models.")
                     if route is None:
                         # Temporary compatibility branch for non-registry test/dry-run
                         # stores. Production registry databases always resolve a route.
@@ -283,6 +300,8 @@ class DecisionRuntime:
                         # terminal; never egress the request to a fallback route.
                         if result.error is not None and not result.error.retryable:
                             break
+                except _RouteUnavailable as exc:
+                    last = self._failure(invocation, DecisionErrorCode.PROVIDER_UNAVAILABLE, str(exc), started, attempt + 1, fallback)
                 except (DecisionCompatibilityError, ContractValidationError, ValueError, TimeoutError) as exc:
                     code = DecisionErrorCode.DEADLINE_EXCEEDED if isinstance(exc, TimeoutError) else DecisionErrorCode.NO_COMPATIBLE_MODEL if isinstance(exc, DecisionCompatibilityError) else DecisionErrorCode.PROVIDER_RESPONSE_INVALID
                     last = self._failure(invocation, code, "Decision provider returned an invalid response." if code is DecisionErrorCode.PROVIDER_RESPONSE_INVALID else "No compatible decision model is available." if code is DecisionErrorCode.NO_COMPATIBLE_MODEL else "Decision provider timed out.", started, attempt + 1, fallback)

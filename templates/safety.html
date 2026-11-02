@@ -65,7 +65,7 @@
             </div>
             <dl id="sg-status" class="sg-facts" hidden>
                 <div class="sg-fact">
-                    <dt>Provider</dt>
+                    <dt>Decision model</dt>
                     <dd><span id="sg-provider">—</span> <span id="sg-circuit-badge" class="sf-badge sf-badge-muted">closed</span></dd>
                 </div>
                 <div class="sg-fact">
@@ -248,9 +248,12 @@
                 <div class="sf-kpi-sub" id="kpi-mode">—</div>
             </div>
             <div class="sf-kpi">
-                <div class="sf-kpi-label">Provider</div>
+                <div class="sf-kpi-label">Decision model</div>
                 <div class="sf-kpi-value" id="kpi-provider">—</div>
-                <div class="sf-kpi-sub"><span id="kpi-circuit" class="sf-badge sf-badge-muted">circuit —</span></div>
+                <div class="sf-kpi-sub">
+                    <span id="kpi-circuit" class="sf-badge sf-badge-muted">circuit —</span>
+                    <span id="kpi-recording" class="sf-badge sf-badge-ok" hidden>recording</span>
+                </div>
             </div>
             <div class="sf-kpi">
                 <div class="sf-kpi-label">Comparisons</div>
@@ -284,36 +287,20 @@
                 <div class="dc-row">
                     <div class="dc-row-text">
                         <div class="dc-label-row">
-                            <label class="dc-label" for="dc-provider">Provider</label>
-                            <span class="save-status" id="dc-status-provider" aria-live="polite"></span>
+                            <label class="dc-label" for="dc-model">Decision model</label>
+                            <span class="save-status" id="dc-status-model" aria-live="polite"></span>
                         </div>
-                        <span class="dc-desc">The registered decision service.</span>
-                    </div>
-                    <div class="dc-row-control">
-                        <select id="dc-provider" class="sf-select dc-select"><option value="systemone">SystemOne</option></select>
-                        <span class="sf-field-err" id="dc-err-provider" hidden></span>
-                    </div>
-                </div>
-                <div class="dc-row dc-row-wide">
-                    <div class="dc-row-text">
-                        <div class="dc-label-row">
-                            <label class="dc-label" for="dc-endpoint">Provider endpoint</label>
-                            <span class="save-status" id="dc-status-endpoint" aria-live="polite"></span>
-                        </div>
-                        <span class="dc-desc">Absolute http(s) URL of the provider decision service. Stored as plain configuration and shown here in full.</span>
+                        <span class="dc-desc">A decision model from <a href="/system#models">System &rsaquo; Models</a>. Its provider supplies the endpoint and credentials.</span>
                     </div>
                     <div class="dc-row-control">
                         <div class="dc-endpoint-row">
-                            <div class="dc-affix">
-                                <i data-lucide="globe" aria-hidden="true"></i>
-                                <input id="dc-endpoint" class="sf-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://…">
-                            </div>
-                            <button type="button" class="sf-btn dc-test-btn" id="dc-endpoint-test">
+                            <select id="dc-model" class="sf-select dc-select"><option value="">None (HMADS only)</option></select>
+                            <button type="button" class="sf-btn dc-test-btn" id="dc-model-test">
                                 <i data-lucide="plug-zap" aria-hidden="true"></i><span>Test</span>
                             </button>
                         </div>
-                        <span class="sf-field-err" id="dc-err-endpoint" hidden></span>
-                        <div id="dc-endpoint-test-result" class="dc-test-result" role="status" aria-live="polite" hidden></div>
+                        <span class="sf-field-err" id="dc-err-model" hidden></span>
+                        <div id="dc-model-test-result" class="dc-test-result" role="status" aria-live="polite" hidden></div>
                     </div>
                 </div>
             </fieldset>
@@ -420,6 +407,52 @@
                         </div>
                         <span class="dc-meta"><span class="dc-human" data-for="dc-cooldown"></span><span class="dc-range">1 – 3,600 s</span></span>
                         <span class="sf-field-err" id="dc-err-cooldown" hidden></span>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Enforce behaviour: what an allowed model decision actually does -->
+            <fieldset class="dc-group">
+                <legend class="dc-group-title"><i data-lucide="gavel"></i>Enforce behaviour</legend>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-record">Record allowed decisions</label>
+                            <span class="save-status" id="dc-status-record" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">
+                            In enforce mode an allowed command is stored in the activity table only while
+                            this is on. Refusals are always recorded. Turning it off leaves no trace of
+                            what the model cleared.
+                        </span>
+                    </div>
+                    <div class="dc-row-control">
+                        <label class="dc-switch">
+                            <input type="checkbox" id="dc-record" role="switch">
+                            <span class="dc-switch-track" aria-hidden="true"></span>
+                        </label>
+                        <span class="sf-field-err" id="dc-err-record" hidden></span>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-floor">HMADS safety floor</label>
+                            <span class="save-status" id="dc-status-floor" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">
+                            Let your own HMADS rules raise the DMSS severity when they are stricter.
+                            Built-in rules never override a confident DMSS decision. The floor can only
+                            make a decision stricter, never more permissive — it is how local rules such
+                            as <code>git add -A</code> still apply in enforce mode.
+                        </span>
+                    </div>
+                    <div class="dc-row-control">
+                        <label class="dc-switch">
+                            <input type="checkbox" id="dc-floor" role="switch">
+                            <span class="dc-switch-track" aria-hidden="true"></span>
+                        </label>
+                        <span class="sf-field-err" id="dc-err-floor" hidden></span>
                     </div>
                 </div>
             </fieldset>

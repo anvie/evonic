@@ -33,6 +33,23 @@ def _version_key(ver: str) -> tuple:
     return tuple(int(x or '0') for x in m.groups())
 
 
+_MINIMUM_RE = re.compile(r'^v?\d+(\.\d+){0,2}$')
+
+
+def minimum_version_error(minimum, what: str = 'This plugin', current: str = None) -> str:
+    """Why something that needs Evonic ``minimum`` or newer cannot run on this Evonic, or '' when it can (or needs
+    nothing). The commit offset a dev build adds (``1.6.0-23``) does not count: it is newer than ``1.6.0``."""
+    wanted = str(minimum or '').strip()
+    if not wanted:
+        return ''
+    if not _MINIMUM_RE.match(wanted):
+        return f'{what} declares an invalid min_evonic_version "{wanted}" (expected something like "1.6.0").'
+    running = current if current is not None else get_version()
+    if _version_key(running) >= _version_key(wanted):
+        return ''
+    return f'{what} needs Evonic {wanted} or newer, but this is Evonic {running}. Update Evonic to use it.'
+
+
 def _current_branch() -> str:
     """Return the active git branch name, or empty string if unavailable."""
     try:

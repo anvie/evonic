@@ -27,7 +27,6 @@ BUILTIN_FNS = {
     "switch_path",
     "new_path",
     "read_transcript",
-    "compile_task_graph",
     "clear_log_file",
 }
 

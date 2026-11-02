@@ -28,7 +28,10 @@ def notify_agent(agent_id: str, tag: str, message: str,
                  dedup_max_age_seconds: float = None,
                  trigger_llm: bool = True,
                  deliver_external: bool = False,
-                 metadata: dict = None) -> dict:
+                 metadata: dict = None,
+                 save_memory: bool = True,
+                 ephemeral: bool = False,
+                 ephemeral_ttl: int = 7200) -> dict:
     """Send a system notification to an agent.
 
     Args:
@@ -60,6 +63,13 @@ def notify_agent(agent_id: str, tag: str, message: str,
         deliver_external: When trigger_llm is False and the resolved session has an
                           active channel, also send the notification through it.
         metadata: Optional extra metadata dict merged into the saved message record.
+        save_memory: When False, the exchange is never turned into the agent's memory: the message is marked
+                     ``no_memory`` (the summarizer leaves it out) and, when this call picks or creates the session
+                     itself, the whole session is flagged too. A session passed in with ``session_id`` already
+                     belongs to someone else's conversation, so only the message is excluded there.
+        ephemeral: When True, the session is disposable: it is removed once ``ephemeral_ttl`` seconds have
+                   passed (see ``backend.ephemeral_sessions``). Meant for sessions this call creates.
+        ephemeral_ttl: Lifetime in seconds of an ephemeral session. Default 2 hours.
 
     Returns:
         dict with keys:
@@ -185,6 +195,16 @@ def notify_agent(agent_id: str, tag: str, message: str,
             "route": route_kind,
             "fallback_reason": fallback_reason,
         }
+
+    if ephemeral or not save_memory:
+        try:
+            from backend import ephemeral_sessions
+            ephemeral_sessions.mark(target_session_id, agent_id, save_memory=save_memory or bool(session_id),
+                                    ttl=ephemeral_ttl if ephemeral else None)
+        except Exception:
+            _logger.exception("notify_agent: could not flag session '%s'.", target_session_id)
+        if not save_memory:
+            metadata = {**(metadata or {}), 'no_memory': True}
 
     delivery = 'runtime' if trigger_llm else 'web'
     try:

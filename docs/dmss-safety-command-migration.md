@@ -13,8 +13,10 @@ circuit breaking, enforcement boundaries, and the final safety floor.
 1. A persisted `safety.command` profile is the preferred source.
 2. Disabled, missing, invalid, unavailable, secret-bearing, timed-out, malformed,
 or low-confidence profile results return the deterministic HMADS verdict.
-3. While no `safety.command` profile is provisioned, existing `decim_safety.*`
-settings remain readable and use the legacy DMSS resolver.
+3. While no `safety.command` profile is provisioned, DMSS uses the
+`decim_safety.*` settings, including the decision model selected on the Safety
+page (`decim_safety.model_id`). Its endpoint and credentials come from that
+model's provider; DMSS no longer stores a raw endpoint URL.
 4. To roll back, disable the profile or set its mode to `off`; DMSS immediately
 returns to the unchanged legacy settings path. Do **not** remove legacy settings
 in this migration.

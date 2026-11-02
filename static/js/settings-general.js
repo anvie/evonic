@@ -173,7 +173,7 @@ window.settingsGeneral = {
     },
 
     _populateModelSelects(models, current) {
-        const fill = (id, list, selectedId, emptyLabel) => {
+        const fill = (id, list, selectedId, emptyLabel, kind) => {
             const el = document.getElementById(id);
             if (!el) return;
             if (list.length === 0) {
@@ -184,31 +184,25 @@ window.settingsGeneral = {
             ui.populateModelSelect(el, list, {
                 selectedValue: selectedId || "",
                 emptyLabel: emptyLabel,
+                kind: kind,
             });
         };
 
         const enabled = models.filter((m) => m.enabled);
-        // Uses the same canonical model-capabilities/v1 vocabulary as the registry.
-        const decisionCompatible = enabled.filter((model) => {
-            const operations = (model.capabilities && model.capabilities.operations) || {};
-            const schemaVersions = (model.capabilities && model.capabilities.schema_versions) || [];
-            return Boolean(
-                operations.decision && operations.decision !== "unsupported" &&
-                operations.strict_output && operations.strict_output !== "unsupported" &&
-                Array.isArray(schemaVersions) && schemaVersions.includes("decision-schema/v1"),
-            );
-        });
+        const decisionCompatible = enabled.filter((model) => model.type === "decision");
         fill(
             "task-classifier-decision-model-select",
             decisionCompatible,
             current.taskDecisionProfile && current.taskDecisionProfile.primary_model_id,
             "Use legacy Task Classifier",
+            "decision",
         );
         fill(
             "cmp-decision-model-select",
             decisionCompatible,
             current.cmpDecisionProfile && current.cmpDecisionProfile.primary_model_id,
             "Use legacy CMP classifier",
+            "decision",
         );
         fill("default-model-select", models, current.defaultModelId, "— Select model —");
         fill(

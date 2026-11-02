@@ -237,6 +237,17 @@ def _on_summary_updated(event):
     if not agent:
         return
 
+    # A one-shot question (agent_oneshot) is a task, not a conversation: it must not become knowledge.
+    try:
+        from backend.agent_oneshot import is_oneshot_external_id
+        from backend.ephemeral_sessions import is_memory_blocked
+        session = db.get_session_with_details(session_id) or {}
+        if is_oneshot_external_id(session.get('external_user_id')) or is_memory_blocked(session_id):
+            log.info("[summary_updated] session %s is not to be remembered; no knowledge extraction", session_id)
+            return
+    except Exception:
+        pass
+
     def _run_extract():
         with usage_context('memory', agent_id, agent.get('name'), session_id):
             process_knowledge(agent, session_id, summary,
@@ -289,6 +300,14 @@ try:
     start_orphan_sweeper()
 except Exception:
     log.warning("simulation orphan sweeper failed to start", exc_info=True)
+
+
+# Knowledge-base docs with an `expires` date are deleted once it has passed (docs without one are never touched).
+try:
+    from backend.kb_expiry import start as start_kb_expiry
+    start_kb_expiry()
+except Exception:
+    log.warning("kb expiry sweep failed to start", exc_info=True)
 
 
 __all__ = ['AgentRuntime', 'agent_runtime', 'DEFAULT_SUMMARIZE_PROMPT']

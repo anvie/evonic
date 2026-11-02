@@ -12,6 +12,7 @@ from flask import Blueprint, make_response, render_template, request, session, r
 import config
 from backend.audit_logger import audit
 from backend import totp
+from backend.cookie_policy import cookie_secure
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -67,7 +68,7 @@ def _complete_login(next_url: str):
         'csrf_token', csrf_token,
         httponly=False,
         samesite='Lax',
-        secure=not config.FORCE_INSECURE_COOKIES,
+        secure=cookie_secure(),
         path='/',
         max_age=604800,
     )
@@ -105,9 +106,14 @@ def login_page():
         if not _is_safe_redirect_url(next_url):
             next_url = '/'
         return redirect(next_url)
+    # Shown after first-time setup, which redirects here once the server is back.
+    notice = None
+    if request.args.get('ready'):
+        notice = 'Setup complete. Sign in with the password you just created.'
     return render_template('login.html',
                            turnstile_site_key=config.TURNSTILE_SITE_KEY,
-                           error=None)
+                           error=None,
+                           notice=notice)
 
 
 @auth_bp.route('/login', methods=['POST'])

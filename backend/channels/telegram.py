@@ -403,14 +403,6 @@ def _split_message(text: str, max_len: int = 4050) -> list:
     return chunks
 
 
-def _ask_user_enabled() -> bool:
-    try:
-        from models.db import db
-        return db.get_setting('plugin_enabled:ask_user') == '1'
-    except Exception:
-        return False
-
-
 def _ask_user_view(question_id: str, prompt: dict):
     """Text and inline keyboard for the current step of an ask_user prompt.
 
@@ -441,6 +433,14 @@ def _ask_user_view(question_id: str, prompt: dict):
         lines.append('Tap an option, or type a message to answer in your own words.')
     rows.append([InlineKeyboardButton('Cancel', callback_data=f"aq:{question_id}:x")])
     return '\n'.join(lines), InlineKeyboardMarkup(rows)
+
+
+def _actions_keyboard(actions: list):
+    """Inline keyboard for channel actions: up to three buttons per row."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from backend.channel_actions import encode_action
+    buttons = [InlineKeyboardButton(a['label'], callback_data=encode_action(a)) for a in actions]
+    return InlineKeyboardMarkup([buttons[i:i + 3] for i in range(0, len(buttons), 3)])
 
 
 def _ask_user_summary(answers: list) -> str:
@@ -775,11 +775,11 @@ class TelegramChannel(BaseChannel):
             parts = raw.split(':')
             question_id = parts[1] if len(parts) >= 3 else ''
             prompt = _ask_user_prompts.get(question_id)
-            if prompt is None or not _ask_user_enabled():
+            if prompt is None:
                 await query.answer()
                 await _edit_query_text(query, 'This question is no longer open.')
                 return
-            from plugins.ask_user.store import question_registry
+            from backend.ask_user_store import question_registry
             action = parts[2]
             if action == 'x':
                 # Pop before resolving so the ask_user_resolved handler skips its edit.
@@ -839,11 +839,41 @@ class TelegramChannel(BaseChannel):
             await _edit_query_text(
                 query, 'This question is no longer open.' if error else _ask_user_summary(pending.answers))
 
+        async def handle_channel_action_callback(query, raw):
+            import asyncio
+            from backend.channel_actions import (
+                UNAVAILABLE_TEXT, decode_action, dispatch_channel_action,
+            )
+            decoded = decode_action(raw)
+            if decoded is None:
+                await query.answer()
+                return
+            namespace, payload = decoded
+            message = query.message
+            action_context = {
+                'channel_type': 'telegram',
+                'channel_id': channel_id,
+                'agent_id': agent_id,
+                'external_user_id': str(message.chat_id) if message else '',
+                'actor_id': str(query.from_user.id) if query.from_user else '',
+                'source': 'button',
+            }
+            ack = await asyncio.to_thread(dispatch_channel_action, namespace, payload, action_context)
+            await query.answer()
+            if not ack or message is None:
+                return
+            original = message.text or ''
+            text = ack if ack == UNAVAILABLE_TEXT and not original else f"{original}\n\n{ack}"
+            await _edit_query_text(query, text)
+
         async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query = update.callback_query
             raw = query.data or ''
             if raw.startswith('aq:'):
                 await handle_ask_user_callback(query, raw)
+                return
+            if raw.startswith('act:'):
+                await handle_channel_action_callback(query, raw)
                 return
             await query.answer()
             parts = raw.split(':', 1)
@@ -975,7 +1005,7 @@ class TelegramChannel(BaseChannel):
 
         # EventStream listeners: show ask_user questions as inline-keyboard buttons
         def _on_ask_user_required(data):
-            if data.get('channel_id') != channel_id or not _ask_user_enabled():
+            if data.get('channel_id') != channel_id:
                 return
             user_id = data.get('external_user_id')
             question_id = data.get('question_id')
@@ -1106,6 +1136,43 @@ class TelegramChannel(BaseChannel):
         text = _strip_markdown(text)
         for chunk in _split_message(text):
             self._run_async(self._app.bot.send_message(chat_id=external_user_id, text=chunk))
+        from backend.event_stream import event_stream
+        event_stream.emit('message_sent', {
+            'channel_type': 'telegram',
+            'channel_id': self.channel_id,
+            'external_user_id': external_user_id,
+            'message': text,
+        })
+
+    def send_message_with_actions(self, external_user_id: str, text: str,
+                                  actions: list, session_id: str = None):
+        """Send a message with actions as an inline keyboard on its last chunk."""
+        from backend.channel_actions import normalize_actions
+        actions = normalize_actions(actions)
+        if not actions:
+            self.send_message(external_user_id, text, session_id=session_id)
+            return
+        if not self._app:
+            return
+        with self._buf_lock:
+            pending = self._buf.pop(external_user_id, None)
+            old = self._buf_timers.pop(external_user_id, None)
+            if old:
+                old.cancel()
+        if pending:
+            text = pending + "\n\n" + text
+        text = _strip_markdown(text)
+        chunks = _split_message(text)
+        keyboard = _actions_keyboard(actions)
+        try:
+            for i, chunk in enumerate(chunks):
+                markup = keyboard if i == len(chunks) - 1 else None
+                self._run_async(self._app.bot.send_message(
+                    chat_id=external_user_id, text=chunk, reply_markup=markup))
+            self._last_sent[external_user_id] = time.time()
+        except Exception as e:
+            self._store_send_error(external_user_id, str(e))
+            return
         from backend.event_stream import event_stream
         event_stream.emit('message_sent', {
             'channel_type': 'telegram',

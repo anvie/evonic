@@ -147,7 +147,6 @@ def _persist_session_agent_state(chat_db, session_id: str, ms) -> None:
         'plan_file': data.get('plan_file'),
         'states': data.get('states', {}),
         'auto_trivial': data.get('auto_trivial', False),
-        'atg': data.get('atg'),
         'cmp': data.get('cmp'),
     })
     chat_db.upsert_session_state(session_id, json.dumps(session_data))
@@ -293,8 +292,7 @@ def _register_builtins():
             'plan_file': fresh.plan_file,
             'states': fresh.states,
             'auto_trivial': fresh.auto_trivial,
-            'atg': None,   # full-replace already wipes these; explicit for clarity
-            'cmp': None,
+            'cmp': None,   # full-replace already wipes this; explicit for clarity
         }
         db.upsert_session_state(session_id, json.dumps(session_data), agent_id=agent_id)
         # Global: reset focus only
@@ -761,7 +759,7 @@ def _register_builtins():
 
         _db = agent_chat_manager.get(agent_id)
         session_content = _db.get_session_state(session_id)
-        # Preserve CMP, ATG, plan, tasks, and extension-owned session fields.
+        # Preserve CMP, plan, tasks, and extension-owned session fields.
         # Only the operating mode changes for this command.
         ms = AgentState.deserialize(session_content) if session_content else AgentState()
         ms.set_mode("plan", reason="slash command /plan")
@@ -888,7 +886,6 @@ def _register_builtins():
             'plan_file': state_data.get('plan_file'),
             'states': state_data.get('states', {}),
             'auto_trivial': state_data.get('auto_trivial', False),
-            'atg': state_data.get('atg'),
             'cmp': state_data.get('cmp'),
             'active_goal': active_goal,
         })

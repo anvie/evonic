@@ -1,10 +1,10 @@
 """
-Ask User Question — shared state for the ask_user plugin.
+Ask User Question — shared state for the ask_user tool.
 
-The ask_user_question tool (running on the agent loop thread) registers a
+The ask_user tool (running on the agent loop thread) registers a
 PendingQuestion here and blocks on its event; the answer route (running on a
 request thread) resolves it. Both import this module by its absolute name
-(``plugins.ask_user.store``) so they share one registry instance.
+(``backend.ask_user_store``) so they share one registry instance.
 """
 
 from __future__ import annotations
@@ -185,8 +185,8 @@ def build_result(status: str, questions: List[dict], answers: Optional[List[dict
         return {
             'status': 'disabled',
             'questions': [{'header': q['header'], 'question': q['question']} for q in questions],
-            'error': 'The Ask User Question plugin was disabled before the user answered. '
-                     'Do not assume an answer and do not call ask_user_question again; '
+            'error': 'Ask User Question was disabled for this agent before the user answered. '
+                     'Do not assume an answer and do not call ask_user again; '
                      'ask the user in plain text instead.',
         }
     return {
@@ -283,9 +283,27 @@ class QuestionRegistry:
         return entry[0] if entry else None
 
     def pending_for_session(self, session_id: str) -> List[PendingQuestion]:
+        return [pq for pq in self.pending_all() if pq.session_id == session_id]
+
+    def pending_all(self) -> List[PendingQuestion]:
         with self._lock:
             return [pq for pq in self._pending.values()
-                    if pq.session_id == session_id and pq.answers is None and not pq.dismissed]
+                    if pq.answers is None and not pq.dismissed]
+
+
+def browser_notice(pending: PendingQuestion, agent_name: str) -> dict:
+    """Payload of ``question_required`` on the realtime ``questions`` channel,
+    which the browser turns into a notification (static/js/browser-notify.js)."""
+    first = pending.questions[0] if pending.questions else {}
+    return {
+        'question_id': pending.question_id,
+        'agent_id': pending.agent_id,
+        'agent_name': agent_name or pending.agent_id,
+        'session_id': pending.session_id,
+        'header': first.get('header', ''),
+        'question': first.get('question', ''),
+        'count': len(pending.questions),
+    }
 
 
 question_registry = QuestionRegistry()

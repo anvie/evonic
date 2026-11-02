@@ -1,15 +1,15 @@
 """
-ask_user_question.py — pause the agent loop and ask the user multiple-choice questions.
+ask_user.py — pause the agent loop and ask the user multiple-choice questions.
 
-Registers the question (the plugin's web UI polls /api/ask_user/pending and
-renders it as a card above the chat input; on Telegram the channel shows it as
+Registers the question (the agent page's web UI polls /api/ask_user/pending
+and renders it as a card above the chat input; on Telegram the channel shows it as
 inline-keyboard buttons on ``ask_user_required``), then blocks until one of:
 
 * the user submits the card or taps the last button → status 'answered'
 * the user closes the card or taps Cancel → status 'dismissed'
 * the user sends a normal chat message instead → status 'replied_in_chat'
 * the user presses Stop → status 'cancelled'
-* the plugin is disabled while waiting → status 'disabled'
+* the agent's ask_user_enabled setting is turned off while waiting → status 'disabled'
 
 There is deliberately no timeout: the card stays open until the user acts.
 ``question_required`` / ``question_resolved`` are also journaled on the
@@ -36,9 +36,12 @@ _NO_HUMAN_USERS = ('__agent__', '__scheduler__', 'api:')
 _SUPPORTED_CHANNEL_TYPES = ('telegram',)
 
 
-def _plugin_enabled() -> bool:
+def _enabled_for(agent: dict) -> bool:
+    """Read the agent's ``ask_user_enabled`` setting live, so turning it off
+    closes a question that is already open."""
     from models.db import db
-    return db.get_setting('plugin_enabled:ask_user') == '1'
+    row = db.get_agent(agent.get('_db_agent_id') or agent.get('id') or '') or {}
+    return bool(row.get('ask_user_enabled', 1))
 
 
 def _unavailable_reason(agent: dict) -> str | None:
@@ -78,10 +81,10 @@ def _peek_chat_reply(session_id: str) -> str | None:
 
 
 def execute(agent: dict, args: dict) -> Any:
-    if not _plugin_enabled():
-        return {'error': 'Ask User Question plugin is disabled. Enable it in Plugins settings.'}
+    if not _enabled_for(agent):
+        return {'error': "Ask User Question is disabled for this agent. Enable it in the agent's settings."}
 
-    from plugins.ask_user.store import build_result, normalize_questions, question_registry
+    from backend.ask_user_store import browser_notice, build_result, normalize_questions, question_registry
 
     questions, error = normalize_questions((args or {}).get('questions'))
     if error:
@@ -92,7 +95,7 @@ def execute(agent: dict, args: dict) -> Any:
         return {
             'status': 'unavailable',
             'error': f'Interactive questions are unavailable: {reason}. '
-                     'Do not call ask_user_question again in this conversation; '
+                     'Do not call ask_user again in this conversation; '
                      'ask the user in plain text instead.',
         }
 
@@ -122,6 +125,17 @@ def execute(agent: dict, args: dict) -> Any:
         except Exception:
             _logger.exception('ask_user: failed to journal %s', event_type)
 
+    def notify_browsers(event_type: str, payload: dict) -> None:
+        # Global (not per-session) channel so any open Evonic tab can show a
+        # browser notification. No turn id: it expires with the normal retention.
+        if realtime_store is None:
+            return
+        try:
+            realtime_store.publish('questions', event_type, payload,
+                                   agent_id=agent_id, session_id=session_id)
+        except Exception:
+            _logger.exception('ask_user: failed to publish %s', event_type)
+
     def notify_channel(event_name: str, payload: dict) -> None:
         # External channels (Telegram) render the question from event_stream.
         if not agent.get('channel_id'):
@@ -143,6 +157,7 @@ def execute(agent: dict, args: dict) -> Any:
         'questions': questions,
     })
     notify_channel('ask_user_required', {'questions': questions})
+    notify_browsers('question_required', browser_notice(pending, agent.get('name', '')))
 
     status, chat_reply = 'cancelled', None
     last_heartbeat = time.monotonic()
@@ -150,7 +165,7 @@ def execute(agent: dict, args: dict) -> Any:
         while not pending.event.wait(timeout=_POLL_SECONDS):
             if agent_runtime.is_stop_requested(session_id):
                 break
-            if not _plugin_enabled():
+            if not _enabled_for(agent):
                 status = 'disabled'
                 break
             chat_reply = _peek_chat_reply(session_id)
@@ -176,4 +191,5 @@ def execute(agent: dict, args: dict) -> Any:
         'reply': chat_reply,
     })
     notify_channel('ask_user_resolved', {'status': status, 'answers': pending.answers or []})
+    notify_browsers('question_resolved', {'question_id': pending.question_id, 'status': status})
     return result

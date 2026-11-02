@@ -104,6 +104,46 @@ def _generate_approval_info(blocked_patterns: list[str], matched_count: int) -> 
     }
 
 
+def _threshold_verdict(code: str, total_score: int, all_reasons: list[str],
+                       all_blocked: list[str], all_matched: list[dict]) -> dict:
+    """Map an aggregated HMADS score onto the legacy verdict thresholds."""
+    blocked_deduped = list(set(all_blocked))
+
+    # Determine level using the same thresholds as the legacy system
+    if total_score >= 15:
+        level = "dangerous"
+        requires_approval = False
+        approval_info = None
+    elif total_score >= 8:
+        level = "requires_approval"
+        requires_approval = True
+        approval_info = _generate_approval_info(blocked_deduped, len(all_matched))
+        # Locate the dangerous spans so every surface (web modal, chat card, and
+        # messaging channels) can highlight / focus on the risky code instead of
+        # showing it as undifferentiated (and head-truncated) text.
+        from backend.tools.lib.snippet_focus import build_focus_snippet, compute_highlights
+        highlights = compute_highlights(code, all_matched)
+        approval_info["highlights"] = highlights
+        approval_info["focus_snippet"] = build_focus_snippet(code, highlights)
+    elif total_score >= 4:
+        level = "warning"
+        requires_approval = False
+        approval_info = None
+    else:
+        level = "safe"
+        requires_approval = False
+        approval_info = None
+
+    return {
+        "level": level,
+        "score": total_score,
+        "reasons": all_reasons,
+        "blocked_patterns": blocked_deduped,
+        "requires_approval": requires_approval,
+        "approval_info": approval_info,
+    }
+
+
 class SafetyPipeline:
     """Run all registered checkers and merge into a single verdict."""
 
@@ -135,6 +175,8 @@ class SafetyPipeline:
         all_reasons: list[str] = []
         all_blocked: list[str] = []
         all_matched: list[dict] = []
+        # score, reasons, blocked_patterns, matched_patterns from user rules only
+        user_parts: list[Any] = [0, [], [], []]
 
         for checker in self._checkers:
             try:
@@ -147,47 +189,22 @@ class SafetyPipeline:
             all_reasons.extend(result.get("reasons", []))
             all_blocked.extend(result.get("blocked_patterns", []))
             all_matched.extend(result.get("matched_patterns", []))
+            if getattr(checker, "user_defined", False):
+                user_parts[0] += result.get("score", 0)
+                user_parts[1].extend(result.get("reasons", []))
+                user_parts[2].extend(result.get("blocked_patterns", []))
+                user_parts[3].extend(result.get("matched_patterns", []))
 
-        # Deduplicate blocked_patterns
-        blocked_deduped = list(set(all_blocked))
-
-        # Determine level using the same thresholds as the legacy system
-        if total_score >= 15:
-            level = "dangerous"
-            requires_approval = False
-            approval_info = None
-        elif total_score >= 8:
-            level = "requires_approval"
-            requires_approval = True
-            approval_info = _generate_approval_info(blocked_deduped, len(all_matched))
-            # Locate the dangerous spans so every surface (web modal, chat card, and
-            # messaging channels) can highlight / focus on the risky code instead of
-            # showing it as undifferentiated (and head-truncated) text.
-            from backend.tools.lib.snippet_focus import build_focus_snippet, compute_highlights
-            highlights = compute_highlights(code, all_matched)
-            approval_info["highlights"] = highlights
-            approval_info["focus_snippet"] = build_focus_snippet(code, highlights)
-        elif total_score >= 4:
-            level = "warning"
-            requires_approval = False
-            approval_info = None
-        else:
-            level = "safe"
-            requires_approval = False
-            approval_info = None
-
-        result_dict = {
-            "level": level,
-            "score": total_score,
-            "reasons": all_reasons,
-            "blocked_patterns": blocked_deduped,
-            "requires_approval": requires_approval,
-            "approval_info": approval_info,
-            # Legacy callers keep their keys unchanged; the source label is
-            # additive and lets tool boundaries and telemetry distinguish the
-            # deterministic path from a model decision.
-            "decision_source": "deterministic",
-        }
+        result_dict = _threshold_verdict(code, total_score, all_reasons, all_blocked, all_matched)
+        blocked_deduped = result_dict["blocked_patterns"]
+        level = result_dict["level"]
+        # Legacy callers keep their keys unchanged; the source label is
+        # additive and lets tool boundaries and telemetry distinguish the
+        # deterministic path from a model decision.
+        result_dict["decision_source"] = "deterministic"
+        # The same verdict from user-defined rules alone: only these may floor
+        # an accepted DMSS decision (see _apply_hmads_floor).
+        result_dict["user_rules"] = _threshold_verdict(code, *user_parts)
 
         if level != "safe":
             categories = ", ".join(blocked_deduped) or "-"
@@ -239,6 +256,12 @@ class SafetyPipeline:
                 deterministic = {}
                 result = _model_verdict(outcome.decision, "decision_profile", metadata,
                                         "Command Safety", "safety_command")
+                # Same floor contract as the native DMSS path: HMADS may only
+                # make an accepted model decision stricter.
+                floor_settings = self._load_settings()
+                if floor_settings is not None and getattr(floor_settings, "hmads_floor", False):
+                    deterministic = self._timed_deterministic(code, tool_type, agent_context)
+                    result = _apply_hmads_floor(result, deterministic)
             else:
                 deterministic = self._timed_deterministic(code, tool_type, agent_context)
                 source = "deterministic_fallback" if outcome.decision is None else "deterministic_shadow"
@@ -257,9 +280,12 @@ class SafetyPipeline:
             return self._timed_deterministic(code, tool_type, agent_context)
 
         # Shadow compares against the HMADS verdict it leaves in charge; enforce
-        # only needs HMADS when the model's answer is unusable.
+        # only needs HMADS when the model's answer is unusable -- unless the
+        # HMADS floor is enabled, in which case HMADS always scores the command
+        # so its verdict can raise (never lower) the DMSS severity.
         deterministic = None
-        if settings.mode == "shadow":
+        if settings.mode == "shadow" or (
+                settings.mode == "enforce" and getattr(settings, "hmads_floor", False)):
             deterministic = self._timed_deterministic(code, tool_type, agent_context)
 
         started = time.perf_counter()
@@ -331,15 +357,18 @@ class SafetyPipeline:
                 result["decim_safety"]["event_id"] = event_id
             return result
 
-        # In enforce mode an accepted Decim decision governs the public verdict;
-        # HMADS is not consulted.
+        # In enforce mode an accepted Decim decision governs the public verdict.
+        # With the HMADS floor enabled, the deterministic verdict already scored
+        # above can only make it stricter, never more permissive.
         result = _model_verdict(decision.decision, "decim", metadata, "Decim Safety", "decim")
+        if deterministic is not None:
+            result = _apply_hmads_floor(result, deterministic)
         level = result["level"]
 
-        event_id = self._record(settings, code, tool_type, agent_context, {},
+        event_id = self._record(settings, code, tool_type, agent_context, deterministic or {},
                                 model_decision=decision.decision, confidence=decision.confidence,
                                 latency_ms=decision.latency_ms, fallback_reason=None,
-                                decision_source="decim",
+                                decision_source=result["decision_source"],
                                 correlation_id=decision.correlation_id,
                                 provider_key=decision.provider_key,
                                 model_id=decision.model_id, policy_version=decision.policy_version,
@@ -470,12 +499,21 @@ class SafetyPipeline:
         execution outcome, not a sample, so it is always recorded here — with
         the DMSS output — rather than later by ``record_refusal`` without it.
         """
+        # One audit line per decision, so a missing telemetry row can always be
+        # explained from the log alone (policy, not failure).
+        audit = ("[dmss-audit] level=%s source=%s tool=%s model_decision=%s "
+                 "confidence=%s correlation_id=%s") % (
+            final_level, decision_source, tool_type, model_decision,
+            confidence, correlation_id,
+        )
+
         if settings.mode == "enforce" and not settings.record_enforce_events \
                 and final_level not in {"dangerous", "requires_approval"}:
+            logger.info("%s recorded=false reason=record_enforce_events_disabled", audit)
             return None
         try:
             service = self._telemetry_service()
-            return service.record_comparison(
+            event_id = service.record_comparison(
                 settings=settings,
                 code=code,
                 tool_type=tool_type,
@@ -493,8 +531,14 @@ class SafetyPipeline:
                 final_level=final_level,
                 hmads_duration_ms=deterministic.get("hmads_duration_ms"),
             )
+            if event_id:
+                logger.info("%s recorded=true event_id=%s", audit, event_id)
+            else:
+                logger.info("%s recorded=false reason=store_rejected", audit)
+            return event_id
         except Exception:
             logger.exception("Decim Safety telemetry recording failed")
+            logger.info("%s recorded=error", audit)
             return None
 
 
@@ -526,6 +570,48 @@ def _model_verdict(decision: str, source: str, metadata: dict,
             "blocked_patterns": [f"{pattern_prefix}_block"],
         })
     return result
+
+
+# Severity order used by the HMADS floor: a floor may only move a verdict up.
+_LEVEL_RANK = {"safe": 0, "warning": 1, "requires_approval": 2, "dangerous": 3}
+
+
+def _apply_hmads_floor(result: dict, deterministic: dict) -> dict:
+    """Raise *result* to the user-rule verdict when it is stricter.
+
+    The HMADS floor exists because a model cannot know platform-local policy
+    (``git add -A`` is a local staging rule, not a general security rule), so
+    only rules the user defined in HMADS may floor a confident DMSS decision;
+    built-in rules never do.  A floored verdict keeps the DMSS metadata for
+    auditing but is attributed to the rules (`decision_source="decim_floor"`),
+    and it can never be *more* permissive than the DMSS decision.
+    """
+    model_level = result.get("level") or "safe"
+    user_verdict = (deterministic or {}).get("user_rules") or {}
+    floor_level = user_verdict.get("level") or "safe"
+    meta = dict(result.get("decim_safety") or {})
+    if _LEVEL_RANK.get(floor_level, 0) <= _LEVEL_RANK.get(model_level, 0):
+        meta["hmads_floor"] = floor_level
+        result["decim_safety"] = meta
+        return result
+
+    floored = dict(user_verdict)
+    floored["decision_source"] = "decim_floor"
+    floored["decim_safety"] = {
+        **meta,
+        "decision_source": "decim_floor",
+        "model_level": model_level,
+        "hmads_floor": floor_level,
+    }
+    floored["reasons"] = list(user_verdict.get("reasons") or []) + [
+        f"User HMADS rule raised the DMSS verdict ({model_level} → {floor_level})."
+    ]
+    floored["requires_approval"] = floor_level in {"requires_approval", "dangerous"}
+    logger.warning(
+        "[dmss] User HMADS rule raised the model verdict: model=%s floor=%s categories=%s",
+        model_level, floor_level, ",".join(user_verdict.get("blocked_patterns") or []),
+    )
+    return floored
 
 
 def _elapsed_ms(started: float) -> int:
@@ -564,6 +650,10 @@ def verdict_provenance(safety: dict | None) -> dict:
         source, mode = "rules", "shadow"
     elif decision_source == "deterministic_fallback":
         source, mode = "rules", "fallback"
+    elif decision_source == "decim_floor":
+        # DMSS answered, HMADS overruled it: attribute the decision to the rules
+        # so the badge never claims the model cleared something it did not.
+        source, mode = "rules", "enforce"
     else:
         source, mode = "rules", None
     level = safety.get("level") or "safe"

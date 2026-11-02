@@ -372,13 +372,13 @@ _DEFAULT_SETTINGS = [
     # operation always falls back to the deterministic HMADS pipeline.
     ("decim_safety.enabled", "0"),
     ("decim_safety.mode", "off"),
-    ("decim_safety.provider", "systemone"),
     ("decim_safety.request_timeout_ms", "1500"),
     ("decim_safety.minimum_confidence", "0.90"),
     ("decim_safety.max_payload_chars", "12000"),
     ("decim_safety.circuit_breaker_failures", "3"),
     ("decim_safety.circuit_breaker_cooldown_seconds", "60"),
     ("decim_safety.record_enforce_events", "0"),
+    ("decim_safety.hmads_floor", "0"),
     ("decim_safety.retention_days", "30"),
 ]
 
@@ -607,13 +607,15 @@ def run_setup(
             except (json.JSONDecodeError, IOError):
                 pass
 
-        # 9. Persist admin password to .env
+        # 9. Persist admin password to .env (and apply it to this process so the
+        #    credential works immediately — config is read once at import time).
         if password:
             from werkzeug.security import generate_password_hash
 
             pw_hash = generate_password_hash(password, method="pbkdf2:sha256")
             env_path = os.path.join(config.BASE_DIR, ".env")
             _update_env_var(env_path, "ADMIN_PASSWORD_HASH", pw_hash)
+            apply_admin_password_hash(pw_hash)
 
         # Memory-engine awareness: surface whether evomem is ready or FTS5 is used.
         try:
@@ -770,11 +772,23 @@ def run_reconfigure(
             pw_hash = generate_password_hash(password, method="pbkdf2:sha256")
             env_path = os.path.join(config.BASE_DIR, ".env")
             _update_env_var(env_path, "ADMIN_PASSWORD_HASH", pw_hash)
+            apply_admin_password_hash(pw_hash)
 
         return {"success": True, "agent_id": agent_id}
 
     except Exception as e:
         return {"error": str(e)}
+
+
+def apply_admin_password_hash(pw_hash: str) -> None:
+    """Make *pw_hash* effective in the running process, not only in ``.env``.
+
+    ``config.ADMIN_PASSWORD_HASH`` is read once at import time, so writing the
+    hash to ``.env`` alone leaves a running server authenticating against the old
+    (often empty) value until it restarts.
+    """
+    os.environ["ADMIN_PASSWORD_HASH"] = pw_hash
+    config.ADMIN_PASSWORD_HASH = pw_hash
 
 
 def _update_env_var(env_path, key, value):

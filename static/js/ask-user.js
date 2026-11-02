@@ -1,8 +1,7 @@
 /*
- * Ask User Question plugin — web UI for the agent chat page.
+ * Ask User Question — web UI for the agent chat page.
  *
- * Injected on /agents/<id> by plugins/ask_user/routes.py (inject_assets), so it
- * needs no Evonic core changes. It polls /api/ask_user/pending for the page's
+ * Loaded by templates/agent_detail.html. It polls /api/ask_user/pending for the page's
  * chat session, docks a pending question above the chat input (locking the
  * composer), and posts answers or cancels back. It only relies on the chat
  * page's element ids: #chat-input, #chat-send-btn, #chat-attach-btn,
@@ -153,7 +152,8 @@
             .data('questions', questions);
         $card.append($('<div class="ask-card-title">').append(
             $('<span class="ask-card-icon" aria-hidden="true">').html(QUESTION_ICON),
-            $('<span>').text('The agent needs your input')
+            $('<span>').text('The agent needs your input'),
+            window.EvonicNotify ? window.EvonicNotify.promptElement('ask-notify') : null
         ));
 
         questions.forEach((q, qi) => {

@@ -230,16 +230,6 @@ def test_hook_passes_last_final_to_detector():
     assert det.call_args[1]['recent_tail'] == 'Invoice sudah selesai dibuat.'
 
 
-def test_llm_sees_finished_task_state():
-    ms = _session()
-    ms.atg = {'status': 'done', 'dag': {'root_goal': 'g'}}
-    client = _client({'route': 'continue'})
-    with patch('backend.task_classifier._get_classifier_client',
-               return_value=client):
-        detect(ms.cmp, ms, LONG_NEW_TASK)
-    assert 'FINISHED' in _sent_prompt(client)
-
-
 # ── LLM decisions + validation ───────────────────────────────────────────────
 
 def test_llm_decisions_flow_through():

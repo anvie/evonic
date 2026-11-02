@@ -8,10 +8,9 @@ from backend.agent_runtime.cmp import store
 from backend.agent_state import AgentState
 
 
-def _ms(mode='execute', plan_file='plan/p1.md', atg=None):
+def _ms(mode='execute', plan_file='plan/p1.md'):
     ms = AgentState(mode=mode)
     ms.plan_file = plan_file
-    ms.atg = atg
     return ms
 
 
@@ -35,8 +34,7 @@ def test_new_cmp_first_path():
 
 
 def test_create_path_branches_and_resets_task_state():
-    atg = {'status': 'done', 'dag': {'root_goal': 'g'}}
-    ms = _init(_ms(mode='execute', plan_file='plan/old.md', atg=atg), ts=1000)
+    ms = _init(_ms(mode='execute', plan_file='plan/old.md'), ts=1000)
     record = store.create_path(ms.cmp, ms, 'invoice task', goal='make invoice',
                                depends_on=['A1'], now_ts=2000)
 
@@ -51,12 +49,10 @@ def test_create_path_branches_and_resets_task_state():
     assert p1['segments'] == [[999, 1999]]
     assert p1['mode'] == 'execute'
     assert p1['plan_file'] == 'plan/old.md'
-    assert p1['atg'] == atg
 
     # ms reset to a fresh plan cycle (the re-arm mutations)
     assert ms.mode == 'plan'
     assert ms.plan_file is None
-    assert ms.atg is None
     assert ms.auto_trivial is False
 
 
@@ -65,7 +61,7 @@ def test_create_trivial_path_starts_execute_and_round_trips_state():
     record = store.create_path(ms.cmp, ms, 'push dev', now_ts=2000,
                                trivial=True)
     assert ms.mode == 'execute' and ms.auto_trivial is True
-    assert ms.plan_file is None and ms.atg is None
+    assert ms.plan_file is None
 
     store.switch_to(ms.cmp, ms, 'A1', now_ts=3000)
     assert ms.mode == 'plan' and ms.auto_trivial is False
@@ -83,27 +79,22 @@ def test_create_path_unknown_dependency_raises():
 # ── Switch / snapshot round-trip ─────────────────────────────────────────────
 
 def test_switch_restores_task_state_round_trip():
-    atg1 = {'status': 'executing', 'dag': {'root_goal': 'task one',
-                                           'nodes': {'n1': {'status': 'done'}}}}
-    ms = _init(_ms(mode='execute', plan_file='plan/one.md', atg=atg1), ts=1000)
+    ms = _init(_ms(mode='execute', plan_file='plan/one.md'), ts=1000)
     store.create_path(ms.cmp, ms, 'task two', now_ts=2000)
     ms.mode = 'execute'
     ms.plan_file = 'plan/two.md'
-    ms.atg = {'status': 'compiled', 'dag': {'root_goal': 'task two'}}
 
     target = store.switch_to(ms.cmp, ms, 'A1', now_ts=3000)
 
-    # P1's full state restored verbatim — fixes the single-slot ms.atg
+    # P1's full state restored verbatim
     assert ms.mode == 'execute'
     assert ms.plan_file == 'plan/one.md'
-    assert ms.atg == atg1
     # stored snapshot cleared while live (no double truth)
-    assert target['atg'] is None and target['plan_file'] is None
+    assert target['plan_file'] is None
     # A2 snapshotted
     p2 = ms.cmp['paths']['A2']
     assert p2['status'] == 'preserved'
     assert p2['plan_file'] == 'plan/two.md'
-    assert p2['atg']['status'] == 'compiled'
     # segments: P1 reopened, P2 closed
     assert ms.cmp['paths']['A1']['segments'] == [[999, 1999], [2999, None]]
     assert p2['segments'] == [[1999, 2999]]
@@ -142,8 +133,6 @@ def test_preserved_archives_when_over_max_cap():
     for i in range(2, store.MAX_PRESERVED + 2):
         assert ms.cmp['paths'][f'A{i}']['status'] == 'preserved'
     assert ms.cmp['paths'][last_id]['status'] == 'active'
-    # atg snapshot cleared on archive
-    assert ms.cmp['paths']['A1']['atg'] is None
 
 
 def test_archived_prunes_after_three_days():
@@ -281,7 +270,7 @@ def test_card_field_caps():
 # ── Serialization ────────────────────────────────────────────────────────────
 
 def test_cmp_survives_agent_state_round_trip():
-    ms = _init(_ms(atg={'status': 'done'}), ts=1000)
+    ms = _init(ts=1000)
     store.create_path(ms.cmp, ms, 'second', now_ts=2000)
     restored = AgentState.deserialize(ms.serialize())
     assert restored.cmp == json.loads(json.dumps(ms.cmp))

@@ -4,6 +4,15 @@ import shutil
 import json
 import config
 
+# Tool ids that were renamed: old id -> new id. Assignments are moved on startup
+# and by `evonic doctor --fix`. Retired ids that have no successor need no entry:
+# the doctor's orphaned-tool check removes them.
+# TODO(cleanup): drop an entry once every install has run past the release that
+# renamed the tool (check CHANGELOG), and this whole table once it is empty.
+LEGACY_TOOL_IDS = {
+    'ask_user_question': 'ask_user',  # renamed in the ask_user simplification
+}
+
 
 def _migrate_db_to_subdir(target_path: str):
     """Move evonic.db (or legacy evaluation.db) from project root to db/ subdir on first run after upgrade."""
@@ -387,7 +396,6 @@ class SchemaMixin:
                 ("send_file_allowed_path_regex", "TEXT DEFAULT ''"),
                 ("audio_enabled", "BOOLEAN DEFAULT 0"),
                 ("video_enabled", "BOOLEAN DEFAULT 0"),
-                ("enable_atg", "BOOLEAN DEFAULT 0"),
                 ("enable_cmp", "BOOLEAN DEFAULT 0"),
                 # dm_only: agent hanya melayani pesan pribadi (DM); pesan grup ditolak.
                 ("dm_only", "INTEGER DEFAULT 0"),
@@ -765,11 +773,7 @@ class SchemaMixin:
                     hmads_duration_ms INTEGER
                 )
             """)
-            cursor.execute("PRAGMA table_info(decim_safety_events)")
-            decim_cols = {row[1] for row in cursor.fetchall()}
-            for col, ddl in (("agent_id", "TEXT"), ("hmads_duration_ms", "INTEGER")):
-                if col not in decim_cols:
-                    cursor.execute(f"ALTER TABLE decim_safety_events ADD COLUMN {col} {ddl}")
+            self._migrate_decim_safety_events(cursor)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_occurred ON decim_safety_events(occurred_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_unsafe ON decim_safety_events(final_unsafe)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decim_events_epoch ON decim_safety_events(telemetry_epoch)")
@@ -1197,6 +1201,21 @@ class SchemaMixin:
                 cursor.execute("ALTER TABLE agents ADD COLUMN help_enabled BOOLEAN DEFAULT 1")
             except sqlite3.OperationalError:
                 pass
+            # TODO(cleanup): obsolete once no install can still be upgrading from the
+            # ask_user plugin; remove this block (and the unit test for it) then.
+            # Migration: ask_user moved from a plugin into core, gated per agent
+            # (1 = the agent gets ask_user). The first time the column is
+            # added, drop the plugin's enable setting.
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN ask_user_enabled BOOLEAN DEFAULT 1")
+                cursor.execute("DELETE FROM app_settings WHERE key = 'plugin_enabled:ask_user'")
+            except sqlite3.OperationalError:
+                pass
+            # Migration: move assignments of renamed tools to their new id
+            # TODO(cleanup): obsolete together with LEGACY_TOOL_IDS entries; remove when it is empty.
+            for old_id, new_id in LEGACY_TOOL_IDS.items():
+                cursor.execute("UPDATE OR IGNORE agent_tools SET tool_id = ? WHERE tool_id = ?", (new_id, old_id))
+                cursor.execute("DELETE FROM agent_tools WHERE tool_id = ?", (old_id,))
 
             # Migration: relax connector_token NOT NULL so NULL is allowed before pairing completes
             try:
@@ -1368,6 +1387,18 @@ class SchemaMixin:
                 "ON user_escalations(originating_session_id, status, created_at)"
             )
 
+            # Flags on disposable sessions: never remembered, removed after a time (see mixins/session_flags.py).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS session_flags (
+                    session_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    no_memory INTEGER NOT NULL DEFAULT 0,
+                    expires_at REAL,
+                    created_at REAL NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_flags_expiry ON session_flags(expires_at)")
+
             # ==================== System Alerts Table ====================
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS system_alerts (
@@ -1410,6 +1441,10 @@ class SchemaMixin:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_profiles_enabled "
                            "ON decision_profiles(enabled, profile_key)")
+            # Optional example input_context, shown prefilled when the profile is opened in the Playground.
+            cursor.execute("PRAGMA table_info(decision_profiles)")
+            if "sample_input_json" not in {row[1] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE decision_profiles ADD COLUMN sample_input_json TEXT")
 
             # Built-in agent profiles must be visible from a fresh installation,
             # even before an administrator has configured a Decision Models-capable
@@ -1446,9 +1481,9 @@ class SchemaMixin:
                 builtin_agent_profiles,
             )
 
-            # Decision Activity deliberately holds diagnostic metadata only. It
-            # never stores invocation contexts, policy metadata, credentials,
-            # raw provider content, candidates, or provider logits.
+            # Decision Activity holds diagnostic metadata and, unless switched off, the
+            # validated, secret-free input of each invocation (bounded; redactable). It never
+            # stores policy metadata, credentials, raw provider content, candidates, or logits.
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS decision_activity (
                     id TEXT PRIMARY KEY,
@@ -1473,6 +1508,13 @@ class SchemaMixin:
                     CHECK (attempts >= 0)
                 )
             """)
+            # The validated input of an invocation, kept so an event can be reproduced in the Playground.
+            # Recording is switchable (app setting decision_activity_record_input); see DecisionActivityMixin.
+            cursor.execute("PRAGMA table_info(decision_activity)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+            for column, decl in (("input_json", "TEXT"), ("input_status", "TEXT")):
+                if column not in existing_columns:
+                    cursor.execute(f"ALTER TABLE decision_activity ADD COLUMN {column} {decl}")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_activity_time "
                            "ON decision_activity(created_at DESC, id DESC)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_activity_profile_time "
@@ -1490,6 +1532,8 @@ class SchemaMixin:
             # configure a compatible provider endpoint and credentials separately.
             self._seed_builtin_decision_models(cursor)
             conn.commit()
+        # Registry migrations may rewrite decim_safety.* settings directly.
+        self.invalidate_settings_cache()
 
         # Migrate chat data from main DB to per-agent DBs
         self._migrate_chat_to_agent_dbs()
@@ -1499,6 +1543,28 @@ class SchemaMixin:
 
         # Populate session_index from per-agent chat DBs (idempotent one-time migration)
         self._populate_session_index()
+
+    # Additive columns introduced after the telemetry table shipped.  A database
+    # created by an older build never receives them from CREATE TABLE IF NOT
+    # EXISTS, so every read and write must have a migration here.  Missing
+    # ``detection_type``/``detection_command`` silently disabled the whole
+    # activity table (INSERT and SELECT both raised), which is why this list has
+    # to stay in sync with ``_EVENT_COLUMNS`` in
+    # ``backend/services/decim_safety_telemetry.py``.
+    _DECIM_EVENT_ADDED_COLUMNS = (
+        ("agent_id", "TEXT"),
+        ("hmads_duration_ms", "INTEGER"),
+        ("detection_type", "TEXT"),
+        ("detection_command", "TEXT"),
+    )
+
+    def _migrate_decim_safety_events(self, cursor):
+        """Add telemetry columns that are absent from a pre-existing table."""
+        cursor.execute("PRAGMA table_info(decim_safety_events)")
+        existing = {row[1] for row in cursor.fetchall()}
+        for col, ddl in self._DECIM_EVENT_ADDED_COLUMNS:
+            if col not in existing:
+                cursor.execute(f"ALTER TABLE decim_safety_events ADD COLUMN {col} {ddl}")
 
     def _migrate_model_ids_v2(self, cursor):
         """One-shot rename of llm_models ids to 'provider/model_name' format.
@@ -1623,6 +1689,9 @@ class SchemaMixin:
         migrations = (
             ("registry_endpoint_v1_provider_fields", self._migrate_provider_endpoint_fields),
             ("registry_endpoint_v1_model_capabilities", self._migrate_model_capabilities),
+            ("model_type_split_v1", self._migrate_model_type_split),
+            ("dmss_endpoint_to_model_v1", self._migrate_dmss_endpoint_to_model),
+            ("hmads_git_staging_user_rules_v1", self._migrate_git_staging_to_user_rules),
         )
         for migration_id, migration in migrations:
             cursor.execute("SELECT 1 FROM registry_migration_ledger WHERE migration_id = ?", (migration_id,))
@@ -1674,10 +1743,13 @@ class SchemaMixin:
     def _seed_builtin_decision_models(self, cursor):
         """Make built-in decision-model metadata selectable without a connection.
 
-        Model rows are soft references to provider connections, so a catalog entry
-        can be installed before an operator configures its System One endpoint.
-        INSERT OR IGNORE preserves any administrator changes to an existing row.
+        The model and an endpoint-less SystemOne provider are installed so the
+        operator only has to fill in the endpoint under System > Models.
+        INSERT OR IGNORE preserves any administrator changes to existing rows.
         """
+        cursor.execute(
+            "INSERT OR IGNORE INTO providers (id, name, type, base_url, api_key, api_format, endpoint, adapter_key, connection_options) "
+            "VALUES ('systemone', 'SystemOne', 'remote', '', '', 'systemone', '', 'systemone.questions.v1', '{}')")
         capabilities = json.dumps({
             "version": "model-capabilities/v1",
             "operations": {
@@ -1700,7 +1772,7 @@ class SchemaMixin:
             (
                 "systemone/LiquidAI-d1-3B",
                 "LiquidAI d1-3B",
-                "remote",
+                "decision",
                 "systemone",
                 "",
                 "",
@@ -1713,7 +1785,7 @@ class SchemaMixin:
                 0,
                 3,
                 "systemone",
-                1,
+                0,
                 next_shortcode,
                 32768,
                 capabilities,
@@ -1755,6 +1827,115 @@ class SchemaMixin:
             )
             updated += cursor.rowcount
         return {"models_normalized": updated, "precondition": "model capability and provenance columns present"}
+
+    def _migrate_git_staging_to_user_rules(self, cursor):
+        """Install the git staging checks as editable user HMADS rules.
+
+        ``git add -A`` / ``git add .`` are local workflow policy, not built-in
+        security rules: as user rules they can be edited or deleted, and only
+        user rules may floor a confident DMSS decision. Runs once, so a rule the
+        operator later deletes stays deleted.
+        """
+        rules = (
+            ("hmads-user-git-add-all", "Git add all files (git add -A)", r"\bgit\s+add\s+-A\b"),
+            ("hmads-user-git-add-dot", "Git add all files (git add .)", r"\bgit\s+add\s+\.(?:\s|$)"),
+        )
+        for rule_id, description, pattern in rules:
+            cursor.execute(
+                "INSERT OR IGNORE INTO safety_rules (id, name, description, pattern, pattern_type, weight, "
+                "category, tool_scope, scope, enabled, is_system) "
+                "VALUES (?, ?, ?, ?, 'regex', 8, 'git_staging', 'all', 'global', 1, 0)",
+                (rule_id, description, description, pattern))
+        return {"rules": [rule_id for rule_id, _, _ in rules]}
+
+    def _migrate_model_type_split(self, cursor):
+        """Turn ``type`` from locality (remote/local) into the model kind (llm/decision).
+
+        A row advertising decision operations becomes a decision model. If agents
+        or the global default also use it as a chat model, it stays an LLM and a
+        decision copy takes over its Decision Profile references.
+        """
+        from models.mixins.models import _MODEL_COLUMNS, _decode_capabilities, capabilities_for_type
+        cursor.execute(f"SELECT {_MODEL_COLUMNS} FROM llm_models")
+        names = [col[0] for col in cursor.description]
+        rows = [_decode_capabilities(dict(zip(names, row))) for row in cursor.fetchall()]
+        agent_columns = {row[1] for row in cursor.execute("PRAGMA table_info(agents)")}
+        chat_refs = [c for c in ("model_id", "fallback_model_id", "vision_model_id", "default_model_id") if c in agent_columns]
+        converted = split = 0
+        for model in rows:
+            operations = model["capabilities"].get("operations") or {}
+            is_decision = operations.get("decision") not in (None, "unsupported")
+            used_for_chat = bool(model.get("is_default")) or any(
+                cursor.execute(f"SELECT 1 FROM agents WHERE {c} = ? LIMIT 1", (model["id"],)).fetchone()
+                for c in chat_refs)
+            model_type = "decision" if is_decision and not used_for_chat else "llm"
+            cursor.execute(
+                "UPDATE llm_models SET type = ?, capabilities = ? WHERE id = ?",
+                (model_type, json.dumps(capabilities_for_type(model_type, model.get("vision_supported"), model["capabilities"]), sort_keys=True), model["id"]))
+            converted += 1
+            if not (is_decision and used_for_chat):
+                continue
+            referenced = cursor.execute(
+                "SELECT 1 FROM decision_profiles WHERE primary_model_id = ? OR fallback_model_id = ? LIMIT 1",
+                (model["id"], model["id"])).fetchone()
+            if not referenced:
+                continue
+            copy_id = f"{model['id']}-decision"
+            cursor.execute("SELECT COALESCE(MAX(shortcode), 0) FROM llm_models")
+            shortcode = cursor.fetchone()[0] + 1
+            cursor.execute(
+                """INSERT OR IGNORE INTO llm_models (id, name, type, provider, model_name, max_tokens,
+                    timeout, enabled, is_default, model_max_concurrent, api_format, shortcode, capabilities)
+                   VALUES (?, ?, 'decision', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
+                (copy_id, f"{model['name']} (decision)", model["provider"], model["model_name"], model.get("max_tokens") or 32768,
+                 model.get("timeout") or 60, model.get("enabled", 1), model.get("model_max_concurrent") or 3,
+                 model.get("api_format") or "openai", shortcode,
+                 json.dumps(capabilities_for_type("decision", 0, model["capabilities"]), sort_keys=True)))
+            for column in ("primary_model_id", "fallback_model_id"):
+                cursor.execute(f"UPDATE decision_profiles SET {column} = ? WHERE {column} = ?", (copy_id, model["id"]))
+            split += 1
+        return {"models_typed": converted, "decision_copies": split}
+
+    def _migrate_dmss_endpoint_to_model(self, cursor):
+        """Move a raw DMSS endpoint into a SystemOne provider and select its decision model."""
+        settings = dict(cursor.execute(
+            "SELECT key, value FROM app_settings WHERE key IN "
+            "('decim_safety.provider_endpoint', 'decim_safety.model_id')").fetchall())
+        endpoint = (settings.get("decim_safety.provider_endpoint")
+                    or os.getenv("DECIM_SAFETY_SYSTEMONE_ENDPOINT", "")).strip()
+        cursor.execute("DELETE FROM app_settings WHERE key IN ('decim_safety.provider_endpoint', 'decim_safety.provider')")
+        if not endpoint or settings.get("decim_safety.model_id"):
+            return {"migrated": False}
+
+        self._seed_builtin_decision_models(cursor)
+        seed_id, provider_id = "systemone/LiquidAI-d1-3B", "systemone"
+        existing = cursor.execute("SELECT endpoint FROM providers WHERE id = ?", (provider_id,)).fetchone()
+        if existing and (existing[0] or "").rstrip("/") not in ("", endpoint.rstrip("/")):
+            # The SystemOne provider already points elsewhere: give DMSS its own.
+            provider_id = "systemone-dmss"
+        cursor.execute(
+            "INSERT OR IGNORE INTO providers (id, name, type, base_url, api_key, api_format, endpoint, adapter_key, connection_options) "
+            "VALUES (?, ?, 'remote', ?, '', 'systemone', ?, 'systemone.questions.v1', '{}')",
+            (provider_id, "SystemOne" if provider_id == "systemone" else "SystemOne (DMSS)", endpoint, endpoint))
+        cursor.execute(
+            "UPDATE providers SET base_url = ?, endpoint = ?, adapter_key = 'systemone.questions.v1', api_format = 'systemone' "
+            "WHERE id = ? AND COALESCE(endpoint, '') = ''", (endpoint, endpoint, provider_id))
+        model_id = seed_id
+        if provider_id != "systemone":
+            model_id = f"{provider_id}/LiquidAI-d1-3B"
+            cursor.execute("SELECT COALESCE(MAX(shortcode), 0) FROM llm_models")
+            shortcode = cursor.fetchone()[0] + 1
+            cursor.execute(
+                """INSERT OR IGNORE INTO llm_models (id, name, type, provider, base_url, api_key, model_name, max_tokens,
+                    timeout, thinking, thinking_budget, enabled, is_default, model_max_concurrent, api_format,
+                    vision_supported, shortcode, context_window, capabilities)
+                   SELECT ?, name, 'decision', ?, '', '', model_name, max_tokens, timeout, 0, 0, 1, 0,
+                          model_max_concurrent, api_format, 0, ?, context_window, capabilities
+                   FROM llm_models WHERE id = ?""", (model_id, provider_id, shortcode, seed_id))
+        cursor.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('decim_safety.model_id', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (model_id,))
+        return {"migrated": True, "provider_id": provider_id, "model_id": model_id}
 
     def _populate_session_index(self):
         """One-time migration: populate session_index from all per-agent chat DBs.

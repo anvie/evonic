@@ -133,6 +133,25 @@ def list_decision_activity():
     return jsonify({"events": events, "next_cursor": _next_cursor(events) if has_more else None})
 
 
+@decision_profiles_bp.route("/api/admin/decision-activity/settings", methods=["GET"])
+def decision_activity_settings():
+    return jsonify({"record_input": db.get_setting("decision_activity_record_input", "1") != "0"})
+
+
+@decision_profiles_bp.route("/api/admin/decision-activity/settings", methods=["PUT"])
+def update_decision_activity_settings():
+    data = _payload()
+    if data is None or not isinstance(data.get("record_input"), bool):
+        return jsonify({"success": False, "error": {"code": "invalid_payload", "path": "record_input", "message": "must be true or false"}}), 400
+    db.set_setting("decision_activity_record_input", "1" if data["record_input"] else "0")
+    return jsonify({"success": True, "record_input": data["record_input"]})
+
+
+@decision_profiles_bp.route("/api/admin/decision-activity", methods=["DELETE"])
+def clear_decision_activity():
+    return jsonify({"success": True, "deleted": db.clear_decision_activity()})
+
+
 @decision_profiles_bp.route("/api/admin/decision-activity/<event_id>", methods=["GET"])
 def get_decision_activity(event_id: str):
     event = db.get_decision_activity(event_id)

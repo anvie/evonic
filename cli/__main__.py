@@ -787,7 +787,8 @@ def main():
     )
     backup_parser.add_argument(
         "--encrypt", action="store_true", default=False,
-        help="Encrypt the backup with AES-256-GCM (passphrase prompted from stdin)"
+        help="(removed) Encryption of backups is no longer supported; encrypt the "
+             "archive at the file level with gpg or age instead"
     )
     backup_parser.add_argument(
         "--verify", type=str, default=None, metavar="FILE",
@@ -1062,12 +1063,17 @@ def main():
         elif args.list:
             list_command(args.list)
         else:
+            if args.encrypt:
+                print("Error: The --encrypt option has been removed.")
+                print("Encrypted backups are no longer supported by 'evonic backup'.")
+                print("Encrypt the resulting archive at the file level instead, e.g.:")
+                print("  evonic backup -o backup.tar.gz && gpg -c backup.tar.gz")
+                sys.exit(1)
             backup_command(
                 output=args.output,
                 fmt=args.format,
                 quiet=args.quiet,
                 exclude=args.exclude,
-                encrypt=args.encrypt,
             )
     elif args.command == "restore":
         restore_command(

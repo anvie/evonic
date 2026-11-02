@@ -12,6 +12,7 @@ must stay free of vendor-specific naming.
 import os
 import sys
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,7 +57,7 @@ class _Provider:
     def __init__(self, result):
         self._result = result
 
-    def decide(self, packet, settings):
+    def decide(self, packet, settings, route=None):
         if isinstance(self._result, Exception):
             raise self._result
         if self._result.correlation_id is None:
@@ -65,10 +66,30 @@ class _Provider:
 
 
 def _settings(**overrides) -> DecimSettings:
-    base = dict(enabled=True, mode="shadow", provider="systemone",
+    base = dict(enabled=True, mode="shadow", model_id="systemone/test-model",
                 minimum_confidence=0.9, retention_days=30)
     base.update(overrides)
     return DecimSettings(**base)
+
+
+ADAPTER = "systemone.questions.v1"
+
+
+def _route(endpoint="http://127.0.0.1:9/decide", api_key="", enabled=True, adapter=ADAPTER):
+    """A stand-in for the registry's ResolvedModelRoute."""
+    return SimpleNamespace(
+        model_id="systemone/test-model", enabled=enabled,
+        credentials={"api_key": api_key} if api_key else {},
+        provider=SimpleNamespace(provider_id="systemone", endpoint=endpoint, enabled=True,
+                                 adapter_key=SimpleNamespace(value=adapter)),
+    )
+
+
+def _resolver(providers, route=None, **kwargs):
+    """Resolver whose selected model routes to the given protocol client."""
+    route = route or _route()
+    return DecimSafetyResolver({ADAPTER: p for p in providers.values()},
+                               route_resolver=lambda _model_id: route, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +129,7 @@ def test_fingerprint_is_stable_and_not_reversible():
 # ---------------------------------------------------------------------------
 
 def test_resolver_accepts_confident_decision():
-    resolver = DecimSafetyResolver({"systemone": _Provider(_decision("allow"))})
+    resolver = _resolver({"systemone": _Provider(_decision("allow"))})
     result = resolver.resolve("echo hi", "bash", {}, _settings(mode="enforce"))
     assert result.attempted is True
     assert result.decision is not None
@@ -117,7 +138,7 @@ def test_resolver_accepts_confident_decision():
 
 
 def test_resolver_falls_back_on_low_confidence():
-    resolver = DecimSafetyResolver({"systemone": _Provider(_decision("allow", 0.4))})
+    resolver = _resolver({"systemone": _Provider(_decision("allow", 0.4))})
     result = resolver.resolve("echo hi", "bash", {}, _settings(mode="enforce"))
     assert result.attempted is True
     assert result.decision is None
@@ -125,7 +146,7 @@ def test_resolver_falls_back_on_low_confidence():
 
 
 def test_resolver_isolates_provider_exceptions():
-    resolver = DecimSafetyResolver({"systemone": _Provider(RuntimeError("boom"))})
+    resolver = _resolver({"systemone": _Provider(RuntimeError("boom"))})
     result = resolver.resolve("echo hi", "bash", {}, _settings(mode="enforce"))
     assert result.attempted is True
     assert result.decision is None
@@ -133,13 +154,13 @@ def test_resolver_isolates_provider_exceptions():
 
 
 def test_resolver_is_disabled_when_off_or_disabled():
-    resolver = DecimSafetyResolver({"systemone": _Provider(_decision("block"))})
+    resolver = _resolver({"systemone": _Provider(_decision("block"))})
     assert resolver.resolve("echo hi", "bash", {}, _settings(enabled=False)).attempted is False
     assert resolver.resolve("echo hi", "bash", {}, _settings(mode="off")).attempted is False
 
 
 def test_resolver_ignores_out_of_scope_tools():
-    resolver = DecimSafetyResolver({"systemone": _Provider(_decision("block"))})
+    resolver = _resolver({"systemone": _Provider(_decision("block"))})
     result = resolver.resolve("echo hi", "file_write", {}, _settings())
     assert result.attempted is False
     assert result.fallback_reason == "out_of_scope"
@@ -148,7 +169,7 @@ def test_resolver_ignores_out_of_scope_tools():
 def test_circuit_breaker_opens_then_half_opens():
     clock = {"t": 1000.0}
     breaker = DecimCircuitBreaker(clock=lambda: clock["t"])
-    resolver = DecimSafetyResolver(
+    resolver = _resolver(
         {"systemone": _Provider(DecimProviderError("transport_error"))},
         breaker=breaker,
     )
@@ -196,8 +217,19 @@ class _FakeTransport:
         return _Response(self._payload, self._status)
 
 
-def _adapter(transport):
-    return SystemOneDecisionProvider("http://127.0.0.1:9/decide", transport=transport)
+class _BoundAdapter:
+    """The real SystemOne client, called with a fixed model route."""
+
+    def __init__(self, transport, route=None):
+        self._provider = SystemOneDecisionProvider(transport=transport)
+        self._route = route or _route()
+
+    def decide(self, packet, settings):
+        return self._provider.decide(packet, settings, self._route)
+
+
+def _adapter(transport, route=None):
+    return _BoundAdapter(transport, route)
 
 
 def test_adapter_parses_typed_choice_response():
@@ -317,10 +349,10 @@ def test_resolver_falls_back_when_state_was_truncated():
     class _TruncatingProvider:
         key = "systemone"
 
-        def decide(self, packet, settings):
+        def decide(self, packet, settings, route):
             raise DecimProviderError("truncated_state")
 
-    resolver = DecimSafetyResolver({"systemone": _TruncatingProvider()})
+    resolver = _resolver({"systemone": _TruncatingProvider()})
     result = resolver.resolve("echo hi", "bash", {}, _settings(mode="enforce"))
     assert result.attempted is True
     assert result.decision is None
@@ -336,9 +368,34 @@ def test_adapter_rejects_malformed_response():
 
 def test_adapter_requires_configured_endpoint():
     with pytest.raises(DecimProviderError) as exc:
-        SystemOneDecisionProvider("").decide(
-            build_policy_packet("echo hi", "bash", "sandboxed_docker", 12000), _settings())
+        SystemOneDecisionProvider().decide(
+            build_policy_packet("echo hi", "bash", "sandboxed_docker", 12000), _settings(), _route(endpoint=""))
     assert exc.value.category == "provider_unconfigured"
+
+
+def test_adapter_sends_provider_credentials_from_the_model_route():
+    import json
+    transport = _FakeTransport(json.dumps({"answers": {"decision": {"choice": "allow", "confidence": 0.99}}}).encode())
+    decision = _adapter(transport, _route(api_key="s1-key")).decide(
+        build_policy_packet("echo hi", "bash", "sandboxed_docker", 12000), _settings())
+    assert transport.opened[0].get_header("Authorization") == "Bearer s1-key"
+    assert transport.opened[0].full_url == "http://127.0.0.1:9/decide"
+    # Without a provider-reported model id, the registry model id is used.
+    assert decision.model_id == "systemone/test-model"
+
+
+@pytest.mark.parametrize("settings, route", [
+    (_settings(model_id=""), _route()),
+    (_settings(), None),
+    (_settings(), _route(enabled=False)),
+    (_settings(), _route(adapter="openai.chat_completions.v1")),
+])
+def test_resolver_falls_back_without_a_usable_decision_model(settings, route):
+    resolver = DecimSafetyResolver({ADAPTER: _Provider(_decision("allow"))},
+                                   route_resolver=lambda _model_id: route)
+    result = resolver.resolve("echo hi", "bash", {}, replace(settings, mode="enforce"))
+    assert result.decision is None
+    assert result.fallback_reason == "provider_unconfigured"
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +404,7 @@ def test_adapter_requires_configured_endpoint():
 
 def _pipeline(provider) -> SafetyPipeline:
     pipeline = SafetyPipeline()
-    pipeline._decim_resolver = DecimSafetyResolver({"systemone": provider})
+    pipeline._decim_resolver = _resolver({"systemone": provider})
     return pipeline
 
 
@@ -501,11 +558,11 @@ def test_telemetry_agreement_and_unsafe_flags():
 # Settings validation
 # ---------------------------------------------------------------------------
 
-def test_validate_settings_rejects_unknown_mode_and_provider():
+def test_validate_settings_rejects_unknown_mode_and_non_string_model():
     with pytest.raises(ValueError):
         validate_decim_settings({"mode": "aggressive"})
     with pytest.raises(ValueError):
-        validate_decim_settings({"provider": "unknown-vendor"})
+        validate_decim_settings({"model_id": 42})
 
 
 def test_validate_settings_rejects_out_of_range_values():
@@ -517,7 +574,7 @@ def test_validate_settings_rejects_out_of_range_values():
 
 def test_validate_settings_accepts_valid_mapping():
     settings = validate_decim_settings({
-        "enabled": "true", "mode": "enforce", "provider": "systemone",
+        "enabled": "true", "mode": "enforce", "model_id": "systemone/test-model",
         "minimum_confidence": 0.95, "retention_days": 7,
     })
     assert settings.enabled is True

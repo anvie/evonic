@@ -4,9 +4,7 @@ CMP compactor — interface-preserving path cards, deterministic layer.
 Card prose is maintained incrementally by the per-turn single-pass op
 (detector envelope → store.apply_card_delta), so suspension no longer needs
 an LLM summarization call. What remains here is only deterministic:
-lifting facts from ATG execution state (node records including failure
-causes) independent of LLM quality, mechanically filling gaps from the
-transcript, and token estimates. Node identity is immutable — finalization
+mechanically filling gaps from the transcript, and token estimates. Node identity is immutable — finalization
 never touches a path's title/action (renaming established map nodes was a
 live bug of the LLM-card era).
 """
@@ -16,10 +14,6 @@ import json
 import logging
 
 _logger = logging.getLogger(__name__)
-
-# Mutating tools whose path-like args count as artifacts.
-_ARTIFACT_TOOLS = {'write_file', 'str_replace', 'patch', 'delete_file'}
-_ARTIFACT_ARG_KEYS = ('file_path', 'path')
 
 
 def collect_path_entries(chatlog, path: dict) -> list:
@@ -35,33 +29,6 @@ def collect_path_entries(chatlog, path: dict) -> list:
             _logger.exception("CMP: failed reading chatlog segment [%s, %s]",
                               start, end)
     return entries
-
-
-def lift_atg_facts(atg_state) -> tuple:
-    """Deterministic (key_facts, artifacts, goal) from ATG execution state —
-    independent of LLM summarization quality."""
-    facts, artifacts = [], []
-    goal = ""
-    if not isinstance(atg_state, dict):
-        return facts, artifacts, goal
-    dag = atg_state.get('dag') or {}
-    goal = dag.get('root_goal') or atg_state.get('root_goal') or ""
-    status = atg_state.get('status')
-    if status:
-        facts.append(f"task graph status: {status}")
-    for nid in sorted(dag.get('nodes') or {}):
-        node = dag['nodes'][nid]
-        record = node.get('record') or {}
-        if node.get('status') == 'failed' and record.get('error'):
-            facts.append(f"step {nid} ({str(node.get('goal', ''))[:40]}) "
-                         f"failed: {str(record['error'])[:120]}")
-        if node.get('tool') in _ARTIFACT_TOOLS:
-            args = record.get('resolved_args') or node.get('args_template') or {}
-            for key in _ARTIFACT_ARG_KEYS:
-                value = args.get(key)
-                if isinstance(value, str) and value and value not in artifacts:
-                    artifacts.append(value)
-    return facts, artifacts, goal
 
 
 def path_token_estimate(chatlog, path: dict) -> int:
@@ -119,20 +86,13 @@ def card_token_estimate(path: dict) -> int:
 def finalize_active_card(chatlog, cmp: dict, ms) -> None:
     """Deterministic finalization of the ACTIVE path's card before it is
     suspended (switch/branch). Card prose is kept fresh by the per-turn op;
-    this only lifts the guaranteed-correct ATG execution facts (live ms.atg,
-    not yet snapshotted) and mechanically fills an empty goal/outcome from
-    the transcript. Never touches title/action (node identity is immutable
+    this only mechanically fills an empty outcome from the transcript. Never touches title/action (node identity is immutable
     after creation). Never raises."""
     try:
-        from backend.agent_runtime.cmp.store import (
-            GOAL_MAX, OUTCOME_MAX, apply_card_delta)
+        from backend.agent_runtime.cmp.store import OUTCOME_MAX
         path = cmp['paths'][cmp['active_id']]
         if not path.get('card_stale', True):
             return
-        facts, artifacts, goal = lift_atg_facts(ms.atg)
-        apply_card_delta(path, {'new_facts': facts, 'new_artifacts': artifacts})
-        if not path.get('goal') and goal:
-            path['goal'] = str(goal)[:GOAL_MAX]
         if not path.get('outcome'):
             entries = collect_path_entries(chatlog, path)
             last_final = next((e.get('content', '') for e in reversed(entries)

@@ -319,6 +319,11 @@
             return model.name + (model.model_name ? ' (' + model.model_name + ')' : '');
         };
         var providerFor = options.providerFor || function (model) { return model.provider || 'Other'; };
+        // Chat pickers list LLMs only; decision pickers pass kind: 'decision'.
+        var kind = options.kind || 'llm';
+        models = (models || []).filter(function (model) {
+            return (model.type === 'decision' ? 'decision' : 'llm') === kind;
+        });
         var selectedValue = options.selectedValue == null ? select.value : String(options.selectedValue);
         var fragment = document.createDocumentFragment();
 

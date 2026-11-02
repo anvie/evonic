@@ -1,0 +1,75 @@
+# Ask User Question
+
+A core Evonic feature (formerly the `ask_user` plugin) that lets an agent pause mid-turn and ask the user 1–4 multiple-choice questions, like Claude Code's `AskUserQuestion`. The questions render as an interactive card in the agent's web chat, or as inline-keyboard buttons on Telegram; the agent's turn waits until the user responds, then the answers come back as the tool result and the agent continues in the same turn.
+
+## How it works
+
+The agent calls `ask_user` with:
+
+```json
+{
+  "questions": [
+    {
+      "question": "Which database should we use?",
+      "header": "Database",
+      "multiSelect": false,
+      "options": [
+        {"label": "SQLite", "description": "File-based, zero setup", "recommended": true},
+        {"label": "PostgreSQL", "description": "Full relational server"}
+      ]
+    }
+  ]
+}
+```
+
+Every question gets an automatic free-text "Other" choice. In the web chat a pending card docks above the chat input. With more than one question it becomes a wizard: one question per step, header chips to jump between steps, Back/Next, and Submit on the last step. Clicking a single-select option moves to the next step on its own, and Enter (shown as a keycap on Next/Submit) advances or submits unless the user is typing in the chat input. The card takes keyboard focus as soon as it docks (unless the user is typing in another field): ↑/↓ move through the options of the current question, wrapping around, and choose a single-select option as they go; Space toggles a multi-select option; Enter on a not-yet-chosen single-select option picks it and then advances or submits; Esc cancels. While a card is docked, the chat input, send and attach buttons are disabled, so the user answers or cancels the card. If the agent stops waiting (for example after a server restart), the card closes as "no longer open" and the input unlocks.
+
+`recommended` is optional. It shows a "Recommended" badge and is never pre-selected. A single-choice question keeps only its first recommendation. A label written as `"SQLite (Recommended)"` (or `(Rekomendasi)`) is turned into the flag, so the answer text stays clean.
+
+The tool registers the question and blocks. It has no timeout; it ends in one of five ways:
+
+| Status | When | Result the agent gets |
+|---|---|---|
+| `answered` | The user submits the card | `answers`: header, question, answer text, selected labels, other text |
+| `replied_in_chat` | The user sends a normal chat message instead (not from the agent page, where the input is locked) | `reply`; the message also follows as the next user message |
+| `dismissed` | The user presses **Cancel** (or Esc) on the card | a message telling the agent not to assume answers and to carry on |
+| `cancelled` | The user sends `/stop` | an error telling the agent not to assume an answer |
+| `disabled` | **Ask User Questions** is turned off in the agent's settings while the question is open | an error telling the agent not to call the tool again and to ask in plain text |
+
+While it waits, the tool journals a small heartbeat event every minute so the stale-turn reaper does not kill the turn. It also journals `question_required` / `question_resolved` on the session's chat stream for any client that wants them. Once the card is answered, closed or no longer open, it simply leaves the dock and the input unlocks. The answer shows in the thinking timeline as the tool's result.
+
+Interactive questions work in the Evonic web chat and on Telegram. The tool is declared `"channels": ["web", "telegram"]` in `tools/ask_user.json`, so on WhatsApp/Discord sessions Evonic leaves it out of the agent's tool list entirely (no schema tokens, no call). API sessions, scheduler runs, agent-to-agent messages and simulations have no `channel_id`, so the tool is still listed there but returns `status: "unavailable"` and tells the agent not to call it again, so it asks in plain text.
+
+## Telegram
+
+On a Telegram session the tool emits `ask_user_required` / `ask_user_resolved` on Evonic's `event_stream`, and the Telegram channel (`backend/channels/telegram.py`) shows each question as a message with one button per option; descriptions and the ⭐ recommendation are in the message text. A tap on a single-select option moves to the next question; on a multi-select question taps toggle a ✅ and **Done** moves on; **Cancel** closes the question (`dismissed`). After the last question the message is replaced by a summary of the answers. Typing a message instead answers in the user's own words (`replied_in_chat`). If the question ends any other way (stopped, answered elsewhere, turned off for the agent), the message is edited to say so and its buttons stop working.
+
+## Enabling and disabling
+
+Every agent has **Ask User Questions** under *Tools & capabilities* in its settings, on by default (`ask_user_enabled`). While it is on the agent gets `ask_user` without a tool assignment. When it is off the tool is left out of the agent's tool list (even if assigned by hand), refuses to run, and a question that is already open ends as `disabled` within a second, which closes the web card and the Telegram message.
+
+Upgrading from the plugin: the first start after the upgrade removes the plugin's enable setting, and `evonic doctor --fix` (run by `evonic update`) removes the agents' leftover `plugin:ask_user:ask_user_question` assignments as orphaned tools. A leftover `plugins/ask_user/` folder is ignored and the plugin id can no longer be installed.
+
+## Web UI
+
+The agent page (`templates/agent_detail.html`) loads `static/js/ask-user.js` and `static/css/ask-user.css`; the endpoints live in `routes/ask_user.py` and the question registry in `backend/ask_user_store.py`. The script polls `/api/ask_user/pending` for the page's chat session: every second while the agent is busy or a card is open, and every 4 seconds otherwise. It docks pending questions above the chat input and locks the composer. The agent is re-read from the URL on every poll, so the card follows the sidebar's in-place agent switch (which changes the URL without reloading the page). It relies only on these chat page element ids: `#chat-input`, `#chat-send-btn`, `#chat-attach-btn`, `#chat-file-preview` and `#chat-messages`. If Evonic renames them, update `ask-user.js`. The Sessions page is not covered.
+
+## Browser notifications
+
+`static/js/browser-notify.js` (loaded on every page by `templates/base.html`) shows a browser notification when an agent asks a question, or when a command needs approval, while you are not looking at it:
+
+- A question notifies unless a focused Evonic tab is showing that agent's chat. Clicking the notification focuses the tab and opens the agent's chat.
+- An approval notifies unless any Evonic tab is focused (the approval modal is already on screen there).
+- The notification closes once the question or approval is resolved, and each one notifies at most once per browser.
+
+Permission is asked with **Notify me in this browser** on the question card and in the approval modal. While it is granted, one tab per browser (elected with the Web Locks API) keeps a realtime connection open on the `questions` and `approvals` channels, even while hidden. The tool publishes `question_required` / `question_resolved` on the global `questions` channel for this; a reconnecting tab gets the still-open questions in the stream snapshot.
+
+Limits: notifications need a secure context (HTTPS or `localhost`; on plain `http://` the card shows "Browser notifications need HTTPS" instead), and at least one Evonic tab must be open, in the background is fine. There is no Web Push, so nothing arrives with the browser or every Evonic tab closed.
+
+## Endpoints
+
+- `POST /api/ask_user/answer` — `{"question_id": "...", "answers": [{"selected": ["SQLite"], "other": null}]}`; one entry per question, in order.
+- `POST /api/ask_user/cancel` — `{"question_id": "..."}`; closes the question without answering (`dismissed`).
+- `GET /api/ask_user/pending?session_id=...&known=id1,id2` — questions still waiting in a session, plus `resolved`: how each `known` id that stopped waiting ended (`expired` if the server no longer knows it, e.g. after a restart).
+
+All three sit under `/api/`, so the app's login and CSRF checks apply.

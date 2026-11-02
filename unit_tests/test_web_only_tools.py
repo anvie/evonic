@@ -3,14 +3,14 @@
 from backend.agent_runtime import context
 from backend.agent_runtime.context import build_tools
 
-TOOL_ID = 'plugin:ask_user:ask_user_question'
+TOOL_ID = 'ask_user'
 
 
 def _setup(monkeypatch, web_only=False, channels=None):
     tool_def = {
         'id': TOOL_ID,
         'web_only': web_only,
-        'function': {'name': 'ask_user_question', 'description': 'd', 'parameters': {'type': 'object'}},
+        'function': {'name': 'ask_user', 'description': 'd', 'parameters': {'type': 'object'}},
     }
     if channels is not None:
         tool_def['channels'] = channels
@@ -35,29 +35,42 @@ def _names(agent, **kwargs):
 
 def test_web_only_tool_is_listed_in_web_chat(monkeypatch):
     agent = _setup(monkeypatch, web_only=True)
-    assert 'ask_user_question' in _names(agent)
-    assert 'ask_user_question' in _names(agent, channel_id=None)
+    assert 'ask_user' in _names(agent)
+    assert 'ask_user' in _names(agent, channel_id=None)
 
 
 def test_web_only_tool_is_hidden_on_external_channel(monkeypatch):
     agent = _setup(monkeypatch, web_only=True)
-    assert 'ask_user_question' not in _names(agent, channel_id='whatsapp-1')
+    assert 'ask_user' not in _names(agent, channel_id='whatsapp-1')
 
 
 def test_regular_tool_is_kept_on_external_channel(monkeypatch):
     agent = _setup(monkeypatch, web_only=False)
-    assert 'ask_user_question' in _names(agent, channel_id='whatsapp-1')
+    assert 'ask_user' in _names(agent, channel_id='whatsapp-1')
 
 
 def test_channels_tool_is_listed_only_on_declared_channel_types(monkeypatch):
     agent = _setup(monkeypatch, channels=['web', 'telegram'])
-    assert 'ask_user_question' in _names(agent)
-    assert 'ask_user_question' in _names(agent, channel_id='telegram-1')
-    assert 'ask_user_question' not in _names(agent, channel_id='whatsapp-1')
-    assert 'ask_user_question' not in _names(agent, channel_id='deleted-channel')
+    assert 'ask_user' in _names(agent)
+    assert 'ask_user' in _names(agent, channel_id='telegram-1')
+    assert 'ask_user' not in _names(agent, channel_id='whatsapp-1')
+    assert 'ask_user' not in _names(agent, channel_id='deleted-channel')
 
 
 def test_channels_without_web_hides_tool_in_web_chat(monkeypatch):
     agent = _setup(monkeypatch, channels=['telegram'])
-    assert 'ask_user_question' not in _names(agent)
-    assert 'ask_user_question' in _names(agent, channel_id='telegram-1')
+    assert 'ask_user' not in _names(agent)
+    assert 'ask_user' in _names(agent, channel_id='telegram-1')
+
+
+def test_ask_user_follows_agent_setting_without_assignment(monkeypatch):
+    agent = _setup(monkeypatch, channels=['web', 'telegram'])
+    monkeypatch.setattr(context.db, 'get_agent_tools', lambda agent_id: [])
+    assert 'ask_user' in _names(agent)  # on by default
+    assert 'ask_user' in _names({**agent, 'ask_user_enabled': 1})
+    assert 'ask_user' not in _names({**agent, 'ask_user_enabled': 0})
+
+
+def test_ask_user_disabled_overrides_manual_assignment(monkeypatch):
+    agent = _setup(monkeypatch, channels=['web', 'telegram'])
+    assert 'ask_user' not in _names({**agent, 'ask_user_enabled': 0})

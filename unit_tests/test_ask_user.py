@@ -1,7 +1,7 @@
 """
-Tests for the ask_user plugin: question/answer validation, the answer route,
-and the blocking ask_user_question tool (with the runtime, realtime journal
-and settings DB stubbed out).
+Tests for ask_user: question/answer validation, the answer route, and the
+blocking ask_user tool (with the runtime, realtime journal and the
+agents DB stubbed out).
 """
 
 import queue
@@ -14,11 +14,11 @@ from unittest.mock import patch
 
 from flask import Flask
 
-from plugins.ask_user import routes
-from plugins.ask_user.store import (
+from backend.ask_user_store import (
     QuestionRegistry, build_result, normalize_answers, normalize_questions,
     question_registry,
 )
+from routes.ask_user import ask_user_bp
 
 
 def _q(question='Which database?', header='Database', options=('PostgreSQL', 'SQLite'), multi=False):
@@ -131,7 +131,7 @@ class TestNormalizeAnswers(unittest.TestCase):
 class TestRegistryAndRoutes(unittest.TestCase):
     def setUp(self):
         app = Flask(__name__)
-        app.register_blueprint(routes.create_blueprint())
+        app.register_blueprint(ask_user_bp)
         self.client = app.test_client()
         self.questions, _ = normalize_questions([_q()])
         self.pending = question_registry.create('sess-1', 'agent-1', self.questions)
@@ -200,36 +200,6 @@ class TestRegistryAndRoutes(unittest.TestCase):
         self.assertEqual(body['resolved'][qid], 'dismissed')
 
 
-class TestAssetInjection(unittest.TestCase):
-    PAGE = '<html><body><div id="chat-input"></div></body></html>'
-
-    def setUp(self):
-        app = Flask(__name__)
-        app.register_blueprint(routes.create_blueprint())
-        app.add_url_rule('/agents/<agent_id>', 'agent', lambda agent_id: self.PAGE)
-        app.add_url_rule('/plugins', 'plugins', lambda: self.PAGE)
-        self.client = app.test_client()
-
-    def test_agent_page_gets_plugin_ui(self):
-        with patch.object(routes, '_plugin_enabled', return_value=True):
-            html = self.client.get('/agents/evonic').get_data(as_text=True)
-        self.assertIn('/ask_user/static/ask_user.js?v=', html)
-        self.assertIn('/ask_user/static/ask_user.css?v=', html)
-        self.assertLess(html.index('ask_user.js'), html.index('</body>'))
-
-    def test_other_pages_and_disabled_plugin_are_untouched(self):
-        with patch.object(routes, '_plugin_enabled', return_value=True):
-            self.assertEqual(self.client.get('/plugins').get_data(as_text=True), self.PAGE)
-        with patch.object(routes, '_plugin_enabled', return_value=False):
-            self.assertEqual(self.client.get('/agents/evonic').get_data(as_text=True), self.PAGE)
-
-    def test_static_assets_are_served(self):
-        for name in ('ask_user.js', 'ask_user.css'):
-            res = self.client.get(f'/ask_user/static/{name}')
-            self.assertEqual(res.status_code, 200, name)
-            res.close()
-
-
 class _FakeRuntime:
     def __init__(self):
         self.stop = threading.Event()
@@ -269,10 +239,11 @@ class TestAskUserQuestionTool(unittest.TestCase):
         self.runtime = _FakeRuntime()
         self.realtime = _FakeRealtime()
         self.event_stream = _FakeEventStream()
-        self.enabled = '1'
+        self.enabled = True
         channels = {'telegram-1': {'type': 'telegram'}, 'whatsapp-1': {'type': 'whatsapp'}}
-        fake_db = types.SimpleNamespace(get_setting=lambda key, default=None: self.enabled,
-                                        get_channel=channels.get)
+        fake_db = types.SimpleNamespace(
+            get_agent=lambda agent_id: {'id': agent_id, 'ask_user_enabled': 1 if self.enabled else 0},
+            get_channel=channels.get)
         self.modules = patch.dict(sys.modules, {
             'models.db': types.SimpleNamespace(db=fake_db),
             'backend.agent_runtime': types.SimpleNamespace(agent_runtime=self.runtime),
@@ -280,8 +251,8 @@ class TestAskUserQuestionTool(unittest.TestCase):
             'backend.event_stream': types.SimpleNamespace(event_stream=self.event_stream),
         })
         self.modules.start()
-        from plugins.ask_user.backend.tools import ask_user_question
-        self.tool = ask_user_question
+        from backend.tools import ask_user
+        self.tool = ask_user
 
     def tearDown(self):
         self.modules.stop()
@@ -312,11 +283,27 @@ class TestAskUserQuestionTool(unittest.TestCase):
 
         self.assertEqual(result['value']['status'], 'answered')
         self.assertEqual(result['value']['answers'][0]['answer'], 'PostgreSQL')
-        channel, event_type, payload, kwargs = self.realtime.events[-1]
+        channel, event_type, payload, kwargs = [e for e in self.realtime.events if e[0] == 'chat'][-1]
         self.assertEqual((channel, event_type), ('chat', 'question_resolved'))
         self.assertEqual(payload['status'], 'answered')
         self.assertEqual(kwargs['turn_id'], 'turn-1')
         self.assertIsNone(question_registry.get(question_id))
+
+    def test_browsers_get_a_global_notice(self):
+        agent = {**self.AGENT, 'name': 'Builder'}
+        thread, result = self._run_async(agent=agent)
+        question_id = self._wait_for_question()
+        question_registry.dismiss(question_id)
+        thread.join(5)
+        notices = [e for e in self.realtime.events if e[0] == 'questions']
+        self.assertEqual([e[1] for e in notices], ['question_required', 'question_resolved'])
+        _, _, required, kwargs = notices[0]
+        self.assertEqual(required['agent_name'], 'Builder')
+        self.assertEqual(required['question'], 'Which database?')
+        self.assertEqual((required['question_id'], required['count']), (question_id, 1))
+        # Not tied to the turn, so it expires with the normal retention.
+        self.assertEqual((kwargs['session_id'], kwargs.get('turn_id')), ('sess-1', None))
+        self.assertEqual(notices[1][2], {'question_id': question_id, 'status': 'dismissed'})
 
     def test_dismiss_returns_dismissed(self):
         thread, result = self._run_async()
@@ -391,7 +378,7 @@ class TestAskUserQuestionTool(unittest.TestCase):
         ):
             result = self.tool.execute(agent, {'questions': [_q()]})
             self.assertEqual(result['status'], 'unavailable', agent)
-            self.assertIn('Do not call ask_user_question again', result['error'])
+            self.assertIn('Do not call ask_user again', result['error'])
         self.assertEqual(self.realtime.events, [])
 
     def test_web_chat_does_not_notify_channels(self):
@@ -419,22 +406,22 @@ class TestAskUserQuestionTool(unittest.TestCase):
         self.assertEqual(data['status'], 'answered')
         self.assertEqual(data['answers'][0]['answer'], 'SQLite')
 
-    def test_disabling_plugin_closes_open_question(self):
+    def test_disabling_for_agent_closes_open_question(self):
         agent = {**self.AGENT, 'channel_id': 'telegram-1', 'user_id': '12345'}
         thread, result = self._run_async(agent=agent)
         question_id = self._wait_for_question()
-        self.enabled = '0'
+        self.enabled = False
         thread.join(5)
         self.assertEqual(result['value']['status'], 'disabled')
-        self.assertIn('do not call ask_user_question again', result['value']['error'])
+        self.assertIn('do not call ask_user again', result['value']['error'])
         # Both UIs drop it: the web card polls the registry, Telegram edits its message.
         self.assertIsNone(question_registry.get(question_id))
         self.assertEqual(question_registry.resolved_status(question_id), 'disabled')
         self.assertEqual(self.event_stream.events[-1][1]['status'], 'disabled')
 
-    def test_invalid_questions_and_disabled_plugin(self):
+    def test_invalid_questions_and_disabled_for_agent(self):
         self.assertIn('error', self.tool.execute(self.AGENT, {'questions': []}))
-        self.enabled = '0'
+        self.enabled = False
         self.assertIn('disabled', self.tool.execute(self.AGENT, {'questions': [_q()]})['error'])
 
 

@@ -62,6 +62,10 @@
         color: #b91c1c; background: rgb(239 68 68 / .1); border: 1px solid rgb(239 68 68 / .3); }
     html.dark .lg-error { color: #fca5a5; background: rgb(239 68 68 / .14); border-color: rgb(248 113 113 / .35); }
     .lg-error svg { flex: none; width: 18px; height: 18px; margin-top: 1px; }
+    .lg-notice { display: flex; align-items: flex-start; gap: .625rem; margin-bottom: 1rem; padding: .75rem .875rem; border-radius: 1rem; font-size: .8125rem; line-height: 1.4;
+        color: #15803d; background: rgb(34 197 94 / .1); border: 1px solid rgb(34 197 94 / .3); }
+    html.dark .lg-notice { color: #86efac; background: rgb(34 197 94 / .14); border-color: rgb(74 222 128 / .35); }
+    .lg-notice svg { flex: none; width: 18px; height: 18px; margin-top: 1px; }
     .lg-label { display: block; margin: 0 0 .375rem .75rem; font-size: .8125rem; font-weight: 600; color: var(--lg-muted); }
     .lg-field { position: relative; margin-bottom: 1rem; }
     .lg-ico { position: absolute; left: 1rem; top: 50%; width: 1.0625rem; height: 1.0625rem; transform: translateY(-50%); color: #94a3b8; pointer-events: none; transition: color .15s; }
@@ -105,6 +109,12 @@
         <p class="lg-tag">Sign in to continue</p>
 
         <div class="lg-card">
+            {% if notice %}
+            <div class="lg-notice" role="status">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+                <span>{{ notice }}</span>
+            </div>
+            {% endif %}
             {% if error %}
             <div class="lg-error" role="alert">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>

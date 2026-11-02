@@ -1357,6 +1357,15 @@ class AgentRuntime:
         if external_user_id is None:
             external_user_id = '__system__'
 
+        # A bare number answering numbered channel actions (channels without
+        # buttons) selects that action instead of starting an agent turn.
+        if channel_id and session_id is None:
+            from backend.channel_actions import handle_text_reply
+            matched, ack = handle_text_reply(channel_id, external_user_id, message,
+                                             agent_id=agent_id)
+            if matched:
+                return {"response": ack or '', "tool_trace": []}
+
         _logger.info(
             "[handle_message] agent=%s sender=%s msg_preview=%.80r",
             agent_id, external_user_id, message,
@@ -2505,6 +2514,10 @@ class AgentRuntime:
             if agent.get('vision_enabled', 1) and 'describe_image' not in assigned_tool_ids:
                 assigned_tool_ids.append('describe_image')
 
+            # ask_user is on unless the agent turned it off.
+            if agent.get('ask_user_enabled', 1) and 'ask_user' not in assigned_tool_ids:
+                assigned_tool_ids.append('ask_user')
+
             # Agents with audio_enabled automatically get transcribe_audio.
             if agent.get('audio_enabled') and 'transcribe_audio' not in assigned_tool_ids:
                 assigned_tool_ids.append('transcribe_audio')
@@ -2575,7 +2588,6 @@ class AgentRuntime:
                 'audio_enabled': agent.get('audio_enabled', 0),
                 'messaging_acl': agent.get('messaging_acl'),
                 'messaging_acl_mode': agent.get('messaging_acl_mode', 'whitelist'),
-                'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
                 'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
                 'workplace_switch_enabled': bool(agent.get('workplace_switch_enabled')),
             }
@@ -2615,6 +2627,15 @@ class AgentRuntime:
                     agent_context['trusted_attachment_mime_types'] = _att_mime_types
                 if _att_paths:
                     agent_context['trusted_attachment_paths'] = _att_paths
+
+        # A turn started by a message marked "not to be remembered" (notify_agent save_memory=False) must not write
+        # to memory or the knowledge base either: the message's own flag only keeps it out of the summaries.
+        try:
+            _started_by = chatlog.get_last_entry(types=frozenset({'user'})) or {}
+            if isinstance(_started_by.get('metadata'), dict) and _started_by['metadata'].get('no_memory'):
+                agent_context['no_memory_turn'] = True
+        except Exception:
+            pass
 
         # Propagate agent_message_depth and from_agent_id from incoming message metadata
         if ctx.external_user_id.startswith("__agent__"):
@@ -2693,8 +2714,7 @@ class AgentRuntime:
                         ms = AgentState(always_execute=bool(agent.get('always_execute')))
             # Cross-task boundary handling. CMP (when enabled) owns it: the
             # detector routes the turn (continue/return/branch) and a branch
-            # IS the ATG re-arm — a fresh plan cycle on its own path. Agents
-            # with ATG but not CMP keep the original 2-way re-arm.
+            # starts a fresh plan cycle on its own path.
             _boundary_text = ""
             if not agent.get('is_subagent'):
                 for _msg in reversed(messages):
@@ -2709,7 +2729,6 @@ class AgentRuntime:
             # late slot only covers turns it skipped — e.g. brand-new sessions
             # where agent state didn't exist yet at assembly time (first-path
             # init happens here, after the classifier created ms).
-            _cmp_handled = _cmp_early_handled
             if (not _cmp_early_handled
                     and agent.get('enable_cmp') and agent.get('enable_agent_state')
                     and not agent.get('is_subagent')):
@@ -2719,26 +2738,12 @@ class AgentRuntime:
                     _cmp_res = _cmp_pkg.on_turn_boundary(
                         agent, ms, _cmp_chatlog, _boundary_text,
                         session_id=ctx.session_id, agent_id=agent['id'])
-                    _cmp_handled = _cmp_res is not None
                     if _cmp_res and _cmp_res.get('decision') not in ('continue', 'init'):
                         _logger.info("CMP boundary: %s -> %s (layer %s) for session %s",
                                      _cmp_res.get('decision'), _cmp_res.get('target'),
                                      _cmp_res.get('layer'), ctx.session_id)
                 except Exception:
                     _logger.exception("CMP boundary check failed — keeping current state")
-
-            # ATG re-arm (atg-only agents): when the previous task graph is
-            # finished and this message is a brand-new complex task, re-enter
-            # the plan/compile cycle so the new task gets its own graph.
-            if (not _cmp_handled and not is_new_session and ms.mode == 'execute'
-                    and agent.get('enable_atg') and not agent.get('is_subagent')):
-                try:
-                    from backend.agent_runtime import atg as _atg_pkg
-                    if _atg_pkg.maybe_rearm_atg(agent, ms, _boundary_text):
-                        _logger.info("ATG re-armed for session %s — new complex task detected",
-                                     ctx.session_id)
-                except Exception:
-                    _logger.exception("ATG re-arm check failed — keeping current state")
 
             # Sub-agents receive delegated tasks from their parent and
             # should never require plan/approval cycles. Force execute mode.
@@ -3195,8 +3200,15 @@ class AgentRuntime:
                 for sk_id, tool_defs in skills_data.items()]
 
     def send_as_bot(self, session_id: str, text: str,
-                    metadata: dict | None = None) -> bool:
-        """Admin takeover: save message as assistant and send via channel."""
+                    metadata: dict | None = None,
+                    actions: list | None = None) -> bool:
+        """Admin takeover: save message as assistant and send via channel.
+
+        ``actions`` (see backend.channel_actions) are validated up front and
+        raise ChannelActionError when malformed.
+        """
+        from backend.channel_actions import normalize_actions
+        actions = normalize_actions(actions)
         session = db.get_session_with_details(session_id)
         if not session:
             return False
@@ -3228,7 +3240,11 @@ class AgentRuntime:
             instance = channel_manager._active.get(session['channel_id'])
             if instance and instance.is_running:
                 try:
-                    instance.send_message(session['external_user_id'], text)
+                    if actions:
+                        instance.send_message_with_actions(
+                            session['external_user_id'], text, actions)
+                    else:
+                        instance.send_message(session['external_user_id'], text)
                 except Exception as e:
                     _logger.error("send_as_bot channel error: %s", e)
         return True
