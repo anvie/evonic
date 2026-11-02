@@ -599,6 +599,7 @@ window.settingsModels = {
         document.getElementById("model-id").value = "";
         this._populateProviderSelect();
         document.getElementById("model-provider").value = providerId;
+        this._showInheritedEndpoint(providerId);
         // SystemOne only serves structured decisions.
         document.getElementById("model-type").value =
             prov.adapter_key === "systemone.questions.v1" ? "decision" : "llm";
@@ -616,7 +617,8 @@ window.settingsModels = {
         document.getElementById("model-type").value = this._isDecision(model) ? "decision" : "llm";
         this._populateProviderSelect();
         document.getElementById("model-provider").value = model.provider || "";
-        document.getElementById("model-base-url").value = model.legacy_override_provenance ? "Legacy override retained (read-only)" : "Inherited from provider";
+        document.getElementById("model-base-url").value = model.base_url || "";
+        this._showInheritedEndpoint(model.provider);
         document.getElementById("model-name-param").value = model.model_name || "";
         document.getElementById("model-max-tokens").value = model.max_tokens || 32768;
         document.getElementById("model-context-window").value = model.context_window || 0;
@@ -636,6 +638,15 @@ window.settingsModels = {
         openModal("model-modal");
     },
 
+    /* Empty "Connection source" inherits the provider, so show what it would inherit. */
+    _showInheritedEndpoint(providerId) {
+        const prov = this.providers.find((p) => p.id === providerId);
+        const endpoint = prov ? prov.endpoint || prov.base_url || "" : "";
+        document.getElementById("model-base-url").placeholder = endpoint
+            ? "Inherited from provider: " + endpoint
+            : "Inherited from provider";
+    },
+
     toggleFields() {
         // Decision models have no chat settings (tokens, sampling, thinking, vision, default).
         const decision = document.getElementById("model-type").value === "decision";
@@ -653,6 +664,7 @@ window.settingsModels = {
             name: document.getElementById("model-name").value,
             type: document.getElementById("model-type").value,
             provider: document.getElementById("model-provider").value,
+            base_url: document.getElementById("model-base-url").value.trim(),
             model_name: document.getElementById("model-name-param").value,
             max_tokens:
                 parseInt(document.getElementById("model-max-tokens").value) || 32768,
