@@ -201,18 +201,36 @@ def test_legacy_model_format_override_still_routes_until_deprecated():
     assert config["api_format"] == "ollama"
 
 
-def test_new_models_cannot_set_connection_overrides_and_capabilities_are_validated(client):
+def test_models_can_override_connection_source_but_not_credentials_and_capabilities_are_validated(client):
     from models.db import db
 
     provider_id = db.create_provider({
         "id": "api-provider", "name": "API Provider", "endpoint": "https://api.example.invalid/v1",
         "adapter_key": "openai.chat_completions.v1",
     })
-    overridden = client.post("/api/models", json={
-        "name": "Bad", "type": "remote", "provider": provider_id, "model_name": "bad", "base_url": "https://override.invalid",
+    credentials = client.post("/api/models", json={
+        "name": "Bad", "type": "remote", "provider": provider_id, "model_name": "bad", "api_key": "secret",
     })
-    assert overridden.status_code == 400
-    assert "inherit endpoint" in overridden.get_json()["error"]
+    assert credentials.status_code == 400
+    assert "credentials" in credentials.get_json()["error"]
+
+    bad_url = client.post("/api/models", json={
+        "name": "Bad URL", "type": "llm", "provider": provider_id, "model_name": "bad-url", "base_url": "ftp://x",
+    })
+    assert bad_url.status_code == 400
+
+    overridden = client.post("/api/models", json={
+        "name": "Override", "type": "llm", "provider": provider_id, "model_name": "override", "base_url": " https://override.invalid/v1/ ",
+    })
+    assert overridden.status_code == 200
+    override_id = overridden.get_json()["model_id"]
+    assert db.get_model_by_id(override_id)["base_url"] == "https://override.invalid/v1"
+    assert db.resolve_model_config(db.get_model_by_id(override_id))["base_url"] == "https://override.invalid/v1"
+
+    cleared = client.put(f"/api/models/{override_id}", json={"base_url": ""})
+    assert cleared.status_code == 200
+    assert not db.get_model_by_id(override_id)["base_url"]
+    assert db.resolve_model_config(db.get_model_by_id(override_id))["base_url"] == "https://api.example.invalid/v1"
 
     invalid = client.post("/api/models", json={
         "name": "Bad capability", "type": "remote", "provider": provider_id, "model_name": "bad-capability",
