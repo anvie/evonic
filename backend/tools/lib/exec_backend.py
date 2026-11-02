@@ -261,6 +261,9 @@ class BackendRegistry:
             agent_id = agent_context.get('agent_id', agent_context.get('id', ''))
             is_subagent = bool(agent_context.get('is_subagent'))
             is_explorer = bool(agent_context.get('is_explorer'))
+            if not workspace:
+                from backend.tools._workspace import default_sandbox_workspace
+                workspace = default_sandbox_workspace(agent_id)
             if SANDBOX_BACKEND == 'bwrap':
                 from backend.tools.lib.backends.bwrap_backend import BwrapBackend
                 agent_name = agent_context.get('agent_name') or agent_context.get('name') or ''

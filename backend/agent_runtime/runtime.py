@@ -2545,6 +2545,14 @@ class AgentRuntime:
             else:
                 _workspace = agent.get('workspace') or None
 
+            # A sandboxed agent without a workspace would get the whole repo
+            # (database, keys, source) mounted at /workspace. Give it its own
+            # directory so the container and the file tools agree on the root.
+            if (not _workspace and not _workplace_id and not agent.get('is_explorer')
+                    and agent.get('sandbox_enabled', 1)):
+                from backend.tools._workspace import default_sandbox_workspace
+                _workspace = default_sandbox_workspace(agent_id)
+
             # A LID-addressed WhatsApp DM reaches us as bare LID digits, which
             # look exactly like a phone number. Resolve the real identity once
             # here so tools never have to guess from user_id.

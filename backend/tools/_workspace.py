@@ -4,6 +4,7 @@ _workspace.py — shared workspace path resolution for file tools.
 from typing import Optional
 
 import os
+import re
 
 from backend.tools.lib.simulation_scope import (
     agents_dir as _sim_agents_dir,
@@ -14,6 +15,21 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 _AGENTS_DIR = os.path.join(_BASE_DIR, 'agents')
 _SHARED_AGENTS_DIR = os.path.join(_BASE_DIR, 'shared', 'agents')
 _SELF_PREFIX = '/_self/'
+
+
+def default_sandbox_workspace(agent_id: str) -> str:
+    """Host directory mounted at /workspace for a sandboxed agent with no workspace set.
+
+    Never the repo root: that tree holds the database, keys and source. An operator
+    who explicitly sets SANDBOX_WORKSPACE keeps that choice.
+    """
+    explicit = os.getenv('SANDBOX_WORKSPACE', '').strip()
+    if explicit:
+        return os.path.abspath(explicit)
+    safe = re.sub(r'[^A-Za-z0-9_-]', '_', agent_id or '') or 'default'
+    path = os.path.join(_SHARED_AGENTS_DIR, safe)
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def agents_dir(agent: Optional[dict] = None) -> str:
