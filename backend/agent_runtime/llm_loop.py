@@ -1003,13 +1003,14 @@ def run_tool_loop(agent: Dict[str, Any],
         messages = _patched
 
     # Vision-capable models read recent image attachments natively (on a copy of
-    # the messages; the canonical history stays text-only). Opt out per agent
-    # with the ``image_input_mode=describe`` variable.
+    # the messages; the canonical history stays text-only). This is unconditional:
+    # a model that reports vision support never falls back to describe_image for
+    # a recent image, so the describe_image hint is dropped from the same copy.
     if _vision_supported:
         try:
             from backend.agent_runtime import native_images
-            if native_images.native_mode_enabled(
-                    agent_model_config, db.get_agent_variables_dict(db_agent_id)):
+            if native_images.native_mode_enabled(agent_model_config):
+                messages = native_images.strip_describe_image_hints(messages)
                 messages = native_images.attach_native_images(
                     messages, session_id, db_agent_id, db)
         except Exception:
