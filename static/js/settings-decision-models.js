@@ -370,11 +370,19 @@ window.decisionModels = {
         const input = hasInput
             ? `<pre class="mt-2 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-100 dark:bg-gray-900 p-3 text-xs max-h-64">${this.escape(JSON.stringify(event.input_context, null, 2))}</pre>`
             : `<p class="mt-2 text-sm text-gray-500 dark:text-gray-400">${this.escape(this.activityInputNote(event))}</p>`;
-        const fields = Object.keys(summary);
+        const keys = Object.keys(summary);
+        const conf = event.confidence == null ? "" : Math.max(0, Math.min(1, event.confidence));
+        const chips = [event.model_id, event.latency_ms != null ? event.latency_ms + " ms" : "", event.attempts ? event.attempts + (event.attempts === 1 ? " attempt" : " attempts") : "", event.fallback_used ? "fallback used" : ""].filter(Boolean).map((c) => `<span class="dp-chip">${this.escape(c)}</span>`).join("");
+        const cards = keys.map((key) => {
+            const value = summary[key], isScore = typeof value === "number" && value >= 0 && value <= 1;
+            const bar = isScore ? `<div class="dp-conf"><span>Score</span><div class="dp-bar"><i style="width:${value * 100}%"></i></div><b>${this.escape(Math.round(value * 1000) / 10 + "%")}</b></div>` : "";
+            return `<div class="dp-out"><div class="dp-out-top"><span class="dp-out-key">${this.escape(key)}</span><span class="dp-val">${this.escape(JSON.stringify(value))}</span></div>${bar}</div>`;
+        }).join("");
+        const meter = conf === "" ? "" : `<div class="dp-out"><div class="dp-out-top"><span class="dp-out-key">Overall confidence</span><span class="dp-val">${this.escape(Math.round(conf * 100) + "%")}</span></div><div class="dp-conf"><span>Lowest field confidence</span><div class="dp-bar"><i style="width:${conf * 100}%"></i></div></div></div>`;
         const output = event.error_code
-            ? `<p class="mt-2 text-sm text-red-700 dark:text-red-300">Error: ${this.escape(event.error_code)}. No answer was produced.</p>`
-            : fields.length
-                ? `<table class="mt-2 w-full text-sm"><thead><tr class="text-left text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400"><th class="px-3 py-1 font-medium">Field</th><th class="px-3 py-1 font-medium">Answer</th></tr></thead><tbody>${fields.map((key) => `<tr class="border-t border-gray-200 dark:border-gray-700"><td class="px-3 py-1 font-mono text-xs align-top">${this.escape(key)}</td><td class="px-3 py-1 break-all">${this.escape(summary[key])}</td></tr>`).join("")}</tbody></table>`
+            ? `<div class="dp-banner bad mt-2"><strong>${this.escape(event.error_code)}</strong><span>No answer was produced.</span></div>${chips ? `<div class="dp-chips">${chips}</div>` : ""}`
+            : keys.length
+                ? `<div class="dp-banner ok mt-2">✓ Decision completed</div><div class="dp-chips">${chips}</div>${cards}${meter}<p class="dp-meta">Per-option probabilities are not recorded in Activity. Run it in the Playground to see them.</p>`
                 : `<p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No answer fields were returned.</p>`;
         const action = canReproduce
             ? `<button type="button" class="btn-primary text-sm" onclick="decisionModels.rerunActivity('${this.escape(event.id)}')">Test in Playground</button>`
@@ -382,10 +390,10 @@ window.decisionModels = {
         const note = canReproduce
             ? `Fills the Playground with exactly this input${changed ? `. The profile has changed since this event (${this.escape(event.profile_version)} to ${this.escape(profile.policy_version)}), so the result may differ` : ""}. It does not run until you choose Run safe test.`
             : !profile ? "This profile no longer exists as a saved profile, so the event cannot be reproduced." : "No input was recorded for this event, so it cannot be reproduced exactly.";
-        root.innerHTML = `<div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-gray-500 dark:text-gray-400 flex-1 min-w-[12rem]">${note}</p>${action}</div>
+        root.innerHTML = `<div class="dp"><div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-gray-500 dark:text-gray-400 flex-1 min-w-[12rem]">${note}</p>${action}</div>
             <div class="${section}">${heading("Input")}${input}</div>
             <div class="${section}">${heading("Output")}${output}</div>
-            <dl class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">${rows.map(([key, value]) => `<div><dt class="text-gray-500 dark:text-gray-400">${this.escape(key)}</dt><dd class="font-medium text-gray-900 dark:text-gray-100 break-all">${this.escape(value == null ? "unavailable" : value)}</dd></div>`).join("")}</dl>`;
+            <dl class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">${rows.map(([key, value]) => `<div><dt class="text-gray-500 dark:text-gray-400">${this.escape(key)}</dt><dd class="font-medium text-gray-900 dark:text-gray-100 break-all">${this.escape(value == null ? "unavailable" : value)}</dd></div>`).join("")}</dl></div>`;
     },
     async rerunActivity(id) {
         const cached = this._activityDetail && this._activityDetail.id === id ? this._activityDetail : null;
