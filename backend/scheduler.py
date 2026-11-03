@@ -45,6 +45,56 @@ from apscheduler.events import EVENT_JOB_MISSED, EVENT_JOB_EXECUTED
 
 log = logging.getLogger(__name__)
 
+# Schedule columns that hold an ISO-8601 timestamp.
+_SCHEDULE_DATETIME_FIELDS = ("created_at", "next_run_at", "last_run_at")
+
+
+def localize_datetime(value):
+    """Return an ISO-8601 timestamp with an explicit UTC offset.
+
+    The scheduler persists most timestamps as *naive server-local wall clock*
+    strings (``datetime.now().isoformat()``), while a few are already aware
+    (APScheduler's ``next_run_time``).  A browser cannot tell those two apart,
+    so naive values used to be rendered as if they were UTC — shifting every
+    display by the server's UTC offset.
+
+    Naive values are therefore interpreted as system-local time and re-emitted
+    with their offset (``+07:00`` on this deployment), so clients can convert
+    the instant to whatever timezone the user is actually in.  Aware values
+    keep their instant.  Precision is normalised to milliseconds because some
+    browsers reject (or mis-parse) ISO strings with 6-digit fractions.
+    """
+    if not value or not isinstance(value, str):
+        return value
+    try:
+        dt = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return value
+    if dt.tzinfo is None:
+        dt = dt.astimezone()  # naive == system-local wall clock
+    return dt.isoformat(timespec="milliseconds")
+
+
+def localize_schedule(schedule: Optional[dict]) -> Optional[dict]:
+    """Copy a schedule row and make every datetime field offset-aware.
+
+    Only the returned copy is touched; the database keeps storing the original
+    naive (server-local) strings so existing rows and agent-created schedules
+    keep working unchanged.
+    """
+    if not schedule:
+        return schedule
+    localized = dict(schedule)
+    for field in _SCHEDULE_DATETIME_FIELDS:
+        if localized.get(field):
+            localized[field] = localize_datetime(localized[field])
+    trigger_config = localized.get("trigger_config")
+    if isinstance(trigger_config, dict) and trigger_config.get("run_date"):
+        trigger_config = dict(trigger_config)
+        trigger_config["run_date"] = localize_datetime(trigger_config["run_date"])
+        localized["trigger_config"] = trigger_config
+    return localized
+
 
 class Scheduler:
     def __init__(self):
@@ -261,7 +311,7 @@ class Scheduler:
             'owner_type': owner_type, 'owner_id': owner_id,
         })
 
-        return db.get_schedule(schedule_id)
+        return localize_schedule(db.get_schedule(schedule_id))
 
     def update_schedule(self, schedule_id: str, name: str = None,
                         trigger_type: str = None, trigger_config: dict = None,
@@ -310,7 +360,7 @@ class Scheduler:
             self._register_job(schedule_id, new_trigger_type, new_trigger_config)
             self._update_next_run(schedule_id)
 
-        updated = self._enrich_next_run(db.get_schedule(schedule_id))
+        updated = localize_schedule(self._enrich_next_run(db.get_schedule(schedule_id)))
         self._emit('schedule_updated', {
             'schedule_id': schedule_id, 'name': updated['name'],
             'owner_type': updated['owner_type'], 'owner_id': updated['owner_id'],
@@ -341,12 +391,12 @@ class Scheduler:
         schedules = db.get_schedules(owner_type=owner_type, owner_id=owner_id,
                                      enabled_only=enabled_only)
         job_map = self._build_next_run_map() if self._started else {}
-        return [self._enrich_next_run(s, job_map) for s in schedules]
+        return [localize_schedule(self._enrich_next_run(s, job_map)) for s in schedules]
 
     def get_schedule(self, schedule_id: str) -> Optional[dict]:
         from models.db import db
         s = db.get_schedule(schedule_id)
-        return self._enrich_next_run(s) if s else None
+        return localize_schedule(self._enrich_next_run(s)) if s else None
 
     def toggle_schedule(self, schedule_id: str) -> Optional[dict]:
         """Toggle enabled/disabled state."""
@@ -363,7 +413,7 @@ class Scheduler:
         else:
             self._remove_job(schedule_id)
             db.update_schedule(schedule_id, next_run_at=None)
-        return db.get_schedule(schedule_id)
+        return localize_schedule(db.get_schedule(schedule_id))
 
     def run_now(self, schedule_id: str) -> bool:
         """Trigger a schedule immediately (out-of-band)."""
