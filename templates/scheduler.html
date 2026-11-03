@@ -175,16 +175,17 @@ function getUserTimezone() {
 const USER_TIMEZONE = getUserTimezone();
 
 // Parse an ISO timestamp for display in the user's local timezone.
-// Values without an explicit offset are treated as server-side UTC (the
-// scheduler persists naive datetimes in UTC) and converted to local time.
-// Falls back to the legacy local-time interpretation when no timezone is known.
+// The API returns offset-aware ISO strings (e.g. "2026-11-03T21:00:00+07:00"),
+// so `new Date()` converts them to the browser's timezone. A value without an
+// explicit offset can only be a legacy/local wall-clock value and is treated
+// as browser-local — never as UTC, which used to shift every time by the
+// server's UTC offset.
 function parseDate(iso) {
     if (!iso) return null;
     const s = String(iso).trim();
     if (!s) return null;
-    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
-    let d = hasTimezone ? new Date(s) : (USER_TIMEZONE ? new Date(s + 'Z') : new Date(s));
-    if (isNaN(d.getTime())) d = new Date(s); // last-resort fallback
+    let d = new Date(s);
+    if (isNaN(d.getTime())) d = new Date(s.replace(' ', 'T')); // last-resort fallback
     return isNaN(d.getTime()) ? null : d;
 }
 
@@ -193,7 +194,7 @@ function fmtDate(iso) {
     const d = parseDate(iso);
     if (!d) return esc(iso);
     try {
-        return d.toLocaleString('id-ID', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+        return d.toLocaleString('id-ID', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
     } catch { return esc(iso); }
 }
 
@@ -368,7 +369,7 @@ function openCreateModal() {
     onActionTypeChange();
 }
 
-// Convert a stored run_date (UTC or aware ISO) into a value suitable for an
+// Convert a stored run_date (offset-aware ISO) into a value suitable for an
 // <input type="datetime-local">, expressed in the user's local timezone.
 function toDatetimeLocal(iso) {
     if (!iso) return '';
@@ -378,14 +379,15 @@ function toDatetimeLocal(iso) {
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Convert a local datetime-local value back to a naive UTC string for the API,
-// so the backend (which treats naive run_date as UTC) stores the correct instant.
-function toUtcNaive(localValue) {
-    if (!localValue || !USER_TIMEZONE) return localValue;
+// Convert a local datetime-local value into an offset-aware UTC ISO string.
+// The backend stores exactly what it receives, so sending an explicit instant
+// ("...Z") guarantees the job fires at the wall-clock time the user picked,
+// regardless of the server's own timezone.
+function toUtcIso(localValue) {
+    if (!localValue) return localValue;
     const d = new Date(localValue);
     if (isNaN(d.getTime())) return localValue;
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+    return d.toISOString();
 }
 
 async function openEditModal(id) {
@@ -486,7 +488,7 @@ async function createSchedule() {
     if (triggerType === 'date') {
         const v = document.getElementById('f-run-date').value;
         if (!v) return alert('Run date is required');
-        triggerConfig = {run_date: toUtcNaive(v)};
+        triggerConfig = {run_date: toUtcIso(v)};
     } else if (triggerType === 'interval') {
         const val = parseInt(document.getElementById('f-interval-value').value);
         const unit = document.getElementById('f-interval-unit').value;
