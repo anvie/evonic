@@ -1322,6 +1322,10 @@ html.dark .mcd-pill.warn { color: #f2b84b; }
 .mcd-name { font-weight: 650; font-size: .95rem; line-height: 1.25; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcd-id { display: flex; align-items: center; gap: .375rem; margin-top: 2px; font-family: var(--st-mono); font-size: .72rem; color: var(--text-muted); min-width: 0; }
 .mcd-id > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Registry id (primary key in llm_models): fixed at creation, so it can differ from the model name. */
+.mcd-regid { display: flex; align-items: center; gap: .375rem; margin-top: 1px; font-family: var(--st-mono); font-size: .68rem; color: var(--text-muted); opacity: .85; min-width: 0; }
+.mcd-regid::before { content: "id"; flex: none; padding: 0 .25rem; border-radius: 3px; background: rgb(148 163 184 / .18); font-size: .6rem; letter-spacing: .02em; opacity: .9; }
+.mcd-regid > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcd-copy { display: grid; padding: 2px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); cursor: pointer; opacity: 0; transition: opacity .12s; }
 .mcd-copy svg { width: 13px; height: 13px; }
 .mcd-card:hover .mcd-copy, .mcd-copy:focus-visible { opacity: 1; }
