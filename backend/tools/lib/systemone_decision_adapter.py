@@ -255,7 +255,7 @@ class SystemOneQuestionsDecisionAdapter:
                     if confidence is None:
                         confidence = next((item.probability for item in candidates if item.value == selected and item.probability is not None), None)
                 fields.append(DecisionFieldResult(field.key, selected, confidence, candidates))
-            model_id = next((body[key] for key in ("model_id", "model") if isinstance(body.get(key), str)), None)
+            model_id = body.get("model_id") if isinstance(body.get("model_id"), str) else None   # not "model": llama.cpp puts its file path there
             elapsed_ms = int((time.monotonic() - started) * 1000)
             result = DecisionResult(invocation.profile, invocation.schema.version, tuple(fields),
                                     ProviderMetadata(str(self.model.get("provider") or "systemone"), model_id or str(self.model.get("id") or "systemone"), usage=_usage(body)),

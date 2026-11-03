@@ -182,7 +182,7 @@ def test_clef_answers_inside_cloudflares_result_wrapper_are_read():
     assert {c.value: c.probability for c in fields["disposition"].candidates} == {"go": .8, "stop": .2}
     assert fields["approved"].value is True and fields["approved"].confidence == .85
     assert fields["risk"].value == 5.0 and fields["risk"].confidence == .5          # level 2 of 0..4 on a 0..10 scale
-    assert result.provider.model_id == "clef" and result.provider.usage == {"input_tokens": 812, "output_tokens": 0}
+    assert result.provider.model_id == _clef_model()["id"] and result.provider.usage == {"input_tokens": 812, "output_tokens": 0}
 
 
 def test_clef_answers_without_the_wrapper_are_read_too():

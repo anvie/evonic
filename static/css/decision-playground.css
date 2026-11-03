@@ -67,3 +67,10 @@ html.dark .dp { --dp-bg: #1e293b; --dp-soft: #0f172a; --dp-line: #334155; --dp-t
 .dp-ro-desc { margin: .375rem 0 0; font-size: .8125rem; color: var(--dp-mute); }
 .dp-opts { display: flex; flex-wrap: wrap; gap: .375rem; margin-top: .5rem; }
 .dp-opt { font-size: .75rem; font-weight: 500; color: var(--dp-accent); background: var(--dp-accent-soft); border-radius: .375rem; padding: .125rem .5rem; }
+/* Activity detail: the same result cards, tighter. */
+.dp-act .dp-out { padding: .5rem .75rem; margin-top: .375rem; border-radius: .5rem; }
+.dp-act .dp-out-key { font-size: .6875rem; }
+.dp-act .dp-val { font-size: .8125rem; padding: 0 .5rem; border-radius: .375rem; }
+.dp-act .dp-conf { margin-top: .375rem; }
+.dp-act .dp-cands { margin-top: .375rem; gap: .25rem; }
+.dp-act .dp-meta { margin-top: .25rem; }

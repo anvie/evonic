@@ -373,18 +373,17 @@ window.decisionModels = {
         const keys = Object.keys(summary);
         const analysis = event.field_analysis || {}, clamp = (n) => Math.max(0, Math.min(1, n));
         const pct = (n) => Math.round(n * 1000) / 10 + "%";
-        const chips = [event.model_id, event.latency_ms != null ? event.latency_ms + " ms" : "", event.attempts ? event.attempts + (event.attempts === 1 ? " attempt" : " attempts") : "", event.fallback_used ? "fallback used" : ""].filter(Boolean).map((c) => `<span class="dp-chip">${this.escape(c)}</span>`).join("");
         const cards = keys.map((key) => {
             const info = analysis[key] || {}, cands = (info.candidates || []).slice().sort((x, y) => y.probability - x.probability);
             const conf = info.confidence == null ? "" : `<div class="dp-conf"><span>Confidence</span><div class="dp-bar"><i style="width:${clamp(info.confidence) * 100}%"></i></div><b>${this.escape(Math.round(info.confidence * 100) + "%")}</b></div>`;
             const bars = cands.length ? `<div class="dp-cands">${cands.map((c, i) => `<div class="dp-cand ${i === 0 ? "top" : ""}"><b title="${this.escape(String(c.value))}">${this.escape(String(c.value))}</b><div class="dp-bar"><i style="width:${clamp(c.probability) * 100}%"></i></div><span>${this.escape(pct(c.probability))}</span></div>`).join("")}</div>` : "";
-            return `<div class="dp-out"><div class="dp-out-top"><span class="dp-out-key">${this.escape(key)}</span><span class="dp-val">${this.escape(JSON.stringify(summary[key]))}</span></div>${conf}${bars}</div>`;
+            return `<div class="dp-out"><div class="dp-out-top"><span class="dp-out-key">${this.escape(key)}</span><span class="dp-val">${this.escape(typeof summary[key] === "string" ? summary[key] : JSON.stringify(summary[key]))}</span></div>${conf}${bars}</div>`;
         }).join("");
-        const fallbackConf = !Object.keys(analysis).length && event.confidence != null ? `<div class="dp-out"><div class="dp-conf" style="margin-top:0"><span>Confidence</span><div class="dp-bar"><i style="width:${clamp(event.confidence) * 100}%"></i></div><b>${this.escape(Math.round(event.confidence * 100) + "%")}</b></div></div><p class="dp-meta">Per-option probabilities were not recorded for this older event.</p>` : "";
+        const fallbackConf = !Object.keys(analysis).length && event.confidence != null ? `<div class="dp-out"><div class="dp-conf"><span>Confidence</span><div class="dp-bar"><i style="width:${clamp(event.confidence) * 100}%"></i></div><b>${this.escape(Math.round(event.confidence * 100) + "%")}</b></div></div><p class="dp-meta">Per-option probabilities were not recorded for this older event.</p>` : "";
         const output = event.error_code
-            ? `<div class="dp-banner bad mt-2"><strong>${this.escape(event.error_code)}</strong><span>No answer was produced.</span></div>${chips ? `<div class="dp-chips">${chips}</div>` : ""}`
+            ? `<div class="dp-banner bad mt-2"><strong>${this.escape(event.error_code)}</strong><span>No answer was produced.</span></div>`
             : keys.length
-                ? `<div class="dp-banner ok mt-2">✓ Decision completed</div><div class="dp-chips">${chips}</div>${cards}${fallbackConf}`
+                ? `${cards}${fallbackConf}`
                 : `<p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No answer fields were returned.</p>`;
         const action = canReproduce
             ? `<button type="button" class="btn-primary text-sm" onclick="decisionModels.rerunActivity('${this.escape(event.id)}')">Test in Playground</button>`
@@ -392,7 +391,7 @@ window.decisionModels = {
         const note = canReproduce
             ? `Fills the Playground with exactly this input${changed ? `. The profile has changed since this event (${this.escape(event.profile_version)} to ${this.escape(profile.policy_version)}), so the result may differ` : ""}. It does not run until you choose Run safe test.`
             : !profile ? "This profile no longer exists as a saved profile, so the event cannot be reproduced." : "No input was recorded for this event, so it cannot be reproduced exactly.";
-        root.innerHTML = `<div class="dp"><div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-gray-500 dark:text-gray-400 flex-1 min-w-[12rem]">${note}</p>${action}</div>
+        root.innerHTML = `<div class="dp dp-act"><div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-gray-500 dark:text-gray-400 flex-1 min-w-[12rem]">${note}</p>${action}</div>
             <div class="${section}">${heading("Input")}${input}</div>
             <div class="${section}">${heading("Output")}${output}</div>
             <dl class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">${rows.map(([key, value]) => `<div><dt class="text-gray-500 dark:text-gray-400">${this.escape(key)}</dt><dd class="font-medium text-gray-900 dark:text-gray-100 break-all">${this.escape(value == null ? "unavailable" : value)}</dd></div>`).join("")}</dl></div>`;
