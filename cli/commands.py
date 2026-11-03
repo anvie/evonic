@@ -2733,36 +2733,97 @@ _PASS = f"{_G}✓{_RESET}"
 _FAIL = f"{_R}✗{_RESET}"
 _WARN = f"{_Y}⚠{_RESET}"
 _INFO = f"{_B}ℹ{_RESET}"
-_DOCTOR_COMPACT = False
+_DOCTOR_ACTIVE = False
+_DOCTOR_VERBOSE = False
+_doctor_section = None  # {"title", "lines": [(kind, msg)], "printed"} while a doctor section is being collected
+_DOCTOR_WIDTH = 72
+_KIND_ICON = {"pass": _PASS, "fail": _FAIL, "warn": _WARN, "info": _INFO}
+
+
+def _split_title(title):
+    """'10b. Foo Check' -> ('10b', 'Foo Check'); titles without a number keep an empty one."""
+    num, dot, rest = title.partition(". ")
+    if dot and num[:1].isdigit() and len(num) <= 4:
+        return num, rest
+    return "", title
+
+
+def _flush_section(partial=False):
+    """Print the section collected so far. Collapsed to one line when everything passed; warnings and failures
+    are listed under it (everything with --verbose). ``partial`` is for callers about to print raw output
+    (docker build, install scripts) that must come after the section header."""
+    global _doctor_section
+    sec = _doctor_section
+    if sec is None:
+        return
+    lines = sec["lines"]
+    counts = {k: sum(1 for kind, _ in lines if kind == k) for k in ("pass", "warn", "fail")}
+    shown = [(k, m) for k, m in lines if _DOCTOR_VERBOSE or k in ("warn", "fail")]
+    if not sec["printed"]:
+        num, name = _split_title(sec["title"])
+        label = f"{_DIM}{num:>3}{_RESET}  {name}" if num else f"     {name}"
+        pad = " " * max(1, 54 - len(name))
+        if partial:
+            print(f"\n  {_DIM}▸{_RESET}  {label}")
+        else:
+            if counts["fail"]:
+                icon = _FAIL
+            elif counts["warn"]:
+                icon = _WARN
+            elif counts["pass"]:
+                icon = _PASS
+            else:
+                icon = f"{_DIM}–{_RESET}"
+            parts = []
+            if counts["pass"]:
+                parts.append(f"{_G}{counts['pass']} ok{_RESET}")
+            if counts["warn"]:
+                parts.append(f"{_Y}{counts['warn']} warn{_RESET}")
+            if counts["fail"]:
+                parts.append(f"{_R}{counts['fail']} fail{_RESET}")
+            summary = f"{_DIM} · {_RESET}".join(parts) if parts else f"{_DIM}skipped{_RESET}"
+            print(f"  {icon}  {label}{pad}{summary}")
+        sec["printed"] = True
+    for kind, msg in shown:
+        print(f"       {_KIND_ICON[kind]}  {msg}" if msg else f"       {_KIND_ICON[kind]}")
+    sec["lines"] = []
+    if not partial:
+        _doctor_section = None
 
 
 def _section(title):
-    if not _DOCTOR_COMPACT:
+    global _doctor_section
+    if not _DOCTOR_ACTIVE:
         print(f"\n{_BOLD}{_C}══ {title} ══{_RESET}")
+        return
+    _flush_section()
+    _doctor_section = {"title": title, "lines": [], "printed": False}
+
+
+def _emit(kind, msg):
+    if _DOCTOR_ACTIVE and _doctor_section is not None:
+        _doctor_section["lines"].append((kind, msg))
+    else:
+        print(f"  {_KIND_ICON[kind]}  {msg}" if msg else f"  {_KIND_ICON[kind]}")
 
 
 def _ok(msg=""):
-    line = f"  {_PASS}  {msg}" if msg else f"  {_PASS}"
-    if not _DOCTOR_COMPACT:
-        print(line)
+    _emit("pass", msg)
     return "pass"
 
 
 def _fail(msg=""):
-    line = f"  {_FAIL}  {msg}" if msg else f"  {_FAIL}"
-    print(line)
+    _emit("fail", msg)
     return "fail"
 
 
 def _warn(msg=""):
-    line = f"  {_WARN}  {msg}" if msg else f"  {_WARN}"
-    print(line)
+    _emit("warn", msg)
     return "warn"
 
 
 def _info(msg):
-    if not _DOCTOR_COMPACT:
-        print(f"  {_INFO}  {msg}")
+    _emit("info", msg)
 
 
 def evomem_install(force=False):
@@ -2782,14 +2843,12 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
     import json
     import platform
 
-    global _DOCTOR_COMPACT
-    _DOCTOR_COMPACT = fix and not verbose
+    global _DOCTOR_ACTIVE, _DOCTOR_VERBOSE, _doctor_section
+    _DOCTOR_ACTIVE, _DOCTOR_VERBOSE, _doctor_section = True, verbose, None
 
-    if fix:
-        print(f"\n{_BOLD}{_C}🩺  Evonic Doctor (fix mode){_RESET}")
-    else:
-        print(f"\n{_BOLD}{_C}🩺  Evonic Doctor{_RESET}")
-    print(f"{_DIM}System diagnostics & health check{_RESET}")
+    title = "Evonic Doctor (fix mode)" if fix else "Evonic Doctor"
+    print(f"\n  🩺  {_BOLD}{_C}{title}{_RESET}")
+    print(f"      {_DIM}System diagnostics & health check{_RESET}")
 
     results = []
     fixes_applied = []
@@ -3153,6 +3212,31 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
                 if result.returncode == 0:
                     docker_available = True
                     results.append(_ok("Docker is available and responsive"))
+                    from config import SANDBOX_IMAGE, BASE_DIR
+                    image_check = subprocess.run(
+                        ["docker", "image", "inspect", SANDBOX_IMAGE],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if image_check.returncode == 0:
+                        results.append(_ok(f"Sandbox image '{SANDBOX_IMAGE}' is present"))
+                    else:
+                        results.append(_warn(
+                            f"Sandbox image '{SANDBOX_IMAGE}' not found — bash/runpy "
+                            f"will fail for sandbox-enabled agents"
+                        ))
+                        if fix:
+                            build = subprocess.run(
+                                ["docker", "build", "-t", SANDBOX_IMAGE,
+                                 os.path.join(BASE_DIR, "docker", "tools")],
+                                capture_output=True, text=True
+                            )
+                            if build.returncode == 0:
+                                fixes_applied.append(f"Built sandbox image '{SANDBOX_IMAGE}'")
+                            else:
+                                tail = (build.stderr or build.stdout).strip().splitlines()[-1:]
+                                results.append(_fail(
+                                    f"docker build failed for '{SANDBOX_IMAGE}'"
+                                    + (f": {tail[0][:160]}" if tail else "")))
                 else:
                     results.append(_warn(
                         f"Docker CLI found but daemon returned exit code {result.returncode}"
@@ -3526,6 +3610,35 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
                 fn_name = td.get("function", {}).get("name", "")
                 if fn_name:
                     valid_tool_ids.add(f"skill:{skill_id}:{fn_name}")
+
+        # Agent messaging tools are injected by the runtime but may also be
+        # assigned explicitly
+        from backend.tools.agent_messaging import get_agent_messaging_tool_defs
+        for td in get_agent_messaging_tool_defs():
+            fn_name = td.get("function", {}).get("name", "")
+            if fn_name:
+                valid_tool_ids.add(fn_name)
+
+        # Plugin tools: plugin:<plugin_id>:<fn_name>. Disabled plugins count too,
+        # so their assignments survive until the plugin is re-enabled.
+        from backend.plugin_manager import plugin_manager
+        for plugin in plugin_manager.list_plugins():
+            plugin_id = plugin.get("id", "")
+            tools_file = plugin.get("tools_file", "")
+            if not plugin_id or not tools_file:
+                continue
+            plugin_dir = plugin.get("_dir", os.path.join(ROOT, "plugins", plugin_id))
+            try:
+                with open(os.path.join(plugin_dir, tools_file), encoding="utf-8") as f:
+                    plugin_defs = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(plugin_defs, list):
+                continue
+            for d in plugin_defs:
+                fn_name = d.get("function", {}).get("name", "") if isinstance(d, dict) else ""
+                if fn_name:
+                    valid_tool_ids.add(f"plugin:{plugin_id}:{fn_name}")
 
         orphan_count = 0
         for a in agents:
@@ -4185,6 +4298,7 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
                 # gutter — a clean header, a dim "│" margin per line, and a
                 # closing tick. A gutter (vs. a closed box) stays aligned even
                 # when long lines wrap.
+                _flush_section(partial=True)
                 print(f"  {_DIM}╭─{_RESET} {_BOLD}{name}{_RESET} {_DIM}install · {rec['source_id']}/{binary['fix_script']}{_RESET}")
                 # Truncate each streamed line to the terminal width so long lines
                 # (URLs, paths) stay on one row instead of wrapping and breaking
@@ -4351,7 +4465,24 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
         results.append(_warn(f"WhatsApp bridge check failed: {e}"))
 
 
-    _section("Summary")
+    # ── 18. Plugin Checks ────────────────────────────────────
+    try:
+        from backend.plugin_doctor import run_plugin_doctor
+        reports = run_plugin_doctor(fix=fix)
+        if not reports:
+            _section("18. Plugin Checks")
+            _info("No enabled plugin provides doctor checks")
+        for rep in reports:
+            _section(f"Plugin · {rep['name']}")
+            for finding in rep["findings"]:
+                results.append({"ok": _ok, "warn": _warn, "fail": _fail}[finding.level](finding.message))
+            fixes_applied.extend(f"[{rep['name']}] {line}" for line in rep["fixes"])
+    except Exception as e:
+        _section("18. Plugin Checks")
+        results.append(_fail(f"Plugin doctor failed: {e}"))
+
+    _flush_section()
+    _DOCTOR_ACTIVE = False
 
     # Filter out "skip" entries
     real = [r for r in results if r != "skip"]
@@ -4360,30 +4491,32 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
     warnings = sum(1 for r in real if r == "warn")
     total = passed + failed + warnings
 
-    print(f"\n  {_BOLD}Total checks:{_RESET} {total}")
-    print(f"  {_G}✓ Passed:{_RESET}  {passed}")
+    print(f"\n  {_DIM}{'─' * (_DOCTOR_WIDTH - 4)}{_RESET}")
+    parts = [f"{_G}{passed} passed{_RESET}"]
     if warnings:
-        print(f"  {_Y}⚠ Warnings:{_RESET} {warnings}")
+        parts.append(f"{_Y}{warnings} warning{'s' if warnings != 1 else ''}{_RESET}")
     if failed:
-        print(f"  {_R}✗ Failed:{_RESET}  {failed}")
+        parts.append(f"{_R}{failed} failed{_RESET}")
+    print(f"  {f' {_DIM}·{_RESET} '.join(parts)}  {_DIM}({total} checks){_RESET}")
 
     if fixes_applied:
-        print(f"\n  {_BOLD}{_C}Fixes applied:{_RESET} {len(fixes_applied)}")
+        print(f"\n  {_BOLD}{_C}Fixes applied{_RESET} {_DIM}({len(fixes_applied)}){_RESET}")
         for fix_msg in fixes_applied:
-            print(f"    {_G}→{_RESET} {fix_msg}")
+            print(f"    {_G}→{_RESET} {fix_msg.splitlines()[0][:_DOCTOR_WIDTH + 30]}")
 
     if failed > 0:
-        print(f"\n{_R}{_BOLD}  System has issues that need attention.{_RESET}")
+        print(f"\n  {_R}{_BOLD}System has issues that need attention.{_RESET}")
     elif warnings > 0:
-        print(f"\n{_Y}{_BOLD}  System is operational with minor warnings.{_RESET}")
+        print(f"\n  {_Y}{_BOLD}System is operational with minor warnings.{_RESET}")
     else:
-        print(f"\n{_G}{_BOLD}  All checks passed. System is healthy!{_RESET}")
+        print(f"\n  {_G}{_BOLD}All checks passed. System is healthy!{_RESET}")
 
     if not fix and (failed > 0 or warnings > 0):
-        print(f"\n  {_DIM}Tip: run{_RESET} {_BOLD}evonic doctor --fix{_RESET} {_DIM}to auto-fix fixable issues.{_RESET}")
+        print(f"  {_DIM}Tip: run{_RESET} {_BOLD}evonic doctor --fix{_RESET} {_DIM}to auto-fix fixable issues.{_RESET}")
+    if not verbose:
+        print(f"  {_DIM}Use{_RESET} {_BOLD}--verbose{_RESET} {_DIM}to list every passing check.{_RESET}")
 
     print()
-    _DOCTOR_COMPACT = False
     return 0 if failed == 0 else 1
 
 

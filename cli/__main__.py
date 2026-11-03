@@ -123,11 +123,11 @@ def main():
     )
     doctor_parser.add_argument(
         "--fix", action="store_true", default=False,
-        help="Automatically fix detected inconsistencies with compact output",
+        help="Automatically fix detected inconsistencies",
     )
     doctor_parser.add_argument(
         "--verbose", action="store_true", default=False,
-        help="Show every diagnostic detail (including with --fix)",
+        help="List every passing check, not just warnings and failures",
     )
     doctor_parser.add_argument(
         "--with-llm-provider", action="store_true", default=False,
