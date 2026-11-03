@@ -313,11 +313,32 @@
             </div>
 
 
+            <div class="mb-4 hidden" id="model-registry-id-group">
+                <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                    for="model-registry-id"
+                    >Registry ID</label
+                >
+                <input
+                    type="text"
+                    id="model-registry-id"
+                    readonly
+                    class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm font-mono bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 focus:outline-none"
+                />
+                <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                    Primary key in the model registry. It is generated once as
+                    <span class="font-mono">provider/model_name</span> when the
+                    model is created and never changes, so a renamed model keeps
+                    its original id. Decision profiles, DMSS settings and
+                    Decision Activity entries refer to models by this id.
+                </p>
+            </div>
+
             <div class="mb-4">
                 <label
                     class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
                     for="model-name-param"
-                    >Model ID *</label
+                    >Upstream Model ID *</label
                 >
                 <input
                     type="text"
@@ -330,7 +351,9 @@
                     id="model-id-hint"
                     class="text-xs text-gray-400 dark:text-gray-500 mt-1"
                 >
-                    The exact ID format depends on the provider. Browse the
+                    The identifier sent to the provider (the model's
+                    <span class="font-mono">model_name</span>), not the registry
+                    id. The exact format depends on the provider. Browse the
                     catalog at
                     <a
                         href="https://models.dev/"

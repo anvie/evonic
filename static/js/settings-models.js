@@ -238,7 +238,7 @@ window.settingsModels = {
         const state = model.enabled
             ? (model.is_default ? "Default · enabled" : "Enabled")
             : "Off";
-        const search = [name, model.model_name, prov && prov.name].join(" ").toLowerCase();
+        const search = [name, model.model_name, id, prov && prov.name].join(" ").toLowerCase();
 
         return `
         <article class="mcd-card${model.is_default ? " is-default" : ""}${model.enabled ? "" : " is-off"}" tabindex="0" aria-label="Edit ${e(name)}" onclick="settingsModels.onCardClick(event, '${id}')" onkeydown="settingsModels.onCardKey(event, '${id}')" data-on="${model.enabled ? 1 : 0}" data-think="${model.thinking ? 1 : 0}" data-search="${e(search)}">
@@ -248,6 +248,8 @@ window.settingsModels = {
                     <div class="mcd-name" title="${e(name)}">${e(name)}</div>
                     <div class="mcd-id"><span title="${e(model.model_name)}">${e(model.model_name)}</span>
                         <button type="button" class="mcd-copy" aria-label="Copy model id" data-id="${e(model.model_name)}" onclick="settingsModels.copyId(this)">${I.copy}</button></div>
+                    ${id && id !== (model.model_name || "") ? `<div class="mcd-regid"><span title="Registry ID — the primary key in the model registry. Fixed at creation, so it can differ from the model name.">${e(id)}</span>
+                        <button type="button" class="mcd-copy" aria-label="Copy registry id" data-id="${e(id)}" onclick="settingsModels.copyId(this)">${I.copy}</button></div>` : ""}
                 </div>
                 <div class="mcd-acts">
                     ${decision ? "" : `<button type="button" class="mcd-ib mcd-test" aria-label="Ping ${e(name)}" title="Ping: send a short prompt to check this model answers" onclick="settingsModels.pingModel('${id}', this)">${I.bolt}</button>`}
@@ -581,10 +583,21 @@ window.settingsModels = {
 
     /* ---- Model CRUD ---- */
 
+    // The registry id is generated once at creation and never changes, so it is shown read-only:
+    // a renamed model keeps the id it was born with (see generate_model_id in models/mixins/models.py).
+    _setRegistryId(value) {
+        const group = document.getElementById("model-registry-id-group");
+        const input = document.getElementById("model-registry-id");
+        if (!group || !input) return;
+        input.value = value || "";
+        group.classList.toggle("hidden", !value);
+    },
+
     showAddModelModal() {
         document.getElementById("modal-title").textContent = "Add Model";
         document.getElementById("model-form").reset();
         document.getElementById("model-id").value = "";
+        this._setRegistryId("");
         this._populateProviderSelect();
         this.toggleFields();
         openModal("model-modal");
@@ -597,6 +610,7 @@ window.settingsModels = {
         document.getElementById("modal-title").textContent = "Add Model — " + (prov.name || providerId);
         document.getElementById("model-form").reset();
         document.getElementById("model-id").value = "";
+        this._setRegistryId("");
         this._populateProviderSelect();
         document.getElementById("model-provider").value = providerId;
         this._showInheritedEndpoint(providerId);
@@ -613,6 +627,7 @@ window.settingsModels = {
 
         document.getElementById("modal-title").textContent = "Edit Model";
         document.getElementById("model-id").value = model.id;
+        this._setRegistryId(model.id);
         document.getElementById("model-name").value = model.name || "";
         document.getElementById("model-type").value = this._isDecision(model) ? "decision" : "llm";
         this._populateProviderSelect();
