@@ -43,9 +43,15 @@ from backend.tools.read_attachment import (
     _is_textish, _is_anydoc, _read_anydoc_text, _TEXTISH_EXTS,
 )
 
+# Compound archive names (.tar.gz, .tar.bz2) end in one of these, which is what splitext sees.
+_ARCHIVE_EXTS = {'.zip', '.gz', '.tgz', '.bz2', '.tbz2', '.tar', '.rar'}
+_IMAGE_EXTS = {
+    '.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff',
+    '.svg', '.ico', '.heic', '.heif', '.avif',
+}
 _ALLOWED_EXTS = (
-    {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.zip',
-     '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.rtf', '.epub'}
+    _IMAGE_EXTS | _ARCHIVE_EXTS
+    | {'.pdf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.rtf', '.epub'}
     | _TEXTISH_EXTS
 )
 
@@ -82,7 +88,7 @@ def _process_upload(file_storage, agent_id: str, session_id: str,
         f.write(file_bytes)
 
     # Persist attachment record
-    is_image = mime_type.startswith('image/')
+    is_image = mime_type.startswith('image/') or ext in _IMAGE_EXTS
     file_type = 'photo' if is_image else 'document'
     attachment_id = db.save_attachment(
         agent_id=agent_id,
@@ -113,7 +119,11 @@ def _process_upload(file_storage, agent_id: str, session_id: str,
         agent = db.get_agent(agent_id)
         if agent and (agent.get('workplace_id') or agent.get('sandbox_enabled')):
             from backend.tools._ensure_workplace_file import ensure_workplace_file
-            workplace_path = ensure_workplace_file(target_path, agent)
+            # The DB row carries no session_id; pass it so the upload-time copy
+            # lands in the same session-scoped staging dir as read_attachment.
+            workplace_path = ensure_workplace_file(
+                target_path, {**agent, 'session_id': session_id}
+            )
             attachment_info['workplace_path'] = workplace_path
     except Exception as e:
         _logger.warning(
@@ -283,11 +293,14 @@ def api_session_reply(session_id):
         upload_meta = {'attachment_info': attachment_info}
 
         # Build [Attached: ... id=N] line so agents can use read_attachment(attachment_id=N)
+        # The path must be the one the execution environment can see: host paths are
+        # meaningless (and misleading) inside a Docker sandbox or remote workplace.
         att = result['attachment_info']
+        visible_path = att.get('workplace_path') or att['file_path']
         info_line = (
             f"[Attached: {att['filename']} "
             f"({att['mime_type']}, {_human_size(att['size_bytes'])}) "
-            f"id={att['attachment_id']} path={att['file_path']}]"
+            f"id={att['attachment_id']} path={visible_path}]"
         )
 
         # Prepend info_line to text; for non-image files also prepend extracted content

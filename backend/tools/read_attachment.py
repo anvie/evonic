@@ -38,7 +38,7 @@ _TEXTISH_MIMES = {
 
 _TEXTISH_EXTS = {
     '.txt', '.md', '.markdown', '.log',
-    '.json', '.yaml', '.yml', '.xml', '.csv', '.tsv',
+    '.json', '.jsonl', '.ndjson', '.yaml', '.yml', '.xml', '.csv', '.tsv',
     '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.go', '.rs',
     '.c', '.cc', '.cpp', '.h', '.hpp', '.rb', '.php', '.kt', '.swift',
     '.html', '.htm', '.css', '.scss', '.sql', '.sh', '.toml', '.ini',
