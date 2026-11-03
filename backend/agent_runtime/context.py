@@ -1186,7 +1186,10 @@ def build_attachment_note(attachment_info: dict,
     ``read_attachment(attachment_id=N)`` without inferring an ID from a session
     name or storage path.
     """
-    file_path = attachment_info.get('file_path', '')
+    # Prefer the path the execution environment can actually open (container
+    # /workspace path, remote workplace path).  The host file_path is only a
+    # fallback for non-sandboxed agents.
+    file_path = attachment_info.get('workplace_path') or attachment_info.get('file_path', '')
     if file_path and not os.path.isabs(file_path):
         file_path = os.path.abspath(os.path.join(_BASE_DIR, file_path))
 

@@ -100,3 +100,74 @@ def test_attachment_note_keeps_media_tool_guidance(tmp_path):
 
     assert 'Attachment ID: 186' in note
     assert 'transcribe_audio' in note
+
+
+def test_attachment_note_prefers_workplace_path_over_host_path():
+    """Sandboxed agents must see a path their container can actually open."""
+    info = {
+        'attachment_id': 187,
+        'filename': 'probe.tar.gz',
+        'mime_type': 'application/gzip',
+        'size_bytes': 3145728,
+        'file_path': os.path.join('data', 'attachments', 'asep', 'asep-030df24d', 'probe.tar.gz'),
+        'workplace_path': '/workspace/evonic-asep-scratchpad/attachments/asep-030df24d/dead_beef_probe.tar.gz',
+    }
+
+    note = context.build_attachment_note(info)
+
+    assert 'File path: /workspace/evonic-asep-scratchpad/attachments/asep-030df24d/' in note
+    assert 'data/attachments' not in note
+
+
+class _FakeBackend:
+    """Identity-resolving backend that records staged writes."""
+
+    def __init__(self):
+        self.writes = []
+        self._sizes = {}
+
+    def resolve_path(self, path):
+        return path
+
+    def write_file_bytes(self, path, data, create_dirs=True):
+        self.writes.append(path)
+        self._sizes[path] = len(data)
+        return {'ok': True}
+
+    def file_stat(self, path):
+        return {'exists': path in self._sizes, 'size': self._sizes.get(path, -1)}
+
+
+def test_upload_stages_attachment_under_session_scoped_workplace_path(tmp_path, monkeypatch):
+    """Upload-time staging must use the real session id, not the 'default' bucket."""
+    monkeypatch.chdir(tmp_path)
+    agent_id = 'workplace_upload_agent'
+    session_id = f'{agent_id}-abc123'
+    db.create_agent({'id': agent_id, 'name': agent_id, 'system_prompt': ''})
+
+    backend = _FakeBackend()
+    monkeypatch.setattr(
+        'backend.tools.lib.exec_backend.registry.get_backend',
+        lambda sid, agent: backend,
+    )
+    # The DB row has no session_id — the upload path must supply it.
+    monkeypatch.setattr(
+        'routes.sessions.db.get_agent',
+        lambda aid: {'id': aid, 'sandbox_enabled': True},
+    )
+    upload = FileStorage(
+        stream=io.BytesIO(b'payload\n'),
+        filename='note.txt',
+        content_type='text/plain',
+    )
+
+    result = _process_upload(
+        upload, agent_id, session_id,
+        external_user_id='user-1', channel_id='channel-1',
+    )
+
+    info = result['attachment_info']
+    assert info['workplace_path'] == backend.writes[0]
+    assert info['workplace_path'].startswith(
+        f'/tmp/evonic-{agent_id}-scratchpad/attachments/{session_id}/')
+

@@ -8,9 +8,9 @@ by other tools (read_file, bash, runpy, etc.) that run inside the remote.
 If there is no workplace, the path is returned as-is (it's already accessible).
 """
 
+import hashlib
 import os
 import re
-import uuid
 
 from backend.tools._workspace import scratch_dir
 
@@ -22,13 +22,25 @@ def _safe_component(value: str, fallback: str) -> str:
 
 
 def _staging_path(local_path: str, agent: dict) -> str:
-    """Return an agent- and session-scoped backend staging path."""
+    """Return a deterministic agent- and session-scoped backend staging path.
+
+    The name is derived from the source path plus its size and mtime, so the same
+    attachment always resolves to the same backend path.  A fresh random name per
+    call would duplicate multi-MB payloads on every turn and make the path shown
+    to the model differ from the one later reported by other tools.
+    """
     agent_id = _safe_component(agent.get('id'), 'default')
     session_id = _safe_component(agent.get('session_id'), 'default')
     filename = _safe_component(os.path.basename(local_path), 'attachment')
+    try:
+        info = os.stat(local_path)
+        fingerprint = f"{os.path.abspath(local_path)}|{info.st_size}|{info.st_mtime_ns}"
+    except OSError:
+        fingerprint = str(local_path)
+    digest = hashlib.sha1(fingerprint.encode('utf-8', 'replace')).hexdigest()[:16]
     return os.path.join(
         scratch_dir(agent_id), 'attachments', session_id,
-        f"{uuid.uuid4().hex}_{filename}",
+        f"{digest}_{filename}",
     )
 
 
@@ -44,7 +56,10 @@ def ensure_workplace_file(local_path: str, agent: dict) -> str:
         agent: Agent context dict (must contain at least 'id').
 
     Returns:
-        The accessible path string (may differ from local_path for remote agents).
+        The path as seen by the execution environment (a container path such as
+        /workspace/... for Docker).  This is the value that must be handed to the
+        model and to other tools — never the host path, which does not exist
+        inside the sandbox.
 
     Raises:
         RuntimeError: If the file cannot be transferred to the remote backend.
@@ -61,9 +76,7 @@ def ensure_workplace_file(local_path: str, agent: dict) -> str:
     if not os.path.isfile(local_path):
         raise RuntimeError(f"File not found on host: {local_path}")
 
-    # Read file bytes from the host filesystem
-    with open(local_path, 'rb') as f:
-        data = f.read()
+    expected_size = os.path.getsize(local_path)
 
     # Resolve the execution backend
     if workplace_id:
@@ -81,7 +94,8 @@ def ensure_workplace_file(local_path: str, agent: dict) -> str:
         backend = exec_registry.get_backend(session_id, agent)
 
     # Stage the copy in the execution environment's per-agent scratchpad.
-    # A unique name prevents collisions when different attachments share a basename.
+    # The name is content-derived, so repeated calls for the same attachment
+    # reuse one path instead of stacking up duplicate copies.
     dest_path = _staging_path(local_path, agent)
 
     # Resolve path if the backend supports it
@@ -90,6 +104,19 @@ def ensure_workplace_file(local_path: str, agent: dict) -> str:
         if hasattr(backend, 'resolve_path')
         else dest_path
     )
+
+    # Idempotent: skip the transfer when the backend already holds this exact file.
+    # Avoids re-streaming multi-MB payloads through `docker exec` on every turn.
+    try:
+        existing = backend.file_stat(resolved_dest)
+    except Exception:
+        existing = None
+    if isinstance(existing, dict) and existing.get('size', -1) == expected_size:
+        return resolved_dest
+
+    # Read file bytes from the host filesystem only when a transfer is needed
+    with open(local_path, 'rb') as f:
+        data = f.read()
 
     # Write file to the execution backend
     write_result = backend.write_file_bytes(resolved_dest, data, create_dirs=True)
@@ -110,4 +137,5 @@ def ensure_workplace_file(local_path: str, agent: dict) -> str:
             f"expected {len(data)} bytes, got {file_stat.get('size', -1)} bytes"
         )
 
-    return dest_path
+    # Return the backend-visible path: the host path is meaningless inside the sandbox
+    return resolved_dest
