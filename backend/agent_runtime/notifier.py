@@ -9,6 +9,7 @@ notifications directed at an agent. Handles:
 - LLM triggering (trigger_llm=True) or DB-only storage (trigger_llm=False)
 """
 
+import json
 import time as _time
 from datetime import datetime, timezone
 
@@ -31,7 +32,8 @@ def notify_agent(agent_id: str, tag: str, message: str,
                  metadata: dict = None,
                  save_memory: bool = True,
                  ephemeral: bool = False,
-                 ephemeral_ttl: int = 7200) -> dict:
+                 ephemeral_ttl: int = 7200,
+                 override_model_id: str = None) -> dict:
     """Send a system notification to an agent.
 
     Args:
@@ -70,6 +72,11 @@ def notify_agent(agent_id: str, tag: str, message: str,
         ephemeral: When True, the session is disposable: it is removed once ``ephemeral_ttl`` seconds have
                    passed (see ``backend.ephemeral_sessions``). Meant for sessions this call creates.
         ephemeral_ttl: Lifetime in seconds of an ephemeral session. Default 2 hours.
+        override_model_id: Model (llm_models id) the agent uses in this session instead of its own, stored as the
+                     session's ``model_override_id``. It applies only to a disposable session this call opens
+                     (``ephemeral=True`` and no ``session_id``): anywhere else it is ignored with a warning, so a
+                     person's own conversation can never be switched to another model. An unknown or disabled
+                     model is ignored too, and the agent keeps its own.
 
     Returns:
         dict with keys:
@@ -206,6 +213,10 @@ def notify_agent(agent_id: str, tag: str, message: str,
         if not save_memory:
             metadata = {**(metadata or {}), 'no_memory': True}
 
+    if override_model_id:
+        _apply_session_model_override(target_session_id, _db_agent_id, override_model_id,
+                                      allowed=bool(ephemeral and not session_id))
+
     delivery = 'runtime' if trigger_llm else 'web'
     try:
         if trigger_llm:
@@ -297,6 +308,33 @@ def notify_agent(agent_id: str, tag: str, message: str,
         "fallback_reason": fallback_reason,
         "delivery": delivery,
     }
+
+
+def _apply_session_model_override(session_id: str, agent_id: str, model_id: str, allowed: bool = False) -> bool:
+    """Store ``model_id`` as the session's model override (read by the LLM loop). True when it was stored."""
+    if not allowed:
+        _logger.warning("notify_agent: override_model_id ignored for session '%s': only a new ephemeral session "
+                        "takes one.", session_id)
+        return False
+    try:
+        model = db.get_model_by_id(model_id)
+        if not model or not model.get('enabled', True):
+            _logger.warning("notify_agent: override_model_id '%s' is unknown or disabled; the agent keeps its own "
+                            "model.", model_id)
+            return False
+        raw = db.get_session_state(session_id, agent_id=agent_id)
+        try:
+            state = json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            state = {}
+        if not isinstance(state, dict):
+            state = {}
+        state['model_override_id'] = model_id
+        db.upsert_session_state(session_id, json.dumps(state), agent_id=agent_id)
+        return True
+    except Exception:
+        _logger.exception("notify_agent: could not set the model override of session '%s'.", session_id)
+        return False
 
 
 def _resolve_web_fallback(agent_id: str, exclude_session_id: str = None):

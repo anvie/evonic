@@ -76,14 +76,14 @@ def resolve_human_route(agent_id: str, prefer: str = 'auto') -> Optional[dict]:
 
 def ask(agent_id: str, message: str, *, tag: str = 'SYSTEM', sender: str = 'oneshot',
         timeout: int = DEFAULT_TIMEOUT, metadata: Optional[dict] = None, acl_sender: Optional[str] = None,
-        ttl: int = 7200) -> dict:
+        ttl: int = 7200, override_model_id: Optional[str] = None) -> dict:
     """Ask ``agent_id`` once. Returns ``{'success', 'reply', 'session_id', 'waited_seconds', 'error', 'timed_out'}``.
 
     ``sender`` names the requester (letters, digits, underscore); every call gets its own session
     ``__agent__oneshot__<sender>_<random>``. The session is left in place for ``purge()`` to remove later.
     ``acl_sender`` is an agent whose messaging ACL must allow the question (as for agent-to-agent messages);
     agents in focus mode are not interrupted. The session is never remembered and is removed after ``ttl``
-    seconds."""
+    seconds. ``override_model_id`` makes the agent answer with that model in this session; see ``notify_agent``."""
     from backend.agent_runtime.notifier import notify_agent
     from backend.tools import agent_messaging as am
 
@@ -111,7 +111,8 @@ def ask(agent_id: str, message: str, *, tag: str = 'SYSTEM', sender: str = 'ones
     try:
         sent = notify_agent(agent_id=agent_id, tag=tag, message=message, external_user_id=f'{PREFIX}{sender_key}',
                             channel_id=None, dedup=False, metadata=meta,
-                            save_memory=False, ephemeral=True, ephemeral_ttl=ttl)
+                            save_memory=False, ephemeral=True, ephemeral_ttl=ttl,
+                            override_model_id=override_model_id)
         session_id = sent.get('session_id')
         if not sent.get('success'):
             return {'success': False, 'reply': None, 'session_id': session_id,

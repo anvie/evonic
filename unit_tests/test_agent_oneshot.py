@@ -258,3 +258,48 @@ def test_a_turn_started_by_a_message_that_is_not_to_be_remembered_cannot_write_m
         assert es.refuse_memory_write('write_file', {'path': '/_self/kb/x.md'}, {**ordinary_chat, 'no_memory_turn': True})
         assert es.refuse_memory_write('remember', {}, ordinary_chat) is None                    # the next turn is normal again
         assert es.refuse_memory_write('recall', {}, {**ordinary_chat, 'no_memory_turn': True}) is None
+
+
+# ── override_model_id: a model for one disposable session ──
+
+def _notify_with_override(model, session_id=None, **kw):
+    """notify_agent against a fake db; returns (the session state written, if any)."""
+    import json
+    from backend.agent_runtime import notifier
+    written = []
+    with patch('backend.ephemeral_sessions.mark', lambda *a, **k: None), \
+         patch.object(notifier, 'db') as fake_db, \
+         patch('backend.agent_runtime.agent_runtime.handle_message', lambda *a, **k: {'success': True}, create=True):
+        fake_db.get_or_create_session.return_value = 'sess-1'
+        fake_db.get_session_with_details.return_value = {'id': 'web-1', 'agent_id': 'asep', 'external_user_id': 'web_test', 'channel_id': None}
+        fake_db.get_model_by_id.side_effect = lambda mid: model if mid == 'm-fast' else None
+        fake_db.get_session_state.return_value = json.dumps({'mode': 'plan'})
+        fake_db.upsert_session_state.side_effect = lambda sid, raw, agent_id=None: written.append((sid, json.loads(raw), agent_id))
+        notifier.notify_agent('asep', 'SYSTEM/Pring', 'hello', dedup=False, save_memory=False,
+                              **({'session_id': session_id} if session_id else {'external_user_id': '__agent__oneshot__x_1'}),
+                              **kw)
+    return written
+
+
+def test_a_new_ephemeral_session_takes_the_override_and_keeps_its_other_state():
+    written = _notify_with_override({'id': 'm-fast', 'enabled': 1}, ephemeral=True, override_model_id='m-fast')
+    assert written == [('sess-1', {'mode': 'plan', 'model_override_id': 'm-fast'}, 'asep')]
+
+
+def test_an_unknown_or_disabled_model_is_ignored_and_the_agent_keeps_its_own():
+    assert _notify_with_override({'id': 'm-fast', 'enabled': 0}, ephemeral=True, override_model_id='m-fast') == []
+    assert _notify_with_override(None, ephemeral=True, override_model_id='m-gone') == []
+
+
+def test_the_override_never_touches_an_existing_conversation_or_a_non_ephemeral_session():
+    model = {'id': 'm-fast', 'enabled': 1}
+    assert _notify_with_override(model, session_id='web-1', trigger_llm=False, ephemeral=True, override_model_id='m-fast') == []
+    assert _notify_with_override(model, override_model_id='m-fast') == []          # a plain notification may land in someone's own chat
+
+
+def test_ask_passes_the_override_on_to_the_new_session():
+    notify, seen = _answer_later('{"a": 1}')
+    with patch.object(agent_oneshot, 'db', FakeDb()), patch('backend.agent_runtime.notifier.notify_agent', notify):
+        assert agent_oneshot.ask('assistant', 'q', override_model_id='m-fast', timeout=5)['success']
+        assert agent_oneshot.ask('assistant', 'q', timeout=5)['success']
+    assert seen[0]['override_model_id'] == 'm-fast' and seen[1]['override_model_id'] is None
