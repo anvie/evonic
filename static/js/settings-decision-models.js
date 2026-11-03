@@ -95,9 +95,19 @@ window.decisionModels = {
     isBuiltin(key) { return ["safety.command", "agent.task_complexity", "agent.path_boundary", "agent.goal_completion"].includes(key); },
     escape(value) { const el = document.createElement("div"); el.textContent = value == null ? "" : String(value); return el.innerHTML; },
 
+    // Registry ids are frozen at creation time: `generate_model_id` runs once and
+    // `update_model` never recomputes it, so a renamed model keeps its original
+    // `provider/model_name` id. Label with the live provider and upstream model
+    // name instead - that is the part of the row the endpoint actually receives.
+    modelLabel(model) {
+        const name = model.name || model.model_name || model.id || "";
+        const upstream = [model.provider, model.model_name].filter(Boolean).join(" · ");
+        return upstream ? `${name} (${upstream})` : String(name);
+    },
+
     modelOptions(selected, includeEmpty) {
         const compatible = this.compatibleModels();
-        const options = compatible.map((model) => `<option value="${this.escape(model.id)}" ${model.id === selected ? "selected" : ""}>${this.escape(model.name)} (${this.escape(model.id)})</option>`);
+        const options = compatible.map((model) => `<option value="${this.escape(model.id)}" ${model.id === selected ? "selected" : ""}>${this.escape(this.modelLabel(model))}</option>`);
         return (includeEmpty ? '<option value="">No fallback</option>' : '<option value="" disabled selected>Select a compatible model</option>') + options.join("");
     },
 
@@ -180,7 +190,7 @@ window.decisionModels = {
         const saved = this.playgroundStateLoad(), deepLinked = !!(query.profile || query.model);
         const has = (select, value) => value && Array.from(select.options).some(o => o.value === value);
         profileSelect.innerHTML = this.profiles.map(p => `<option value="${this.escape(p.profile_key)}">${this.escape(p.display_name)} (${this.escape(p.profile_key)})</option>`).join("");
-        modelSelect.innerHTML = this.compatibleModels().map(m => `<option value="${this.escape(m.id)}">${this.escape(m.name)} (${this.escape(m.id)})</option>`).join("");
+        modelSelect.innerHTML = this.compatibleModels().map(m => `<option value="${this.escape(m.id)}">${this.escape(this.modelLabel(m))}</option>`).join("");
         const pick = deepLinked ? query : saved;
         let mode = query.model ? "direct" : query.profile ? "profile" : (saved.mode === "direct" ? "direct" : "profile");
         if (has(profileSelect, pick.profile)) profileSelect.value = pick.profile;
@@ -300,7 +310,7 @@ window.decisionModels = {
     populateActivityOptions() {
         const profile = document.getElementById("decision-activity-profile"), model = document.getElementById("decision-activity-model");
         if (profile) profile.innerHTML = '<option value="">All profiles</option>' + this.profiles.map((item) => `<option value="${this.escape(item.profile_key)}">${this.escape(item.display_name)} (${this.escape(item.profile_key)})</option>`).join("");
-        if (model) model.innerHTML = '<option value="">All models</option>' + this.models.map((item) => `<option value="${this.escape(item.id)}">${this.escape(item.name)} (${this.escape(item.id)})</option>`).join("");
+        if (model) model.innerHTML = '<option value="">All models</option>' + this.models.map((item) => `<option value="${this.escape(item.id)}">${this.escape(this.modelLabel(item))}</option>`).join("");
     },
     activityStatus(message, kind = "neutral") {
         const status = document.getElementById("decision-activity-status");

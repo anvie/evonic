@@ -44,6 +44,7 @@ def test_fresh_database_has_endpoint_registry_ledger_and_additive_fields():
         "model_type_split_v1",
         "dmss_endpoint_to_model_v1",
         "hmads_git_staging_user_rules_v1",
+        "builtin_decision_model_dedup_v1",
     }
     assert ledger["registry_endpoint_v1_provider_fields"]["precondition"] == "provider connection columns present"
 
@@ -112,7 +113,7 @@ def test_upgrade_migration_is_idempotent_and_normalizes_legacy_rows():
 
     with db._connect() as conn:
         ledger_count = conn.execute("SELECT COUNT(*) FROM registry_migration_ledger").fetchone()[0]
-    assert ledger_count == 6
+    assert ledger_count == 7
 
     # Legacy override stays operational through the compatibility resolver only.
     config = db.resolve_model_config(model)
@@ -422,3 +423,78 @@ def test_create_and_update_model_keep_override_provenance_truthful():
 
     db.update_model(inherited_id, {"base_url": "http://override.example.invalid/v2"})
     assert db.get_model_by_id(inherited_id)["legacy_override_provenance"] == "legacy_model_override"
+
+
+def _dedup_ledger_details():
+    """Details recorded by the superseded-builtin retirement step, if it ran."""
+    from models.db import db
+
+    with db._connect() as conn:
+        row = conn.execute(
+            "SELECT details FROM registry_migration_ledger WHERE migration_id = ?",
+            ("builtin_decision_model_dedup_v1",),
+        ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def _add_systemone_decision_row():
+    """Register an operator-supplied decision model next to the builtin seed."""
+    from models.db import db
+
+    db.create_model({
+        "name": "Nimble-9B-v3", "type": "decision", "provider": "systemone",
+        "model_name": "nimble-9b-v3", "enabled": 1,
+    })
+
+
+def test_builtin_decision_model_stays_enabled_without_a_replacement():
+    from models.db import db
+
+    assert _dedup_ledger_details() == {"disabled": None, "reason": "no_successor"}
+    assert db.get_model_by_id("systemone/LiquidAI-d1-3B")["enabled"] == 1
+
+
+def test_unreferenced_builtin_decision_model_is_retired_for_a_referenced_successor():
+    from models.db import db
+
+    _add_systemone_decision_row()
+    db.set_setting("decim_safety.model_id", "systemone/nimble-9b-v3")
+
+    _rerun_registry_migrations("builtin_decision_model_dedup_v1")
+
+    assert db.get_model_by_id("systemone/LiquidAI-d1-3B")["enabled"] == 0
+    assert db.get_model_by_id("systemone/nimble-9b-v3")["enabled"] == 1
+    assert _dedup_ledger_details() == {
+        "disabled": "systemone/LiquidAI-d1-3B",
+        "successor": "systemone/nimble-9b-v3",
+    }
+
+
+def test_referenced_builtin_decision_model_is_never_retired():
+    from models.db import db
+
+    _add_systemone_decision_row()
+    db.set_setting("decim_safety.model_id", "systemone/nimble-9b-v3")
+    db.create_decision_profile({
+        "profile_key": "safety.builtin", "display_name": "Builtin", "enabled": True,
+        "mode": "shadow", "primary_model_id": "systemone/LiquidAI-d1-3B", "timeout_ms": 1000,
+        "retry_limit": 0, "minimum_confidence": 0.5, "policy_version": "p/v1",
+        "schema_version": "decision-schema/v1",
+        "schema": {"version": "decision-schema/v1", "fields": [{"key": "approved", "kind": "boolean"}]},
+    })
+
+    _rerun_registry_migrations("builtin_decision_model_dedup_v1")
+
+    assert db.get_model_by_id("systemone/LiquidAI-d1-3B")["enabled"] == 1
+    assert _dedup_ledger_details() == {"disabled": None, "reason": "seed_referenced"}
+
+
+def test_unreferenced_successor_does_not_retire_the_builtin():
+    from models.db import db
+
+    _add_systemone_decision_row()  # registered but wired to nothing
+
+    _rerun_registry_migrations("builtin_decision_model_dedup_v1")
+
+    assert db.get_model_by_id("systemone/LiquidAI-d1-3B")["enabled"] == 1
+    assert _dedup_ledger_details() == {"disabled": None, "reason": "no_successor"}

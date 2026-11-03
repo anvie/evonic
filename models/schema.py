@@ -1531,6 +1531,10 @@ class SchemaMixin:
             # Built-in model metadata is intentionally connection-free. Operators
             # configure a compatible provider endpoint and credentials separately.
             self._seed_builtin_decision_models(cursor)
+
+            # Runs after the seed so the row exists, and only retires the seed
+            # when an operator-supplied successor already replaced it.
+            self._retire_superseded_builtin_decision_models(cursor)
             conn.commit()
         # Registry migrations may rewrite decim_safety.* settings directly.
         self.invalidate_settings_cache()
@@ -1792,6 +1796,93 @@ class SchemaMixin:
                 capabilities,
             ),
         )
+
+    def _retire_superseded_builtin_decision_models(self, cursor):
+        """Disable the seeded ``LiquidAI d1-3B`` row once another row replaced it.
+
+        ``_seed_builtin_decision_models`` uses ``INSERT OR IGNORE``, so the seed
+        row survives every boot. When an operator registers a decision model of
+        their own on the same provider instead of editing the seed, both rows
+        stay enabled and every picker shows two entries whose ids differ by a
+        single character (``systemone/LiquidAI-d1-3B`` vs
+        ``systemone/LiquidAI/d1-3B``). Ids are frozen at creation time (see
+        ``generate_model_id``), so the seed cannot be renamed into agreement.
+
+        The seed is disabled only when it is provably unused: nothing references
+        it and a *referenced* successor exists on the same provider. Installs
+        that still rely on the seed keep it enabled and selectable.
+        """
+        migration_id = "builtin_decision_model_dedup_v1"
+        already_applied = cursor.execute(
+            "SELECT 1 FROM registry_migration_ledger WHERE migration_id = ?",
+            (migration_id,),
+        ).fetchone()
+        if already_applied:
+            return
+
+        seed_id, provider_id = "systemone/LiquidAI-d1-3B", "systemone"
+        seed = cursor.execute(
+            "SELECT enabled FROM llm_models WHERE id = ?", (seed_id,)
+        ).fetchone()
+        if not seed or not seed[0]:
+            details = {"disabled": None, "reason": "seed_missing_or_disabled"}
+        elif self._model_is_referenced(cursor, seed_id):
+            # Someone deliberately selected the builtin: never take it away.
+            details = {"disabled": None, "reason": "seed_referenced"}
+        else:
+            successor = self._referenced_decision_successor(cursor, seed_id, provider_id)
+            if not successor:
+                details = {"disabled": None, "reason": "no_successor"}
+            else:
+                cursor.execute("UPDATE llm_models SET enabled = 0 WHERE id = ?", (seed_id,))
+                details = {"disabled": seed_id, "successor": successor}
+
+        cursor.execute(
+            "INSERT INTO registry_migration_ledger (migration_id, details) VALUES (?, ?)",
+            (migration_id, json.dumps(details, sort_keys=True)),
+        )
+
+    @staticmethod
+    def _model_is_referenced(cursor, model_id):
+        """True when a Decision Profile, setting, or agent still points at the model."""
+        if cursor.execute(
+            "SELECT 1 FROM decision_profiles "
+            "WHERE primary_model_id = ? OR fallback_model_id = ? LIMIT 1",
+            (model_id, model_id),
+        ).fetchone():
+            return True
+        if cursor.execute(
+            "SELECT 1 FROM app_settings WHERE value = ? LIMIT 1", (model_id,)
+        ).fetchone():
+            return True
+        agent_columns = {row[1] for row in cursor.execute("PRAGMA table_info(agents)")}
+        return any(
+            cursor.execute(
+                f"SELECT 1 FROM agents WHERE {column} = ? LIMIT 1", (model_id,)
+            ).fetchone()
+            for column in ("model_id", "fallback_model_id", "vision_model_id", "default_model_id")
+            if column in agent_columns
+        )
+
+    @classmethod
+    def _referenced_decision_successor(cls, cursor, seed_id, provider_id):
+        """Return an enabled, referenced decision model on the same provider.
+
+        A successor only counts when something actually selects it: an enabled
+        row nobody wired up is not a replacement for the builtin.
+        """
+        candidates = [
+            row[0]
+            for row in cursor.execute(
+                "SELECT id FROM llm_models "
+                "WHERE provider = ? AND type = 'decision' AND enabled = 1 AND id <> ?",
+                (provider_id, seed_id),
+            )
+        ]
+        for candidate in candidates:
+            if cls._model_is_referenced(cursor, candidate):
+                return candidate
+        return None
 
     def _migrate_model_capabilities(self, cursor):
         """Normalize capabilities and explicitly mark retained legacy overrides."""
