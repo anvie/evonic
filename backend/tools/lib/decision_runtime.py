@@ -168,6 +168,9 @@ class DecisionRuntime:
                 "model_id": result.provider.model_id if result.provider else None,
                 "adapter_key": result.provider.provider_key if result.provider else None,
                 "outcome_summary": fields,
+                "field_analysis": {field.key: {"confidence": field.confidence,
+                                               "candidates": [{"value": c.value, "probability": c.probability} for c in field.candidates or []]}
+                                   for field in result.fields},
                 "confidence": min(confidences) if confidences else None,
                 "latency_ms": result.timing.total_ms, "attempts": result.attempts,
                 "fallback_used": bool(result.fallback and result.fallback.used),

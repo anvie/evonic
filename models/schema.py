@@ -1512,7 +1512,7 @@ class SchemaMixin:
             # Recording is switchable (app setting decision_activity_record_input); see DecisionActivityMixin.
             cursor.execute("PRAGMA table_info(decision_activity)")
             existing_columns = {row[1] for row in cursor.fetchall()}
-            for column, decl in (("input_json", "TEXT"), ("input_status", "TEXT")):
+            for column, decl in (("input_json", "TEXT"), ("input_status", "TEXT"), ("analysis_json", "TEXT")):
                 if column not in existing_columns:
                     cursor.execute(f"ALTER TABLE decision_activity ADD COLUMN {column} {decl}")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_activity_time "

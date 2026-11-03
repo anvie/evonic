@@ -371,18 +371,20 @@ window.decisionModels = {
             ? `<pre class="mt-2 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-100 dark:bg-gray-900 p-3 text-xs max-h-64">${this.escape(JSON.stringify(event.input_context, null, 2))}</pre>`
             : `<p class="mt-2 text-sm text-gray-500 dark:text-gray-400">${this.escape(this.activityInputNote(event))}</p>`;
         const keys = Object.keys(summary);
-        const conf = event.confidence == null ? "" : Math.max(0, Math.min(1, event.confidence));
+        const analysis = event.field_analysis || {}, clamp = (n) => Math.max(0, Math.min(1, n));
+        const pct = (n) => Math.round(n * 1000) / 10 + "%";
         const chips = [event.model_id, event.latency_ms != null ? event.latency_ms + " ms" : "", event.attempts ? event.attempts + (event.attempts === 1 ? " attempt" : " attempts") : "", event.fallback_used ? "fallback used" : ""].filter(Boolean).map((c) => `<span class="dp-chip">${this.escape(c)}</span>`).join("");
         const cards = keys.map((key) => {
-            const value = summary[key], isScore = typeof value === "number" && value >= 0 && value <= 1;
-            const bar = isScore ? `<div class="dp-conf"><span>Score</span><div class="dp-bar"><i style="width:${value * 100}%"></i></div><b>${this.escape(Math.round(value * 1000) / 10 + "%")}</b></div>` : "";
-            return `<div class="dp-out"><div class="dp-out-top"><span class="dp-out-key">${this.escape(key)}</span><span class="dp-val">${this.escape(JSON.stringify(value))}</span></div>${bar}</div>`;
+            const info = analysis[key] || {}, cands = (info.candidates || []).slice().sort((x, y) => y.probability - x.probability);
+            const conf = info.confidence == null ? "" : `<div class="dp-conf"><span>Confidence</span><div class="dp-bar"><i style="width:${clamp(info.confidence) * 100}%"></i></div><b>${this.escape(Math.round(info.confidence * 100) + "%")}</b></div>`;
+            const bars = cands.length ? `<div class="dp-cands">${cands.map((c, i) => `<div class="dp-cand ${i === 0 ? "top" : ""}"><b title="${this.escape(String(c.value))}">${this.escape(String(c.value))}</b><div class="dp-bar"><i style="width:${clamp(c.probability) * 100}%"></i></div><span>${this.escape(pct(c.probability))}</span></div>`).join("")}</div>` : "";
+            return `<div class="dp-out"><div class="dp-out-top"><span class="dp-out-key">${this.escape(key)}</span><span class="dp-val">${this.escape(JSON.stringify(summary[key]))}</span></div>${conf}${bars}</div>`;
         }).join("");
-        const meter = conf === "" ? "" : `<div class="dp-out"><div class="dp-out-top"><span class="dp-out-key">Overall confidence</span><span class="dp-val">${this.escape(Math.round(conf * 100) + "%")}</span></div><div class="dp-conf"><span>Lowest field confidence</span><div class="dp-bar"><i style="width:${conf * 100}%"></i></div></div></div>`;
+        const fallbackConf = !Object.keys(analysis).length && event.confidence != null ? `<div class="dp-out"><div class="dp-conf" style="margin-top:0"><span>Confidence</span><div class="dp-bar"><i style="width:${clamp(event.confidence) * 100}%"></i></div><b>${this.escape(Math.round(event.confidence * 100) + "%")}</b></div></div><p class="dp-meta">Per-option probabilities were not recorded for this older event.</p>` : "";
         const output = event.error_code
             ? `<div class="dp-banner bad mt-2"><strong>${this.escape(event.error_code)}</strong><span>No answer was produced.</span></div>${chips ? `<div class="dp-chips">${chips}</div>` : ""}`
             : keys.length
-                ? `<div class="dp-banner ok mt-2">✓ Decision completed</div><div class="dp-chips">${chips}</div>${cards}${meter}<p class="dp-meta">Per-option probabilities are not recorded in Activity. Run it in the Playground to see them.</p>`
+                ? `<div class="dp-banner ok mt-2">✓ Decision completed</div><div class="dp-chips">${chips}</div>${cards}${fallbackConf}`
                 : `<p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No answer fields were returned.</p>`;
         const action = canReproduce
             ? `<button type="button" class="btn-primary text-sm" onclick="decisionModels.rerunActivity('${this.escape(event.id)}')">Test in Playground</button>`

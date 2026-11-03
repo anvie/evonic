@@ -19,6 +19,7 @@ from typing import Any, Mapping
 _MAX_TEXT = 256
 _MAX_CORRELATION = 256
 _MAX_SUMMARY_FIELDS = 32
+_MAX_CANDIDATES = 16
 _MAX_ROW_BYTES = 12 * 1024
 _MAX_INPUT_BYTES = 16 * 1024
 RECORD_INPUT_SETTING = "decision_activity_record_input"
@@ -60,6 +61,39 @@ def _summary(value: Any) -> dict[str, Any]:
     return result
 
 
+def _analysis(value: Any) -> dict[str, Any]:
+    """Per-field confidence and the probability of each option the model weighed (what the Playground draws as bars).
+
+    Only the schema's own option values and numbers are kept; provider logits and any other payload are never accepted.
+    """
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for key in sorted(value):
+        item = value[key]
+        if (len(result) >= _MAX_SUMMARY_FIELDS or not isinstance(key, str) or not isinstance(item, Mapping)
+                or not _SAFE_KEY.fullmatch(key) or _SECRET_KEY.search(key) or _UNSAFE_SNAPSHOT_KEY.search(key)):
+            continue
+        entry: dict[str, Any] = {}
+        confidence = item.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) and 0 <= confidence <= 1:
+            entry["confidence"] = float(confidence)
+        candidates = []
+        for candidate in (item.get("candidates") or [])[:_MAX_CANDIDATES]:
+            if not isinstance(candidate, Mapping):
+                continue
+            option, probability = _safe_scalar(candidate.get("value")), candidate.get("probability")
+            if (option is None or isinstance(option, str) and _SECRET_VALUE.search(option) or isinstance(probability, bool)
+                    or not isinstance(probability, (int, float)) or not 0 <= probability <= 1):
+                continue
+            candidates.append({"value": option, "probability": float(probability)})
+        if candidates:
+            entry["candidates"] = candidates
+        if entry:
+            result[key] = entry
+    return result
+
+
 def _looks_secret(value: Any) -> bool:
     """True if any key or text anywhere in ``value`` resembles a credential."""
     if isinstance(value, str):
@@ -93,6 +127,9 @@ def _public(row: Mapping[str, Any], *, detail: bool = False) -> dict[str, Any]:
     event["fallback_used"] = bool(event["fallback_used"])
     event["redacted"] = bool(event["redacted"])
     event["outcome_summary"] = json.loads(event.pop("outcome_json")) if detail else None
+    analysis = event.pop("analysis_json", None)
+    if detail:
+        event["field_analysis"] = json.loads(analysis) if analysis else {}
     if not detail:
         event.pop("outcome_json", None)
     raw_input = event.pop("input_json", None)
@@ -146,16 +183,18 @@ class DecisionActivityMixin:
         if len(json.dumps(raw, separators=(",", ":")).encode()) > _MAX_ROW_BYTES:
             raw["outcome_json"] = "{}"
         raw["input_json"], raw["input_status"] = input_json, input_status
+        analysis = json.dumps(_analysis(event.get("field_analysis")), sort_keys=True, separators=(",", ":"))
+        raw["analysis_json"] = analysis if len(analysis.encode()) <= _MAX_ROW_BYTES else None
         with self._connect() as conn:
             conn.execute("""INSERT INTO decision_activity
                 (id, source, profile_key, profile_version, model_id, adapter_key,
                  result_class, error_code, confidence, latency_ms, attempts,
                  fallback_used, fallback_reason, correlation_id, outcome_json, created_at,
-                 input_json, input_status)
+                 input_json, input_status, analysis_json)
                 VALUES (:id, :source, :profile_key, :profile_version, :model_id, :adapter_key,
                         :result_class, :error_code, :confidence, :latency_ms, :attempts,
                         :fallback_used, :fallback_reason, :correlation_id, :outcome_json, :created_at,
-                        :input_json, :input_status)""", raw)
+                        :input_json, :input_status, :analysis_json)""", raw)
         return event_id
 
     def list_decision_activity(self, *, limit: int = 50, cursor: tuple[float, str] | None = None,
@@ -191,7 +230,7 @@ class DecisionActivityMixin:
 
     def redact_decision_activity(self, event_id: str) -> bool:
         with self._connect() as conn:
-            result = conn.execute("UPDATE decision_activity SET outcome_json = '{}', correlation_id = NULL, input_json = NULL, redacted = 1 WHERE id = ? AND redacted = 0", (event_id,))
+            result = conn.execute("UPDATE decision_activity SET outcome_json = '{}', analysis_json = NULL, correlation_id = NULL, input_json = NULL, redacted = 1 WHERE id = ? AND redacted = 0", (event_id,))
             return result.rowcount == 1
 
     def clear_decision_activity(self) -> int:

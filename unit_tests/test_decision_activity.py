@@ -139,3 +139,17 @@ def test_a_request_refused_for_a_secret_never_reaches_the_activity_input():
         runtime.invoke(RuntimeRequest("application.example", "v1", {"note": "api_key=abc123"}, activity_source="production"))
     assert refused.value.code.value == "secret_detected"
     assert all(e.get("input_context") is None for e in store.recorded)            # refused before anything is recorded
+
+
+def test_activity_keeps_per_field_confidence_and_option_probabilities_only():
+    analysis = {"approved": {"confidence": 0.98, "candidates": [
+                    {"value": False, "probability": 0.981}, {"value": True, "probability": 0.019},
+                    {"value": "x", "probability": 1.5}, {"value": "token=drop", "probability": 0.1}, {"value": "y", "probability": None}],
+                "provider_logits": [1, 2]},
+                "raw_response": {"confidence": 0.5}, "bad-key": {"confidence": 0.5}}
+    event_id = db.record_decision_activity(_event(field_analysis=analysis))
+    assert db.get_decision_activity(event_id)["field_analysis"] == {"approved": {"confidence": 0.98, "candidates": [
+        {"value": False, "probability": 0.981}, {"value": True, "probability": 0.019}]}}
+    assert "field_analysis" not in db.list_decision_activity(limit=1)[0]
+    assert db.get_decision_activity(db.record_decision_activity(_event()))["field_analysis"] == {}
+    assert db.redact_decision_activity(event_id)

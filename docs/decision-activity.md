@@ -6,7 +6,9 @@ Decision Activity provides bounded diagnostics for Decision Runtime invocations.
 
 Each event has an opaque ID, timestamp, source (`production`, `playground`, or `profile_test`), profile key/version, selected model ID and adapter/provider key, result class, typed error code, normalized confidence, total latency, attempt count, fallback status/reason, and optional correlation ID.
 
-A detail event may include `outcome_summary`: a **strict allowlist snapshot** of normalized result field values only. The field name must match the Decision Schema-style lowercase key pattern, there are at most 32 fields, scalar strings are capped at 256 characters, and aggregate stored rows are capped at 12 KiB. Nested objects, arrays, provider candidates/logits, arbitrary payloads, and invalid keys are dropped. Keys resembling secret names are also dropped.
+A detail event may include `outcome_summary`: a **strict allowlist snapshot** of normalized result field values only. The field name must match the Decision Schema-style lowercase key pattern, there are at most 32 fields, scalar strings are capped at 256 characters, and aggregate stored rows are capped at 12 KiB. Nested objects, arrays, arbitrary payloads, and invalid keys are dropped from `outcome_summary`.
+
+The detail record also carries `field_analysis`, keyed by the same field names: the field's `confidence` and its `candidates` (`{value, probability}` for each option the model weighed, at most 16 per field, 12 KiB in all). It is what the Activity detail draws as bars, like the Playground. Only the schema's own option values and numbers in 0..1 are kept; provider logits and any other provider payload are dropped. Events recorded before this was added have an empty `field_analysis`. Redaction clears it. Keys resembling secret names are also dropped.
 
 ### Recorded input (so an event can be reproduced)
 
@@ -18,7 +20,7 @@ While the **Record inputs** setting is on (the default; System Settings → Deci
 
 `input_status` is `recorded`, `withheld` (credential-like text), `too_large`, `invalid`, `off`, or absent. The list endpoint never returns inputs (only `has_input`); the detail endpoint returns `input_context`. Redacting an event clears its input; purge and clear delete it with the row.
 
-The store still never accepts or records policy metadata, full prompts, provider responses, credentials, free-form provider error text, candidates or logits.
+The store still never accepts or records policy metadata, full prompts, provider responses, credentials, free-form provider error text, provider logits.
 
 ## Administration UI and safe reruns
 
