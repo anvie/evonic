@@ -8,6 +8,7 @@ a metadata block for opaque binary files.
 """
 
 import json
+import mimetypes
 import os
 from typing import Any, Dict, Optional
 
@@ -121,10 +122,16 @@ def _format_metadata(row: Optional[Dict[str, Any]], fallback_path: str,
         }
     if workplace_path and workplace_path != meta.get('path'):
         meta['workplace_path'] = workplace_path
-    return (
-        "[Attachment metadata — binary file, not directly readable as text]\n\n"
-        + json.dumps(meta, indent=2)
-    )
+    mime = meta.get('mime_type') or mimetypes.guess_type(str(meta.get('path') or ''))[0] or ''
+    if mime.startswith('image/') or meta.get('file_type') in ('photo', 'image'):
+        # A picture sent with a message is already shown to a vision model in that
+        # message; this block is only its file info. Saying "not readable" made
+        # models claim they could not see pictures they had been given.
+        header = ("[Attachment metadata — image file. If this picture came with a message "
+                  "you can already see it there; this block only lists its file details]")
+    else:
+        header = "[Attachment metadata — binary file, not directly readable as text]"
+    return header + "\n\n" + json.dumps(meta, indent=2)
 
 
 def _read_anydoc_text(path: str, offset: int) -> str:
