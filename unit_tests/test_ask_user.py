@@ -188,6 +188,22 @@ class TestRegistryAndRoutes(unittest.TestCase):
         other = self.client.get('/api/ask_user/pending?session_id=sess-2').get_json()['questions']
         self.assertEqual(other, [])
 
+    def test_pending_agents_groups_waiting_questions_by_agent(self):
+        other = question_registry.create('sess-2', 'agent-2', self.questions)
+        try:
+            agents = self.client.get('/api/ask_user/pending_agents').get_json()['agents']
+            self.assertIn(self.pending.question_id, agents.get('agent-1', []))
+            self.assertIn(other.question_id, agents.get('agent-2', []))
+        finally:
+            question_registry.remove(other.question_id)
+
+        # A question that stopped waiting disappears from the map.
+        qid = self.pending.question_id
+        question_registry.dismiss(qid)
+        question_registry.remove(qid, 'dismissed')
+        agents = self.client.get('/api/ask_user/pending_agents').get_json()['agents']
+        self.assertNotIn(qid, agents.get('agent-1', []))
+
     def test_pending_reports_how_known_questions_ended(self):
         qid = self.pending.question_id
         url = f'/api/ask_user/pending?session_id=sess-1&known={qid},gone-after-restart'

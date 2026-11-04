@@ -6,6 +6,7 @@ Provides:
 - POST /api/ask_user/cancel   → close a pending question without answering
 - GET  /api/ask_user/pending  → questions waiting in a session (?session_id=),
                                 plus how any ?known= ids that stopped waiting ended
+- GET  /api/ask_user/pending_agents → which agents are waiting, for the sidebar ring
 
 The card itself is static/js/ask-user.js, loaded by the agent page. The /api/
 routes sit behind the app's session auth and CSRF checks.
@@ -67,3 +68,17 @@ def pending_questions():
         ],
         'resolved': resolved,
     })
+
+
+@ask_user_bp.route('/api/ask_user/pending_agents', methods=['GET'])
+def pending_question_agents():
+    """Map of agent_id -> waiting question_ids, across every session.
+
+    The sidebar uses it to draw the pink "needs input" ring: a question can be
+    asked while the tab is closed, so the ring cannot rely on the realtime
+    ``question_required`` event alone.
+    """
+    agents = {}
+    for pq in question_registry.pending_all():
+        agents.setdefault(pq.agent_id, []).append(pq.question_id)
+    return jsonify({'agents': agents})
