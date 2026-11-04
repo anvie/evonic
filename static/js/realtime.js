@@ -303,7 +303,7 @@ var RealtimeClient = (function () {
 
 /**
  * getSharedRealtime([opts]) — Returns the single shared RealtimeClient instance
- * for global channels (status, approvals, update). The first caller triggers
+ * for global channels (status, approvals, questions, update). The first caller triggers
  * creation + start; subsequent callers receive the same instance for handler
  * registration. The singleton is creation-order agnostic — any script can call
  * it at any point during page load and handlers registered before start() will
@@ -330,10 +330,10 @@ function getSharedRealtime(opts) {
         return window[wpKey];
     }
 
-    // Global singleton for status, approvals, update.
+    // Global singleton for status, approvals, questions, update.
     if (!window._evSharedRT) {
         window._evSharedRT = new RealtimeClient({
-            channels: 'status,approvals,update'
+            channels: 'status,approvals,questions,update'
         });
         window._evSharedRT.start();
 

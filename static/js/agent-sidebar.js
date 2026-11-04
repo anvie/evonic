@@ -153,6 +153,9 @@ function renderSidebar(agents) {
         avatar.className = 'agent-avatar';
         avatar.setAttribute('data-agent-id', agent.id);
         avatar.setAttribute('data-busy', agent.busy ? 'true' : 'false');
+        // A question may already be waiting (buffered realtime event or the
+        // pending_agents resync) before this avatar was rendered.
+        if (_askPending[agent.id]) avatar.setAttribute('data-asking', 'true');
         if (_getUnreadSet().has(agent.id)) avatar.setAttribute('data-unread', 'true');
         avatar.setAttribute('title', agent.name);
 
@@ -256,8 +259,11 @@ function showTooltip(e, agent) {
     descEl.textContent = agent.description || '';
 
     var badge = document.createElement('span');
-    badge.className = 'tt-badge ' + (agent.busy ? 'busy' : 'idle');
-    badge.textContent = agent.busy ? 'Busy' : 'Idle';
+    var avatarEl = e.currentTarget;
+    var asking = !!(avatarEl && avatarEl.getAttribute('data-asking') === 'true');
+    var busy = !!(avatarEl && avatarEl.getAttribute('data-busy') === 'true');
+    badge.className = 'tt-badge ' + (asking ? 'asking' : (busy ? 'busy' : 'idle'));
+    badge.textContent = asking ? 'Needs input' : (busy ? 'Busy' : 'Idle');
 
     tooltip.appendChild(nameEl);
     if (agent.description) tooltip.appendChild(descEl);
@@ -647,6 +653,164 @@ function resyncBusyState() {
         .catch(function () {});
 }
 
+/* ── Waiting for the user's input (ask_user) ──
+   An agent blocked on ask_user spins a PINK ring instead of the yellow busy
+   ring, so "needs my input" is distinguishable from "still working".
+   State comes from the realtime `questions` channel (question_required /
+   question_resolved). A question can also be asked while this tab is closed,
+   and question_resolved carries no agent_id, so we keep a local
+   question_id → agent_id map and reconcile with /api/ask_user/pending_agents
+   on load, reconnect and tab re-focus. */
+var _askByAgent = {};      // agent_id -> { question_id: true }
+var _askByQuestion = {};   // question_id -> agent_id
+var _askPending = {};      // agent_id -> true, buffered until the avatar renders
+var _askChangedAt = {};    // agent_id -> ms of the last local change (resync race guard)
+var _askSSE = null;
+var _askReconnectTimer = null;
+var _askBoundRt = null;
+
+function _applyAskingAvatar(agentId, asking) {
+    _askChangedAt[agentId] = Date.now();
+    if (asking) _askPending[agentId] = true;
+    else delete _askPending[agentId];
+    var avatar = document.querySelector(
+        '#agent-sidebar .agent-avatar[data-agent-id="' + CSS.escape(agentId) + '"]'
+    );
+    if (!avatar) return;  // not rendered yet — renderSidebar() re-applies _askPending
+    if (asking) avatar.setAttribute('data-asking', 'true');
+    else avatar.removeAttribute('data-asking');
+}
+
+function addPendingQuestion(payload) {
+    if (!payload || !payload.agent_id) return;
+    var agentId = payload.agent_id;
+    var qid = payload.question_id;
+    if (qid) {
+        _askByQuestion[qid] = agentId;
+        if (!_askByAgent[agentId]) _askByAgent[agentId] = {};
+        _askByAgent[agentId][qid] = true;
+    }
+    _applyAskingAvatar(agentId, true);
+}
+
+function removePendingQuestion(payload) {
+    var qid = payload && payload.question_id;
+    if (!qid) return;
+    var agentId = _askByQuestion[qid];
+    if (!agentId) {
+        // We never saw this question (e.g. asked before this tab connected),
+        // so a ring may be stale — reconcile instead of guessing.
+        resyncAskingState();
+        return;
+    }
+    delete _askByQuestion[qid];
+    var open = _askByAgent[agentId] || {};
+    delete open[qid];
+    if (Object.keys(open).length) {
+        // Another question of this agent is still waiting.
+        _askChangedAt[agentId] = Date.now();
+        return;
+    }
+    delete _askByAgent[agentId];
+    _applyAskingAvatar(agentId, false);
+}
+
+/** Reconcile the pink rings with the server (which agents are waiting now). */
+function resyncAskingState() {
+    var startedAt = Date.now();
+    fetch('/api/ask_user/pending_agents', { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+            if (!data) return;
+            var agents = data.agents || {};
+            Object.keys(agents).forEach(function (agentId) {
+                var open = {};
+                (agents[agentId] || []).forEach(function (qid) {
+                    open[qid] = true;
+                    _askByQuestion[qid] = agentId;
+                });
+                _askByAgent[agentId] = open;
+                _applyAskingAvatar(agentId, true);
+            });
+            // Clear rings the server no longer knows about — unless a realtime
+            // event changed that agent after this fetch started (stale response).
+            function isStale(agentId) {
+                if (Object.prototype.hasOwnProperty.call(agents, agentId)) return false;
+                if ((_askChangedAt[agentId] || 0) > startedAt) return false;
+                delete _askByAgent[agentId];
+                return true;
+            }
+            Object.keys(_askPending).forEach(function (agentId) {
+                if (isStale(agentId)) delete _askPending[agentId];
+            });
+            document.querySelectorAll('#agent-sidebar .agent-avatar[data-asking="true"]').forEach(function (avatar) {
+                var agentId = avatar.getAttribute('data-agent-id');
+                if (isStale(agentId)) _applyAskingAvatar(agentId, false);
+            });
+        })
+        .catch(function () {});
+}
+
+function subscribeAskingSSE() {
+    if (typeof getSharedRealtime !== 'undefined') {
+        var rt = getSharedRealtime();
+        if (_askBoundRt === rt) return;
+        _askBoundRt = rt;
+        rt.on('questions', 'question_required', addPendingQuestion);
+        rt.on('questions', 'question_resolved', removePendingQuestion);
+        return;
+    }
+
+    // Fallback when realtime.js is not loaded: dedicated stream for the channel
+    // (the server replays pending questions as a snapshot on connect).
+    if (_askSSE) return;
+    try {
+        _askSSE = new EventSource('/api/realtime/stream?channels=questions&snapshot=1');
+        _askSSE.addEventListener('question_required', function (e) {
+            try { addPendingQuestion(JSON.parse(e.data)); } catch (_) {}
+        });
+        _askSSE.addEventListener('question_resolved', function (e) {
+            try { removePendingQuestion(JSON.parse(e.data)); } catch (_) {}
+        });
+        _askSSE.addEventListener('error', function () {
+            if (_askSSE) {
+                _askSSE.close();
+                _askSSE = null;
+            }
+            resyncAskingState();
+            if (!_askReconnectTimer) {
+                _askReconnectTimer = setTimeout(function () {
+                    _askReconnectTimer = null;
+                    subscribeAskingSSE();
+                }, 3000);
+            }
+        });
+    } catch (_) {
+        _askSSE = null;
+    }
+}
+
+function closeAskingRealtime() {
+    if (_askReconnectTimer) {
+        clearTimeout(_askReconnectTimer);
+        _askReconnectTimer = null;
+    }
+    if (_askSSE) {
+        try {
+            _askSSE.close();
+        } catch (_) {}
+        _askSSE = null;
+    }
+}
+
+// A hidden tab pauses the shared stream; on return, re-check what is waiting.
+document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) {
+        resyncAskingState();
+        subscribeAskingSSE();
+    }
+});
+
 function closeBusyRealtime() {
     if (_busyReconnectTimer) {
         clearTimeout(_busyReconnectTimer);
@@ -664,9 +828,13 @@ function closeBusyRealtime() {
 // path, which manages its own lifecycle via getSharedRealtime's handler).
 window.addEventListener('pagehide', closeBusyRealtime);
 window.addEventListener('beforeunload', closeBusyRealtime);
+window.addEventListener('pagehide', closeAskingRealtime);
+window.addEventListener('beforeunload', closeAskingRealtime);
 window.addEventListener('pageshow', function () {
     resyncBusyState();
+    resyncAskingState();
     subscribeBusySSE();
+    subscribeAskingSSE();
 });
 
 /** Toggle sidebar collapsed state */
@@ -731,6 +899,8 @@ function initSidebar() {
 
     fetchSidebarAgents().then(function () {
         resyncBusyState();
+        resyncAskingState();
     });
     subscribeBusySSE();
+    subscribeAskingSSE();
 }
