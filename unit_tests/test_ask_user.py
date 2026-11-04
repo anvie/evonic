@@ -444,5 +444,22 @@ class TestRegistryIsolation(unittest.TestCase):
         self.assertEqual(registry.pending_for_session('s'), [])
 
 
+
+class ChatClearKeepsCardAliveTests(unittest.TestCase):
+    """chatUI.clear() runs after the history fetch, which can land after the card opened
+    (page load, agent switch, history resync). jQuery's .empty() would strip the card's
+    handlers while pinToEnd() kept it on screen: Submit and Cancel stop working."""
+
+    def test_clear_spares_the_dock_in_module_and_bundle(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for parts in (('chat-ui', 'index.js'), ('chat-ui.js',)):
+            with open(os.path.join(root, 'static', 'js', *parts), encoding='utf-8') as fh:
+                src = fh.read()
+            clear = src[src.index('    clear() {'):src.index('this._lastLiveTurnId = null;', src.index('    clear() {'))]
+            self.assertNotIn('$container.empty()', clear, parts)
+            self.assertIn("node.id !== 'ask-user-dock'", clear, parts)
+
+
 if __name__ == '__main__':
     unittest.main()
