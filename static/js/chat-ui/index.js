@@ -115,7 +115,10 @@ export class ChatUI {
     clear() {
         this._turns.forEach(turn => turn.dispose('clear'));
         this._turns.clear();
-        this.$container.empty();
+        // Not .empty(): that strips jQuery handlers from everything inside, and the open
+        // ask_user card (static/js/ask-user.js) stays on screen, so it would look fine but
+        // ignore every click. The card leaves on its own once its question is resolved.
+        this.$container.contents().filter((_, node) => node.id !== 'ask-user-dock').remove();
         this._lastLiveTurnId = null;
     }
 
