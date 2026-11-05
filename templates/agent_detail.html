@@ -16,7 +16,7 @@ main { align-items: flex-start !important; }
     color: #7f2a3c;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
-.chat-composer:has(#chat-input.chat-bash-input) {
+.chat-composer#chat-composer.is-bash {
     background: rgb(255 241 243 / .9);
     border-color: #f0b4bd;
     box-shadow: 0 0 0 3px rgba(240, 180, 189, 0.22);
@@ -35,7 +35,7 @@ main { align-items: flex-start !important; }
     top: -17px;
 }
 html.dark #chat-input.chat-bash-input { caret-color: #f3a6b3; color: #f6e9ec; }
-html.dark .chat-composer:has(#chat-input.chat-bash-input) { background: rgb(38 26 34 / .88); border-color: #7a4455; box-shadow: 0 0 0 3px rgba(251, 113, 133, 0.1); }
+html.dark .chat-composer#chat-composer.is-bash { background: rgb(38 26 34 / .88); border-color: #7a4455; box-shadow: 0 0 0 3px rgba(251, 113, 133, 0.1); }
 html.dark #chat-input.chat-bash-input::placeholder { color: #c08c97; }
 html.dark #chat-bash-hint { background: #7a4455; color: #f6e9ec; }
 /* ── Chat composer: card with borderless textarea + bottom action bar ── */
@@ -97,12 +97,12 @@ html.dark .chat-composer #chat-input::placeholder { color: #6b7280 !important; }
 html.dark .chat-composer #chat-input.chat-bash-input { color: #f6e9ec !important; }
 html.dark .chat-composer #chat-input.chat-bash-input::placeholder { color: #c08c97 !important; }
 /* Bash mode: action buttons follow the rose theme instead of clashing with the indigo one */
-.chat-composer:has(#chat-input.chat-bash-input) .chat-send-pill { background: #d9617a; box-shadow: 0 4px 12px -4px rgb(217 97 122 / .45); }
-.chat-composer:has(#chat-input.chat-bash-input) .chat-send-pill:hover { background: #c4506a; }
-.chat-composer:has(#chat-input.chat-bash-input) .chat-icon-btn { border-color: rgb(217 97 122 / .35); color: #a8445b; }
-html.dark .chat-composer:has(#chat-input.chat-bash-input) .chat-send-pill { background: #c75a72; box-shadow: none; }
-html.dark .chat-composer:has(#chat-input.chat-bash-input) .chat-send-pill:hover { background: #d9738a; }
-html.dark .chat-composer:has(#chat-input.chat-bash-input) .chat-icon-btn { border-color: rgb(251 113 133 / .28); color: #e8a3af; }
+.chat-composer#chat-composer.is-bash .chat-send-pill { background: #d9617a; box-shadow: 0 4px 12px -4px rgb(217 97 122 / .45); }
+.chat-composer#chat-composer.is-bash .chat-send-pill:hover { background: #c4506a; }
+.chat-composer#chat-composer.is-bash .chat-icon-btn { border-color: rgb(217 97 122 / .35); color: #a8445b; }
+html.dark .chat-composer#chat-composer.is-bash .chat-send-pill { background: #c75a72; box-shadow: none; }
+html.dark .chat-composer#chat-composer.is-bash .chat-send-pill:hover { background: #d9738a; }
+html.dark .chat-composer#chat-composer.is-bash .chat-icon-btn { border-color: rgb(251 113 133 / .28); color: #e8a3af; }
 /* Floating composer: sits over the bottom of the chat; messages stay visible (softly blurred) behind it */
 /* ── Mobile revamp: no page title / tab bar; menu lives in a right-side drawer ── */
 #mobile-floating-bar { display: none; }
@@ -7247,9 +7247,45 @@ function chatInputChanged(input) {
 
 // Animated autosize: measure the natural height (synchronously, no paint in between),
 // then transition from the previous pixel height to the new one — no flash/jump on every keystroke.
+//
+// Per-keystroke cost matters in long sessions: flipping the textarea to height:auto and reading scrollHeight
+// forces a synchronous layout of the whole page (the chat list is a flex sibling), which grew with chat length
+// (~35-65 ms/key at ~800K tokens of history). So the natural height is measured on an off-screen mirror textarea
+// (out-of-flow: only the mirror is laid out) and the real textarea is only written when its height actually changes.
+let _resizeMirror = null;
+function measureChatInputHeight(input) {
+    const width = input.clientWidth;
+    if (!width) return null;                                   // hidden / not laid out: caller falls back
+    if (!_resizeMirror) {
+        _resizeMirror = document.createElement('textarea');
+        _resizeMirror.setAttribute('aria-hidden', 'true');
+        _resizeMirror.tabIndex = -1;
+        _resizeMirror.rows = 1;
+        document.body.appendChild(_resizeMirror);
+    }
+    const cs = getComputedStyle(input);
+    const m = _resizeMirror;
+    m.style.cssText = 'position:fixed;left:-9999px;top:0;visibility:hidden;pointer-events:none;height:0;min-height:0;' +
+        'overflow:hidden;border:0;resize:none;box-sizing:border-box;white-space:pre-wrap;word-wrap:break-word;' +
+        `width:${width}px;padding:${cs.padding};font:${cs.font};letter-spacing:${cs.letterSpacing};line-height:${cs.lineHeight};`;
+    m.value = input.value;
+    return Math.max(m.scrollHeight, parseFloat(cs.minHeight) || 0);
+}
+
 function resizeChatInput(input, animate = true) {
     if (!input) return;
     const max = parseFloat(getComputedStyle(input).maxHeight) || 150;
+    const natural = measureChatInputHeight(input);
+    if (natural !== null) {
+        const next = Math.min(natural, max);
+        const overflow = natural > max ? 'auto' : 'hidden';
+        const prevPx = parseFloat(input.style.height);
+        if (!isNaN(prevPx) && Math.abs(prevPx - next) < 1) {
+            // Same height as last time (typing within a line): touch nothing, so no layout is invalidated.
+            if (input.style.overflowY !== overflow) input.style.overflowY = overflow;
+            return;
+        }
+    }
     const prev = input.offsetHeight;
     input.style.transition = 'none';
     input.style.height = 'auto';
