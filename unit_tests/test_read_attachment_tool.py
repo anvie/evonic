@@ -135,6 +135,17 @@ def test_binary_attachment_returns_metadata(tmp_path, monkeypatch):
     assert parsed['filename'] == 'photo.jpg'
 
 
+def test_image_metadata_does_not_claim_the_picture_is_unreadable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _make_agent('agent_img')
+    aid, _ = _store('agent_img', b'\x00\x01\x02BIN', name='photo.jpg',
+                    mime='image/jpeg', tmp_path=tmp_path)
+    out = ra.execute({'id': 'agent_img'}, {'attachment_id': aid})['result']
+    assert 'image file' in out and 'already see it' in out
+    assert 'not directly readable' not in out
+    assert json.loads(out.split('\n\n', 1)[1])['mime_type'] == 'image/jpeg'
+
+
 def test_pdf_no_anydoc_returns_unavailable(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _make_agent('agent_pdf')

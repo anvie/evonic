@@ -142,5 +142,30 @@ def test_images_are_sent_as_stream_json_blocks():
     assert cmd[cmd.index("--output-format") + 1] == "stream-json"
     sent = json.loads(run.call_args.kwargs["input"])
     blocks = sent["message"]["content"]
-    assert blocks[0]["source"] == {"type": "base64", "media_type": "image/png", "data": "QUJD"}
-    assert "[image 1 attached]" in blocks[1]["text"]
+    image = next(b for b in blocks if b["type"] == "image")
+    assert image["source"] == {"type": "base64", "media_type": "image/png", "data": "QUJD"}
+    assert "[image 1, shown below]" in blocks[blocks.index(image) - 1]["text"]
+
+
+def _picture(n):
+    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{n}"}}
+
+
+def test_each_image_sits_where_it_was_mentioned_and_old_ones_are_dropped():
+    count = claude_cli.MAX_IMAGES + 2
+    messages = []
+    for n in range(count):
+        messages.append({"role": "user", "content": [{"type": "text", "text": f"pic {n}"}, _picture(f"AA{n}")]})
+        messages.append({"role": "assistant", "content": f"seen {n}"})
+    blocks = claude_cli._stream_content(
+        claude_cli._format_transcript(messages, (images := [])), images)
+
+    sent = [b["source"]["data"] for b in blocks if b["type"] == "image"]
+    assert sent == [f"AA{n}" for n in range(2, count)]
+    text = "\n".join(b["text"] for b in blocks if b["type"] == "text")
+    assert "[image 1: an older picture, no longer attached]" in text
+    assert f"[image {count}, shown below]" in text
+    # Every picture follows its own label, directly.
+    for i, block in enumerate(blocks):
+        if block["type"] == "image":
+            assert blocks[i - 1]["text"].rstrip().endswith("shown below]")
