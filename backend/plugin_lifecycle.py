@@ -85,6 +85,15 @@ class PluginManager:
         from models.db import db
         return db.get_setting(f'plugin_enabled:{plugin_id}') == '1'
 
+    def is_plugin_enabled(self, plugin_id: str) -> bool:
+        """Public, Flask-free "is this plugin enabled?" — safe outside a request.
+
+        ``get_plugin()`` is a UI accessor: it reads ``current_app.url_map`` and therefore needs an
+        application context. Agent turns run in worker threads that have none, so anything deciding
+        whether a plugin's tools may be used must ask this instead.
+        """
+        return self._is_plugin_enabled(plugin_id)
+
     def _load_all(self):
         """Load handlers from all enabled plugins at startup."""
         self._nav_cache = None

@@ -33,7 +33,9 @@ def notify_agent(agent_id: str, tag: str, message: str,
                  save_memory: bool = True,
                  ephemeral: bool = False,
                  ephemeral_ttl: int = 7200,
-                 override_model_id: str = None) -> dict:
+                 override_model_id: str = None,
+                 lend_tools: list = None,
+                 lend_tools_from: str = None) -> dict:
     """Send a system notification to an agent.
 
     Args:
@@ -77,6 +79,12 @@ def notify_agent(agent_id: str, tag: str, message: str,
                      (``ephemeral=True`` and no ``session_id``): anywhere else it is ignored with a warning, so a
                      person's own conversation can never be switched to another model. An unknown or disabled
                      model is ignored too, and the agent keeps its own.
+        lend_tools: Plugin tool ids (``plugin:<owner>:<fn>``) the sending plugin lends to the agent for this
+                     message. They are advertised and authorized while that message is answered and, when the
+                     resolved session is an agent-to-agent one, remembered for the session as well, so the rest of
+                     that conversation keeps them (see ``backend.agent_runtime.session_tools``). They never become
+                     part of the agent's tool assignment.
+        lend_tools_from: The plugin those tools belong to; a lent id must be that plugin's own.
 
     Returns:
         dict with keys:
@@ -216,6 +224,23 @@ def notify_agent(agent_id: str, tag: str, message: str,
     if override_model_id:
         _apply_session_model_override(target_session_id, _db_agent_id, override_model_id,
                                       allowed=bool(ephemeral and not session_id))
+
+    # Tools a plugin lends with this message: carried in the metadata (the turn answering it sees them) and,
+    # for an agent-to-agent session, remembered so the rest of that conversation keeps them too.
+    if lend_tools and lend_tools_from:
+        lent = [str(t).strip() for t in lend_tools if str(t).strip()]
+        metadata = {**(metadata or {}), 'lend_tools': lent,
+                    'lend_tools_from': str(lend_tools_from).strip()}
+        try:
+            from backend.agent_runtime import session_tools
+            info = db.get_session_with_details(target_session_id) or {}
+            if session_tools.is_inter_agent_session(info.get('external_user_id')):
+                session_tools.grant(target_session_id, info.get('agent_id') or _db_agent_id,
+                                    lend_tools_from, lent,
+                                    granted_by=(metadata or {}).get('from_agent_id'))
+        except Exception:
+            _logger.warning('notify_agent: could not grant lent tools for session %s',
+                            target_session_id, exc_info=True)
 
     delivery = 'runtime' if trigger_llm else 'web'
     try:

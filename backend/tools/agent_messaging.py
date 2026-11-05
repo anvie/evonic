@@ -887,6 +887,17 @@ def _on_final_answer(data: dict) -> None:
                 reply_to_id, sender_id, agent_b_id,
             )
 
+    # A question that was asked in a session (not by an agent on someone's behalf) has no
+    # human route on purpose: the asker reads the answer from the waiter woken above, and
+    # the waiter must be woken first. So this is checked before the route is resolved.
+    if meta.get('skip_auto_forward'):
+        _logger.info(
+            "Auto-forward skip: skip_auto_forward set for '%s' in session '%s' "
+            "(the asker reads the answer itself).",
+            agent_b_id, session_id,
+        )
+        return
+
     report_to_id = meta.get('report_to_id')
     if not report_to_id:
         _logger.warning(
@@ -899,15 +910,6 @@ def _on_final_answer(data: dict) -> None:
     session_id_from_meta = meta.get('session_id')
     original_depth = meta.get('agent_message_depth', 0)
     subagent_user_direct = meta.get('subagent_user_direct', False)
-    skip_auto_forward = meta.get('skip_auto_forward', False)
-
-    if skip_auto_forward:
-        _logger.info(
-            "Auto-forward skip: skip_auto_forward set for '%s' in session '%s' "
-            "(sync explore — result already returned via tool output).",
-            agent_b_id, session_id,
-        )
-        return
 
     # Guard: if report_to_id would create a self-session (agent_b == sender extracted from
     # report_to_id), bail out. This catches any residual cases where report_to_id was set

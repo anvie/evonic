@@ -115,6 +115,19 @@ class ChatDelegationMixin:
     def get_session_state(self, session_id: str, agent_id: str) -> Optional[str]:
         return self._chat_db(agent_id).get_session_state(session_id)
 
+    def grant_session_tools(self, session_id: str, tool_ids: List[str], owner: str,
+                            agent_id: str, granted_by: str = None,
+                            ttl_seconds: int = 259200) -> List[str]:
+        """Lend ``owner``'s tools to one session (see ``backend.agent_runtime.session_tools``)."""
+        return self._chat_db(agent_id).grant_session_tools(
+            session_id, tool_ids, owner, granted_by=granted_by, ttl_seconds=ttl_seconds)
+
+    def list_session_tool_grants(self, session_id: str, agent_id: str) -> List[Dict[str, Any]]:
+        return self._chat_db(agent_id).list_session_tool_grants(session_id)
+
+    def revoke_session_tools(self, session_id: str, agent_id: str, tool_ids: List[str] = None) -> int:
+        return self._chat_db(agent_id).revoke_session_tools(session_id, tool_ids=tool_ids)
+
     def clear_session(self, session_id: str, agent_id: str = None, no_archive: bool = False):
         agent_id = agent_id or self._find_agent_for_session(session_id)
         if agent_id:

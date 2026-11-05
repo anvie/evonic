@@ -33,6 +33,7 @@ from config import AGENT_TIMEOUT_RETRIES as MAX_TIMEOUT_RETRIES, AGENT_QUEUE_WOR
 from backend.agent_runtime import context as _ctx
 from backend.agent_runtime import llm_loop as _loop
 from backend.agent_runtime import summarizer as _sum
+from backend.agent_runtime import session_tools as _session_tools
 from backend.agent_runtime.concurrency import ConcurrencyManager
 from backend.agent_state import AgentState
 from backend.channels.registry import channel_manager
@@ -236,71 +237,73 @@ def _apply_restart_origin_guard(agent_context: dict, assigned_tool_ids: list,
     return assigned_tool_ids, tools
 
 
-LEND_TOOLS_MAX = 8
-_LEND_TOOL_ID_RE = re.compile(r'^plugin:([A-Za-z0-9_]+):([A-Za-z0-9_]+)$')
+LEND_TOOLS_MAX = _session_tools.MAX_LENT
 
 
 def _apply_lent_tools(agent_context: dict, assigned_tool_ids: list,
-                      tools: list, metadata: dict) -> tuple:
-    """Add the tools an in-platform sender lends this one turn, and no other.
+                      tools: list, metadata: dict,
+                      session_id: str = None, agent_id: str = None) -> tuple:
+    """Add the tools an in-platform sender lends, and no other.
 
-    ``metadata['lend_tools']`` names the tools a plugin wants the agent to have
-    while it answers the message that carries the metadata. They are advertised
-    and authorized for that turn only: they never enter the agent's assignments
-    and are gone with the session. The metadata is built by the core, never from
-    tool arguments, so an agent cannot lend itself a tool.
+    Two sources are merged, both validated by ``session_tools`` (the tool must
+    be the lending plugin's own, that plugin must be enabled, its backend must
+    exist, and no core tool may be shadowed):
 
-    An id must be ``plugin:<plugin>:<fn>`` and belong to the plugin named in
-    ``metadata['lend_tools_from']``; that plugin must be enabled and the tool's
-    backend must exist. Built-ins can never be lent, and the list is capped at
-    ``LEND_TOOLS_MAX``.
+    * ``metadata['lend_tools']`` — the tools a plugin lends with the message it
+      sends. They are advertised and authorized for the turn that answers it.
+    * the grants of ``session_id`` — the same tools, remembered for as long as
+      that inter-agent conversation lives, so the agent can keep using them in
+      its next turns without being assigned anything.
+
+    Neither ever enters the agent's assignments, and neither is written by the
+    agent itself: the metadata is built by the core, and a grant needs an
+    inter-agent session to exist at all.
+
+    A lending problem must never be able to kill a turn: anything that goes
+    wrong here is logged and the turn continues without lent tools.
     """
-    if not isinstance(metadata, dict):
-        return assigned_tool_ids, tools
-    wanted = metadata.get('lend_tools')
-    owner = str(metadata.get('lend_tools_from') or '').strip()
-    if not isinstance(wanted, (list, tuple)) or not owner or not wanted:
-        return assigned_tool_ids, tools
+    try:
+        seen = {t.get('function', {}).get('name') for t in tools}
+        lent_ids = list(assigned_tool_ids)
+        added = False
 
-    from backend.plugin_manager import plugin_manager
-    from backend.tools import tool_registry
-    from backend.tools.registry import BUILTIN_TOOL_IDS
+        def add(owner: str, tool_ids) -> None:
+            nonlocal added
+            for tool_id, fn in _session_tools.lent_tool_defs(owner, tool_ids):
+                name = fn.get('name')
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                tools.append({'type': 'function', 'function': fn})
+                if tool_id not in lent_ids:
+                    lent_ids.append(tool_id)
+                added = True
 
-    if not (plugin_manager.get_plugin(owner) or {}).get('enabled'):
-        _logger.warning('Lent tools ignored: plugin %r is not enabled', owner)
+        meta = metadata if isinstance(metadata, dict) else {}
+        owner = str(meta.get('lend_tools_from') or '').strip()
+        wanted = meta.get('lend_tools')
+        if owner and isinstance(wanted, (list, tuple)) and wanted:
+            add(owner, list(wanted)[:LEND_TOOLS_MAX])
+            if session_id and agent_id:            # keep them for the rest of the conversation
+                _session_tools.grant(session_id, agent_id, owner,
+                                     list(wanted)[:LEND_TOOLS_MAX],
+                                     granted_by=meta.get('from_agent_id'))
+
+        if session_id and agent_id:                # tools lent earlier in this session
+            by_owner: Dict[str, List[str]] = {}
+            for row in _session_tools.grants_for(session_id, agent_id):
+                by_owner.setdefault(str(row.get('owner') or ''), []).append(str(row.get('tool_id') or ''))
+            for grant_owner, ids in by_owner.items():
+                if grant_owner:
+                    add(grant_owner, [i for i in ids if i])
+
+        if added:
+            agent_context['assigned_tool_ids'] = lent_ids
+        return lent_ids, tools
+    except Exception:
+        _logger.warning('Lent tools ignored for this turn (session=%s, agent=%s)',
+                        session_id, agent_id, exc_info=True)
         return assigned_tool_ids, tools
-
-    defs = {d.get('id'): d for d in plugin_manager.get_all_plugin_tool_defs()
-            if isinstance(d, dict)}
-    core_names = {d.get('function', {}).get('name')
-                  for d in tool_registry.get_tool_defs_from_json() if isinstance(d, dict)}
-    seen = {t.get('function', {}).get('name') for t in tools}
-    lent_ids = list(assigned_tool_ids)
-    added = False
-    for raw in list(wanted)[:LEND_TOOLS_MAX]:
-        tool_id = str(raw or '').strip()
-        match = _LEND_TOOL_ID_RE.match(tool_id)
-        if not match or match.group(1) != owner:
-            _logger.warning('Lent tool %r refused: not a tool of plugin %r', tool_id, owner)
-            continue
-        fn_name = match.group(2)
-        fn = (defs.get(tool_id) or {}).get('function') or {}
-        if fn.get('name') != fn_name or fn_name in BUILTIN_TOOL_IDS or fn_name in core_names:
-            _logger.warning('Lent tool %r refused: it would shadow a core tool', tool_id)
-            continue
-        if fn_name in seen:
-            continue
-        if plugin_manager.find_plugin_tool_backend(fn_name, owner)[0] is None:
-            _logger.warning('Lent tool %r refused: no backend implementation', tool_id)
-            continue
-        seen.add(fn_name)
-        tools.append({'type': 'function', 'function': fn})
-        if tool_id not in lent_ids:
-            lent_ids.append(tool_id)
-        added = True
-    if added:
-        agent_context['assigned_tool_ids'] = lent_ids
-    return lent_ids, tools
 
 
 def _should_wrap_user_message(agent: dict) -> bool:
@@ -2711,11 +2714,13 @@ class AgentRuntime:
                 if _att_paths:
                     agent_context['trusted_attachment_paths'] = _att_paths
 
-        # Tools a plugin lends for this message only (e.g. a tool that belongs to
-        # its own question). Must run before the loop builds its executor.
+        # Tools a plugin lends for this message, plus the ones already lent to this
+        # conversation (an inter-agent session). Must run before the loop builds its
+        # executor, and must never be able to interrupt the turn.
         assigned_tool_ids, tools = _apply_lent_tools(
             agent_context, assigned_tool_ids, tools,
             _trusted_meta if isinstance(_trusted_meta, dict) else {},
+            session_id=ctx.session_id, agent_id=db_agent_id,
         )
 
         # A turn started by a message marked "not to be remembered" (notify_agent save_memory=False) must not write

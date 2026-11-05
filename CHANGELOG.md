@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Features
+
+- Tools a plugin lends an agent are now remembered for the conversation they were lent to, not only for the message that carried them. A grant is stored per session (`session_tool_grants`), always expires (72 hours, refreshed when the tool is lent again), is capped at eight tools, and is refused outside agent-to-agent sessions, for another plugin's tools, for core tool names and for disabled plugins. `notify_agent(lend_tools=..., lend_tools_from=...)` lends them; the agent keeps the tool in its later turns of that session, and the tool still never enters its assignment.
+
 ### Improvements
 
 - The agent sidebar turns an agent's ring **pink** (instead of the yellow "busy" spin) while that agent is waiting for your answer to an `ask_user` question, and the tooltip badge reads **Needs input**. The state is restored after a reload and cleared as soon as the question is answered, dismissed, or timed out.
@@ -10,6 +14,7 @@
 
 ### Bug Fixes
 
+- A message that lends an agent a plugin tool no longer kills the turn. The lending check asked the plugin manager through its UI accessor (`get_plugin()`), which reads the Flask URL map; agent turns run on a worker thread with no application context, so every such message failed with `Working outside of application context` and the user saw “An unexpected error occurred while processing your request” before the model ever ran. The check is now context-free, and a problem while lending is logged instead of interrupting the turn.
 - The ask_user card no longer goes dead when it opens before the chat history finishes loading (opening or reloading the page while a question is waiting, switching back to that agent, or a history resync). The card stayed on screen, but Submit never enabled, Cancel did nothing, and the composer stayed locked.
 - A model with **Vision Supported** now always reads the user's image itself. The attachment note used to tell every vision-enabled agent to *"Use the `describe_image` tool to view and analyze this image"*, so a vision-capable model read a second model's text summary of an image it could already see — the image was attached, and the answer still came from another model, a few seconds slower. The hint is now dropped for vision-capable models, and the unused `image_input_mode` agent variable (never exposed in the UI) is gone: the model capability alone decides. Non-vision models are unchanged and still use `describe_image`, as do images older than the last three user turns, which are not attached inline.
 - The built-in `LiquidAI d1-3B` decision model is now retired once you have registered your own decision model on the same provider. The seed row is re-inserted on every start and was never disabled, so every picker offered two near-identical entries for one endpoint. It is disabled (not deleted) only when nothing references it and the replacement is actually in use, so an install that still relies on the built-in keeps it selectable.

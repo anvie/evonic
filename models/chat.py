@@ -3,6 +3,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Generator, Tuple
 
 AGENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'agents')
@@ -38,6 +39,7 @@ def _migrate_session_id(cursor, old_id: str, new_id: str) -> None:
     cursor.execute("UPDATE chat_summaries SET session_id = ? WHERE session_id = ?", (new_id, old_id))
     cursor.execute("UPDATE agent_state SET session_id = ? WHERE session_id = ?", (new_id, old_id))
     cursor.execute("UPDATE session_state SET session_id = ? WHERE session_id = ?", (new_id, old_id))
+    cursor.execute("UPDATE session_tool_grants SET session_id = ? WHERE session_id = ?", (new_id, old_id))
 
 
 class AgentChatDB:
@@ -180,6 +182,20 @@ class AgentChatDB:
                     FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
                 )
             """)
+            # Tools a plugin lends to one inter-agent session for as long as that session lives.
+            # Scoped to the session, always expiring (see backend/agent_runtime/session_tools.py).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS session_tool_grants (
+                    session_id TEXT NOT NULL,
+                    tool_id TEXT NOT NULL,
+                    owner TEXT NOT NULL,
+                    granted_by TEXT,
+                    granted_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    PRIMARY KEY (session_id, tool_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tool_grants_session ON session_tool_grants(session_id)")
             # Long-term memory table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS memories (
@@ -498,12 +514,83 @@ class AgentChatDB:
                     pass
         return None
 
+    # -- Tools lent to one session --
+
+    def grant_session_tools(self, session_id: str, tool_ids: List[str], owner: str,
+                            granted_by: str = None, ttl_seconds: int = 259200) -> List[str]:
+        """Remember that ``owner`` lends ``tool_ids`` to ``session_id`` until ``expires_at``.
+
+        Re-granting the same tool refreshes its expiry, so a tool lent again in a later message of the
+        same conversation never disappears under the agent's feet. Expired rows are dropped on read
+        (``list_session_tool_grants``), so no sweeper is needed.
+        """
+        ids = [str(t).strip() for t in (tool_ids or []) if str(t).strip()]
+        if not session_id or not ids or not owner:
+            return []
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=max(60, int(ttl_seconds)))
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO session_tool_grants "
+                "(session_id, tool_id, owner, granted_by, granted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                [(session_id, tool_id, owner, granted_by, now.isoformat(), expires.isoformat())
+                 for tool_id in ids])
+            conn.commit()
+        return ids
+
+    def list_session_tool_grants(self, session_id: str) -> List[Dict[str, Any]]:
+        """The tools still lent to ``session_id``; expired ones are deleted as they are found."""
+        if not session_id:
+            return []
+        now = datetime.now(timezone.utc)
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT session_id, tool_id, owner, granted_by, granted_at, expires_at "
+                "FROM session_tool_grants WHERE session_id = ?", (session_id,)).fetchall()
+            live, expired = [], []
+            for row in rows:
+                try:
+                    deadline = datetime.fromisoformat(str(row["expires_at"]))
+                except (TypeError, ValueError):
+                    expired.append(row["tool_id"])
+                    continue
+                if deadline.tzinfo is None:
+                    deadline = deadline.replace(tzinfo=timezone.utc)
+                if deadline > now:
+                    live.append(dict(row))
+                else:
+                    expired.append(row["tool_id"])
+            if expired:
+                conn.executemany("DELETE FROM session_tool_grants WHERE session_id = ? AND tool_id = ?",
+                                 [(session_id, tool_id) for tool_id in expired])
+                conn.commit()
+            return live
+
+    def revoke_session_tools(self, session_id: str, tool_ids: List[str] = None) -> int:
+        """Drop the grants of ``session_id`` (all of them when ``tool_ids`` is None). Returns how many."""
+        if not session_id:
+            return 0
+        with self._connect() as conn:
+            if tool_ids:
+                ids = [str(t).strip() for t in tool_ids if str(t).strip()]
+                if not ids:
+                    return 0
+                cursor = conn.executemany(
+                    "DELETE FROM session_tool_grants WHERE session_id = ? AND tool_id = ?",
+                    [(session_id, tool_id) for tool_id in ids])
+            else:
+                cursor = conn.execute("DELETE FROM session_tool_grants WHERE session_id = ?", (session_id,))
+            conn.commit()
+            return max(0, cursor.rowcount or 0)
+
     def clear_session(self, session_id: str):
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
             cursor.execute("DELETE FROM chat_summaries WHERE session_id = ?", (session_id,))
             cursor.execute("DELETE FROM session_state WHERE session_id = ?", (session_id,))
+            cursor.execute("DELETE FROM session_tool_grants WHERE session_id = ?", (session_id,))
             # Do NOT delete agent_state — it is global per-agent, not per-session
             conn.commit()
 
@@ -513,6 +600,7 @@ class AgentChatDB:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM chat_messages")
             cursor.execute("DELETE FROM chat_summaries")
+            cursor.execute("DELETE FROM session_tool_grants")
             cursor.execute("DELETE FROM chat_sessions")
             conn.commit()
 
@@ -677,6 +765,7 @@ class AgentChatDB:
                 return False
             cursor.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
             cursor.execute("DELETE FROM chat_summaries WHERE session_id = ?", (session_id,))
+            cursor.execute("DELETE FROM session_tool_grants WHERE session_id = ?", (session_id,))
             cursor.execute(
                 "UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (session_id,))
@@ -698,6 +787,7 @@ class AgentChatDB:
             for sid in session_ids:
                 cursor.execute("DELETE FROM chat_messages WHERE session_id = ?", (sid,))
                 cursor.execute("DELETE FROM chat_summaries WHERE session_id = ?", (sid,))
+                cursor.execute("DELETE FROM session_tool_grants WHERE session_id = ?", (sid,))
                 cursor.execute(
                     "UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (sid,))
