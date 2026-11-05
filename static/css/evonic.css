@@ -1825,6 +1825,28 @@ html.dark {
     to { transform: rotate(360deg); }
 }
 
+/* Waiting for the user's answer (ask_user): pink ring, slower spin + glow.
+   Later rule of equal specificity, so it overrides the busy ring. */
+#agent-sidebar .agent-avatar[data-asking="true"]::after {
+    opacity: 1;
+    border-color: #ec4899 #ec4899 transparent transparent;
+    animation: agent-asking-spin 1.2s linear infinite;
+}
+
+@keyframes agent-asking-spin {
+    0%   { transform: rotate(0deg);   box-shadow: 0 0 3px rgba(236, 72, 153, 0.35); }
+    50%  { transform: rotate(180deg); box-shadow: 0 0 10px rgba(236, 72, 153, 0.65); }
+    100% { transform: rotate(360deg); box-shadow: 0 0 3px rgba(236, 72, 153, 0.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #agent-sidebar .agent-avatar[data-asking="true"]::after {
+        animation: none;
+        border-color: #ec4899;
+        box-shadow: 0 0 6px rgba(236, 72, 153, 0.45);
+    }
+}
+
 .agent-sidebar-tooltip {
     position: fixed;
     z-index: 9999;
@@ -1875,6 +1897,11 @@ html.dark {
 .agent-sidebar-tooltip .tt-badge.idle {
     background: rgba(148, 163, 184, 0.15);
     color: #94a3b8;
+}
+
+.agent-sidebar-tooltip .tt-badge.asking {
+    background: rgba(236, 72, 153, 0.18);
+    color: #ec4899;
 }
 
 .sidebar-toggle-btn {

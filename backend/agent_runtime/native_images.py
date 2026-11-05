@@ -1,14 +1,15 @@
 """Feed recent image attachments straight to vision-capable models.
 
-By default a model that supports vision should look at the user's image itself
-instead of reading a second model's ``describe_image`` summary. The canonical
-transcript is never changed: images are attached to a *copy* of the messages
-right before the provider call, so history keeps only the textual attachment
-note (``Attachment ID: N``) and older images can still be fetched with
-``describe_image`` / ``read_attachment``.
+Rule: a model with ``vision_supported`` always sees the image natively -- the
+attachment is attached as an ``image_url`` part on a *copy* of the messages
+right before the provider call. Models without ``vision_supported`` never get
+the image bytes: they read it through the ``describe_image`` tool instead, and
+only they receive the ``describe_image`` hint in the attachment note.
 
-Agent variable ``image_input_mode``: ``auto`` (default, native when the model
-has ``vision_supported``) or ``describe`` (always use the ``describe_image`` tool).
+There is no per-agent switch. The canonical transcript is never changed, so
+history keeps only the textual attachment note (``Attachment ID: N``); older
+images (beyond :data:`MAX_USER_TURNS_BACK` user turns) are not attached and can
+still be fetched with ``describe_image`` / ``read_attachment``.
 """
 
 import base64
@@ -21,7 +22,6 @@ from typing import Any, Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
 
-MODE_VARIABLE = 'image_input_mode'
 MAX_USER_TURNS_BACK = 3      # only images from the most recent user turns
 MAX_IMAGES = 4               # per request
 MAX_EDGE = 1568              # longest side after downscale
@@ -32,10 +32,12 @@ _cache: 'OrderedDict[tuple, str]' = OrderedDict()
 _CACHE_SIZE = 16
 
 
-def native_mode_enabled(model_config: Optional[Dict[str, Any]], variables: Dict[str, str]) -> bool:
-    if not (model_config or {}).get('vision_supported'):
-        return False
-    return str((variables or {}).get(MODE_VARIABLE, 'auto')).strip().lower() != 'describe'
+def native_mode_enabled(model_config: Optional[Dict[str, Any]]) -> bool:
+    """True when images must be attached natively instead of read via ``describe_image``.
+
+    This is purely a model capability check: there is no per-agent override.
+    """
+    return bool((model_config or {}).get('vision_supported'))
 
 
 def _data_url(path: str, mime: str) -> Optional[str]:
@@ -79,6 +81,46 @@ def _message_text(message: Dict[str, Any]) -> str:
         return '\n'.join(p.get('text', '') for p in content
                          if isinstance(p, dict) and p.get('type') == 'text')
     return ''
+
+
+DESCRIBE_HINT = 'Use the `describe_image` tool to view and analyze this image.'
+
+
+def _strip_hint(text: str) -> str:
+    # Drop the hint together with the newline that introduced it.
+    return re.sub(r'\n?' + re.escape(DESCRIBE_HINT), '', text)
+
+
+def strip_describe_image_hints(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return ``messages`` without the ``describe_image`` hint lines.
+
+    Used for vision-capable models, where the image is already attached natively
+    and the hint would tell the model to read a second model's summary instead of
+    looking at the image. Unchanged messages are returned as the same objects, so
+    callers keep sharing state with the canonical transcript.
+    """
+    result = []
+    for message in messages:
+        content = message.get('content')
+        if isinstance(content, str):
+            if DESCRIBE_HINT in content:
+                result.append({**message, 'content': _strip_hint(content)})
+            else:
+                result.append(message)
+        elif isinstance(content, list):
+            parts = []
+            changed = False
+            for part in content:
+                if (isinstance(part, dict) and part.get('type') == 'text'
+                        and DESCRIBE_HINT in (part.get('text') or '')):
+                    parts.append({**part, 'text': _strip_hint(part['text'])})
+                    changed = True
+                else:
+                    parts.append(part)
+            result.append({**message, 'content': parts} if changed else message)
+        else:
+            result.append(message)
+    return result
 
 
 def attach_native_images(messages: List[Dict[str, Any]], session_id: str, agent_id: str,

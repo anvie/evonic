@@ -188,6 +188,22 @@ class TestRegistryAndRoutes(unittest.TestCase):
         other = self.client.get('/api/ask_user/pending?session_id=sess-2').get_json()['questions']
         self.assertEqual(other, [])
 
+    def test_pending_agents_groups_waiting_questions_by_agent(self):
+        other = question_registry.create('sess-2', 'agent-2', self.questions)
+        try:
+            agents = self.client.get('/api/ask_user/pending_agents').get_json()['agents']
+            self.assertIn(self.pending.question_id, agents.get('agent-1', []))
+            self.assertIn(other.question_id, agents.get('agent-2', []))
+        finally:
+            question_registry.remove(other.question_id)
+
+        # A question that stopped waiting disappears from the map.
+        qid = self.pending.question_id
+        question_registry.dismiss(qid)
+        question_registry.remove(qid, 'dismissed')
+        agents = self.client.get('/api/ask_user/pending_agents').get_json()['agents']
+        self.assertNotIn(qid, agents.get('agent-1', []))
+
     def test_pending_reports_how_known_questions_ended(self):
         qid = self.pending.question_id
         url = f'/api/ask_user/pending?session_id=sess-1&known={qid},gone-after-restart'
@@ -442,6 +458,23 @@ class TestRegistryIsolation(unittest.TestCase):
         self.assertEqual(len(registry.pending_for_session('s')), 1)
         registry.answer(pq.question_id, [{'selected': ['SQLite']}])
         self.assertEqual(registry.pending_for_session('s'), [])
+
+
+
+class ChatClearKeepsCardAliveTests(unittest.TestCase):
+    """chatUI.clear() runs after the history fetch, which can land after the card opened
+    (page load, agent switch, history resync). jQuery's .empty() would strip the card's
+    handlers while pinToEnd() kept it on screen: Submit and Cancel stop working."""
+
+    def test_clear_spares_the_dock_in_module_and_bundle(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for parts in (('chat-ui', 'index.js'), ('chat-ui.js',)):
+            with open(os.path.join(root, 'static', 'js', *parts), encoding='utf-8') as fh:
+                src = fh.read()
+            clear = src[src.index('    clear() {'):src.index('this._lastLiveTurnId = null;', src.index('    clear() {'))]
+            self.assertNotIn('$container.empty()', clear, parts)
+            self.assertIn("node.id !== 'ask-user-dock'", clear, parts)
 
 
 if __name__ == '__main__':

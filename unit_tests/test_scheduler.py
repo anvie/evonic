@@ -12,7 +12,9 @@ Covers:
 import pytest
 import sys
 import os
+import re
 import uuid
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -143,6 +145,91 @@ class TestSchedulerDB:
         db.create_schedule(**_make_schedule_kwargs())
         fetched = db.get_schedules()[0]
         assert fetched['max_runs'] is None
+
+
+# ---------------------------------------------------------------------------
+# TestSchedulerDatetimeLocalization — naive server-local -> offset-aware API
+# ---------------------------------------------------------------------------
+
+class TestSchedulerDatetimeLocalization:
+    """Scheduler timestamps are stored naive (server-local) but exposed aware.
+
+    Regression: the UI used to "append Z" to naive values and display them in
+    the browser timezone, which shifted a 21:00 WIB one-shot to 04:00 the next
+    day. The API must therefore never return bare datetimes.
+    """
+
+    def test_localize_datetime_naive_keeps_wall_clock(self):
+        from backend.scheduler import localize_datetime
+        result = localize_datetime('2026-11-03T21:00:00')
+        parsed = datetime.fromisoformat(result)
+        assert parsed.tzinfo is not None
+        assert (parsed.year, parsed.month, parsed.day) == (2026, 11, 3)
+        assert (parsed.hour, parsed.minute) == (21, 0)
+        expected_offset = datetime(2026, 11, 3, 21, 0).astimezone().utcoffset()
+        assert parsed.utcoffset() == expected_offset
+
+    def test_localize_datetime_aware_keeps_instant(self):
+        from backend.scheduler import localize_datetime
+        result = localize_datetime('2026-11-03T21:00:00+07:00')
+        assert datetime.fromisoformat(result) == datetime.fromisoformat('2026-11-03T21:00:00+07:00')
+
+    def test_localize_datetime_trims_fraction_to_milliseconds(self):
+        from backend.scheduler import localize_datetime
+        result = localize_datetime('2026-11-03T21:00:01.028559')
+        assert re.search(r'\.\d{3}(?:[+-]\d{2}:\d{2}|Z)$', result)
+
+    def test_localize_datetime_passthrough_for_unusable_values(self):
+        from backend.scheduler import localize_datetime
+        assert localize_datetime(None) is None
+        assert localize_datetime('') == ''
+        assert localize_datetime('not-a-date') == 'not-a-date'
+
+    def test_localize_schedule_does_not_mutate_input(self):
+        from backend.scheduler import localize_schedule
+        row = {
+            'id': 's1',
+            'created_at': '2026-11-03T18:51:09.072873',
+            'next_run_at': None,
+            'last_run_at': '2026-11-03T21:00:01.028559',
+            'trigger_config': {'run_date': '2026-11-03T21:00:00'},
+        }
+        localized = localize_schedule(row)
+        assert datetime.fromisoformat(localized['trigger_config']['run_date']).tzinfo is not None
+        assert datetime.fromisoformat(localized['created_at']).tzinfo is not None
+        assert datetime.fromisoformat(localized['last_run_at']).tzinfo is not None
+        # The source row must stay untouched (DB values are not rewritten).
+        assert row['trigger_config'] == {'run_date': '2026-11-03T21:00:00'}
+        assert row['created_at'] == '2026-11-03T18:51:09.072873'
+
+    def test_get_schedule_localizes_but_db_stays_naive(self):
+        from backend.scheduler import scheduler
+        kwargs = _make_schedule_kwargs(
+            trigger_type='date', trigger_config={'run_date': '2026-11-03T21:00:00'})
+        db.create_schedule(**kwargs)
+
+        fetched = scheduler.get_schedule(kwargs['schedule_id'])
+        run_date = datetime.fromisoformat(fetched['trigger_config']['run_date'])
+        assert run_date.tzinfo is not None
+        assert (run_date.hour, run_date.minute) == (21, 0)
+        assert datetime.fromisoformat(fetched['created_at']).tzinfo is not None
+
+        raw = db.get_schedule(kwargs['schedule_id'])
+        assert raw['trigger_config']['run_date'] == '2026-11-03T21:00:00'
+        assert datetime.fromisoformat(raw['created_at']).tzinfo is None
+
+    def test_list_schedules_localizes_run_date(self):
+        from backend.scheduler import scheduler
+        kwargs = _make_schedule_kwargs(
+            trigger_type='date', trigger_config={'run_date': '2026-11-04T04:00:00'})
+        db.create_schedule(**kwargs)
+
+        listed = scheduler.list_schedules(owner_type=kwargs['owner_type'],
+                                          owner_id=kwargs['owner_id'])
+        entry = next(s for s in listed if s['id'] == kwargs['schedule_id'])
+        parsed = datetime.fromisoformat(entry['trigger_config']['run_date'])
+        assert parsed.tzinfo is not None
+        assert (parsed.hour, parsed.minute) == (4, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -559,6 +646,24 @@ class TestSchedulerAPI:
             assert resp.status_code == 200
             data = resp.get_json()
             assert data['schedule']['name'] == 'Get Me'
+
+    def test_api_get_schedule_returns_offset_aware_run_date(self):
+        """The API must not expose bare datetimes (UI cannot guess the zone)."""
+        from app import app
+        kwargs = _make_schedule_kwargs(
+            name='Aware One-shot',
+            trigger_type='date',
+            trigger_config={'run_date': '2026-11-03T21:00:00'},
+        )
+        db.create_schedule(**kwargs)
+        with app.test_client() as client:
+            resp = client.get(f'/api/schedules/{kwargs["schedule_id"]}')
+            assert resp.status_code == 200
+            data = resp.get_json()
+        parsed = datetime.fromisoformat(data['schedule']['trigger_config']['run_date'])
+        assert parsed.tzinfo is not None
+        assert (parsed.hour, parsed.minute) == (21, 0)
+        assert datetime.fromisoformat(data['schedule']['created_at']).tzinfo is not None
 
     def test_api_get_schedule_not_found(self):
         from app import app

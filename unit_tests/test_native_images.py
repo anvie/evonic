@@ -25,11 +25,45 @@ def _msg(attachment_id):
         f'Attachment ID: {attachment_id}\nFile path: /etc/passwd')}
 
 
-def test_mode_needs_vision_and_respects_describe_override():
-    assert native_images.native_mode_enabled({'vision_supported': True}, {})
-    assert not native_images.native_mode_enabled({'vision_supported': False}, {})
-    assert not native_images.native_mode_enabled(
-        {'vision_supported': True}, {'image_input_mode': 'describe'})
+def test_native_mode_requires_vision_only():
+    assert native_images.native_mode_enabled({'vision_supported': True})
+    assert not native_images.native_mode_enabled({'vision_supported': False})
+    assert not native_images.native_mode_enabled({})
+    assert not native_images.native_mode_enabled(None)
+
+
+def test_describe_hint_is_stripped_from_string_content():
+    hint = native_images.DESCRIBE_HINT
+    messages = [{'role': 'user', 'content': f'what is this?\n\n[Attachment: a.png]\n{hint}'}]
+    out = native_images.strip_describe_image_hints(messages)
+    assert out[0]['content'] == 'what is this?\n\n[Attachment: a.png]'
+
+
+def test_describe_hint_is_stripped_from_text_parts():
+    hint = native_images.DESCRIBE_HINT
+    messages = [{'role': 'user', 'content': [
+        {'type': 'text', 'text': f'what is this?\n{hint}'},
+        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA'}},
+    ]}]
+    out = native_images.strip_describe_image_hints(messages)
+    assert out[0]['content'][0]['text'] == 'what is this?'
+    assert out[0]['content'][1]['type'] == 'image_url'
+
+
+def test_stripping_never_mutates_canonical_messages():
+    hint = native_images.DESCRIBE_HINT
+    original = {'role': 'user', 'content': f'look\n{hint}'}
+    parts = {'role': 'user', 'content': [{'type': 'text', 'text': f'look\n{hint}'}]}
+    native_images.strip_describe_image_hints([original, parts])
+    assert original['content'] == f'look\n{hint}'
+    assert parts['content'][0]['text'] == f'look\n{hint}'
+
+
+def test_messages_without_hint_are_returned_unchanged():
+    plain = {'role': 'assistant', 'content': 'no hint here'}
+    tool = {'role': 'tool', 'content': 'Attachment ID: 3'}
+    out = native_images.strip_describe_image_hints([plain, tool])
+    assert out[0] is plain and out[1] is tool
 
 
 def test_recent_image_attachment_is_attached_without_mutating_history(tmp_path):

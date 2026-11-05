@@ -1,7 +1,7 @@
 """Scheduler management routes — list, toggle, cancel, run-now, create, and edit schedules."""
 
 from flask import Blueprint, render_template, jsonify, request
-from backend.scheduler import scheduler
+from backend.scheduler import scheduler, localize_datetime
 
 scheduler_bp = Blueprint('scheduler', __name__)
 
@@ -118,6 +118,11 @@ def api_schedule_logs(schedule_id):
     except ValueError:
         return jsonify({'error': 'Invalid limit/offset'}), 400
     logs = db.get_schedule_logs(schedule_id, limit=limit, offset=offset)
+    # executed_at is stored as naive server-local time; expose it with an
+    # explicit offset so the browser can render it in the user's timezone.
+    for entry in logs:
+        if entry.get('executed_at'):
+            entry['executed_at'] = localize_datetime(entry['executed_at'])
     return jsonify({'logs': logs, 'schedule_id': schedule_id})
 
 
