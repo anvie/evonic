@@ -16,6 +16,7 @@ from models.db import db
 from models.chatlog import chatlog_manager, _DISPLAY_TYPES
 from backend import agent_factory
 from backend.agent_portability import AgentPortabilityError, export_agent, import_agent, preflight_import
+from backend.reasoning_effort import InvalidReasoningEffort, normalize_reasoning_effort
 from backend.audit_logger import audit
 from backend.tools import tool_registry
 from backend.tools.agent_messaging import get_agent_messaging_tool_defs
@@ -398,6 +399,14 @@ def api_create_agent():
     if len(data.get('system_prompt', '')) > 102400:
         return jsonify({'error': 'System prompt too long (max 100 KB).'}), 400
 
+    # Per-agent reasoning-effort override: normalise before the value can reach
+    # the factory (which validates again for imports) or the DB.
+    if 'reasoning_effort' in data:
+        try:
+            data['reasoning_effort'] = normalize_reasoning_effort(data['reasoning_effort'])
+        except InvalidReasoningEffort as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+
     # ``workplace_id`` / ``primary_channel_id`` decide where an agent runs and
     # which channel it owns: they are instantiation-time bindings, never spec
     # fields, so they are stripped here and applied once the agent exists.
@@ -461,6 +470,13 @@ def api_update_agent(agent_id):
         data['workplace_switch_allowed'] = _json.dumps(_allowed) if _allowed else None
     if 'workplace_switch_enabled' in data:
         data['workplace_switch_enabled'] = 1 if data['workplace_switch_enabled'] else 0
+    # Per-agent reasoning-effort override: "" / null clears it back to
+    # "inherit from model"; only the four canonical values are accepted.
+    if 'reasoning_effort' in data:
+        try:
+            data['reasoning_effort'] = normalize_reasoning_effort(data['reasoning_effort'])
+        except InvalidReasoningEffort as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
     target_workplace_id = data.get('workplace_id', existing.get('workplace_id'))
     try:
         _apply_sandbox_workplace_policy(data, target_workplace_id)

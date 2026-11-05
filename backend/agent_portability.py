@@ -6,6 +6,8 @@ import shutil
 import copy
 from typing import Any, Dict, List, Optional
 
+from backend.reasoning_effort import InvalidReasoningEffort, normalize_reasoning_effort
+
 SCHEMA = "evonic.agent"
 VERSION = 1
 ID_RE = re.compile(r"^[a-z0-9_]+$")
@@ -26,7 +28,7 @@ CONFIG_KEYS = frozenset({
     "bash_exec_enabled", "vision_model_id", "inter_agent_clear_context",
     "builtin_tools_enabled", "messaging_acl", "messaging_acl_mode", "memory_engine",
     "kb_organizer_mode", "enable_cmp", "always_execute",
-    "ask_user_enabled",
+    "ask_user_enabled", "reasoning_effort",
 })
 
 
@@ -131,6 +133,16 @@ def validate_payload(payload: Any) -> Dict[str, Any]:
     _require(len(agent["name"]) <= 200 and len(agent["description"]) <= 2000 and len(agent["system_prompt"]) <= MAX_TEXT_LENGTH, "Agent text exceeds the supported length.")
     _require(isinstance(agent["configuration"], dict) and set(agent["configuration"]).issubset(CONFIG_KEYS), "agent.configuration contains unsupported keys.")
     _require(all(value is None or isinstance(value, (str, int, float, bool)) for value in agent["configuration"].values()), "agent.configuration values must be JSON scalars.")
+    # Enum-like settings are normalised here: the import path writes the
+    # configuration straight to the DB (it does not go through agent_factory),
+    # so an unchecked "ultra" would otherwise be persisted.
+    if "reasoning_effort" in agent["configuration"]:
+        try:
+            agent["configuration"]["reasoning_effort"] = normalize_reasoning_effort(
+                agent["configuration"]["reasoning_effort"])
+        except InvalidReasoningEffort as exc:
+            raise AgentPortabilityError(
+                f"agent.configuration.reasoning_effort is invalid: {exc}") from exc
     for field in ("tools", "skills"):
         _require(isinstance(agent[field], list) and all(isinstance(value, str) and value for value in agent[field]), f"agent.{field} must be a list of identifiers.")
         _require(all(DEPENDENCY_ID_RE.fullmatch(value) for value in agent[field]), f"agent.{field} contains an invalid identifier.")

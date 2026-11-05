@@ -1558,6 +1558,17 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                 </select>
                 <p class="text-xs text-gray-400 mt-1">If the primary model fails after all retries, the agent will automatically attempt this fallback model. Leave empty to skip fallback.</p>
             </div>
+            <div class="mb-4">
+                <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium" for="agent-reasoning-effort">Reasoning Effort</label>
+                <select id="agent-reasoning-effort" data-ev-combobox class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:text-gray-100">
+                    <option value="" {{ 'selected' if not agent.reasoning_effort else '' }}>Inherit from model</option>
+                    <option value="low" {{ 'selected' if agent.reasoning_effort == 'low' else '' }}>low</option>
+                    <option value="medium" {{ 'selected' if agent.reasoning_effort == 'medium' else '' }}>medium</option>
+                    <option value="high" {{ 'selected' if agent.reasoning_effort == 'high' else '' }}>high</option>
+                    <option value="max" {{ 'selected' if agent.reasoning_effort == 'max' else '' }}>max</option>
+                </select>
+                <p class="text-xs text-gray-400 mt-1">Overrides the model's Reasoning Effort for this agent only. "Inherit from model" sends no override, so the model's setting (or the provider default) applies. Forwarded to OpenAI-compatible providers only.</p>
+            </div>
             <!-- Workplace Selector -->
             <div class="mb-4">
                 <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Workplace</label>
@@ -4189,6 +4200,7 @@ const AgentAutoSave = {
         { id: 'agent-message-wrapper', key: 'message_wrapper_enabled', type: 'bool' },
         { id: 'agent-run-as-user', key: 'run_as_user', type: 'strnull' },
         { id: 'agent-memory-engine', key: 'memory_engine', type: 'selnull' },
+        { id: 'agent-reasoning-effort', key: 'reasoning_effort', type: 'selnull' },
         { id: 'agent-kb-organizer', key: 'kb_organizer_mode', type: 'selnull' },
         { id: 'agent-send-file-allowed-path-regex', key: 'send_file_allowed_path_regex', type: 'str' },
         { id: 'agent-hidden-slash-commands', key: 'hidden_slash_commands', type: 'str' },

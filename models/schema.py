@@ -403,6 +403,10 @@ class SchemaMixin:
                 # allowed list is a JSON array of workplace ids (empty = any).
                 ("workplace_switch_enabled", "INTEGER DEFAULT 0"),
                 ("workplace_switch_allowed", "TEXT"),
+                # reasoning_effort: per-agent override of the model's
+                # reasoning_effort ("low"|"medium"|"high"|"max"). NULL inherits
+                # the model value, which itself may be NULL (provider default).
+                ("reasoning_effort", "TEXT"),
             ]:
                 try:
                     cursor.execute(f"ALTER TABLE agents ADD COLUMN {col} {defn}")

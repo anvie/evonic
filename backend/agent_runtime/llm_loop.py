@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from typing import Dict, Any, List, Optional
 
 from config import AGENT_PARALLEL_TOOL_WAIT_TIMEOUT
+from backend.reasoning_effort import resolve_reasoning_effort
 
 _logger = logging.getLogger(__name__)
 
@@ -826,6 +827,27 @@ def run_tool_loop(agent: Dict[str, Any],
     except (TypeError, ValueError):
         pass
 
+    # Per-agent reasoning-effort override, resolved once per turn. It belongs to
+    # the agent, not to any particular model, so it applies to every config built
+    # below: the session model override, the persisted/mid-loop fallback model and
+    # the agent's own model. `agent` may be a partial dict (explorer rows carry
+    # only a model), hence the DB fallback.
+    _agent_reasoning_effort = None
+    try:
+        if isinstance(agent, dict) and 'reasoning_effort' in agent:
+            _effort_row = agent
+        else:
+            _effort_row = db.get_agent(agent_id) or {}
+        _agent_reasoning_effort = (_effort_row or {}).get('reasoning_effort')
+    except Exception as e:
+        _logger.debug("Could not resolve reasoning_effort for agent %s: %s", agent_id, e)
+    # Only a non-empty string is an override; anything else (NULL, legacy junk)
+    # means "inherit the model value".
+    if isinstance(_agent_reasoning_effort, str) and _agent_reasoning_effort.strip():
+        _agent_reasoning_effort = _agent_reasoning_effort.strip().lower()
+    else:
+        _agent_reasoning_effort = None
+
     # Helper: build model_config dict from a model DB row
     def _build_model_config(_model: dict) -> dict:
         return {
@@ -836,7 +858,9 @@ def run_tool_loop(agent: Dict[str, Any],
             'timeout': _model.get('timeout', 60),
             'thinking': bool(_model.get('thinking', False)),
             'thinking_budget': int(_model.get('thinking_budget', 0) or 0),
-            'reasoning_effort': _model.get('reasoning_effort'),
+            # Agent override > model default > None (LLMClient omits the key).
+            'reasoning_effort': resolve_reasoning_effort(
+                _agent_reasoning_effort, _model.get('reasoning_effort')),
             'max_tokens': _model.get('max_tokens', 32768),
             'context_window': _model.get('context_window'),
             'temperature': _model.get('temperature'),

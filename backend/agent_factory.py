@@ -108,6 +108,7 @@ from backend.agent_portability import (
     SUBAGENT_ID_RE,
     VARIABLE_KEY_RE,
 )
+from backend.reasoning_effort import InvalidReasoningEffort, normalize_reasoning_effort
 from models.boolean import normalize_bool
 
 __all__ = [
@@ -220,6 +221,8 @@ DEFAULTS: Dict[str, Any] = {
     "fallback_model_id": None,
     "model_id": None,
     "vision_model_id": None,
+    # Per-agent override of the model's reasoning effort; None inherits.
+    "reasoning_effort": None,
     # Media / runtime
     "audio_enabled": 0,
     "video_enabled": 0,
@@ -395,6 +398,11 @@ def _coerce_value(key: str, value: Any) -> Any:
         return _coerce_enum(key, value, MEMORY_ENGINES)
     if key == "kb_organizer_mode":
         return _coerce_enum(key, value, KB_ORGANIZER_MODES)
+    if key == "reasoning_effort":
+        try:
+            return normalize_reasoning_effort(value)
+        except InvalidReasoningEffort as exc:
+            raise SpecValidationError(str(exc)) from exc
     if not isinstance(value, str):
         raise SpecValidationError(f"Agent spec field '{key}' must be a string or null.")
     return value
