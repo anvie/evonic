@@ -140,7 +140,8 @@ window.settingsModels = {
         return String(n);
     },
 
-    // Claude CLI models use an effort level (mirrors backend resolve_effort); others show their token budget.
+    // Claude CLI models use an effort level (mirrors backend resolve_effort); OpenAI-format models
+    // may declare reasoning_effort; everything else shows its token budget.
     _thinkLabel(model) {
         const budget = Number(model.thinking_budget) || 0;
         if (model.api_format === "claude_cli") {
@@ -148,6 +149,7 @@ window.settingsModels = {
                 : budget <= 24576 ? "high" : budget <= 65536 ? "xhigh" : "max";
             return "Thinking · " + lvl;
         }
+        if (model.reasoning_effort) return "Thinking · " + model.reasoning_effort;
         return budget > 0 ? "Thinking · " + this._fmtTokens(budget) : "Thinking";
     },
 
@@ -597,6 +599,7 @@ window.settingsModels = {
         document.getElementById("modal-title").textContent = "Add Model";
         document.getElementById("model-form").reset();
         document.getElementById("model-id").value = "";
+        document.getElementById("model-reasoning-effort").value = "";
         this._setRegistryId("");
         this._populateProviderSelect();
         this.toggleFields();
@@ -610,6 +613,7 @@ window.settingsModels = {
         document.getElementById("modal-title").textContent = "Add Model — " + (prov.name || providerId);
         document.getElementById("model-form").reset();
         document.getElementById("model-id").value = "";
+        document.getElementById("model-reasoning-effort").value = "";
         this._setRegistryId("");
         this._populateProviderSelect();
         document.getElementById("model-provider").value = providerId;
@@ -645,6 +649,8 @@ window.settingsModels = {
         document.getElementById("model-thinking").checked = !!model.thinking;
         document.getElementById("model-thinking-budget").value =
             model.thinking_budget || 0;
+        document.getElementById("model-reasoning-effort").value =
+            model.reasoning_effort || "";
         document.getElementById("model-enabled").checked = !!model.enabled;
         document.getElementById("model-is-default").checked = !!model.is_default;
         document.getElementById("model-vision-supported").checked =
@@ -695,6 +701,8 @@ window.settingsModels = {
             thinking: document.getElementById("model-thinking").checked ? 1 : 0,
             thinking_budget:
                 parseInt(document.getElementById("model-thinking-budget").value) || 0,
+            reasoning_effort:
+                document.getElementById("model-reasoning-effort").value || null,
             enabled: document.getElementById("model-enabled").checked ? 1 : 0,
             is_default: document.getElementById("model-is-default").checked ? 1 : 0,
             vision_supported: document.getElementById("model-vision-supported").checked
