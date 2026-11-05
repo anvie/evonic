@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 import os
+import re
 import signal
 import sys
 import time
@@ -233,6 +234,73 @@ def _apply_restart_origin_guard(agent_context: dict, assigned_tool_ids: list,
     ]
     agent_context['assigned_tool_ids'] = assigned_tool_ids
     return assigned_tool_ids, tools
+
+
+LEND_TOOLS_MAX = 8
+_LEND_TOOL_ID_RE = re.compile(r'^plugin:([A-Za-z0-9_]+):([A-Za-z0-9_]+)$')
+
+
+def _apply_lent_tools(agent_context: dict, assigned_tool_ids: list,
+                      tools: list, metadata: dict) -> tuple:
+    """Add the tools an in-platform sender lends this one turn, and no other.
+
+    ``metadata['lend_tools']`` names the tools a plugin wants the agent to have
+    while it answers the message that carries the metadata. They are advertised
+    and authorized for that turn only: they never enter the agent's assignments
+    and are gone with the session. The metadata is built by the core, never from
+    tool arguments, so an agent cannot lend itself a tool.
+
+    An id must be ``plugin:<plugin>:<fn>`` and belong to the plugin named in
+    ``metadata['lend_tools_from']``; that plugin must be enabled and the tool's
+    backend must exist. Built-ins can never be lent, and the list is capped at
+    ``LEND_TOOLS_MAX``.
+    """
+    if not isinstance(metadata, dict):
+        return assigned_tool_ids, tools
+    wanted = metadata.get('lend_tools')
+    owner = str(metadata.get('lend_tools_from') or '').strip()
+    if not isinstance(wanted, (list, tuple)) or not owner or not wanted:
+        return assigned_tool_ids, tools
+
+    from backend.plugin_manager import plugin_manager
+    from backend.tools import tool_registry
+    from backend.tools.registry import BUILTIN_TOOL_IDS
+
+    if not (plugin_manager.get_plugin(owner) or {}).get('enabled'):
+        _logger.warning('Lent tools ignored: plugin %r is not enabled', owner)
+        return assigned_tool_ids, tools
+
+    defs = {d.get('id'): d for d in plugin_manager.get_all_plugin_tool_defs()
+            if isinstance(d, dict)}
+    core_names = {d.get('function', {}).get('name')
+                  for d in tool_registry.get_tool_defs_from_json() if isinstance(d, dict)}
+    seen = {t.get('function', {}).get('name') for t in tools}
+    lent_ids = list(assigned_tool_ids)
+    added = False
+    for raw in list(wanted)[:LEND_TOOLS_MAX]:
+        tool_id = str(raw or '').strip()
+        match = _LEND_TOOL_ID_RE.match(tool_id)
+        if not match or match.group(1) != owner:
+            _logger.warning('Lent tool %r refused: not a tool of plugin %r', tool_id, owner)
+            continue
+        fn_name = match.group(2)
+        fn = (defs.get(tool_id) or {}).get('function') or {}
+        if fn.get('name') != fn_name or fn_name in BUILTIN_TOOL_IDS or fn_name in core_names:
+            _logger.warning('Lent tool %r refused: it would shadow a core tool', tool_id)
+            continue
+        if fn_name in seen:
+            continue
+        if plugin_manager.find_plugin_tool_backend(fn_name, owner)[0] is None:
+            _logger.warning('Lent tool %r refused: no backend implementation', tool_id)
+            continue
+        seen.add(fn_name)
+        tools.append({'type': 'function', 'function': fn})
+        if tool_id not in lent_ids:
+            lent_ids.append(tool_id)
+        added = True
+    if added:
+        agent_context['assigned_tool_ids'] = lent_ids
+    return lent_ids, tools
 
 
 def _should_wrap_user_message(agent: dict) -> bool:
@@ -2642,6 +2710,13 @@ class AgentRuntime:
                     agent_context['trusted_attachment_mime_types'] = _att_mime_types
                 if _att_paths:
                     agent_context['trusted_attachment_paths'] = _att_paths
+
+        # Tools a plugin lends for this message only (e.g. a tool that belongs to
+        # its own question). Must run before the loop builds its executor.
+        assigned_tool_ids, tools = _apply_lent_tools(
+            agent_context, assigned_tool_ids, tools,
+            _trusted_meta if isinstance(_trusted_meta, dict) else {},
+        )
 
         # A turn started by a message marked "not to be remembered" (notify_agent save_memory=False) must not write
         # to memory or the knowledge base either: the message's own flag only keeps it out of the summaries.
