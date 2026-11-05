@@ -501,6 +501,10 @@ class LLMClient:
         # template switches (llama.cpp/vLLM: {"enable_thinking": false}).
         # Only merged into OpenAI-format payloads — see _chat_completion_once.
         self.chat_template_kwargs = None
+        # Opt-in reasoning effort for OpenAI-compatible providers that accept it
+        # (e.g. DeepSeek: "low" | "high" | "max"). None keeps the provider default
+        # by omitting the key entirely.
+        self.reasoning_effort = None
         self._model_api_key_override = False
         if model_config:
             self._model_api_key_override = bool(model_config.get("api_key"))
@@ -521,6 +525,7 @@ class LLMClient:
             self.api_format = model_config.get("api_format", "openai")
             self.adapter_key = model_config.get("adapter_key")
             self.chat_template_kwargs = model_config.get("chat_template_kwargs")
+            self.reasoning_effort = model_config.get("reasoning_effort") or None
         else:
             try:
                 from models.db import db
@@ -540,6 +545,7 @@ class LLMClient:
                     self.temperature = dm.get("temperature")
                     self.api_format = dm.get("api_format", "openai")
                     self.adapter_key = dm.get("adapter_key")
+                    self.reasoning_effort = dm.get("reasoning_effort") or None
                 else:
                     self.base_url = None
                     self.api_key = None
@@ -1206,6 +1212,12 @@ class LLMClient:
             # Anthropic and Ollama have their own protocols and never see it.
             if getattr(self, "chat_template_kwargs", None):
                 payload["chat_template_kwargs"] = dict(self.chat_template_kwargs)
+            # Opt-in only (model_config["reasoning_effort"]). OpenAI-compatible
+            # providers such as DeepSeek accept "low"/"medium"/"high"/"max";
+            # an unset value omits the key so the provider default applies.
+            # Anthropic and Ollama use their own protocols and never see it.
+            if getattr(self, "reasoning_effort", None):
+                payload["reasoning_effort"] = self.reasoning_effort
 
         if is_anthropic:
             from backend.provider.claude_code import auth_headers

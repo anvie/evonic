@@ -948,6 +948,7 @@ class SchemaMixin:
                     timeout INTEGER DEFAULT 60,
                     thinking BOOLEAN DEFAULT 0,
                     thinking_budget INTEGER DEFAULT 0,
+                    reasoning_effort TEXT DEFAULT NULL,
                     temperature REAL DEFAULT NULL,
                     enabled BOOLEAN DEFAULT 1,
                     is_default BOOLEAN DEFAULT 0,
@@ -1013,6 +1014,14 @@ class SchemaMixin:
             # provenance column prevents them from being mistaken for new input.
             try:
                 cursor.execute("ALTER TABLE llm_models ADD COLUMN legacy_override_provenance TEXT")
+            except sqlite3.OperationalError:
+                pass
+
+            # Migration: add reasoning_effort column to llm_models if missing.
+            # NULL/empty means "provider default": only OpenAI-format payloads
+            # forward an explicit value, so providers keep their own default.
+            try:
+                cursor.execute("ALTER TABLE llm_models ADD COLUMN reasoning_effort TEXT DEFAULT NULL")
             except sqlite3.OperationalError:
                 pass
 

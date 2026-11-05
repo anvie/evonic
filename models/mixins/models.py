@@ -7,7 +7,7 @@ _MODEL_COLUMNS = (
     "id, name, type, provider, base_url, api_key, model_name, max_tokens, timeout, "
     "thinking, thinking_budget, temperature, enabled, is_default, created_at, updated_at, "
     "model_max_concurrent, api_format, vision_supported, legacy_id, shortcode, context_window, capabilities, "
-    "legacy_override_provenance"
+    "legacy_override_provenance, reasoning_effort"
 )
 
 
@@ -72,7 +72,10 @@ def _normalize_model_data(model_data: Dict[str, Any]) -> Dict[str, Any]:
     data["type"] = normalize_model_type(data.get("type"))
     if data["type"] == "decision":
         # Chat-only settings have no meaning for a decision model.
-        data.update(is_default=0, thinking=0, thinking_budget=0, vision_supported=0)
+        data.update(
+            is_default=0, thinking=0, thinking_budget=0, vision_supported=0,
+            reasoning_effort=None,
+        )
     data["capabilities"] = capabilities_for_type(data["type"], data.get("vision_supported"), data.get("capabilities"))
     return data
 
@@ -107,8 +110,9 @@ class ModelsMixin:
                     INSERT INTO llm_models (id, name, type, provider, base_url, api_key,
                         model_name, max_tokens, timeout, thinking, thinking_budget,
                         temperature, enabled, is_default, model_max_concurrent, api_format,
-                        vision_supported, legacy_id, shortcode, context_window, capabilities)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        vision_supported, legacy_id, shortcode, context_window, capabilities,
+                        reasoning_effort)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     m.get('id'),
                     m.get('name'),
@@ -131,6 +135,7 @@ class ModelsMixin:
                     m.get('shortcode'),
                     m.get('context_window', 0),
                     json.dumps(m.get('capabilities') or {}, sort_keys=True),
+                    m.get('reasoning_effort'),
                 ))
             conn.commit()
 
@@ -284,8 +289,8 @@ class ModelsMixin:
                     model_name, max_tokens, timeout, thinking, thinking_budget,
                     temperature, enabled, is_default, model_max_concurrent, api_format,
                     vision_supported, shortcode, context_window, capabilities,
-                    legacy_override_provenance)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    legacy_override_provenance, reasoning_effort)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 model_id,
                 model_data.get('name'),
@@ -312,6 +317,7 @@ class ModelsMixin:
                 'legacy_model_override'
                 if (model_data.get('base_url') or model_data.get('api_key'))
                 else None,
+                model_data.get('reasoning_effort'),
             ))
             conn.commit()
         return model_id
@@ -320,7 +326,8 @@ class ModelsMixin:
         """Update an existing model."""
         allowed = {'name', 'type', 'provider', 'base_url', 'api_key', 'model_name',
                    'max_tokens', 'timeout', 'thinking', 'thinking_budget', 'temperature', 'enabled', 'is_default',
-                   'model_max_concurrent', 'api_format', 'vision_supported', 'context_window'}
+                   'model_max_concurrent', 'api_format', 'vision_supported', 'context_window',
+                   'reasoning_effort'}
         allowed = allowed | {'capabilities'}
         updates = {k: v for k, v in model_data.items() if k in allowed}
         if not updates:
@@ -333,14 +340,16 @@ class ModelsMixin:
             updates['legacy_override_provenance'] = (
                 'legacy_model_override' if (merged_base_url or merged_api_key) else None
             )
-        if updates.keys() & {'type', 'capabilities', 'vision_supported', 'is_default'}:
+        if updates.keys() & {'type', 'capabilities', 'vision_supported', 'is_default', 'reasoning_effort'}:
             current = self.get_model_by_id(model_id)
             if current:
                 merged = _normalize_model_data({**current, **updates})
                 updates['type'] = merged['type']
                 updates['capabilities'] = merged['capabilities']
                 if merged['type'] == 'decision':
-                    updates.update({k: merged[k] for k in ('is_default', 'thinking', 'thinking_budget', 'vision_supported')})
+                    updates.update({k: merged[k] for k in (
+                        'is_default', 'thinking', 'thinking_budget', 'vision_supported',
+                        'reasoning_effort')})
         if 'capabilities' in updates:
             updates['capabilities'] = json.dumps(updates['capabilities'] or {}, sort_keys=True)
         set_clause = ", ".join(f"{k} = ?" for k in updates)

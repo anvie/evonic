@@ -29,6 +29,32 @@ def _sanitize_models(models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return models
 
 
+_REASONING_EFFORT_VALUES = ("low", "medium", "high", "max")
+
+
+def _normalize_reasoning_effort(data: Dict[str, Any]):
+    """Normalize the optional per-model reasoning effort in place.
+
+    An absent key leaves the stored value alone. Empty (or explicit null)
+    clears it, so the provider's own default applies again. Returns an error
+    message, or None when the value is acceptable.
+    """
+    if "reasoning_effort" not in data:
+        return None
+    value = data["reasoning_effort"]
+    if value is None:
+        data["reasoning_effort"] = None
+        return None
+    value = str(value).strip().lower()
+    if not value:
+        data["reasoning_effort"] = None
+        return None
+    if value not in _REASONING_EFFORT_VALUES:
+        return f"reasoning_effort must be one of: {', '.join(_REASONING_EFFORT_VALUES)}"
+    data["reasoning_effort"] = value
+    return None
+
+
 def _normalize_base_url(data: Dict[str, Any]):
     """Normalize the optional per-model connection source in place.
 
@@ -85,7 +111,7 @@ def api_create_model():
 
     if "api_key" in data:
         return jsonify({"success": False, "error": "new models must inherit credentials from their provider"}), 400
-    error = _normalize_base_url(data)
+    error = _normalize_base_url(data) or _normalize_reasoning_effort(data)
     if error:
         return jsonify({"success": False, "error": error}), 400
     try:
@@ -117,6 +143,7 @@ def api_create_model():
                 "timeout": data.get("timeout", 60),
                 "thinking": data.get("thinking", 0),
                 "thinking_budget": data.get("thinking_budget", 0),
+                "reasoning_effort": data.get("reasoning_effort"),
                 "temperature": data.get("temperature"),
                 "enabled": data.get("enabled", 1),
                 "is_default": data.get("is_default", 0),
@@ -155,7 +182,7 @@ def api_update_model(model_id):
     # Credentials stay provider-owned; the connection source may be overridden per model.
     if "api_key" in data:
         return jsonify({"success": False, "error": "model credentials are provider-owned; edit the provider instead"}), 400
-    error = _normalize_base_url(data)
+    error = _normalize_base_url(data) or _normalize_reasoning_effort(data)
     if error:
         return jsonify({"success": False, "error": error}), 400
     if "capabilities" in data:
@@ -224,6 +251,7 @@ def api_clone_model(model_id):
         "timeout": source.get("timeout", 60),
         "thinking": source.get("thinking", 0),
         "thinking_budget": source.get("thinking_budget", 0),
+        "reasoning_effort": source.get("reasoning_effort"),
         "temperature": source.get("temperature"),
         "enabled": source.get("enabled", 1),
         "is_default": 0,

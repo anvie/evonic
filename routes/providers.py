@@ -316,6 +316,7 @@ def api_add_model_from_provider(provider_id):
         "timeout": data.get("timeout", 60),
         "thinking": data.get("thinking", 0),
         "thinking_budget": data.get("thinking_budget", 0),
+        "reasoning_effort": data.get("reasoning_effort"),
         "enabled": 1,
         "api_format": provider.get("api_format", "openai"),
     }
