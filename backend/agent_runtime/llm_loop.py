@@ -123,6 +123,29 @@ _TASK_BOOKKEEPING_REMINDER = (
     "accurate, repeat your final answer unchanged."
 )
 
+# Mid-turn nudge: tool iterations without an update_tasks call before the
+# agent is reminded to reconcile its (still open) task list.
+_TASK_PROGRESS_NUDGE_EVERY = 8
+
+
+def _build_task_progress_nudge(tasks: list) -> str:
+    """Build the mid-turn reminder listing the agent's still-open tasks."""
+    from backend.agent_state import STATUS_ICON
+    open_lines = "\n".join(
+        f"- {STATUS_ICON.get(t.get('status'), '[ ]')} #{t['id']} {t.get('text') or ''}"
+        for t in tasks if t.get('status') in ('pending', 'in_progress'))
+    return (
+        "[SYSTEM REMINDER] You have not updated your task list in a while "
+        "and these tasks are still open:\n"
+        f"{open_lines}\n"
+        "Reconcile it now with update_tasks: mark finished tasks as done and "
+        "keep only the task you are actually working on as in_progress. If a "
+        "task is no longer relevant (the request changed or it is left over "
+        "from earlier work), remove it with update_tasks(action='remove', "
+        "task_id=N) or replace the list with action='set'. Then continue your "
+        "work; do not stop or answer the user just because of this reminder."
+    )
+
 # ── Import from split modules ───────────────────────────────────────────────
 
 from backend.agent_runtime.llm_call import (
@@ -511,6 +534,7 @@ def run_tool_loop(agent: Dict[str, Any],
     _tool_errors = False
     _explicit_task_update_turn = False  # any update_tasks call this turn (turn-scoped)
     _task_reminder_fired = False        # bookkeeping reminder fires at most once per turn
+    _iters_since_task_update = 0        # tool batches since the last update_tasks call
 
     def _is_mutating_tool(tool_name: str) -> bool:
         """Return whether a tool represents implementation work."""
@@ -3164,6 +3188,23 @@ def run_tool_loop(agent: Dict[str, Any],
 
         # Count this as one tool iteration (what the user sees as "iterations")
         _iteration += 1
+
+        # Mid-turn task nudge: remind the agent to reconcile open tasks when it
+        # has gone several tool batches without calling update_tasks.
+        _iters_since_task_update = 0 if _explicit_task_update else _iters_since_task_update + 1
+        _nudge_ms = agent_context.get('agent_state')
+        if (_iters_since_task_update >= _TASK_PROGRESS_NUDGE_EVERY
+                and _nudge_ms is not None
+                and 'update_tasks' in _available_tool_names
+                and any(t.get('status') in ('pending', 'in_progress')
+                        for t in _nudge_ms.tasks)
+                and not stop_event.is_set()
+                and not _tool_args_force_stop_injected):
+            messages.append({
+                "role": "user",
+                "content": _build_task_progress_nudge(_nudge_ms.tasks),
+            })
+            _iters_since_task_update = 0
 
         # Tool calls executed successfully — reset continuation nudge counter
         _continuation_nudge_count = 0

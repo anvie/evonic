@@ -7,13 +7,13 @@ from backend.agent_runtime import llm_loop
 from backend.agent_state import AgentState
 
 
-def _tool_response(name, call_id):
+def _tool_response(name, call_id, arguments="{}"):
     return {
         "success": True,
         "response": {"choices": [{"message": {"content": None, "tool_calls": [{
             "id": call_id,
             "type": "function",
-            "function": {"name": name, "arguments": "{}"},
+            "function": {"name": name, "arguments": arguments},
         }]}, "finish_reason": "tool_calls"}]},
         "duration_ms": 1,
     }
@@ -351,3 +351,84 @@ def test_agent_without_update_tasks_tool_is_exempt():
     assert _reminder_count(client) == 0
     # The conservative auto-complete fallback still applies unchanged.
     assert state.tasks[0]["status"] == "done"
+
+
+def _nudge_count(client):
+    """Count mid-turn progress nudges across every LLM request made."""
+    seen = set()
+    for call in client.chat_completion.call_args_list:
+        for i, msg in enumerate(call.kwargs.get("messages", [])):
+            if "You have not updated your task list" in str(msg.get("content", "")):
+                seen.add(i)
+    return len(seen)
+
+
+def _reads(n, prefix="read"):
+    # Distinct arguments keep the identical-call loop detector quiet.
+    return [_tool_response("read_file", f"{prefix}-{i}", f'{{"path": "{prefix}{i}.txt"}}')
+            for i in range(n)]
+
+
+def _open_task_state():
+    import time
+    return AgentState(mode="execute", tasks=[
+        {"id": 1, "text": "Long running work", "status": "in_progress",
+         "in_progress_since": time.time()},
+    ])
+
+
+def test_progress_nudge_fires_after_n_batches_without_update():
+    result, client = _run_loop(
+        _open_task_state(),
+        _reads(llm_loop._TASK_PROGRESS_NUDGE_EVERY) + [_final_response("Done reading.")],
+        ["update_tasks", "read_file"],
+    )
+
+    assert result == "Done reading."
+    assert _nudge_count(client) == 1
+    last_messages = client.chat_completion.call_args_list[-1].kwargs["messages"]
+    nudge = next(m for m in last_messages if "have not updated your task list" in str(m.get("content", "")))
+    assert "#1 Long running work" in nudge["content"]
+
+
+def test_progress_nudge_repeats_while_ignored():
+    n = llm_loop._TASK_PROGRESS_NUDGE_EVERY
+    _, client = _run_loop(
+        _open_task_state(),
+        _reads(2 * n) + [_final_response("Done reading.")],
+        ["update_tasks", "read_file"],
+    )
+
+    assert _nudge_count(client) == 2
+
+
+def test_progress_nudge_counter_resets_on_update_tasks():
+    n = llm_loop._TASK_PROGRESS_NUDGE_EVERY
+    _, client = _run_loop(
+        _open_task_state(),
+        _reads(n - 3) + [_tool_response("update_tasks", "upd")]
+        + _reads(n - 1, "late") + [_final_response("Done reading.")],
+        ["update_tasks", "read_file"],
+    )
+
+    assert _nudge_count(client) == 0
+
+
+def test_progress_nudge_skipped_without_open_tasks():
+    n = llm_loop._TASK_PROGRESS_NUDGE_EVERY
+    done = AgentState(mode="execute", tasks=[{"id": 1, "text": "Finished", "status": "done"}])
+    _, client = _run_loop(
+        done, _reads(n) + [_final_response("ok")], ["update_tasks", "read_file"])
+    assert _nudge_count(client) == 0
+
+    _, client = _run_loop(
+        AgentState(mode="execute"), _reads(n) + [_final_response("ok")],
+        ["update_tasks", "read_file"])
+    assert _nudge_count(client) == 0
+
+
+def test_progress_nudge_skipped_when_update_tasks_unavailable():
+    n = llm_loop._TASK_PROGRESS_NUDGE_EVERY
+    _, client = _run_loop(
+        _open_task_state(), _reads(n) + [_final_response("ok")], ["read_file"])
+    assert _nudge_count(client) == 0
