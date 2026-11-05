@@ -1,7 +1,8 @@
 """Request-payload options and reachability markers for LLMClient.
 
 Covers the opt-in ``chat_template_kwargs`` escape hatch (used by the model ping
-to ask self-hosted thinking models to skip chain-of-thought) and the
+to ask self-hosted thinking models to skip chain-of-thought), the opt-in
+``reasoning_effort`` passthrough for OpenAI-compatible providers, and the
 ``answered`` marker set when a reasoning block consumed the whole budget.
 """
 
@@ -21,6 +22,7 @@ def _client(**overrides):
     client.temperature = None
     client.thinking = False
     client.thinking_budget = 0
+    client.reasoning_effort = None
     client.timeout = 30
     setattr(client, "api_key", "")
     client.max_retries = 0
@@ -98,3 +100,72 @@ def test_reasoning_only_completion_is_marked_answered_but_not_successful():
     assert result["success"] is False
     assert result["error_type"] == "generation_timeout"
     assert result["answered"] is True
+
+
+def test_reasoning_effort_is_forwarded_to_openai_payload():
+    client = _client(reasoning_effort="max")
+    with patch("backend.llm_client.requests.post", return_value=_response(_openai_body())) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion([{"role": "user", "content": "ping"}], max_tokens=32)
+
+    assert result["success"] is True, result
+    assert post.call_args.kwargs["json"]["reasoning_effort"] == "max"
+
+
+def test_reasoning_effort_is_absent_when_unset():
+    client = _client()
+    with patch("backend.llm_client.requests.post", return_value=_response(_openai_body())) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion([{"role": "user", "content": "ping"}], max_tokens=32)
+
+    assert result["success"] is True, result
+    assert "reasoning_effort" not in post.call_args.kwargs["json"]
+
+
+def test_blank_reasoning_effort_is_treated_as_unset():
+    # Settings > Models sends "" for "Provider default"; it must not reach the
+    # provider as an empty string.
+    client = _client(reasoning_effort="")
+    with patch("backend.llm_client.requests.post", return_value=_response(_openai_body())) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion([{"role": "user", "content": "ping"}], max_tokens=32)
+
+    assert result["success"] is True, result
+    assert "reasoning_effort" not in post.call_args.kwargs["json"]
+
+
+def test_reasoning_effort_never_reaches_the_anthropic_protocol():
+    client = _client(api_format="anthropic",
+                     base_url="http://anthropic.example/v1",
+                     reasoning_effort="max",
+                     _model_api_key_override=True)
+    body = {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "pong"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 5, "output_tokens": 1},
+    }
+    with patch("backend.llm_client.requests.post", return_value=_response(body)) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion([{"role": "user", "content": "ping"}], max_tokens=32)
+
+    assert result["success"] is True, result
+    assert post.call_args.args[0].endswith("/v1/messages")
+    assert "reasoning_effort" not in post.call_args.kwargs["json"]
+
+
+def test_reasoning_effort_never_reaches_the_ollama_protocol():
+    client = _client(api_format="ollama",
+                     adapter_key="ollama.chat.v1",
+                     base_url="http://ollama.example:11434/api",
+                     reasoning_effort="max")
+    body = {"message": {"role": "assistant", "content": "pong"},
+            "done": True, "prompt_eval_count": 3, "eval_count": 1}
+    with patch("backend.llm_client.requests.post", return_value=_response(body)) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion([{"role": "user", "content": "ping"}], max_tokens=32)
+
+    assert result["success"] is True, result
+    assert post.call_args.args[0].endswith("/api/chat")
+    assert "reasoning_effort" not in post.call_args.kwargs["json"]
