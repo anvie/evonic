@@ -1,15 +1,16 @@
 """Feed recent image attachments straight to vision-capable models.
 
-Rule: a model with ``vision_supported`` always sees the image natively -- the
-attachment is attached as an ``image_url`` part on a *copy* of the messages
-right before the provider call. Models without ``vision_supported`` never get
-the image bytes: they read it through the ``describe_image`` tool instead, and
-only they receive the ``describe_image`` hint in the attachment note.
+Rule: a model with ``vision_supported`` and an agent whose ``vision_enabled``
+flag is on sees the image natively -- the attachment is attached as an
+``image_url`` part on a *copy* of the messages right before the provider call.
+Models without ``vision_supported``, and agents with vision switched off, never
+get the image bytes: they read it through the ``describe_image`` tool instead,
+and only they receive the ``describe_image`` hint in the attachment note.
 
-There is no per-agent switch. The canonical transcript is never changed, so
-history keeps only the textual attachment note (``Attachment ID: N``); older
-images (beyond :data:`MAX_USER_TURNS_BACK` user turns) are not attached and can
-still be fetched with ``describe_image`` / ``read_attachment``.
+The canonical transcript is never changed, so history keeps only the textual
+attachment note (``Attachment ID: N``); older images (beyond
+:data:`MAX_USER_TURNS_BACK` user turns) are not attached and can still be
+fetched with ``describe_image`` / ``read_attachment``.
 """
 
 import base64
@@ -32,12 +33,32 @@ _cache: 'OrderedDict[tuple, str]' = OrderedDict()
 _CACHE_SIZE = 16
 
 
-def native_mode_enabled(model_config: Optional[Dict[str, Any]]) -> bool:
+def native_mode_enabled(model_config: Optional[Dict[str, Any]],
+                        vision_enabled: Optional[bool] = True) -> bool:
     """True when images must be attached natively instead of read via ``describe_image``.
 
-    This is purely a model capability check: there is no per-agent override.
+    Both switches must be on: the model must report ``vision_supported`` and the
+    agent must have ``vision_enabled`` set. ``vision_enabled`` defaults to True
+    (and a missing agent key lowers to True) so legacy agent records keep the
+    existing behaviour.
     """
-    return bool((model_config or {}).get('vision_supported'))
+    if not (model_config or {}).get('vision_supported'):
+        return False
+    return True if vision_enabled is None else bool(vision_enabled)
+
+
+def native_images_for_turn(agent: Optional[Dict[str, Any]],
+                           model_config: Optional[Dict[str, Any]]) -> bool:
+    """Resolve the per-turn native-image decision from the agent and its model.
+
+    Single entry point for every call site that must agree on how images are
+    delivered: the agent's ``vision_enabled`` flag (absent on legacy records)
+    gates the model's ``vision_supported`` capability.
+    """
+    return native_mode_enabled(
+        model_config,
+        vision_enabled=(agent or {}).get('vision_enabled', True),
+    )
 
 
 def _data_url(path: str, mime: str) -> Optional[str]:

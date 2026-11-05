@@ -1177,14 +1177,39 @@ def command_hint_from_content(content: str) -> str:
     return "unknown"
 
 
+# Guidance added to an image attachment note when the model can only read the
+# image through the ``describe_image`` tool. Kept in one place so the note and
+# the actual delivery mode (see backend/agent_runtime/native_images.py) can
+# never disagree about whether a tool call is expected.
+IMAGE_DESCRIBE_HINT = "\nUse the `describe_image` tool to view and analyze this image."
+
+
+def image_tool_hint(has_describe_image: bool = True,
+                    native_image: bool = False) -> str:
+    """Return the ``describe_image`` guidance line, or ``''`` when it must be absent.
+
+    Omitted when the image is delivered natively in the request (the model sees
+    it directly) and when the ``describe_image`` tool is unavailable. Shared by
+    ``build_attachment_note()`` and the runtime attachment-context path so both
+    emit the same guidance for the same inputs.
+    """
+    if not has_describe_image or native_image:
+        return ''
+    return IMAGE_DESCRIBE_HINT
+
+
 def build_attachment_note(attachment_info: dict,
                           has_describe_image: bool = True,
-                          audio_enabled: bool = False) -> str:
+                          audio_enabled: bool = False,
+                          native_image: bool = False) -> str:
     """Render authoritative attachment metadata for model-visible context.
 
     The database attachment ID is intentionally explicit so the model can call
     ``read_attachment(attachment_id=N)`` without inferring an ID from a session
     name or storage path.
+
+    ``native_image`` marks an attachment that will be sent to the model as an
+    ``image_url`` part, so the note must not ask for a ``describe_image`` call.
     """
     # Prefer the path the execution environment can actually open (container
     # /workspace path, remote workplace path).  The host file_path is only a
@@ -1209,8 +1234,8 @@ def build_attachment_note(attachment_info: dict,
         note += f"\nAttachment ID: {attachment_id}"
     note += f"\nFile path: {file_path}"
 
-    if mime_type.startswith('image/') and has_describe_image:
-        note += "\nUse the `describe_image` tool to view and analyze this image."
+    if mime_type.startswith('image/'):
+        note += image_tool_hint(has_describe_image, native_image)
     if mime_type.startswith('audio/') and audio_enabled:
         note += "\nUse the `transcribe_audio` tool to listen to this audio."
     return note
@@ -1218,7 +1243,8 @@ def build_attachment_note(attachment_info: dict,
 
 def build_attachment_notes(attachment_infos: list,
                            has_describe_image: bool = True,
-                           audio_enabled: bool = False) -> str:
+                           audio_enabled: bool = False,
+                           native_image: bool = False) -> str:
     """Render notes for multiple attachments, numbered when more than one."""
     notes = []
     count = len(attachment_infos)
@@ -1227,6 +1253,7 @@ def build_attachment_notes(attachment_infos: list,
             info,
             has_describe_image=has_describe_image,
             audio_enabled=audio_enabled,
+            native_image=native_image,
         )
         if count > 1:
             note = note.replace('[Attachment:', f'[Attachment #{index}:', 1)
@@ -1312,19 +1339,22 @@ def sync_session_attachment_manifest(messages: list, session_id: str,
 def append_attachment_note(msg: dict,
                            attachment_info: dict,
                            has_describe_image: bool = True,
-                           audio_enabled: bool = False) -> dict:
+                           audio_enabled: bool = False,
+                           native_image: bool = False) -> dict:
     """Append structured attachment metadata to a model message in-place."""
     note = build_attachment_note(
         attachment_info,
         has_describe_image=has_describe_image,
         audio_enabled=audio_enabled,
+        native_image=native_image,
     )
     content = msg.get('content', '') or ''
     msg['content'] = content.rstrip() + note
     return msg
 
 
-def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True) -> dict:
+def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True,
+                        native_image: bool = False) -> dict:
     """Convert a DB message row into an LLM message dict."""
     entry = {"role": msg['role']}
     _msg_meta = msg.get('metadata') if isinstance(msg.get('metadata'), dict) else {}
@@ -1348,12 +1378,14 @@ def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True)
             attachment_infos,
             has_describe_image=has_describe_image,
             audio_enabled=bool(agent.get('audio_enabled')),
+            native_image=native_image,
         )
     elif attachment_info and isinstance(attachment_info, dict):
         attachment_note = build_attachment_note(
             attachment_info,
             has_describe_image=has_describe_image,
             audio_enabled=bool(agent.get('audio_enabled')),
+            native_image=native_image,
         )
 
     if has_video:

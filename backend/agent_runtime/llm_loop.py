@@ -1004,10 +1004,12 @@ def run_tool_loop(agent: Dict[str, Any],
             'restored_from_state': True,
         })
 
-    # If the model doesn't support vision, replace image content with a text instruction
-    # so the LLM can inform the user in their own language.
+    # If the model doesn't support vision — or the agent's vision is switched
+    # off — replace image content with a text instruction so the LLM can inform
+    # the user in their own language.
     _vision_supported = bool((agent_model_config or {}).get('vision_supported', False))
-    if not _vision_supported:
+    _vision_enabled = bool(agent.get('vision_enabled', 1))
+    if not (_vision_supported and _vision_enabled):
         _patched = []
         for _msg in messages:
             _content = _msg.get('content')
@@ -1016,28 +1018,39 @@ def run_tool_loop(agent: Dict[str, Any],
                 if _has_img:
                     _text_parts = [p['text'] for p in _content if isinstance(p, dict) and p.get('type') == 'text']
                     _user_text = _text_parts[0] if _text_parts else ''
-                    _note = (
-                        f"[System note: The user sent an image{(' with the message: ' + _user_text) if _user_text else ''}, "
-                        "but this model does not support image processing. "
-                        "Please inform the user politely that you cannot process images with the current model, "
-                        "and respond in the same language the user is using. "
-                        "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/]"
-                    )
+                    if _vision_supported:
+                        _note = (
+                            f"[System note: The user sent an image{(' with the message: ' + _user_text) if _user_text else ''}, "
+                            "but image processing is disabled for this agent (vision_enabled=0). "
+                            "Please inform the user politely that image processing is disabled for this agent, "
+                            "and respond in the same language the user is using. "
+                            "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/]"
+                        )
+                    else:
+                        _note = (
+                            f"[System note: The user sent an image{(' with the message: ' + _user_text) if _user_text else ''}, "
+                            "but this model does not support image processing. "
+                            "Please inform the user politely that you cannot process images with the current model, "
+                            "and respond in the same language the user is using. "
+                            "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/]"
+                        )
                     _msg = {**_msg, 'content': _note}
             _patched.append(_msg)
         messages = _patched
 
     # Vision-capable models read recent image attachments natively (on a copy of
-    # the messages; the canonical history stays text-only). This is unconditional:
-    # a model that reports vision support never falls back to describe_image for
-    # a recent image, so the describe_image hint is dropped from the same copy.
-    if _vision_supported:
+    # the messages; the canonical history stays text-only). The decision is made
+    # once per turn and reused for every copy — the native attachment call, the
+    # describe_image hint and any late-injected user message — so the note can
+    # never promise a tool call that the model does not need, and a per-agent
+    # vision toggle always wins over the model's capability.
+    from backend.agent_runtime import native_images as _native_images
+    _native_image_mode = _native_images.native_images_for_turn(agent, agent_model_config)
+    if _native_image_mode:
         try:
-            from backend.agent_runtime import native_images
-            if native_images.native_mode_enabled(agent_model_config):
-                messages = native_images.strip_describe_image_hints(messages)
-                messages = native_images.attach_native_images(
-                    messages, session_id, db_agent_id, db)
+            messages = _native_images.strip_describe_image_hints(messages)
+            messages = _native_images.attach_native_images(
+                messages, session_id, db_agent_id, db)
         except Exception:
             _logger.warning("Native image attachment failed; falling back to describe_image",
                             exc_info=True)
@@ -1143,6 +1156,12 @@ def run_tool_loop(agent: Dict[str, Any],
                     break
             if injected_parts:
                 merged = "\n\n".join(injected_parts)
+                if _native_image_mode:
+                    # Injected content is rendered by the runtime before this
+                    # loop sees it, so it may still carry a describe_image hint
+                    # for an image the model already receives natively.
+                    merged = _native_images.strip_describe_image_hints(
+                        [{'role': 'user', 'content': merged}])[0].get('content', merged)
                 messages.append({"role": "user", "content": merged})
                 # Reset iteration counter so injected tasks (e.g. next kanban task in
                 # autopilot mode) each get a fresh budget instead of sharing the counter

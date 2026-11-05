@@ -136,8 +136,14 @@ _ATTACHMENT_URL_RE = re.compile(r'^/api/attachments/(\d+)(?:/view)?$')
 
 
 def _append_attachment_context(content: str, attachment_infos, attachment_info,
-                               agent: dict, has_describe_image: bool) -> str:
-    """Append context notes for plural attachments with a legacy singular fallback."""
+                               agent: dict, has_describe_image: bool,
+                               native_image: bool = False) -> str:
+    """Append context notes for plural attachments with a legacy singular fallback.
+
+    ``native_image`` mirrors ``context.build_attachment_note()``: when the image
+    is delivered to the model natively, both paths omit the ``describe_image``
+    hint so the note never contradicts the request.
+    """
     if not isinstance(attachment_infos, list):
         attachment_infos = []
     attachment_infos = [info for info in attachment_infos if isinstance(info, dict)]
@@ -162,8 +168,8 @@ def _append_attachment_context(content: str, attachment_infos, attachment_info,
             sz = f"{sb} B"
         label = f"Attachment #{index}" if len(attachment_infos) > 1 else "Attachment"
         note = f"\n\n[{label}: {fn} ({mt}, {sz})]\nFile path: {fp}"
-        if is_img and has_describe_image:
-            note += "\nUse the `describe_image` tool to view and analyze this image."
+        if is_img:
+            note += _ctx.image_tool_hint(has_describe_image, native_image)
         if is_audio and agent.get('audio_enabled'):
             note += "\nUse the `transcribe_audio` tool to listen to this audio."
         notes.append(note)
