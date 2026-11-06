@@ -207,6 +207,20 @@ def test_flags_keep_a_session_out_of_memory_and_let_it_expire(tmp_path):
         assert 's-brief' not in fake.rows and 's-private' in fake.rows        # the private one is kept until something removes it
 
 
+def test_a_session_that_is_not_remembered_is_not_summarized_either():
+    import inspect
+    from backend import ephemeral_sessions as es
+    from backend.agent_runtime import runtime as rt
+    with patch.object(es, 'is_memory_blocked', lambda sid: sid == 's-flagged'):
+        assert rt._session_memory_blocked('s-flagged') is True
+        assert rt._session_memory_blocked('s-normal') is False and rt._session_memory_blocked(None) is False
+    # the turn that ends a conversation starts the summary only for a session that may be remembered
+    source = inspect.getsource(rt.AgentRuntime)
+    start = source.index('Trigger background summarization via shared executor')
+    window = source[start:start + 900]
+    assert 'not _session_memory_blocked(ctx.session_id)' in window and '_sum.maybe_summarize' in window
+
+
 def test_notify_agent_flags_the_session_and_marks_the_message():
     from backend.agent_runtime import notifier
     marked, saved = [], []

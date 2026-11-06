@@ -690,6 +690,12 @@ class _ShutdownManager:
         self._signal_registered = False
 
 
+def _session_memory_blocked(session_id) -> bool:
+    """True for a session flagged not to be remembered (``notify_agent(save_memory=False)``)."""
+    from backend.ephemeral_sessions import is_memory_blocked
+    return is_memory_blocked(session_id or '')
+
+
 class AgentRuntime:
     # State containers — reduce class-level attributes from 23 to 5
     _session_store = _SessionStore()
@@ -2884,9 +2890,10 @@ class AgentRuntime:
             is_error = False
 
         # Trigger background summarization via shared executor (skip for cross-agent sessions — the session
-        # owner's own turns will handle summarization when needed)
+        # owner's own turns will handle summarization when needed, and for a session flagged not to be remembered
+        # (notify_agent save_memory=False): nothing from it may become memory, so there is nothing to summarize)
         threshold = agent.get('summarize_threshold', 3)
-        if threshold and threshold > 0 and db_agent_id == agent_id:
+        if threshold and threshold > 0 and db_agent_id == agent_id and not _session_memory_blocked(ctx.session_id):
             self._bg_executor.submit(
                 _sum.maybe_summarize,
                 agent, ctx.session_id,
