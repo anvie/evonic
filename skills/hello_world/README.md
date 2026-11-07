@@ -104,6 +104,18 @@ def execute(agent: dict, args: dict) -> dict:
 - **`agent`**: Dictionary konteks agent (termasuk metadata session, user, dll).
 - **`args`**: Dictionary argumen yang diteruskan dari agent (berisi `name`).
 
+**Mengembalikan gambar (opsional):** tool boleh menambahkan `images` ke hasil dict, misalnya preview render, grafik atau screenshot:
+
+```python
+return {
+    "status": "success",
+    "message": "Preview siap",
+    "images": [{"mime": "image/png", "data": "<base64>", "label": "preview"}],
+}
+```
+
+Setiap gambar (png, jpeg atau webp, maks. 4 MB, maks. 4 per hasil) disimpan sebagai attachment sesi, dan di hasil tool diganti dengan referensi (`tool_image_attachment_id`, `label`, `path`), jadi transcript tetap berupa teks. Bila model **Vision Supported** dan vision agent aktif, model langsung melihat gambar tersebut pada panggilan berikutnya; selain itu model bisa membacanya dengan `describe_image` memakai `path` tadi.
+
 ### 5. Skrip Install/Uninstall (`setup.py`)
 
 Dipanggil oleh skills manager saat skill di-install atau di-uninstall:

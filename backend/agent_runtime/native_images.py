@@ -188,3 +188,44 @@ def attach_native_images(messages: List[Dict[str, Any]], session_id: str, agent_
             text = _message_text(message)
             result[index] = {**message, 'content': [{'type': 'text', 'text': text}, *parts]}
     return result
+
+
+_TOOL_IMAGE_REF = re.compile(r'"tool_image_attachment_id":\s*(\d+)')
+
+
+def attach_tool_images(messages: List[Dict[str, Any]], session_id: str, agent_id: str,
+                       db: Any) -> List[Dict[str, Any]]:
+    """Return ``messages`` with images that tools returned since the last user turn appended.
+
+    ``tool_images.store`` leaves a reference in each tool result. Most providers do not accept
+    images inside tool messages, so the images go into one user message at the end of a *copy*
+    of the messages; the canonical transcript is unchanged. Only attachments this session and
+    agent own, and that a tool created, are read.
+    """
+    last_user = max((i for i, m in enumerate(messages) if m.get('role') == 'user'), default=-1)
+    wanted = []
+    for message in messages[last_user + 1:]:
+        if message.get('role') == 'tool':
+            wanted.extend(_TOOL_IMAGE_REF.findall(_message_text(message)))
+    if not wanted:
+        return messages
+    try:
+        owned = {str(r['id']): r for r in db.list_session_attachments(session_id, agent_id)}
+    except Exception:
+        _logger.warning('Tool image lookup failed for session %s', session_id, exc_info=True)
+        return messages
+    parts = []
+    labels = []
+    for attachment_id in wanted[-MAX_IMAGES:]:
+        record = owned.get(attachment_id)
+        if not record or record.get('channel_type') != 'tool' or not str(record.get('mime_type') or '').startswith('image/'):
+            continue
+        path = record.get('file_path') or ''
+        url = _data_url(path, record['mime_type']) if os.path.isfile(path) else None
+        if url:
+            parts.append({'type': 'image_url', 'image_url': {'url': url}})
+            labels.append(f"Attachment ID {attachment_id}" + (f" ({record.get('original_filename')})" if record.get('original_filename') else ''))
+    if not parts:
+        return messages
+    note = {'type': 'text', 'text': '[Images returned by your tool calls: ' + '; '.join(labels) + ']'}
+    return list(messages) + [{'role': 'user', 'content': [note, *parts]}]

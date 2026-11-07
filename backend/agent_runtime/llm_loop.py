@@ -1325,6 +1325,14 @@ def run_tool_loop(agent: Dict[str, Any],
                 and not _active_projection.failed_open)
             else messages
         )
+        # Images that tools returned this turn follow the same per-turn native decision as user
+        # images (on this request's copy only)
+        if _native_image_mode:
+            try:
+                _request_messages = _native_images.attach_tool_images(
+                    _request_messages, session_id, db_agent_id, db)
+            except Exception:
+                _logger.warning("Tool image attachment failed", exc_info=True)
         _request = EffectiveRequest(
             messages=_request_messages,
             tools=_effective_tools,
@@ -3007,6 +3015,14 @@ def run_tool_loop(agent: Dict[str, Any],
                                 elif isinstance(tool_result, str):
                                     tool_result = _warning + tool_result
                             # 'log' mode: just logs, no modification
+
+            # Images a tool returned become session attachments; the result keeps a reference
+            if isinstance(tool_result, dict) and tool_result.get('images'):
+                try:
+                    from backend.agent_runtime import tool_images
+                    tool_result = tool_images.store(tool_result, db_agent_id, session_id, fn_name, db)
+                except Exception:
+                    _logger.warning("Could not store images returned by %r", fn_name, exc_info=True)
 
             # Serialize tool result for LLM (always valid JSON when possible)
             try:
