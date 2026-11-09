@@ -67,7 +67,11 @@ def execute(agent: dict, args: dict) -> dict:
         _super_id = db.get_setting('super_agent_id')
     except Exception:
         pass
-    if not (agent.get('is_super') and agent.get('id') == _super_id):
+    # Narrow the exemption only when a designated super agent is actually
+    # configured: with the setting unset this is byte-for-byte the old
+    # behaviour (any is_super agent exempt), so upgrades never regress.
+    _exempt = bool(agent.get('is_super')) and (not _super_id or agent.get('id') == _super_id)
+    if not _exempt:
         from models.db import db
         # Sub-agents inherit parent's skill assignments
         _eid = agent.get('parent_id', agent.get('id', '')) if agent.get('is_subagent') else agent.get('id', '')
