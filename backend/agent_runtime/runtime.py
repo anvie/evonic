@@ -1384,11 +1384,15 @@ class AgentRuntime:
             from datetime import datetime, timezone
             limit = agent.get('token_limit_daily')
             if limit is None:
+                # Opt-in only: a deployment that never asked for a cap must not
+                # inherit one. Set EVONIC_TOKEN_LIMIT_DAILY_DEFAULT to enforce a
+                # fallback for agents without their own token_limit_daily; 0 (the
+                # default) means unlimited, which is what "fails open" promises.
                 import os as _os
                 try:
-                    limit = int(_os.environ.get('EVONIC_TOKEN_LIMIT_DAILY_DEFAULT', '500000') or '500000')
+                    limit = int(_os.environ.get('EVONIC_TOKEN_LIMIT_DAILY_DEFAULT', '0') or '0')
                 except (TypeError, ValueError):
-                    limit = 500000
+                    limit = 0
             if limit and limit > 0 and not agent.get('is_super'):
                 day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
                 _total = usage_db.agent_total_tokens(agent_id, since_iso=day_start)
