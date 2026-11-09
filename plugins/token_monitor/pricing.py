@@ -11,7 +11,10 @@ cost None (shown as "unpriced" in the dashboard).
 """
 
 import json
+import logging
 from typing import Dict, Optional
+
+_logger = logging.getLogger(__name__)
 
 # {substring: {"in": price_per_1M_input, "out": price_per_1M_output}}
 DEFAULT_PRICING: Dict[str, Dict[str, float]] = {
@@ -29,20 +32,49 @@ DEFAULT_PRICING: Dict[str, Dict[str, float]] = {
 }
 
 
+def _warn(message: str):
+    """Surface a pricing misconfiguration in the log file and in the plugin log panel."""
+    _logger.warning("token_monitor pricing: %s", message)
+    try:
+        from backend.plugin_manager import plugin_manager
+        plugin_manager.add_log('token_monitor', 'warn', f"pricing: {message}")
+    except Exception:
+        pass
+
+
 def _load_pricing() -> Dict[str, Dict[str, float]]:
-    """Merge built-in defaults with the optional PRICING_JSON override."""
+    """Merge built-in defaults with the optional PRICING_JSON override.
+
+    A broken override never raises: it is reported through _warn() and the
+    built-in defaults stay in effect, so the dashboard keeps rendering.
+    """
     pricing = dict(DEFAULT_PRICING)
     try:
         from backend.plugin_manager import plugin_manager
         raw = (plugin_manager.get_plugin_config('token_monitor') or {}).get('PRICING_JSON', '')
-        if raw and raw.strip():
-            override = json.loads(raw)
-            if isinstance(override, dict):
-                for k, v in override.items():
-                    if isinstance(v, dict) and 'in' in v and 'out' in v:
-                        pricing[k.lower()] = {'in': float(v['in']), 'out': float(v['out'])}
-    except Exception:
-        pass
+    except Exception as e:
+        _warn(f"could not read PRICING_JSON ({type(e).__name__}: {e}); using built-in defaults")
+        return pricing
+    if not raw or not str(raw).strip():
+        return pricing
+    try:
+        override = json.loads(raw)
+    except json.JSONDecodeError as e:
+        _warn(f"PRICING_JSON is not valid JSON ({e.msg} at line {e.lineno}, "
+              f"column {e.colno}); using built-in defaults")
+        return pricing
+    if not isinstance(override, dict):
+        _warn(f"PRICING_JSON must be a JSON object, got {type(override).__name__}; "
+              "using built-in defaults")
+        return pricing
+    for k, v in override.items():
+        if not isinstance(v, dict) or 'in' not in v or 'out' not in v:
+            _warn(f"ignoring entry {k!r}: expected {{\"in\": <number>, \"out\": <number>}}")
+            continue
+        try:
+            pricing[str(k).lower()] = {'in': float(v['in']), 'out': float(v['out'])}
+        except (TypeError, ValueError):
+            _warn(f"ignoring entry {k!r}: in/out must be numbers, got {v!r}")
     return pricing
 
 
