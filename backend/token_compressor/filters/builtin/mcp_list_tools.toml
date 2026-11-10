@@ -1,0 +1,24 @@
+# mcp_list_tools — compact MCP tool listings.
+#
+# A tool result reaches RTK as one json.dumps line, so none of the line-based
+# stages (max_lines, head_lines, truncate_lines_at) can shrink it — they would
+# only corrupt the JSON. The json stage parses the payload instead and prunes it:
+# raw input_schema blobs (by far the largest part of a full listing) are dropped,
+# long descriptions are capped and oversized arrays are trimmed.
+#
+# The tool itself already renders a compact listing by default and omits schemas
+# when a response would grow past its own soft cap, so this filter only fires on
+# payloads that are still large *after* that — i.e. the pathological
+# "every tool, full schema" dump that the runtime would otherwise truncate
+# mid-JSON, hiding most of the tool names from the model.
+#
+# Narrow queries (filter="<substring>") stay under the threshold and therefore
+# pass through untouched, keeping the input_schema they were asked for.
+[filter]
+command = "^mcp_list_tools"
+description = "Compact MCP tool listings — drop raw schemas, cap descriptions and long arrays"
+json_compact = true
+json_compact_above = 12000
+json_max_string = 240
+json_max_items = 60
+json_drop_keys = ["input_schema"]

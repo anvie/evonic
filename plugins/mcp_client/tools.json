@@ -21,19 +21,31 @@
         "description": "List tools available on configured MCP servers.",
         "function": {
             "name": "mcp_list_tools",
-            "description": "List the tools exposed by external MCP servers configured on this platform (e.g. 'claude-code'). Returns each tool's name, description and JSON input schema. Call mcp_list_servers first to see which servers are configured, then call this before mcp_call to discover valid tool names and their expected arguments. Requires the MCP Client plugin to be enabled.",
+            "description": "List the tools exposed by external MCP servers configured on this platform (e.g. 'claude-code'). By default this returns a compact listing: each tool's name, a short description and an argument signature such as 'presentation_id:string!, title:string?' ('!' = required, '?' = optional, 'mode[a|b]' = allowed values). The raw JSON input schema of every tool would be tens of thousands of characters and gets truncated by the runtime, so schemas are only included on request: pass filter='<substring of the tool name>' to get the matching tools together with their full input_schema, or include_schema=true for every tool (large toolsets have schemas omitted automatically). Use names_only=true when you only need the tool names. Call mcp_list_servers first to see which servers are configured, then call this before mcp_call to discover valid tool names and their expected arguments. Requires the MCP Client plugin to be enabled.",
             "parameters": {
                 "properties": {
                     "server": {
                         "description": "Name of a configured MCP server (e.g. 'claude-code'). Omit to list tools from all configured servers.",
                         "type": "string"
+                    },
+                    "names_only": {
+                        "description": "Return only the tool names, without descriptions or schemas. Cheapest way to see which tools exist.",
+                        "type": "boolean"
+                    },
+                    "filter": {
+                        "description": "Case-insensitive substring (a regex is also accepted) matched against tool name and description. Returns only matching tools, together with their full input_schema. Preferred over include_schema when you need exact arguments for a few tools.",
+                        "type": "string"
+                    },
+                    "include_schema": {
+                        "description": "Include every tool's full JSON input_schema. Only useful for a small toolset; oversized listings have their schemas omitted automatically.",
+                        "type": "boolean"
                     }
                 },
                 "required": [],
                 "type": "object"
             }
         },
-        "mock_response": "{\"server\":\"claude-code\",\"tools\":[{\"name\":\"Bash\",\"description\":\"Run a shell command\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}}]}",
+        "mock_response": "{\"server\":\"claude-code\",\"tool_count\":2,\"shown\":2,\"tools\":[{\"name\":\"Bash\",\"description\":\"Run a shell command\",\"args\":\"command:string!\"},{\"name\":\"Read\",\"description\":\"Read a file from disk\",\"args\":\"file_path:string!, offset:integer?\"}],\"hint\":\"Call mcp_list_tools(server, filter='<substring>') for full input_schema.\"}",
         "mock_response_type": "json"
     },
     {

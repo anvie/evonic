@@ -98,6 +98,28 @@ class CompiledFilter:
     # Replacement text when the output is empty after filtering.
     on_empty: Optional[str] = None
 
+    # --- Optional JSON compaction -------------------------------------
+    # Tool results are often a single giant `json.dumps` line, which the
+    # line-based stages below cannot compact at all.  When any json_* key is
+    # set, the pipeline first parses the output as JSON, prunes it, and
+    # re-serialises it (see filter_pipeline._stage_json_compact).
+    #
+    # Turn the stage on explicitly; it is also implied by any other json_* key.
+    json_compact: bool = False
+
+    # Only compact when the raw text is longer than this (chars). Smaller
+    # payloads are passed through untouched.
+    json_compact_above: Optional[int] = None
+
+    # Truncate any string value longer than this (chars), appending '…'.
+    json_max_string: Optional[int] = None
+
+    # Keep only the first N items of any list longer than N.
+    json_max_items: Optional[int] = None
+
+    # Object keys removed recursively (exact match), e.g. "input_schema".
+    json_drop_keys: list[str] = field(default_factory=list)
+
     # Where this filter was loaded from (for debugging / diagnostics).
     source: str = ""
 
@@ -109,6 +131,16 @@ class CompiledFilter:
     def matches_command(self, command: str) -> bool:
         """Return True if this filter's command regex matches *command*."""
         return bool(self.command_re.search(command))
+
+    def has_json_stage(self) -> bool:
+        """Return True when JSON compaction is configured (implicit or explicit)."""
+        return bool(
+            self.json_compact
+            or self.json_max_string is not None
+            or self.json_max_items is not None
+            or self.json_drop_keys
+            or self.json_compact_above is not None
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +154,9 @@ _VALID_KEYS: frozenset[str] = frozenset({
     "strip_lines", "keep_lines",
     "truncate_lines_at", "head_lines", "tail_lines", "max_lines",
     "on_empty",
+    # JSON-output compaction (single-line json.dumps tool results)
+    "json_compact", "json_compact_above",
+    "json_max_string", "json_max_items", "json_drop_keys",
 })
 
 
@@ -293,6 +328,27 @@ def _compile_filter(raw: dict, source: str) -> CompiledFilter:
             path=path_ref,
         )
 
+    # --- json_* (JSON-output compaction) ---
+    json_compact = raw.get("json_compact", False)
+    if not isinstance(json_compact, bool):
+        raise FilterParseError(
+            f"'json_compact' must be a boolean, got {type(json_compact).__name__}",
+            path=path_ref,
+        )
+    json_compact_above = _get_int("json_compact_above", min_val=1)
+    json_max_string = _get_int("json_max_string", min_val=1)
+    json_max_items = _get_int("json_max_items", min_val=1)
+
+    raw_drop_keys = raw.get("json_drop_keys") or []
+    if not isinstance(raw_drop_keys, list) or not all(
+        isinstance(k, str) for k in raw_drop_keys
+    ):
+        raise FilterParseError(
+            "'json_drop_keys' must be a list of strings",
+            path=path_ref,
+        )
+    json_drop_keys: list[str] = list(raw_drop_keys)
+
     # --- track which keys were explicitly set ---
     explicit_fields = set(raw.keys())
 
@@ -319,6 +375,11 @@ def _compile_filter(raw: dict, source: str) -> CompiledFilter:
         tail_lines=tail_lines,
         max_lines=max_lines,
         on_empty=on_empty,
+        json_compact=json_compact,
+        json_compact_above=json_compact_above,
+        json_max_string=json_max_string,
+        json_max_items=json_max_items,
+        json_drop_keys=json_drop_keys,
         source=source,
         _explicit_fields=explicit_fields,
     )
@@ -407,6 +468,12 @@ def merge_filters(base: CompiledFilter, higher: CompiledFilter) -> CompiledFilte
         tail_lines=higher.tail_lines if "tail_lines" in explicit else base.tail_lines,
         max_lines=higher.max_lines if "max_lines" in explicit else base.max_lines,
         on_empty=higher.on_empty if "on_empty" in explicit else base.on_empty,
+        json_compact=higher.json_compact if "json_compact" in explicit else base.json_compact,
+        json_compact_above=(higher.json_compact_above if "json_compact_above" in explicit
+                            else base.json_compact_above),
+        json_max_string=higher.json_max_string if "json_max_string" in explicit else base.json_max_string,
+        json_max_items=higher.json_max_items if "json_max_items" in explicit else base.json_max_items,
+        json_drop_keys=higher.json_drop_keys if "json_drop_keys" in explicit else base.json_drop_keys,
         source=f"{base.source} + {higher.source}",
         _explicit_fields=base._explicit_fields | explicit,
     )
