@@ -393,6 +393,15 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         )
         parts.append("`" + "`, `".join(_mem_keys) + "`")
 
+    # Tool availability gates for the platform sections below. Never advertise a
+    # capability the agent cannot execute: `builtin_tools_enabled = 0` removes
+    # use_skill/unload_skill, and /_self/ paths only work with file tools.
+    _builtin_tools_on = bool(agent.get('builtin_tools_enabled', True))
+    _assigned_tool_ids = set(sim_spec.tools(agent, eid) or [])
+    _has_file_tools = bool(
+        _assigned_tool_ids & {'read_file', 'write_file', 'patch', 'str_replace'}
+    )
+
     # List available lazy skills so the agent knows what it can load. SYSTEM.md
     # is optional: a lazy skill can expose tools without additional instructions.
     skills_mgr = skills_manager
@@ -417,7 +426,7 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         if brief:
             skill_briefs.append(brief)
 
-    if lazy_skills:
+    if lazy_skills and _builtin_tools_on:
         parts.append("\n## Skills")
         parts.append("You have these skills that can be loaded using `use_skill` tool:")
         for skill_id in lazy_skills:
@@ -428,15 +437,15 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
                 parts.append(f"\n{brief}")
 
     # Skill cleanup rule: remind agents to unload unused lazy-loaded skills.
-    # This is a platform-level instruction injected into all agents by default,
-    # so users don't have to manually add it to SYSTEM.md.
-    parts.append("\n## Skill Cleanup Rule")
-    parts.append(
-        "After completing a task that required loading a lazy-loaded skill, "
-        "immediately review loaded skills and unload any that are no longer "
-        "needed. Do not keep unused skills in context; they waste tokens by "
-        "adding stale tool definitions."
-    )
+    # Injected only when the agent actually has use_skill/unload_skill.
+    if _builtin_tools_on:
+        parts.append("\n## Skill Cleanup Rule")
+        parts.append(
+            "After completing a task that required loading a lazy-loaded skill, "
+            "immediately review loaded skills and unload any that are no longer "
+            "needed. Do not keep unused skills in context; they waste tokens by "
+            "adding stale tool definitions."
+        )
     # Build operations rule: inject for agents that have bash or runpy tools.
     # This ensures long-running compilations don't block the agent.
     if assigned_ids and ('bash' in assigned_ids or 'runpy' in assigned_ids):
@@ -454,27 +463,29 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         )
     
 
-    # Inform all agents about /_self/ access to their local config directory
-    parts.append("\n## Agent Home Directory")
-    parts.append(
-        "You can access your own agent directory on the evonic server "
-        "using the `/_self/` path prefix with any file tool."
-    )
-    parts.append(
-        f"- `/_self/SYSTEM.md` — your system prompt\n"
-        f"- `/_self/kb/` — your knowledge base files\n"
-        f"- `/_self/sessions/` — your session data\n"
-        f"- `/_self/plan/` — your plan files\n"
-        f"- `/_self/artifacts/` — your artifacts directory"
-    )
-    parts.append(
-        "**Important**: `/_self/` paths only work with file tools "
-        "(`read_file`, `write_file`, `patch`, `str_replace`) — "
-        "NOT with `bash` or `runpy`."
-    )
+    # Inform agents about /_self/ access to their local config directory.
+    # Only for agents that actually have file tools — the paths are unusable otherwise.
+    if _has_file_tools:
+        parts.append("\n## Agent Home Directory")
+        parts.append(
+            "You can access your own agent directory on the evonic server "
+            "using the `/_self/` path prefix with any file tool."
+        )
+        parts.append(
+            f"- `/_self/SYSTEM.md` — your system prompt\n"
+            f"- `/_self/kb/` — your knowledge base files\n"
+            f"- `/_self/sessions/` — your session data\n"
+            f"- `/_self/plan/` — your plan files\n"
+            f"- `/_self/artifacts/` — your artifacts directory"
+        )
+        parts.append(
+            "**Important**: `/_self/` paths only work with file tools "
+            "(`read_file`, `write_file`, `patch`, `str_replace`) — "
+            "NOT with `bash` or `runpy`."
+        )
 
     # Inform agents about portal virtual paths configured for them
-    _portal_lines = _build_portal_info(eid)
+    _portal_lines = _build_portal_info(eid) if _has_file_tools else []
     if _portal_lines:
         parts.append("\n## Portals — Virtual Path Mappings")
         parts.append(

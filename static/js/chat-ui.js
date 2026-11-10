@@ -3752,16 +3752,8 @@ class ChatUI {
                 continue;
             }
             if (entry.type === 'intermediate') {
-                // Shown in the chat, with the thinking bubble split around it.
-                if (thinkingTurn) {
-                    if (thinkingTurn.$timeline.find('.timeline-entry').length) {
-                        thinkingTurn.ingest({ event: 'done', data: {}, seq: 0 });
-                    } else {
-                        thinkingTurn.dispose('replay_intermediate');
-                    }
-                    thinkingTurn = null;
-                }
-                this.appendMessage('assistant', entry.content || '', { timestamp: entry.ts || entry.created_at || null });
+                _ensureTurn();
+                thinkingTurn.ingest({ event: 'response_chunk', data: { content: entry.content, is_final: false }, seq: 0 });
                 continue;
             }
             if (entry.type === 'final') {
@@ -3921,7 +3913,7 @@ class ChatUI {
         // Anchor to the explicit element if given, otherwise the very last child so the
         // thinking bubble always appears at the end (not anchored to last user message,
         // which may be mid-conversation when called without an explicit anchor).
-        const $anchor = insertAfterEl ? $(insertAfterEl) : this.$container.children().not('#ask-user-dock').last();
+        const $anchor = insertAfterEl ? $(insertAfterEl) : this.$container.children().last();
         const turn = this.beginTurn($anchor);
         if (startTs) turn._startTime = startTs;
         this._lastLiveTurnId = turn.id; // track for duplicate-bubble detection
@@ -3952,18 +3944,6 @@ class ChatUI {
     }
 
     
-    // An intermediate response (text the agent wrote before a tool call) goes in the chat as
-    // its own message: close the thinking bubble so far, post the text, continue in a new bubble.
-    splitForIntermediate(turnOrId, content, timestamp) {
-        const turn = typeof turnOrId === 'string' ? this._turns.get(turnOrId) : turnOrId;
-        if (turn) {
-            if (this.getTimelineEntryCount(turn)) this.finalizeThinkingBubble(turn);
-            else this.removeThinkingIndicator(turn);
-        }
-        this.appendMessage('assistant', content, { timestamp: timestamp || Date.now() });
-        return this.showThinkingIndicator();
-    }
-
     finalizeThinkingBubble(turnOrId, duration) {
         const turn = typeof turnOrId === 'string' ? this._turns.get(turnOrId) : turnOrId;
         if (!turn) return;

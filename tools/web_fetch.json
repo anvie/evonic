@@ -1,0 +1,39 @@
+{
+  "id": "web_fetch",
+  "name": "Fetch web page",
+  "description": "Fetch a public web page and return its readable text.",
+  "function": {
+    "name": "web_fetch",
+    "description": "Read a public web page (http/https) and return its readable plain text, with the page title. Use this whenever the user gives you a URL or asks for current information from the web. Private, loopback and internal addresses are refused.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Absolute URL to read, e.g. https://evonic.dev/getting-started/overview/"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Maximum characters of extracted text to return (default 20000, hard cap 60000)."
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  "mock_response": {
+    "status": "success",
+    "url": "https://evonic.dev/getting-started/overview/",
+    "final_url": "https://evonic.dev/getting-started/overview/",
+    "http_status": 200,
+    "content_type": "text/html; charset=utf-8",
+    "title": "Overview | Evonic",
+    "text": "Evonic is an agent platform. This mock response is used in evaluation mode only.",
+    "chars": 76,
+    "truncated": false
+  },
+  "mock_response_type": "json",
+  "created_at": "2026-11-08T00:00:00.000000",
+  "updated_at": "2026-11-08T00:00:00.000000"
+}
