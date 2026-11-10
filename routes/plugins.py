@@ -228,8 +228,8 @@ def api_export_plugin(plugin_id):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for root, dirs, files in os.walk(plugin_dir):
-                # Skip __pycache__ directories
-                dirs[:] = [d for d in dirs if d != '__pycache__']
+                # Skip bulky/irrelevant directories
+                dirs[:] = [d for d in dirs if d not in ('__pycache__', '.git', 'node_modules')]
 
                 for filename in files:
                     # Skip .pyc files (compiled bytecode) and dot-files (VCS/editor artifacts)
