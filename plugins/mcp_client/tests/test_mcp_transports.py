@@ -203,3 +203,13 @@ def test_configs_take_a_command_or_a_url(lib, monkeypatch):
         raw["s"] = bad
         with pytest.raises(lib.MCPError, match=why):
             manager._load_server_configs()
+
+
+def test_list_servers_reports_enabled_servers_without_secrets(lib, monkeypatch):
+    raw = {"remote": {"url": "https://deck.example/mcp", "headers": {"Authorization": "Bearer t"}},
+           "local": {"command": "claude", "args": ["mcp", "serve"]},
+           "off": {"command": "x", "enabled": False}}
+    fake = types.SimpleNamespace(plugin_manager=types.SimpleNamespace(get_plugin_config=lambda _: {"MCP_SERVERS": json.dumps(raw)}))
+    monkeypatch.setitem(sys.modules, "backend.plugin_manager", fake)
+    assert lib.MCPManager().list_servers() == [{"name": "local", "transport": "stdio"},
+                                               {"name": "remote", "transport": "http"}]

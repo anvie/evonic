@@ -1,11 +1,27 @@
 [
     {
         "type": "function",
+        "name": "MCP List Servers",
+        "description": "List the MCP servers configured on this platform.",
+        "function": {
+            "name": "mcp_list_servers",
+            "description": "List the external MCP servers configured and enabled on this platform (e.g. 'claude-code'), with their transport (stdio or http). Cheap: it only reads configuration and does not connect to any server. Use it to find out which MCP servers are available, then call mcp_list_tools(server) to see a server's tools and mcp_call to use them. Requires the MCP Client plugin to be enabled.",
+            "parameters": {
+                "properties": {},
+                "required": [],
+                "type": "object"
+            }
+        },
+        "mock_response": "{\"servers\":[{\"name\":\"claude-code\",\"transport\":\"stdio\"}],\"hint\":\"Call mcp_list_tools(server) to see a server's tools, then mcp_call to use one.\"}",
+        "mock_response_type": "json"
+    },
+    {
+        "type": "function",
         "name": "MCP List Tools",
         "description": "List tools available on configured MCP servers.",
         "function": {
             "name": "mcp_list_tools",
-            "description": "List the tools exposed by external MCP servers configured on this platform (e.g. 'claude-code'). Returns each tool's name, description and JSON input schema. Call this before mcp_call to discover valid tool names and their expected arguments. Requires the MCP Client plugin to be enabled.",
+            "description": "List the tools exposed by external MCP servers configured on this platform (e.g. 'claude-code'). Returns each tool's name, description and JSON input schema. Call mcp_list_servers first to see which servers are configured, then call this before mcp_call to discover valid tool names and their expected arguments. Requires the MCP Client plugin to be enabled.",
             "parameters": {
                 "properties": {
                     "server": {
@@ -26,7 +42,7 @@
         "description": "Call a tool on a configured MCP server.",
         "function": {
             "name": "mcp_call",
-            "description": "Invoke a tool on an external MCP server configured on this platform (e.g. run Claude Code's Bash tool via the 'claude-code' server). Call mcp_list_tools first to discover valid server names, tool names and each tool's input schema, then pass the tool's arguments as a JSON object. Requires the MCP Client plugin to be enabled.",
+            "description": "Invoke a tool on an external MCP server configured on this platform (e.g. run Claude Code's Bash tool via the 'claude-code' server). Call mcp_list_servers to see configured server names and mcp_list_tools to discover tool names and each tool's input schema, then pass the tool's arguments as a JSON object. Requires the MCP Client plugin to be enabled.",
             "parameters": {
                 "properties": {
                     "server": {

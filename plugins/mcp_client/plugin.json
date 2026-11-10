@@ -2,7 +2,7 @@
   "id": "mcp_client",
   "name": "MCP Client",
   "version": "1.0.0",
-  "description": "Connect agents to external MCP servers over stdio or Streamable HTTP. Exposes the mcp_list_tools and mcp_call agent tools. Ships with a Claude Code preset (claude mcp serve).",
+  "description": "Connect agents to external MCP servers over stdio or Streamable HTTP. Exposes the mcp_list_servers, mcp_list_tools and mcp_call agent tools. Ships with a Claude Code preset (claude mcp serve).",
   "author": "Evonic",
   "enabled": true,
   "events": [],

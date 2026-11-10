@@ -566,6 +566,11 @@ class MCPManager:
     def server_names(self) -> List[str]:
         return sorted(n for n, c in self._load_server_configs().items() if c["enabled"])
 
+    def list_servers(self) -> List[dict]:
+        """Enabled servers as [{name, transport}] — config only, nothing is started."""
+        return [{"name": n, "transport": "http" if "url" in c else "stdio"}
+                for n, c in sorted(self._load_server_configs().items()) if c["enabled"]]
+
     def get(self, name: str) -> _MCPServer:
         configs = self._load_server_configs()
         cfg = configs.get(name)
