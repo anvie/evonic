@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request, session
 
-from plugins.panel.db import panel_db_factory
+from plugins.panel.db import panel_db_factory, validate_slash_command
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -169,11 +169,11 @@ def create_blueprint():
         return jsonify({"actions": actions})
 
     # ── PATCH|PUT /plugin/panel/<agent_id>/actions/<int:action_id> ───────────
-    # Used by the Panel tab's edit mode to rename a button.
+    # Used by the Panel tab's edit mode to rename a button / set its slash command.
 
     @bp.route("/<agent_id>/actions/<int:action_id>", methods=["PATCH", "PUT"])
     def panel_update_action(agent_id: str, action_id: int):
-        """Rename a panel action button (label-only public edit surface)."""
+        """Edit a panel action button (label and slash command only)."""
         agent, error = _check_agent_access(agent_id)
         if error:
             return jsonify(error[0]), error[1]
@@ -195,6 +195,16 @@ def create_blueprint():
             if len(label) > 120:
                 return jsonify({"error": "Label is too long (max 120 characters)"}), 400
             fields["label"] = label
+
+        if "slash_command" in payload:
+            raw_cmd = payload.get("slash_command")
+            if raw_cmd is not None and not isinstance(raw_cmd, str):
+                return jsonify({"error": "slash_command must be a string"}), 400
+            # Empty string clears the assignment.
+            cmd, cmd_error = validate_slash_command(agent_id, raw_cmd or "", exclude_action_id=action_id)
+            if cmd_error:
+                return jsonify({"error": cmd_error}), 400
+            fields["slash_command"] = cmd
 
         if not fields:
             return jsonify({"error": "No editable fields provided"}), 400
@@ -492,7 +502,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
       <h2 class="pnl-title">Panel — <span>{_escape_html(agent_name)}</span></h2>
       <button id="pnl-edit-toggle" class="pnl-edit-toggle" type="button" aria-pressed="false" title="Edit panel buttons">{_PENCIL_SVG}<span id="pnl-edit-toggle-label">Edit</span></button>
     </div>
-    <p id="pnl-edit-hint" class="pnl-edit-hint pnl-hidden">Edit mode: buttons are paused. Use the pencil to rename or the trash to remove a button, then click Done.</p>
+    <p id="pnl-edit-hint" class="pnl-edit-hint pnl-hidden">Edit mode: buttons are paused. Use the pencil to edit or the trash to remove a button, then click Done.</p>
     <div class="pnl-search-wrap">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.3-4.3m1.8-4.7a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z"/></svg>
       <input id="pnl-search" class="pnl-search" type="search" placeholder="Filter buttons..." autocomplete="off">
@@ -525,7 +535,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
         html += f"""      <div class="pnl-item" data-action-id="{aid}">
         <button class="panel-btn {color_class}{disabled_class}" data-action-id="{aid}" data-action-type="{atype}" data-label="{label}" data-search="{label_lower}" {disabled_attr}><span class="pnl-dot"></span><span class="pnl-hour">&#8987;</span><span class="pnl-label">{label}</span>{cmd_badge}</button>
         <div class="pnl-item-tools">
-          <button class="pnl-tool pnl-tool-edit" type="button" data-action-id="{aid}" title="Rename button" aria-label="Rename {label}">{_PENCIL_SVG}</button>
+          <button class="pnl-tool pnl-tool-edit" type="button" data-action-id="{aid}" title="Edit button" aria-label="Edit {label}">{_PENCIL_SVG}</button>
           <button class="pnl-tool pnl-tool-del" type="button" data-action-id="{aid}" title="Delete button" aria-label="Delete {label}">{_TRASH_SVG}</button>
         </div>
       </div>
@@ -564,10 +574,14 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
 
 <div id="pnl-rename-modal" class="pnl-modal pnl-hidden">
   <div class="pnl-modal-card" role="dialog" aria-modal="true" aria-labelledby="pnl-rename-title">
-    <h3 id="pnl-rename-title" class="pnl-modal-title">Rename button</h3>
+    <h3 id="pnl-rename-title" class="pnl-modal-title">Edit button</h3>
     <div class="pnl-field">
       <label for="pnl-rename-input">Button label</label>
       <input id="pnl-rename-input" type="text" maxlength="120" autocomplete="off">
+    </div>
+    <div class="pnl-field">
+      <label for="pnl-cmd-input">Slash command (optional)</label>
+      <input id="pnl-cmd-input" type="text" maxlength="33" autocomplete="off" placeholder="e.g. deploy — leave empty for none">
     </div>
     <div class="pnl-modal-actions">
       <button id="pnl-rename-cancel" class="pnl-btn-sec" type="button">Cancel</button>
@@ -859,6 +873,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
 
   const renameModal = document.getElementById('pnl-rename-modal');
   const renameInput = document.getElementById('pnl-rename-input');
+  const cmdInput = document.getElementById('pnl-cmd-input');
   let renameTargetId = null;
 
   function openRenameModal(actionId) {
@@ -866,6 +881,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
     if (!action || !renameModal) return;
     renameTargetId = actionId;
     renameInput.value = action.label || '';
+    cmdInput.value = action.slash_command || '';
     renameModal.classList.remove('pnl-hidden');
     renameInput.focus();
     renameInput.select();
@@ -878,19 +894,29 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
 
   // Keep the freshly renamed button (label, filter index, tool tips) in sync
   // without waiting for the realtime re-render.
-  function syncButtonLabel(actionId, label) {
+  function syncButtonLabel(actionId, label, slashCommand) {
     const btn = btnGrid.querySelector('.panel-btn[data-action-id="' + actionId + '"]');
     if (!btn) return;
     btn.dataset.label = label;
     const action = actions.find(function(a) { return a.id === actionId; });
-    const cmd = action && action.slash_command ? String(action.slash_command).trim().toLowerCase() : '';
+    const cmd = slashCommand ? String(slashCommand).trim().toLowerCase() : '';
     btn.dataset.search = cmd ? (label.toLowerCase() + ' /' + cmd) : label.toLowerCase();
     const labelEl = btn.querySelector('.pnl-label');
     if (labelEl) labelEl.textContent = label;
+    let badge = btn.querySelector('.pnl-cmd');
+    if (cmd && !badge) {
+      badge = document.createElement('span');
+      badge.className = 'pnl-cmd';
+      btn.appendChild(badge);
+    }
+    if (badge) {
+      if (cmd) { badge.textContent = '/' + cmd; badge.title = 'Run from chat with /' + cmd; }
+      else badge.remove();
+    }
     const item = btn.closest('.pnl-item');
     if (item) {
       item.querySelectorAll('.pnl-tool').forEach(function(tool) {
-        const verb = tool.classList.contains('pnl-tool-edit') ? 'Rename ' : 'Delete ';
+        const verb = tool.classList.contains('pnl-tool-edit') ? 'Edit ' : 'Delete ';
         tool.setAttribute('aria-label', verb + label);
       });
     }
@@ -900,6 +926,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
     if (renameTargetId === null) return;
     const actionId = renameTargetId;
     const label = (renameInput.value || '').trim();
+    const slashCommand = (cmdInput.value || '').trim().replace(/^\\/+/, '').toLowerCase();
     const action = actions.find(function(a) { return a.id === actionId; });
 
     if (!label) {
@@ -907,7 +934,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
       renameInput.focus();
       return;
     }
-    if (action && label === action.label) { closeRenameModal(); return; }
+    if (action && label === action.label && slashCommand === (action.slash_command || '')) { closeRenameModal(); return; }
 
     const saveBtn = document.getElementById('pnl-rename-save');
     if (saveBtn) saveBtn.disabled = true;
@@ -915,17 +942,20 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
       const resp = await fetch('/plugin/panel/' + AGENT_ID + '/actions/' + actionId, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: label })
+        body: JSON.stringify({ label: label, slash_command: slashCommand })
       });
       const data = await resp.json().catch(function() { return {}; });
       if (!resp.ok) {
-        editToast(data.error || 'Could not rename this button.', true);
+        editToast(data.error || 'Could not update this button.', true);
         return;
       }
-      if (action) action.label = label;
-      syncButtonLabel(actionId, label);
+      if (action) {
+        action.label = label;
+        action.slash_command = slashCommand;
+      }
+      syncButtonLabel(actionId, label, slashCommand);
       closeRenameModal();
-      editToast('Button renamed.');
+      editToast('Button updated.');
     } catch (err) {
       editToast('Network error: ' + err.message, true);
     } finally {
@@ -993,9 +1023,11 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
     document.getElementById('pnl-rename-cancel').addEventListener('click', closeRenameModal);
     document.getElementById('pnl-rename-save').addEventListener('click', saveRename);
     renameModal.addEventListener('click', function(e) { if (e.target === renameModal) closeRenameModal(); });
-    renameInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') { e.preventDefault(); saveRename(); }
-      else if (e.key === 'Escape') { e.preventDefault(); closeRenameModal(); }
+    [renameInput, cmdInput].forEach(function(input) {
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); saveRename(); }
+        else if (e.key === 'Escape') { e.preventDefault(); closeRenameModal(); }
+      });
     });
   }
 

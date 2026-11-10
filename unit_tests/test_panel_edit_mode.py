@@ -180,7 +180,7 @@ def test_edit_mode_survives_a_realtime_re_render(routes):
 
 def test_filter_index_is_rebuilt_after_a_rename(routes):
     html = _render(routes)
-    assert "function syncButtonLabel(actionId, label)" in html
+    assert "function syncButtonLabel(actionId, label, slashCommand)" in html
     assert "btn.dataset.search =" in html
 
 
@@ -205,11 +205,49 @@ def test_labels_are_escaped_in_the_controls(routes):
     html = _render(routes, [evil])
 
     # HTML attributes carry the escaped form...
-    assert "aria-label=\"Rename &lt;img src=x" in html
+    assert "aria-label=\"Edit &lt;img src=x" in html
     # ...and the embedded actions JSON can never close the <script> block.
     assert "<img src=x" not in html
     assert "\\u003cimg src=x" in html
     assert "</script><script" not in html
+
+
+# ── API: slash command ───────────────────────────────────────────────────────
+
+
+def test_edit_sets_normalizes_and_clears_slash_command(client):
+    action = _seed()
+    url = f"/plugin/panel/agent-a/actions/{action['id']}"
+
+    resp = client.patch(url, json={"slash_command": " /Ship-It "})
+    assert resp.status_code == 200
+    assert PanelDB("agent-a").get_action(action["id"])["slash_command"] == "ship-it"
+    assert PanelDB("agent-a").get_action(action["id"])["label"] == "Deploy"
+
+    resp = client.patch(url, json={"slash_command": ""})
+    assert resp.status_code == 200
+    assert PanelDB("agent-a").get_action(action["id"])["slash_command"] == ""
+
+
+def test_edit_rejects_invalid_or_duplicate_slash_command(client):
+    first = _seed(label="One")
+    second = _seed(label="Two")
+    client.patch(f"/plugin/panel/agent-a/actions/{first['id']}", json={"slash_command": "go"})
+
+    for bad in ("Bad Name!", "go"):
+        resp = client.patch(
+            f"/plugin/panel/agent-a/actions/{second['id']}", json={"slash_command": bad}
+        )
+        assert resp.status_code == 400
+    assert PanelDB("agent-a").get_action(second["id"])["slash_command"] == ""
+
+
+def test_edit_keeps_own_slash_command_on_resave(client):
+    action = _seed()
+    url = f"/plugin/panel/agent-a/actions/{action['id']}"
+    client.patch(url, json={"slash_command": "go"})
+
+    assert client.patch(url, json={"label": "Go", "slash_command": "go"}).status_code == 200
 
 
 # ── API: rename ──────────────────────────────────────────────────────────────
