@@ -3079,7 +3079,6 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
         "plugins": "Plugin directory",
         "skills": "Skills directory",
         "agents": "Agent data",
-        "skillsets": "Skillset templates",
         "templates": "Web templates",
     }
 
