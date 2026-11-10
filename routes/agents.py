@@ -189,10 +189,9 @@ def _read_system_prompt(agent_id: str, fallback: str = '') -> str:
 
 
 def _write_system_prompt(agent_id: str, content: str):
-    path = _system_prompt_path(agent_id)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(content)
+    """Persist SYSTEM.md, rotating a backup of the previous version first."""
+    from backend.system_prompt_store import write_system_prompt
+    write_system_prompt(os.path.join(AGENTS_DIR, agent_id), content)
 
 
 def _migrate_system_prompts():

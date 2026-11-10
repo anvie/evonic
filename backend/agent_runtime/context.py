@@ -884,6 +884,11 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
             )
         prompt += "\n\n## Artifacts Directory\n" + artifacts_note
 
+    # Defensive: a literal style placeholder (for example leaked from a raw
+    # template copy) must never reach the model.
+    if "{communication_style}" in prompt:
+        prompt = prompt.replace("{communication_style}", "")
+
     return prompt
 
 
