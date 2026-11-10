@@ -1,8 +1,10 @@
 """
-_mcp_lib.py — minimal MCP (Model Context Protocol) client over stdio.
+_mcp_lib.py — minimal MCP (Model Context Protocol) client over stdio and HTTP.
 
 Spawns and manages long-lived MCP server subprocesses (e.g. `claude mcp serve`)
-and speaks newline-delimited JSON-RPC 2.0 per the MCP stdio transport spec.
+and speaks newline-delimited JSON-RPC 2.0 per the MCP stdio transport spec, or
+talks to remote servers over the Streamable HTTP transport (a server entry with
+a `url` instead of a `command`).
 Used by the mcp_list_tools / mcp_call agent tools; servers are configured via
 the `mcp_client` plugin's MCP_SERVERS variable.
 
@@ -13,8 +15,8 @@ plugin loader does not evict (only 'plugin_pkg_*' modules are). Editing this
 file therefore requires an app restart to take effect.
 
 Concurrency model: fully synchronous, one in-flight request per server,
-guarded by a per-server lock. Processes are shared across agents, spawned
-lazily on first use, and reaped at app exit via atexit.
+guarded by a per-server lock. Processes (and HTTP sessions) are shared across
+agents, started lazily on first use, and reaped at app exit via atexit.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ import select
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections import deque
 from typing import Any, Dict, List, Optional
 
@@ -61,13 +65,10 @@ def content_to_text(content: List[dict]) -> str:
     return "\n".join(parts)
 
 
-class MCPServerProcess:
-    """One MCP server subprocess: spawn, handshake, and synchronous requests.
-
-    All public methods serialize on an internal lock — one request in flight
-    per server. Any transport failure kills the process; the next call
-    transparently respawns it (no automatic retry of the failed call, since
-    tools/call may have side effects).
+class _MCPServer:
+    """The public API shared by both transports. Subclasses provide
+    `_ensure_started_locked` and `_request`; all public methods serialize on
+    `self._lock` — one request in flight per server.
     """
 
     def __init__(self, name: str, config: dict):
@@ -75,11 +76,8 @@ class MCPServerProcess:
         self.config = config
         self.config_json = json.dumps(config, sort_keys=True)
         self._lock = threading.Lock()
-        self._proc: Optional[subprocess.Popen] = None
         self._initialized = False
-        self._buffer = b""
         self._next_id = 0
-        self._stderr_tail: deque = deque(maxlen=200)
 
     # ── Public API ──
 
@@ -113,6 +111,27 @@ class MCPServerProcess:
                 "content": result.get("content") or [],
                 "isError": bool(result.get("isError")),
             }
+
+    def _ensure_started_locked(self, startup_timeout: float) -> None:
+        raise NotImplementedError
+
+    def _request(self, method: str, params: dict, timeout: float) -> dict:
+        raise NotImplementedError
+
+
+class MCPServerProcess(_MCPServer):
+    """One MCP server subprocess: spawn, handshake, and synchronous requests.
+
+    Any transport failure kills the process; the next call transparently
+    respawns it (no automatic retry of the failed call, since tools/call may
+    have side effects).
+    """
+
+    def __init__(self, name: str, config: dict):
+        super().__init__(name, config)
+        self._proc: Optional[subprocess.Popen] = None
+        self._buffer = b""
+        self._stderr_tail: deque = deque(maxlen=200)
 
     def stop(self) -> None:
         with self._lock:
@@ -291,8 +310,180 @@ class MCPServerProcess:
             self._buffer += chunk
 
 
+class _SessionExpired(Exception):
+    """The HTTP server no longer knows our Mcp-Session-Id (it answered 404)."""
+
+
+class MCPHttpServer(_MCPServer):
+    """One remote MCP server over the Streamable HTTP transport.
+
+    Every JSON-RPC message is a POST to the configured `url`, carrying the
+    configured `headers` (e.g. Authorization). The session id the server hands
+    out on initialize (Mcp-Session-Id) goes along on every later request; when
+    the server forgets it (HTTP 404), the session is re-established once and
+    the request re-sent — the server never saw it, so that is safe even for
+    tools/call. A reply is either plain JSON or an SSE stream; in a stream,
+    server→client requests are answered as over stdio (only ping).
+    """
+
+    def __init__(self, name: str, config: dict):
+        super().__init__(name, config)
+        self._session_id: Optional[str] = None
+        self._protocol_version: Optional[str] = None
+
+    def stop(self) -> None:
+        with self._lock:
+            if self._session_id:
+                # Best effort: tell the server the session is over.
+                try:
+                    urllib.request.urlopen(
+                        urllib.request.Request(self.config["url"], method="DELETE",
+                                               headers=self._headers()), timeout=3).close()
+                except Exception:
+                    pass
+            self._session_id = None
+            self._initialized = False
+
+    # ── Lifecycle (call with lock held) ──
+
+    def _ensure_started_locked(self, startup_timeout: float) -> None:
+        if self._initialized:
+            return
+        self._session_id = None
+        self._protocol_version = None
+        result = self._request("initialize", {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "evonic-mcp-client", "version": "1.0.0"},
+        }, startup_timeout)
+        self._protocol_version = result.get("protocolVersion") or PROTOCOL_VERSION
+        self._post({"jsonrpc": "2.0", "method": "notifications/initialized"},
+                   "notifications/initialized", startup_timeout).close()
+        self._initialized = True
+        logger.info(
+            f"MCP server '{self.name}' connected ({self.config['url']}, "
+            f"protocol {self._protocol_version})")
+
+    # ── JSON-RPC over HTTP (call with lock held) ──
+
+    def _headers(self) -> dict:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        headers.update(self.config.get("headers") or {})
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        if self._protocol_version:
+            headers["MCP-Protocol-Version"] = self._protocol_version
+        return headers
+
+    def _post(self, msg: dict, method: str, timeout: float):
+        """POST one message; returns the open response (caller closes it)."""
+        data = json.dumps(msg, separators=(",", ":")).encode("utf-8")
+        req = urllib.request.Request(self.config["url"], data=data, method="POST",
+                                     headers=self._headers())
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code == 404 and self._session_id:
+                raise _SessionExpired()
+            body = e.read().decode("utf-8", errors="replace").strip()[:500]
+            raise MCPError(
+                f"MCP server '{self.name}': {method} failed with HTTP {e.code}"
+                f"{': ' + body if body else ''}")
+        except (urllib.error.URLError, OSError) as e:
+            reason = getattr(e, "reason", e)
+            raise MCPError(f"MCP server '{self.name}': {method} failed ({reason}).")
+
+    def _request(self, method: str, params: dict, timeout: float) -> dict:
+        try:
+            return self._request_once(method, params, timeout)
+        except _SessionExpired:
+            self._initialized = False
+            if method == "initialize":
+                raise MCPError(f"MCP server '{self.name}': initialize was refused (HTTP 404).")
+            logger.info(f"MCP server '{self.name}' session expired — reconnecting")
+            self._ensure_started_locked(timeout)
+            try:
+                return self._request_once(method, params, timeout)
+            except _SessionExpired:
+                self._initialized = False
+                raise MCPError(f"MCP server '{self.name}': session expired again right after reconnecting.")
+
+    def _request_once(self, method: str, params: dict, timeout: float) -> dict:
+        self._next_id += 1
+        req_id = self._next_id
+        deadline = time.monotonic() + timeout
+        res = self._post({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params},
+                         method, timeout)
+        with res:
+            if method == "initialize" and res.headers.get("Mcp-Session-Id"):
+                self._session_id = res.headers["Mcp-Session-Id"]
+            ctype = (res.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype == "text/event-stream":
+                messages = self._sse_messages(res, deadline, method, timeout)
+            else:
+                try:
+                    messages = [json.loads(res.read().decode("utf-8"))]
+                except (ValueError, UnicodeDecodeError, OSError) as e:
+                    raise MCPError(f"MCP server '{self.name}': {method} returned an unreadable reply ({e}).")
+            for msg in messages:
+                for m in (msg if isinstance(msg, list) else [msg]):
+                    result = self._handle(m, req_id, method, timeout)
+                    if result is not None:
+                        return result
+        raise MCPError(f"MCP server '{self.name}': {method} got no response.")
+
+    def _sse_messages(self, res, deadline: float, method: str, timeout: float):
+        """Yield the JSON messages of an SSE stream, honoring the deadline."""
+        data: List[str] = []
+        while True:
+            if time.monotonic() > deadline:
+                raise MCPError(f"MCP server '{self.name}': {method} timed out after {timeout:g}s.")
+            try:
+                raw = res.readline()
+            except (OSError, ValueError) as e:
+                raise MCPError(f"MCP server '{self.name}': {method} stream failed ({e}).")
+            if not raw:
+                return
+            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            if line.startswith("data:"):
+                data.append(line[5:].lstrip(" "))
+            elif line == "" and data:
+                payload, data = "\n".join(data), []
+                try:
+                    yield json.loads(payload)
+                except ValueError:
+                    logger.warning(f"MCP server '{self.name}': skipping malformed event ({payload[:200]!r})")
+
+    def _handle(self, msg, req_id: int, method: str, timeout: float) -> Optional[dict]:
+        """The result if `msg` answers our request; answers server requests."""
+        if not isinstance(msg, dict):
+            return None
+        if "method" in msg and "id" in msg:
+            if msg["method"] == "ping":
+                reply = {"jsonrpc": "2.0", "id": msg["id"], "result": {}}
+            else:
+                reply = {"jsonrpc": "2.0", "id": msg["id"], "error": {
+                    "code": -32601, "message": f"Method not supported: {msg['method']}"}}
+            self._post(reply, method, timeout).close()
+            return None
+        if "method" in msg:
+            logger.debug(f"MCP server '{self.name}' notification: {msg['method']}")
+            return None
+        if msg.get("id") != req_id:
+            return None
+        if "error" in msg:
+            err = msg.get("error") or {}
+            raise MCPError(
+                f"{method} failed: {err.get('message', 'unknown error')} "
+                f"(code {err.get('code')})", err.get("code"))
+        return msg.get("result") or {}
+
+
 class MCPManager:
-    """Registry of MCPServerProcess instances keyed by configured server name.
+    """Registry of MCP server connections keyed by configured server name.
 
     Server configs come from the mcp_client plugin's MCP_SERVERS variable
     (JSON object). A config edit is picked up on the next call: the cached
@@ -300,7 +491,7 @@ class MCPManager:
     """
 
     def __init__(self):
-        self._servers: Dict[str, MCPServerProcess] = {}
+        self._servers: Dict[str, _MCPServer] = {}
         self._lock = threading.Lock()
 
     def _load_server_configs(self) -> Dict[str, dict]:
@@ -315,15 +506,31 @@ class MCPManager:
         if not isinstance(parsed, dict):
             raise MCPError(
                 "MCP_SERVERS must be a JSON object mapping server name to "
-                "{command, args, env, cwd, enabled}")
+                "{command, args, env, cwd, enabled} or {url, headers, enabled}")
 
         servers = {}
         for name, cfg in parsed.items():
             if not isinstance(cfg, dict):
                 raise MCPError(f"MCP server '{name}': config must be a JSON object")
+            url = cfg.get("url")
+            if url is not None:
+                if cfg.get("command") is not None:
+                    raise MCPError(
+                        f"MCP server '{name}': give either 'command' (stdio) or 'url' (HTTP), not both")
+                if not isinstance(url, str) or not url.strip().startswith(("http://", "https://")):
+                    raise MCPError(f"MCP server '{name}': 'url' must be an http(s) URL")
+                headers = cfg.get("headers") or {}
+                if not isinstance(headers, dict):
+                    raise MCPError(f"MCP server '{name}': 'headers' must be an object")
+                servers[str(name)] = {
+                    "url": url.strip(),
+                    "headers": {str(k): str(v) for k, v in headers.items()},
+                    "enabled": bool(cfg.get("enabled", True)),
+                }
+                continue
             command = cfg.get("command")
             if not isinstance(command, str) or not command.strip():
-                raise MCPError(f"MCP server '{name}': 'command' (string) is required")
+                raise MCPError(f"MCP server '{name}': 'command' (string) or 'url' is required")
             args = cfg.get("args") or []
             env = cfg.get("env") or {}
             if not isinstance(args, list) or not isinstance(env, dict):
@@ -359,7 +566,7 @@ class MCPManager:
     def server_names(self) -> List[str]:
         return sorted(n for n, c in self._load_server_configs().items() if c["enabled"])
 
-    def get(self, name: str) -> MCPServerProcess:
+    def get(self, name: str) -> _MCPServer:
         configs = self._load_server_configs()
         cfg = configs.get(name)
         if cfg is None or not cfg["enabled"]:
@@ -376,7 +583,8 @@ class MCPManager:
                 existing.stop()
                 existing = None
             if existing is None:
-                existing = MCPServerProcess(name, cfg)
+                cls = MCPHttpServer if "url" in cfg else MCPServerProcess
+                existing = cls(name, cfg)
                 self._servers[name] = existing
             return existing
 
