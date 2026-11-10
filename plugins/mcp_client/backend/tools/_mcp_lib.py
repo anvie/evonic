@@ -370,6 +370,10 @@ class MCPHttpServer(_MCPServer):
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            # urllib's default "Python-urllib" UA is rejected by Cloudflare (error 1010),
+            # so present as a regular browser. Config `headers` can still override.
+            "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
         }
         headers.update(self.config.get("headers") or {})
         if self._session_id:
