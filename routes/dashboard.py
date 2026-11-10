@@ -13,6 +13,7 @@ from backend.skills_manager import skills_manager
 
 from backend.setup import (run_setup, test_connection, PROVIDER_DEFAULTS,
                             LANGUAGE_PRESETS, DEFAULT_SUPER_AGENT_NAME,
+                            SUPER_AGENT_DEFAULT_CAPABILITIES,
                             check_docker_available)
 import config
 
@@ -108,6 +109,8 @@ def api_setup():
             'is_super': True,
             'workspace': config.BASE_DIR,
             'sandbox_enabled': 1 if sandbox_enabled else 0,
+            # Same first-boot capabilities as the wizard/CLI path.
+            **SUPER_AGENT_DEFAULT_CAPABILITIES,
         })
         _write_system_prompt(agent_id, system_prompt)
         db.set_setting('super_agent_id', agent_id)

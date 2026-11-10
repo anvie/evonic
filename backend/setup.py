@@ -25,6 +25,23 @@ from models.db import db
 DEFAULT_PLATFORM_TIMEZONE = "UTC"
 DEFAULT_SUPER_AGENT_NAME = "Super Agent"
 
+#: Capabilities every freshly created super agent starts with.
+#:
+#: The super agent is the platform's default operator, so media handling is
+#: on out of the box instead of being opt-in per agent:
+#:   * ``vision_enabled``      — can receive/analyse images
+#:   * ``audio_enabled``       — can receive/transcribe audio
+#:   * ``attachments_enabled`` — files sent through a channel are saved and
+#:                               readable by the agent (``read_attachment``)
+#:
+#: These are only *initial* values: the flags stay fully togglable per agent
+#: in the General tab after setup.
+SUPER_AGENT_DEFAULT_CAPABILITIES = {
+    "vision_enabled": 1,
+    "audio_enabled": 1,
+    "attachments_enabled": 1,
+}
+
 # ---------------------------------------------------------------------------
 # Provider defaults
 # ---------------------------------------------------------------------------
@@ -530,6 +547,9 @@ def run_setup(
                 "is_super": True,
                 "workspace": config.BASE_DIR,
                 "sandbox_enabled": 1 if sandbox_enabled else 0,
+                # Vision, audio and attachments are ON for the super agent
+                # from the very first boot (see the constant's docstring).
+                **SUPER_AGENT_DEFAULT_CAPABILITIES,
             }
         )
 
