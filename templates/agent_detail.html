@@ -2597,7 +2597,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                             oninput="chatInputChanged(this)"></textarea>
                         <div class="chat-composer-bar">
                             <input type="file" id="chat-file-input" class="hidden" multiple
-                                   accept="image/*,.pdf,.txt,.md,.log,.json,.jsonl,.ndjson,.yaml,.yml,.xml,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.rb,.php,.html,.css,.sql,.sh,.toml,.ini,.zip,.gz,.tgz,.bz2,.tbz2,.tar,.rar,.docx,.xlsx,.pptx,.odt,.ods,.odp,.rtf,.epub"
+                                   accept="image/*,.pdf,.txt,.md,.log,.json,.jsonl,.ndjson,.yaml,.yml,.xml,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.c,.cpp,.h,.rb,.php,.html,.css,.sql,.sh,.toml,.ini,.zip,.gz,.tgz,.bz2,.tbz2,.tar,.rar,.docx,.xlsx,.pptx,.odt,.ods,.odp,.rtf,.epub,.patch,.diff"
                                    onchange="onChatFileSelected(this)">
                             <button type="button" id="chat-bash-btn" class="chat-icon-btn" title="Bash mode — press Backspace on an empty input to exit" aria-label="Exit bash mode" onclick="if (window._chatBashPinned) setChatBashMode(true, false); else setChatBashMode(false); document.getElementById('chat-input').focus();">!</button>
                             {% if agent.attachments_enabled %}

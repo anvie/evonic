@@ -34,6 +34,12 @@ _TEXTISH_MIMES = {
     'application/javascript',
     'application/x-sh',
     'application/sql',
+    # Unified diff / patch payloads: browsers commonly send one of these, or no
+    # content type at all, when a ``.patch`` file is uploaded.
+    'text/x-patch',
+    'text/x-diff',
+    'application/x-patch',
+    'application/x-diff',
 }
 
 _TEXTISH_EXTS = {
@@ -43,6 +49,10 @@ _TEXTISH_EXTS = {
     '.c', '.cc', '.cpp', '.h', '.hpp', '.rb', '.php', '.kt', '.swift',
     '.html', '.htm', '.css', '.scss', '.sql', '.sh', '.toml', '.ini',
     '.cfg', '.conf', '.env',
+    # Patch formats (git am / git apply / `patch -p1` input). They are plain
+    # text, so they must be readable inline AND accepted by the upload
+    # allowlist, which is derived from this set (see routes/sessions.py).
+    '.patch', '.diff',
 }
 
 
