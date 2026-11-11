@@ -1194,7 +1194,9 @@ html.dark .kb3d-label { color: #e5e7eb; text-shadow: 0 0 3px #111827, 0 0 3px #1
 .kb3d-edge-label { color: #6b7280; opacity: .85; }
 html.dark .kb3d-edge-label { color: #9ca3af; }
 .kb3d-balloon { position: absolute; left: 0; top: 0; max-width: 260px; min-width: 160px; padding: 10px 12px; border-radius: 12px; cursor: pointer; pointer-events: auto;
-    background: #fff; color: #111827; border: 1px solid #e5e7eb; box-shadow: 0 8px 24px rgba(0,0,0,.18); will-change: transform; }
+    background: #fff; color: #111827; border: 1px solid #e5e7eb; box-shadow: 0 8px 24px rgba(0,0,0,.18); will-change: transform;
+    opacity: 0; visibility: hidden; transition: opacity .6s ease, visibility 0s linear .6s; }
+.kb3d-balloon.is-on { opacity: 1; visibility: visible; transition: opacity .15s ease, visibility 0s; }
 .kb3d-balloon::after { content: ''; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; margin-left: -5px; transform: rotate(45deg);
     background: inherit; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; }
 .kb3d-balloon:hover { border-color: #f97316; }
@@ -3189,7 +3191,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
 <script src="{{ url_for('static', filename='js/ask-user.js') }}?v=3" defer></script>
 <script type="importmap">{"imports": {"three": "{{ url_for('static', filename='js/vendor/three.module.min.js') }}"}}</script>
-<script type="module" src="{{ url_for('static', filename='js/kb-graph-3d.js') }}?v=2"></script>
+<script type="module" src="{{ url_for('static', filename='js/kb-graph-3d.js') }}?v=3"></script>
 <script>
 // AGENT_ID/ENABLE_AGENT_STATE are mutable: softSwitchAgent() retargets the page
 // to another agent without a full reload. _agentEpoch invalidates in-flight

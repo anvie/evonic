@@ -159,7 +159,6 @@ function createInstance(container, opts) {
 
     const balloon = document.createElement('div');
     balloon.className = 'kb3d-balloon';
-    balloon.style.display = 'none';
     balloon.innerHTML = '<div class="kb3d-balloon-title"></div><div class="kb3d-balloon-type"></div>'
         + '<div class="kb3d-balloon-desc"></div><div class="kb3d-balloon-hint">Click to open</div>';
     const balloonTitle = balloon.querySelector('.kb3d-balloon-title');
@@ -240,7 +239,7 @@ function createInstance(container, opts) {
         for (const s of sprites) s.visible = false;
         for (const p of labelPool.concat(edgeLabelPool)) { p.el.style.display = 'none'; p.i = -1; p.e = -1; }
         focusIdx = -1; tween = null; hadQuery = false;
-        balloon.style.display = 'none';
+        balloonOn(false);
         layoutReady = false;
     }
 
@@ -493,16 +492,30 @@ function createInstance(container, opts) {
         return { count };
     }
 
+    // ---- balloon visibility: shown while hovering the focused node (or the balloon), fades out slowly after ----
+    const HIDE_DELAY = 450;   // ms the pointer may stray (e.g. travel from the node up to the balloon) before it fades
+    let hideTimer = 0;
+    function balloonOn(on) {
+        clearTimeout(hideTimer);
+        hideTimer = 0;
+        balloon.classList.toggle('is-on', on);
+    }
+    function scheduleBalloonHide() {
+        if (hideTimer || !balloon.classList.contains('is-on')) return;
+        hideTimer = setTimeout(() => { hideTimer = 0; balloon.classList.remove('is-on'); }, HIDE_DELAY);
+    }
+    balloon.addEventListener('pointerenter', () => { if (focusIdx >= 0) balloonOn(true); });
+    balloon.addEventListener('pointerleave', scheduleBalloonHide);
+
     // ---- focus / balloon ----
     const descCache = new Map();
-    function showBalloon(i) {
+    function prepareBalloon(i) {
         const nd = nodes[i];
         balloonTitle.textContent = nd.title || nd.id;
         balloonType.textContent = nd.type || '';
         balloonType.style.display = nd.type ? '' : 'none';
         const cached = descCache.get(nd.id);
         balloonDesc.textContent = cached !== undefined ? cached : 'Loading…';
-        balloon.style.display = '';
         if (cached === undefined && opts.getDescription) {
             Promise.resolve(opts.getDescription(nd)).catch(() => '').then(text => {
                 text = text || '';
@@ -520,7 +533,7 @@ function createInstance(container, opts) {
         controls.enablePan = false;          // keep the focused node as the fixed pivot
         controls.zoomToCursor = false;
         recomputeFlags();
-        showBalloon(i);
+        prepareBalloon(i);
 
         const pa = pos();
         const p = new THREE.Vector3(pa[3 * i], pa[3 * i + 1], pa[3 * i + 2]);
@@ -537,7 +550,7 @@ function createInstance(container, opts) {
 
     function clearFocus() {
         focusIdx = -1;
-        balloon.style.display = 'none';
+        balloonOn(false);
         controls.autoRotate = true;
         controls.enablePan = true;
         controls.zoomToCursor = true;
@@ -600,20 +613,30 @@ function createInstance(container, opts) {
         if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= 4 || performance.now() - d.t > 600) return;
         const r = canvas.getBoundingClientRect();
         const hit = pick(e.clientX - r.left, e.clientY - r.top);
-        if (hit >= 0) focus(hit); else unfocus();
+        if (hit >= 0) {
+            focus(hit);
+            balloonOn(true);
+            hoverXY = { x: e.clientX, y: e.clientY };
+            hoverDirty = true;
+        } else {
+            unfocus();
+        }
     });
     canvas.addEventListener('pointermove', e => {
         if (down) return;
         hoverXY = { x: e.clientX, y: e.clientY };
         hoverDirty = true;
     });
-    canvas.addEventListener('pointerleave', () => { hoverXY = null; hoverDirty = false; hideTooltip(); canvas.style.cursor = ''; });
+    canvas.addEventListener('pointerleave', () => { hoverXY = null; hoverDirty = false; hideTooltip(); canvas.style.cursor = ''; scheduleBalloonHide(); });
 
     function doHover() {
-        if (!hoverXY || !tooltip) return;
+        if (!hoverXY) return;
         const r = canvas.getBoundingClientRect();
         const hit = pick(hoverXY.x - r.left, hoverXY.y - r.top);
         canvas.style.cursor = hit >= 0 ? 'pointer' : '';
+        if (hit >= 0 && hit === focusIdx) { hideTooltip(); balloonOn(true); return; }   // the balloon replaces the tooltip
+        scheduleBalloonHide();
+        if (!tooltip) return;
         if (hit < 0) { hideTooltip(); return; }
         if (hit !== hoverIdx) {
             const nd = nodes[hit];
@@ -791,14 +814,14 @@ function createInstance(container, opts) {
             ep.el.style.display = '';
             ep.el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px) translate(-50%,-50%)';
         }
-        if (focusIdx >= 0 && balloon.style.display !== 'none') {
+        if (focusIdx >= 0) {
             const i = focusIdx;
             const p = project(pa[3 * i], pa[3 * i + 1], pa[3 * i + 2]);
-            if (!p) { balloon.style.visibility = 'hidden'; return; }
+            if (!p) { balloon.style.display = 'none'; return; }
             const half = (balloon.offsetWidth || 260) / 2 + 8;
             const x = Math.min(Math.max(p.x, half), Math.max(half, W - half));
             const y = Math.max(p.y - 18, balloon.offsetHeight + 8);
-            balloon.style.visibility = '';
+            balloon.style.display = '';
             balloon.style.transform = 'translate(' + Math.round(x) + 'px,' + Math.round(y) + 'px) translate(-50%,-100%)';
         }
     }
