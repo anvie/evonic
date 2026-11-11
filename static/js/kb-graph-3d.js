@@ -21,7 +21,7 @@ const EDGE_LABEL_POOL = 20;
 const THUMB_POOL = 64;
 const THUMB_CACHE_MAX = 400;
 const EDGE_WIDTH = 1.6;       // css px
-const POLAR = 1.35;           // fixed camera elevation (rad from the Y axis): rotation is horizontal only
+const POLAR = 1.35;           // initial camera elevation (rad from the Y axis)
 
 const NODE_VERT = `
 attribute vec3 aColor;
@@ -48,6 +48,8 @@ void main() {
     float px = aSize * uSizeScale * uPixelScale / max(dist, 0.001);
     gl_PointSize = clamp(px, 2.5, 90.0);
     gl_Position = projectionMatrix * mv;
+    // dimmed nodes sit at the back of the depth range so they never hide highlighted ones
+    if (aFlag > 0.5 && aFlag < 1.5) gl_Position.z = gl_Position.w * 0.9999;
 }`;
 
 const NODE_FRAG = `
@@ -64,7 +66,9 @@ void main() {
     vec3 col = r > 1.0 - ringW ? border : vColor;
     if (hl && r > 1.0 - ringW) col = vec3(0.976, 0.451, 0.086);
     float a = (vFlag > 0.5 && vFlag < 1.5) ? 0.15 : 1.0;
-    gl_FragColor = vec4(col, a * smoothstep(1.0, 0.85, r));
+    float alpha = a * smoothstep(1.0, 0.85, r);
+    if (alpha < 0.02) discard;   // keep transparent pixels out of the depth buffer
+    gl_FragColor = vec4(col, alpha);
 }`;
 
 // Edges are instanced screen-space quads (WebGL lines are stuck at 1px): one quad per edge, offset sideways by a
@@ -168,14 +172,13 @@ function createInstance(container, opts) {
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 1e5);
-    camera.position.set(0, 0, 300);
+    camera.position.set(0, 300 * Math.cos(POLAR), 300 * Math.sin(POLAR));
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.zoomToCursor = true;
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.6;
-    controls.minPolarAngle = controls.maxPolarAngle = POLAR;   // no vertical orbiting
 
     // ---- graph state ----
     let nodes = [], links = [];
@@ -296,7 +299,7 @@ function createInstance(container, opts) {
         nodeGeo.setAttribute('aImp', new THREE.BufferAttribute(imp, 1));
         nodeGeo.setAttribute('aFlag', new THREE.BufferAttribute(flags, 1));
         nodeMat = new THREE.ShaderMaterial({
-            vertexShader: NODE_VERT, fragmentShader: NODE_FRAG, transparent: true, depthTest: false, depthWrite: false,
+            vertexShader: NODE_VERT, fragmentShader: NODE_FRAG, transparent: true, depthTest: true, depthWrite: true,
             uniforms: {
                 uPixelScale: pixelScaleUniform, uSizeScale: sizeScaleUniform,
                 uLodNear: lodNearUniform, uLodScale: lodScaleUniform,
@@ -389,11 +392,10 @@ function createInstance(container, opts) {
         controls.maxDistance = R * 10;
     }
 
-    // Unit offset (target -> camera) with the locked elevation, keeping the camera's current azimuth.
+    // Unit offset (target -> camera): keeps whatever angle the user is currently viewing from.
     function viewDir(camPos, target) {
-        const ox = camPos.x - target.x, oz = camPos.z - target.z;
-        const az = (ox || oz) ? Math.atan2(ox, oz) : 0.4;
-        return new THREE.Vector3(Math.sin(POLAR) * Math.sin(az), Math.cos(POLAR), Math.sin(POLAR) * Math.cos(az));
+        const d = camPos.clone().sub(target);
+        return d.lengthSq() < 1e-6 ? new THREE.Vector3(0.3, 0.4, 1).normalize() : d.normalize();
     }
 
     function fitCamera() {
@@ -666,7 +668,7 @@ function createInstance(container, opts) {
     // ---- thumbnails (sprite pool) ----
     const sprites = [];
     for (let k = 0; k < THUMB_POOL; k++) {
-        const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false }));
+        const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, alphaTest: 0.5 }));
         s.visible = false;
         s.renderOrder = 3;
         scene.add(s);
@@ -723,7 +725,11 @@ function createInstance(container, opts) {
             const s = sprites[k], c = cand[k];
             if (!c) { s.visible = false; s.userData.i = -1; continue; }
             const i = c[1], nd = nodes[i];
-            s.position.set(pa[3 * i], pa[3 * i + 1], pa[3 * i + 2]);
+            // nudge toward the camera so the sprite wins the depth test against its own node's point
+            const nudge = 0.004;
+            const cp = camera.position;
+            s.position.set(pa[3 * i] + (cp.x - pa[3 * i]) * nudge, pa[3 * i + 1] + (cp.y - pa[3 * i + 1]) * nudge,
+                           pa[3 * i + 2] + (cp.z - pa[3 * i + 2]) * nudge);
             const d = sizes[i] * sizeScaleUniform.value;
             s.scale.set(d, d, 1);
             if (s.userData.url !== nd.thumbnail) {
