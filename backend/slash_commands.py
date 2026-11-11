@@ -112,8 +112,48 @@ class _CommandSuppressed:
 
 
 # Returned by execute_command() when a command is deliberately ignored
-# (currently: `/help` when the agent's `help_enabled` setting is off).
+# (`disabled_slash_commands` match, or `/help` when the agent's
+# `help_enabled` setting is off).
 COMMAND_SUPPRESSED = _CommandSuppressed()
+
+
+def _command_disabled_for_agent(cmd_name: str, agent_id: str) -> bool:
+    """Return whether the agent's `disabled_slash_commands` blocks `cmd_name`.
+
+    Super agents are exempt. Semantics mirror `list_available_commands()`:
+    `*` disables every command, a comma list disables the named commands, and a
+    leading `!` is inverse mode (everything except the named commands).
+    Never raises: on lookup failure the command is treated as enabled.
+    """
+    try:
+        from models.db import db
+
+        agent = db.get_agent(agent_id)
+        if not agent:
+            return False
+        is_super = agent.get('is_super')
+        if is_super is None:
+            # Defense in depth for callers that pass a partial row: fall back to
+            # whichever agent the DB marks as super.
+            super_agent = db.get_super_agent()
+            is_super = bool(super_agent and super_agent.get('id') == agent_id)
+        if is_super:
+            return False
+
+        disabled_raw = agent.get('disabled_slash_commands') or ''
+        if not disabled_raw.strip():
+            return False
+
+        all_names = {c.name for c in command_registry.list_commands()}
+        all_names |= {c.name for c in command_registry.provided_commands(agent_id)}
+        all_names.add(cmd_name)
+        return cmd_name in _expand_slash_list(disabled_raw, all_names)
+    except Exception:
+        _logger.warning(
+            "Failed to evaluate disabled_slash_commands for agent %s; "
+            "treating /%s as enabled", agent_id, cmd_name, exc_info=True,
+        )
+        return False
 
 
 def _help_command_enabled(agent_id: str) -> bool:
@@ -239,15 +279,20 @@ def execute_command(
     Returns the command response string, or None if the command is not found
     (caller should then treat the message as normal chat). Returns
     COMMAND_SUPPRESSED when the command is recognized but disabled for this
-    agent (e.g. `/help` with `help_enabled` off) — callers must then ignore
-    the message entirely: no reply, no LLM fallthrough.
+    agent — either listed in the agent's `disabled_slash_commands` setting, or
+    `/help` with `help_enabled` off. Callers must then ignore the message
+    entirely: no reply, no LLM fallthrough.
     """
-    if cmd_name == 'help' and not _help_command_enabled(agent_id):
-        return COMMAND_SUPPRESSED
-
     cmd = command_registry.resolve(cmd_name, agent_id)
     if not cmd:
         return None  # Unknown command — fall through to normal LLM processing
+
+    # Per-agent `disabled_slash_commands` blocks execution, not just listing.
+    if _command_disabled_for_agent(cmd_name, agent_id):
+        return COMMAND_SUPPRESSED
+
+    if cmd_name == 'help' and not _help_command_enabled(agent_id):
+        return COMMAND_SUPPRESSED
 
     return cmd.handler(session_id, agent_id, external_user_id, channel_id, args)
 
