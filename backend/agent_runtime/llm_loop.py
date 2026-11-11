@@ -1874,8 +1874,10 @@ def run_tool_loop(agent: Dict[str, Any],
                         result = _fallback_result
                         _request = _fallback_request
                         _fallback_succeeded = True
-                        if not _using_global_fallback and not _session_model_override:
-                            # Persist per-agent fallback model ID to agent_state.
+                        if not _session_model_override:
+                            # Persist the fallback model ID to agent_state (per-agent and global-default
+                            # fallbacks alike) so Agent State, /model and /state report the model in use.
+                            # The next turn probes the primary and clears this once it recovers.
                             try:
                                 _as_raw = db.get_agent_state(agent_id)
                                 _as = json.loads(_as_raw) if _as_raw else {}
