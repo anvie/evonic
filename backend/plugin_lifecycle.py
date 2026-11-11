@@ -18,6 +18,7 @@ import types
 import zipfile
 import tempfile
 import importlib.util
+from importlib.machinery import BYTECODE_SUFFIXES, EXTENSION_SUFFIXES
 import inspect
 import traceback
 from collections import deque
@@ -41,6 +42,37 @@ PLUGINS_DIR = os.path.join(BASE_DIR, 'plugins')
 # Plugins that became core features. A leftover copy in plugins/ is ignored and
 # cannot be reinstalled, so it never registers a second copy of the feature.
 RETIRED_PLUGIN_IDS = frozenset({'ask_user'})
+
+# Suffixes a plugin module may be distributed as, highest precedence first.
+# Source wins over bytecode, bytecode over native code: development, hot reload
+# and __pycache__ invalidation keep behaving exactly as they do today, and a
+# compiled artifact is only used when no source ships alongside it.
+_CODED_SUFFIXES = ('.py',) + tuple(BYTECODE_SUFFIXES) + tuple(EXTENSION_SUFFIXES)
+
+
+def _resolve_module_file(base_dir: str, stem: str) -> Optional[str]:
+    """Return the file implementing <stem> inside base_dir, or None.
+
+    Accepts every distribution shape a plugin may ship:
+        handler.py                               plain source
+        handler.pyc                              sourceless bytecode
+        handler.cpython-311-x86_64-linux-gnu.so  native extension (Cython/Nuitka/C)
+    A bare <stem>.so matches too, since ".so" is part of EXTENSION_SUFFIXES.
+    The result is handed to importlib.util.spec_from_file_location, which already
+    knows how to load all three forms.
+    """
+    if not base_dir:
+        return None
+    for suffix in _CODED_SUFFIXES:
+        candidate = os.path.join(base_dir, f'{stem}{suffix}')
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _is_compiled_module(path: Optional[str]) -> bool:
+    """True when path points at a compiled artifact instead of plain source."""
+    return bool(path) and not path.endswith('.py')
 
 # Supported events
 VALID_EVENTS = {
@@ -113,7 +145,7 @@ class PluginManager:
     def _load_plugin(self, plugin_id: str, manifest: dict = None):
         """Load a plugin's handler.py and register its event handlers."""
         plugin_dir = os.path.join(PLUGINS_DIR, plugin_id)
-        handler_path = os.path.join(plugin_dir, 'handler.py')
+        handler_path = _resolve_module_file(plugin_dir, 'handler')
 
         # Register the plugin directory as a package so relative imports work
         pkg_name = f'plugin_pkg_{plugin_id}_{id(self)}'
@@ -138,7 +170,7 @@ class PluginManager:
 
         module = None
 
-        if os.path.isfile(handler_path):
+        if handler_path:
             try:
                 # Load handler.py as a submodule of that package
                 module_name = f'{pkg_name}.handler'
@@ -190,8 +222,8 @@ class PluginManager:
         route_module = module
 
         if route_module is None or not hasattr(route_module, 'create_blueprint') or not callable(route_module.create_blueprint):
-            routes_path = os.path.join(plugin_dir, 'routes.py')
-            if os.path.isfile(routes_path):
+            routes_path = _resolve_module_file(plugin_dir, 'routes')
+            if routes_path:
                 try:
                     routes_module_name = f'{pkg_name}.routes'
                     routes_spec = importlib.util.spec_from_file_location(routes_module_name, routes_path)
@@ -241,17 +273,30 @@ class PluginManager:
             return
 
         try:
-            parameters = inspect.signature(hook).parameters.values()
-            accepts_sdk = any(
-                p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                           inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                           inspect.Parameter.VAR_POSITIONAL)
-                for p in parameters
-            )
+            arity_known = True
+            try:
+                parameters = inspect.signature(hook).parameters.values()
+                accepts_sdk = any(
+                    p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                               inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                               inspect.Parameter.VAR_POSITIONAL)
+                    for p in parameters
+                )
+            except (ValueError, TypeError):
+                # Compiled hooks (Cython/Nuitka/plain C extension) may expose no
+                # introspectable signature at all. Assume the modern form, then
+                # let the TypeError fallback below demote to the legacy one.
+                accepts_sdk = True
+                arity_known = False
             if accepts_sdk:
                 sdk = PluginSDK(plugin_id, self.get_plugin_config(plugin_id), {},
                                 log_callback=self.add_log)
-                hook(sdk)
+                try:
+                    hook(sdk)
+                except TypeError:
+                    if arity_known:
+                        raise
+                    hook()
             else:
                 hook()
             self.add_log(plugin_id, 'info', f"Lifecycle hook completed: {hook_name}")
@@ -344,6 +389,17 @@ class PluginManager:
         
         # The database is the authority on whether a plugin is on (as at startup); the "enabled" flag in plugin.json
         # is only a default and can be stale, which used to leave a plugin unloaded after a settings save.
+        # A compiled handler cannot be swapped inside a live process: dlopen never
+        # unloads, so a replaced .so keeps running the old code. Say so instead of
+        # silently pretending the reload took effect.
+        compiled_handler = _resolve_module_file(plugin_dir, 'handler')
+        if _is_compiled_module(compiled_handler):
+            kind = 'bytecode (.pyc)' if compiled_handler.endswith('.pyc') else 'native (.so)'
+            message = (f'Handler shipped as {kind}; a replacement needs an Evonic '
+                       f'restart before it takes effect')
+            self.add_log(plugin_id, 'warn', message)
+            _logger.warning('%s: %s', plugin_id, message)
+
         manifest = self._read_manifest(plugin_id)
         if manifest and self._is_plugin_enabled(plugin_id):
             self._load_plugin(plugin_id, manifest=manifest)
@@ -567,8 +623,9 @@ class PluginManager:
             if not plugin.get('enabled'):
                 continue
             plugin_dir = plugin.get('_dir', os.path.join(PLUGINS_DIR, pid))
-            tool_path = os.path.join(plugin_dir, 'backend', 'tools', f'{tool_name}.py')
-            if os.path.isfile(tool_path):
+            tool_path = _resolve_module_file(
+                os.path.join(plugin_dir, 'backend', 'tools'), tool_name)
+            if tool_path:
                 return tool_path, pid
         return None, None
 
