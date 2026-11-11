@@ -13,14 +13,15 @@ import * as THREE from 'three';
 import { OrbitControls } from './vendor/OrbitControls.js';
 
 const FOV = 55;
-const WORKER_URL = 'kb-graph-layout-worker.js?v=1';
+const WORKER_URL = 'kb-graph-layout-worker.js?v=2';
 const LOD_MIN_NODES = 1500;      // below this the whole graph is always drawn
 const LOD_SCALE = 0.8;           // importance needed per octave of distance beyond lodNear
 const LABEL_POOL = 60;
 const EDGE_LABEL_POOL = 20;
 const THUMB_POOL = 64;
 const THUMB_CACHE_MAX = 400;
-const HIGHLIGHT = 0xf97316;
+const EDGE_WIDTH = 1.6;       // css px
+const POLAR = 1.35;           // fixed camera elevation (rad from the Y axis): rotation is horizontal only
 
 const NODE_VERT = `
 attribute vec3 aColor;
@@ -66,32 +67,62 @@ void main() {
     gl_FragColor = vec4(col, a * smoothstep(1.0, 0.85, r));
 }`;
 
+// Edges are instanced screen-space quads (WebGL lines are stuck at 1px): one quad per edge, offset sideways by a
+// fixed pixel width, trimmed against the near plane.
 const EDGE_VERT = `
+attribute vec3 aStart;
+attribute vec3 aEnd;
 attribute float aImp;
 attribute float aFlag;
+uniform vec2 uResolution;
+uniform float uWidth;
+uniform float uNear;
 uniform float uLodNear;
 uniform float uLodScale;
-varying float vShow;
+varying float vDist;
+varying float vHalf;
 varying float vFlag;
 void main() {
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    float dist = length(mv.xyz);
+    vec4 ms = modelViewMatrix * vec4(aStart, 1.0);
+    vec4 me = modelViewMatrix * vec4(aEnd, 1.0);
+    float dist = length((ms.xyz + me.xyz) * 0.5);
     float need = uLodScale * max(0.0, log2(dist / uLodNear));
+    float nearZ = -uNear;
+    bool hidden = (aImp < need && aFlag < 1.5) || (ms.z > nearZ && me.z > nearZ);
+    if (hidden) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        vDist = 0.0; vHalf = 0.0; vFlag = 0.0;
+        return;
+    }
+    if (ms.z > nearZ) ms = mix(ms, me, (nearZ - ms.z) / (me.z - ms.z));
+    else if (me.z > nearZ) me = mix(me, ms, (nearZ - me.z) / (ms.z - me.z));
+    vec4 cs = projectionMatrix * ms;
+    vec4 ce = projectionMatrix * me;
+    vec2 d = (ce.xy / ce.w - cs.xy / cs.w) * uResolution * 0.5;
+    float len = length(d);
+    vec2 dir = len > 0.0001 ? d / len : vec2(1.0, 0.0);
+    vec2 nrm = vec2(-dir.y, dir.x);
+    float w = aFlag > 1.5 ? uWidth * 1.8 : (aFlag > 0.5 ? uWidth * 0.6 : uWidth);
+    float halfW = w * 0.5 + 1.0;   // +1px so the edge can be anti-aliased
+    vec4 clip = position.x < 0.5 ? cs : ce;
+    clip.xy += nrm * position.y * halfW / (uResolution * 0.5) * clip.w;
+    vDist = position.y * halfW;
+    vHalf = w * 0.5;
     vFlag = aFlag;
-    vShow = (aImp < need && aFlag < 1.5) ? 0.0 : 1.0;
-    gl_Position = projectionMatrix * mv;
+    gl_Position = clip;
 }`;
 
 const EDGE_FRAG = `
 uniform vec3 uColor;
 uniform float uBase;
-varying float vShow;
+varying float vDist;
+varying float vHalf;
 varying float vFlag;
 void main() {
-    if (vShow < 0.5) discard;
-    float a = vFlag > 1.5 ? 0.85 : (vFlag > 0.5 ? 0.04 : uBase);
+    float cov = clamp(vHalf + 0.5 - abs(vDist), 0.0, 1.0);
+    float a = vFlag > 1.5 ? 0.9 : (vFlag > 0.5 ? 0.05 : uBase);
     vec3 c = vFlag > 1.5 ? vec3(0.976, 0.451, 0.086) : uColor;
-    gl_FragColor = vec4(c, a);
+    gl_FragColor = vec4(c, a * cov);
 }`;
 
 let G = null;   // the single active instance
@@ -145,6 +176,7 @@ function createInstance(container, opts) {
     controls.zoomToCursor = true;
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.6;
+    controls.minPolarAngle = controls.maxPolarAngle = POLAR;   // no vertical orbiting
 
     // ---- graph state ----
     let nodes = [], links = [];
@@ -170,6 +202,9 @@ function createInstance(container, opts) {
     const sizeScaleUniform = { value: 1 };
     const lodNearUniform = { value: 100 };
     const lodScaleUniform = { value: 0 };
+    const resolutionUniform = { value: new THREE.Vector2(1, 1) };   // drawing buffer, device px
+    const widthUniform = { value: EDGE_WIDTH * pr };                // device px
+    const nearUniform = { value: camera.near };
     let W = 0, H = 0, pixelScaleCss = 1;
 
     controls.addEventListener('start', () => { userInteracted = true; tween = null; });
@@ -273,20 +308,27 @@ function createInstance(container, opts) {
         points.renderOrder = 2;
         points.visible = false;
 
-        const edgeImp = new Float32Array(m * 2);
-        for (let e = 0; e < m; e++) edgeImp[2 * e] = edgeImp[2 * e + 1] = Math.min(imp[linkS[e]], imp[linkT[e]]);
-        edgeGeo = new THREE.BufferGeometry();
-        edgeGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(m * 6), 3));
-        edgeGeo.setAttribute('aImp', new THREE.BufferAttribute(edgeImp, 1));
-        edgeGeo.setAttribute('aFlag', new THREE.BufferAttribute(new Float32Array(m * 2), 1));
+        const edgeImp = new Float32Array(m);
+        for (let e = 0; e < m; e++) edgeImp[e] = Math.min(imp[linkS[e]], imp[linkT[e]]);
+        edgeGeo = new THREE.InstancedBufferGeometry();
+        // quad corners: x = which end (0 start / 1 end), y = side (-1 / +1)
+        edgeGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, -1, 0, 0, 1, 0, 1, -1, 0, 1, 1, 0]), 3));
+        edgeGeo.setIndex([0, 2, 1, 1, 2, 3]);
+        edgeGeo.instanceCount = m;
+        edgeGeo.setAttribute('aStart', new THREE.InstancedBufferAttribute(new Float32Array(m * 3), 3));
+        edgeGeo.setAttribute('aEnd', new THREE.InstancedBufferAttribute(new Float32Array(m * 3), 3));
+        edgeGeo.setAttribute('aImp', new THREE.InstancedBufferAttribute(edgeImp, 1));
+        edgeGeo.setAttribute('aFlag', new THREE.InstancedBufferAttribute(new Float32Array(m), 1));
         edgeMat = new THREE.ShaderMaterial({
             vertexShader: EDGE_VERT, fragmentShader: EDGE_FRAG, transparent: true, depthTest: false, depthWrite: false,
+            side: THREE.DoubleSide,
             uniforms: {
+                uResolution: resolutionUniform, uWidth: widthUniform, uNear: nearUniform,
                 uLodNear: lodNearUniform, uLodScale: lodScaleUniform,
-                uColor: { value: new THREE.Color() }, uBase: { value: 0.35 },
+                uColor: { value: new THREE.Color() }, uBase: { value: 0.5 },
             },
         });
-        lines = new THREE.LineSegments(edgeGeo, edgeMat);
+        lines = new THREE.Mesh(edgeGeo, edgeMat);
         lines.frustumCulled = false;
         lines.renderOrder = 1;
         lines.visible = false;
@@ -310,13 +352,14 @@ function createInstance(container, opts) {
         pa.set(positions);
         nodeGeo.attributes.position.needsUpdate = true;
 
-        const ea = edgeGeo.attributes.position.array;
+        const es = edgeGeo.attributes.aStart.array, ee = edgeGeo.attributes.aEnd.array;
         for (let e = 0; e < m; e++) {
-            const s = linkS[e] * 3, t = linkT[e] * 3, o = e * 6;
-            ea[o] = pa[s]; ea[o + 1] = pa[s + 1]; ea[o + 2] = pa[s + 2];
-            ea[o + 3] = pa[t]; ea[o + 4] = pa[t + 1]; ea[o + 5] = pa[t + 2];
+            const s = linkS[e] * 3, t = linkT[e] * 3, o = e * 3;
+            es[o] = pa[s]; es[o + 1] = pa[s + 1]; es[o + 2] = pa[s + 2];
+            ee[o] = pa[t]; ee[o + 1] = pa[t + 1]; ee[o + 2] = pa[t + 2];
         }
-        edgeGeo.attributes.position.needsUpdate = true;
+        edgeGeo.attributes.aStart.needsUpdate = true;
+        edgeGeo.attributes.aEnd.needsUpdate = true;
 
         if (!layoutReady) { points.visible = true; lines.visible = true; layoutReady = true; }
         if (!userInteracted) fitCamera();
@@ -340,17 +383,23 @@ function createInstance(container, opts) {
         sizeScaleUniform.value = R / 120;
         lodNearUniform.value = R * 0.35;
         camera.near = R * 0.005;
+        nearUniform.value = camera.near;
         camera.far = R * 60;
         camera.updateProjectionMatrix();
         controls.minDistance = R * 0.01;
         controls.maxDistance = R * 10;
     }
 
+    // Unit offset (target -> camera) with the locked elevation, keeping the camera's current azimuth.
+    function viewDir(camPos, target) {
+        const ox = camPos.x - target.x, oz = camPos.z - target.z;
+        const az = (ox || oz) ? Math.atan2(ox, oz) : 0.4;
+        return new THREE.Vector3(Math.sin(POLAR) * Math.sin(az), Math.cos(POLAR), Math.sin(POLAR) * Math.cos(az));
+    }
+
     function fitCamera() {
         updateScale();
-        const dir = camera.position.clone().sub(controls.target);
-        if (dir.lengthSq() < 1e-6) dir.set(0.3, 0.4, 1);
-        dir.normalize();
+        const dir = viewDir(camera.position, controls.target);
         controls.target.copy(center);
         camera.position.copy(center).addScaledVector(dir, R * 2.2);
         controls.update();
@@ -363,8 +412,8 @@ function createInstance(container, opts) {
         if (!force && dark === isDark) return;
         isDark = dark;
         if (!edgeMat) return;
-        edgeMat.uniforms.uColor.value.set(dark ? '#6b7280' : '#9ca3af');
-        edgeMat.uniforms.uBase.value = dark ? 0.45 : 0.35;
+        edgeMat.uniforms.uColor.value.set(dark ? '#b6c4d8' : '#6b7280');
+        edgeMat.uniforms.uBase.value = dark ? 0.55 : 0.5;
     }
 
     // ---- flags (filters + focus) ----
@@ -386,7 +435,7 @@ function createInstance(container, opts) {
             let f;
             if (focusIdx >= 0) f = (linkS[e] === focusIdx || linkT[e] === focusIdx) ? 2 : 1;
             else f = (flags[linkS[e]] === 1 && flags[linkT[e]] === 1) ? 1 : 0;
-            ef[2 * e] = ef[2 * e + 1] = f;
+            ef[e] = f;
         }
         nodeGeo.attributes.aFlag.needsUpdate = true;
         edgeGeo.attributes.aFlag.needsUpdate = true;
@@ -468,6 +517,8 @@ function createInstance(container, opts) {
         focusIdx = i;
         userInteracted = true;
         controls.autoRotate = false;
+        controls.enablePan = false;          // keep the focused node as the fixed pivot
+        controls.zoomToCursor = false;
         recomputeFlags();
         showBalloon(i);
 
@@ -477,7 +528,7 @@ function createInstance(container, opts) {
         const c1 = camera.position.clone(), t1 = controls.target.clone();
         let c2;
         if (c1.distanceTo(p) > closeDist * 1.6) {
-            c2 = c1.clone().sub(p).normalize().multiplyScalar(closeDist).add(p);
+            c2 = viewDir(c1, t1).multiplyScalar(closeDist).add(p);
         } else {
             c2 = c1.clone().add(p).sub(t1);   // already close: just recenter
         }
@@ -488,12 +539,25 @@ function createInstance(container, opts) {
         focusIdx = -1;
         balloon.style.display = 'none';
         controls.autoRotate = true;
+        controls.enablePan = true;
+        controls.zoomToCursor = true;
         recomputeFlags();
     }
 
     function unfocus() {
         if (focusIdx < 0) { recomputeFlags(); return; }
         clearFocus();
+    }
+
+    // Reset the view so the whole graph is visible (also drops the focus).
+    function fit() {
+        if (!layoutReady) return;
+        clearFocus();
+        updateScale();
+        userInteracted = true;
+        const c1 = camera.position.clone(), t1 = controls.target.clone();
+        const c2 = viewDir(c1, t1).multiplyScalar(R * 2.2).add(center);
+        tween = { t0: performance.now(), dur: 800, t1, t2: center.clone(), c1, c2 };
     }
 
     balloon.addEventListener('click', () => {
@@ -749,6 +813,7 @@ function createInstance(container, opts) {
         camera.updateProjectionMatrix();
         pixelScaleCss = H / (2 * Math.tan(THREE.MathUtils.degToRad(FOV) / 2));
         pixelScaleUniform.value = pixelScaleCss * pr;
+        renderer.getDrawingBufferSize(resolutionUniform.value);
     }
     const ro = new ResizeObserver(resize);
     ro.observe(container);
@@ -797,7 +862,7 @@ function createInstance(container, opts) {
     }
 
     return {
-        container, canvas, setData, applyFilters, focus, unfocus, dispose,
+        container, canvas, setData, applyFilters, focus, unfocus, fit, dispose,
         indexOf: id => (idToIndex.has(id) ? idToIndex.get(id) : -1),
     };
 }
@@ -821,6 +886,7 @@ window.KBGraph3D = {
     applyFilters: f => (G ? G.applyFilters(f) : { count: 0 }),
     focus: i => G && G.focus(i),
     unfocus: () => G && G.unfocus(),
+    fit: () => G && G.fit(),
     indexOf: id => (G ? G.indexOf(id) : -1),
     dispose() { if (G) { G.dispose(); G = null; } },
 };

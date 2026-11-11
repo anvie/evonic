@@ -26,8 +26,8 @@ self.onmessage = (e) => {
 
     // Charge range and link length grow with the graph so big KBs spread out instead of collapsing into a ball.
     const spread = Math.max(1, Math.cbrt(n / 500));
-    const sim = d3.forceSimulation(nodes)
-        .numDimensions(3)
+    // The dimension count must be passed here: calling .numDimensions(3) afterwards leaves node.z unset (flat layout).
+    const sim = d3.forceSimulation(nodes, 3)
         .force('link', d3.forceLink(edges).distance(30 * spread).strength(0.3))
         .force('charge', d3.forceManyBody().strength(-40 * spread).theta(0.9).distanceMax(400 * spread))
         .force('center', d3.forceCenter(0, 0, 0))

@@ -2106,6 +2106,10 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     New
                 </button>
+                <button onclick="window.KBGraph3D && KBGraph3D.fit()" id="kb-graph-fit" title="Fit all nodes in view" class="bg-white/80 dark:bg-gray-800 backdrop-blur-sm hover:bg-white dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 px-3 py-2 rounded-lg text-sm shadow-lg border border-gray-200 dark:border-gray-600 transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/></svg>
+                    Fit
+                </button>
                 <button onclick="toggleKBGraphView()" id="kb-graph-toggle" class="bg-white/80 dark:bg-gray-800 backdrop-blur-sm hover:bg-white dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 px-3 py-2 rounded-lg text-sm shadow-lg border border-gray-200 dark:border-gray-600 transition-colors flex items-center gap-1.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
                     List
@@ -3185,7 +3189,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
 <script src="{{ url_for('static', filename='js/ask-user.js') }}?v=3" defer></script>
 <script type="importmap">{"imports": {"three": "{{ url_for('static', filename='js/vendor/three.module.min.js') }}"}}</script>
-<script type="module" src="{{ url_for('static', filename='js/kb-graph-3d.js') }}?v=1"></script>
+<script type="module" src="{{ url_for('static', filename='js/kb-graph-3d.js') }}?v=2"></script>
 <script>
 // AGENT_ID/ENABLE_AGENT_STATE are mutable: softSwitchAgent() retargets the page
 // to another agent without a full reload. _agentEpoch invalidates in-flight
