@@ -675,8 +675,8 @@ html.dark .adv-head:hover .adv-arrow { color: #e2e8f0; }
 #agent-tab-area .tab-content > .rounded-lg,
 #agent-tab-area .tab-content > .grid > .rounded-lg,
 #tab-general div.rounded-lg.border,        /* Settings: left card, Advanced Settings, Variables, Plugin settings */
-#kb-graph-svg { border-radius: 1.5rem; }
-#kb-graph-svg > svg { display: block; width: 100%; height: 100%; }
+#kb-graph-svg { border-radius: 1.5rem; overflow: hidden; }
+#kb-graph-svg > canvas { display: block; width: 100%; height: 100%; }
 /* The custom ✕ button replaces the browser's native search-cancel control (prevents a duplicate ✕) */
 #kb-graph-search::-webkit-search-cancel-button,
 #kb-graph-search::-webkit-search-decoration,
@@ -1186,20 +1186,26 @@ html.dark #system-prompt-modal .bg-gray-900 { background: #111827; }
 html.dark #system-prompt-modal .hover\:bg-gray-200:hover { background: #4b5563; }
 html.dark #system-prompt-modal .hover\:bg-gray-600:hover { background: #4b5563; }
 html.dark #system-prompt-modal .hover\:text-gray-600:hover { color: #d1d5db; }
-/* KB Graph search highlight transitions */
-#kb-graph-svg circle { transition: opacity 0.3s, r 0.15s; }
-#kb-graph-svg text   { transition: opacity 0.3s; }
-#kb-graph-svg image  { transition: opacity 0.3s; }
-#kb-graph-svg line   { transition: opacity 0.3s; }
-.kb-node-dimmed circle { opacity: 0.15 !important; }
-.kb-node-dimmed image  { opacity: 0.15 !important; }
-.kb-node-dimmed text   { opacity: 0.1 !important; }
-.kb-link-dimmed        { opacity: 0.05 !important; }
-@keyframes kb-pulse-border {
-  0%, 100% { stroke-opacity: 1; stroke-width: 3; }
-  50%      { stroke-opacity: 0.3; stroke-width: 2; }
-}
-.kb-node-match circle  { stroke: #f97316 !important; animation: kb-pulse-border 1.2s ease-in-out infinite; }
+/* KB Graph 3D: label / balloon overlay (the WebGL canvas itself is created by kb-graph-3d.js) */
+.kb3d-overlay { position: absolute; inset: 0; overflow: hidden; pointer-events: none; border-radius: 1.5rem; }
+.kb3d-label { position: absolute; left: 0; top: 0; white-space: nowrap; font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #374151; text-shadow: 0 0 3px #f9fafb, 0 0 3px #f9fafb; will-change: transform; }
+html.dark .kb3d-label { color: #e5e7eb; text-shadow: 0 0 3px #111827, 0 0 3px #111827; }
+.kb3d-label-focus { font-weight: 700; font-size: 11px; }
+.kb3d-edge-label { color: #6b7280; opacity: .85; }
+html.dark .kb3d-edge-label { color: #9ca3af; }
+.kb3d-balloon { position: absolute; left: 0; top: 0; max-width: 260px; min-width: 160px; padding: 10px 12px; border-radius: 12px; cursor: pointer; pointer-events: auto;
+    background: #fff; color: #111827; border: 1px solid #e5e7eb; box-shadow: 0 8px 24px rgba(0,0,0,.18); will-change: transform; }
+.kb3d-balloon::after { content: ''; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; margin-left: -5px; transform: rotate(45deg);
+    background: inherit; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; }
+.kb3d-balloon:hover { border-color: #f97316; }
+.kb3d-balloon-title { font-size: 13px; font-weight: 600; line-height: 1.3; word-break: break-word; }
+.kb3d-balloon-type { display: inline-block; margin-top: 4px; padding: 0 6px; border-radius: 999px; font-size: 10px; background: #f3f4f6; color: #6b7280; }
+.kb3d-balloon-desc { margin-top: 6px; font-size: 12px; line-height: 1.4; color: #4b5563; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.kb3d-balloon-hint { margin-top: 6px; font-size: 10px; color: #f97316; }
+html.dark .kb3d-balloon { background: #1f2937; color: #f3f4f6; border-color: #374151; }
+html.dark .kb3d-balloon::after { border-right-color: #374151; border-bottom-color: #374151; }
+html.dark .kb3d-balloon-type { background: #374151; color: #9ca3af; }
+html.dark .kb3d-balloon-desc { color: #d1d5db; }
 
 .tab-btn { cursor: pointer; }
 
@@ -3178,7 +3184,8 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=14" defer></script>
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
 <script src="{{ url_for('static', filename='js/ask-user.js') }}?v=3" defer></script>
-<script src="https://d3js.org/d3.v7.min.js"></script>
+<script type="importmap">{"imports": {"three": "{{ url_for('static', filename='js/vendor/three.module.min.js') }}"}}</script>
+<script type="module" src="{{ url_for('static', filename='js/kb-graph-3d.js') }}?v=1"></script>
 <script>
 // AGENT_ID/ENABLE_AGENT_STATE are mutable: softSwitchAgent() retargets the page
 // to another agent without a full reload. _agentEpoch invalidates in-flight
@@ -4915,10 +4922,8 @@ async function createNewFile() {
 let kbGraphMode = 'graph';
 let kbGraphData = null;
 let kbGraphDataEpoch = -1;
-let kbGraphSimulation = null;
 let kbGraphShowOrphans = true;
-let kbGraphZoom = null;
-let kbGraphSvg = null;
+let kbGraphRendered = null;
 
 function _kbTimeAgo(epochSec) {
     if (!epochSec) return 'never';
@@ -5069,64 +5074,9 @@ function _renderTypeFilterChips() {
 }
 
 function _applyGraphFilters() {
-    const svg = d3.select('#kb-graph-svg svg');
-    if (!svg.node()) return;
-
+    if (!window.KBGraph3D || !KBGraph3D.isMounted()) return;
     const q = (document.getElementById('kb-graph-search').value || '').toLowerCase().trim();
-    const hasSearch = !!q;
-    const hasTypeFilter = _kbActiveTypeFilters.size > 0;
-
-    if (!hasSearch && !hasTypeFilter) {
-        svg.selectAll('.kb-node').classed('kb-node-dimmed', false).classed('kb-node-match', false);
-        svg.selectAll('line').classed('kb-link-dimmed', false);
-        return;
-    }
-
-    const visibleIds = new Set();
-    const searchMatchIds = new Set();
-
-    svg.selectAll('.kb-node').each(function(d) {
-        if (!d) return;
-        const passesType = !hasTypeFilter || _kbActiveTypeFilters.has(d.type);
-        const passesSearch = !hasSearch || (
-            (d.fullTitle || '').toLowerCase().includes(q) ||
-            (d.id || '').toLowerCase().includes(q) ||
-            (d.tags || []).some(t => t.toLowerCase().includes(q)) ||
-            (d.type || '').toLowerCase().includes(q)
-        );
-        if (passesType && passesSearch) visibleIds.add(d.id);
-        if (hasSearch && passesSearch) searchMatchIds.add(d.id);
-    });
-
-    svg.selectAll('.kb-node')
-        .classed('kb-node-dimmed', d => !visibleIds.has(d.id))
-        .classed('kb-node-match', d => hasSearch && searchMatchIds.has(d.id) && visibleIds.has(d.id));
-
-    svg.selectAll('line')
-        .classed('kb-link-dimmed', d => {
-            const srcId = typeof d.source === 'object' ? d.source.id : d.source;
-            const tgtId = typeof d.target === 'object' ? d.target.id : d.target;
-            return !visibleIds.has(srcId) && !visibleIds.has(tgtId);
-        });
-
-    // Pan to first search match
-    if (hasSearch && searchMatchIds.size > 0 && kbGraphZoom && kbGraphSvg) {
-        let target = null;
-        svg.selectAll('.kb-node').each(function(d) {
-            if (!target && visibleIds.has(d.id) && searchMatchIds.has(d.id)) target = d;
-        });
-        if (target && target.x != null && target.y != null) {
-            const container = document.getElementById('kb-graph-container');
-            const w = container.clientWidth;
-            const h = container.clientHeight;
-            const currentTransform = d3.zoomTransform(kbGraphSvg.node());
-            const scale = currentTransform.k;
-            const tx = w / 2 - target.x * scale;
-            const ty = h / 2 - target.y * scale;
-            kbGraphSvg.transition().duration(400)
-                .call(kbGraphZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
-        }
-    }
+    KBGraph3D.applyFilters({ query: q, types: _kbActiveTypeFilters });
 }
 
 // Enable/disable the custom summarizer prompt textarea based on the override checkbox.
@@ -5138,89 +5088,56 @@ function toggleSummarizePromptOverride() {
     ta.classList.toggle('opacity-50', !cb.checked);
 }
 
-function renderKBGraph() {
-    if (!kbGraphData || !kbGraphData.pages) {
-        document.getElementById('kb-graph-svg').innerHTML =
-            '<div class="flex items-center justify-center h-full text-gray-400 text-sm">No graph data available.</div>';
-        return;
-    }
-
-    const data = kbGraphData;
-    const svgEl = document.getElementById('kb-graph-svg');
-    svgEl.innerHTML = '';
-
-    // Get container dimensions
-    const container = document.getElementById('kb-graph-container');
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    // --- Build graph nodes and links ---
-    const nodes = [];
-    const nodeMap = {};
-    const links = [];
-
-    // Determine connected node set (for orphan filtering)
-    const connected = new Set();
-    for (const link of data.links || []) {
-        connected.add(link.source);
-        connected.add(link.target);
-    }
-
-    for (const [slug, page] of Object.entries(data.pages)) {
-        if (!kbGraphShowOrphans && !connected.has(slug) && !data.links.some(l => l.source === slug || l.target === slug)) {
-            continue; // skip orphans if hidden
-        }
-        const title = (page.title || slug).substring(0, 20);
-        const tags = page.tags || [];
-        nodes.push({
-            id: slug,
-            label: title,
-            fullTitle: page.title || slug,
-            tags: tags,
-            type: page.type || null,
-            incoming: page.incoming_count || 0,
-            outgoing: page.outgoing_count || 0,
-            thumbnail: page.thumbnail || null
-        });
-        nodeMap[slug] = true;
-    }
-
-    // Add links (only for nodes that are in the graph)
-    for (const link of data.links || []) {
-        if (nodeMap[link.source] && nodeMap[link.target]) {
-            links.push({ source: link.source, target: link.target, dangling: false,
-                         edgeType: link.edge_type || null });
-        }
-    }
-
-    // Add dangling links (source must be in graph, target does not exist)
-    for (const link of data.dangling_links || []) {
-        if (nodeMap[link.source]) {
-            links.push({ source: link.source, target: link.target + ' (missing)', dangling: true });
-            // Add a lightweight target node if not present
-            if (!nodeMap[link.target + ' (missing)']) {
-                nodes.push({
-                    id: link.target + ' (missing)',
-                    label: (link.target).substring(0, 20),
-                    fullTitle: link.target,
-                    tags: [],
-                    incoming: 0,
-                    outgoing: 0,
-                    isDangling: true
-                });
-                nodeMap[link.target + ' (missing)'] = true;
+function _kbDescriptionFrom(content) {
+    let body = content || '';
+    if (body.startsWith('---')) {
+        const end = body.indexOf('\n---', 3);
+        if (end !== -1) {
+            const m = body.slice(3, end).match(/^description:\s*(.+)$/m);
+            body = body.slice(end + 4);
+            if (m) {
+                const d = m[1].trim().replace(/^["']|["']$/g, '');
+                if (d) return d;
             }
         }
     }
+    for (const para of body.split(/\n\s*\n/)) {
+        const t = para.trim();
+        if (!t || t.startsWith('#')) continue;
+        const flat = t.replace(/\s+/g, ' ');
+        return flat.length > 160 ? flat.slice(0, 157) + '…' : flat;
+    }
+    return '';
+}
 
-    if (nodes.length === 0) {
-        svgEl.innerHTML = '<div class="flex items-center justify-center h-full text-gray-400 text-sm">No graph data available.</div>';
+async function _kbNodeDescription(node) {
+    const res = await fetch('/api/agents/' + AGENT_ID + '/kb/' + encodeURIComponent(node.id + '.md'));
+    const data = await res.json();
+    return data.error ? '' : _kbDescriptionFrom(data.content);
+}
+
+function renderKBGraph() {
+    if (!window.KBGraph3D) {
+        // The 3D module loads deferred; retry once it is ready.
+        window.addEventListener('kbgraph3d-ready', renderKBGraph, { once: true });
         return;
+    }
+    const svgEl = document.getElementById('kb-graph-svg');
+    const showEmpty = (msg) => {
+        KBGraph3D.dispose();
+        kbGraphRendered = null;
+        svgEl.innerHTML = '<div class="flex items-center justify-center h-full text-gray-400 text-sm">' + msg + '</div>';
+    };
+    if (!kbGraphData || !kbGraphData.pages) { showEmpty('No graph data available.'); return; }
+
+    const data = kbGraphData;
+    if (kbGraphRendered && kbGraphRendered.data === data && kbGraphRendered.orphans === kbGraphShowOrphans
+            && KBGraph3D.isMounted()) {
+        return; // same data already on screen: keep camera and layout
     }
 
     // --- Color by KB file `type` ---
     function getNodeColor(node) {
-        if (node.isDangling) return '#ef4444';  // dangling stays red
         switch (node.type) {
             case 'session':      return '#8b4513';  // brown
             case 'note':         return '#ffffff';  // white (KB doc)
@@ -5235,6 +5152,38 @@ function renderKBGraph() {
             default:             return '#9ca3af';  // gray fallback
         }
     }
+
+    // --- Build index-based nodes and links (dangling links are not drawn in 3D) ---
+    const connected = new Set();
+    for (const link of data.links || []) {
+        connected.add(link.source);
+        connected.add(link.target);
+    }
+
+    const nodes = [];
+    const indexOf = new Map();
+    for (const [slug, page] of Object.entries(data.pages)) {
+        if (!kbGraphShowOrphans && !connected.has(slug)) continue;
+        indexOf.set(slug, nodes.length);
+        nodes.push({
+            id: slug,
+            title: page.title || slug,
+            tags: page.tags || [],
+            type: page.type || null,
+            incoming: page.incoming_count || 0,
+            outgoing: page.outgoing_count || 0,
+            thumbnail: page.thumbnail || null,
+            color: getNodeColor({ type: page.type || null }),
+        });
+    }
+
+    const links = [];
+    for (const link of data.links || []) {
+        const s = indexOf.get(link.source), t = indexOf.get(link.target);
+        if (s !== undefined && t !== undefined) links.push({ s, t, edgeType: link.edge_type || null });
+    }
+
+    if (nodes.length === 0) { showEmpty('No graph data available.'); return; }
 
     // --- Build type filter chips ---
     const typeSet = new Set();
@@ -5259,207 +5208,18 @@ function renderKBGraph() {
         filterEl.classList.add('hidden');
     }
 
-    // --- D3 setup ---
-    // The canvas follows its container (100%) instead of the pixel size measured at draw time: the tab can be laid out
-    // at a different width later (mobile bar/padding, orientation, drawer), which used to crop the right side of the graph.
-    const svg = d3.select('#kb-graph-svg')
-        .append('svg')
-        .attr('width', '100%')
-        .attr('height', '100%');
-
-    const g = svg.append('g');
-
-    // Zoom
-    const zoom = d3.zoom()
-        .scaleExtent([0.1, 4])
-        .on('zoom', (event) => {
-            g.attr('transform', event.transform);
-        });
-    svg.call(zoom);
-    kbGraphZoom = zoom;
-    kbGraphSvg = svg;
-
-    // Dark mode detection
-    const isDark = document.documentElement.classList.contains('dark');
-    const linkColor = isDark ? '#6b7280' : '#d1d5db';
-    const textColor = isDark ? '#e5e7eb' : '#374151';
-
-    // --- Force simulation ---
-    const simulation = d3.forceSimulation(nodes)
-        .force('link', d3.forceLink(links).id(d => d.id).distance(80))
-        .force('charge', d3.forceManyBody().strength(-300))
-        .force('center', d3.forceCenter(width / 2, height / 2))
-        .force('collide', d3.forceCollide().radius(d => nodeRadius(d) + 12));
-
-    kbGraphSimulation = simulation;
-
-    // --- Draw links ---
-    const link = g.append('g')
-        .selectAll('line')
-        .data(links)
-        .join('line')
-        .attr('stroke', d => d.dangling ? '#ef4444' : linkColor)
-        .attr('stroke-width', d => d.dangling ? 1.5 : 1)
-        .attr('stroke-dasharray', d => d.dangling ? '5,5' : null)
-        .attr('opacity', 0.6);
-
-    // --- Draw typed-edge labels (skip generic 'mentions' to reduce noise) ---
-    const linkLabel = g.append('g')
-        .selectAll('text')
-        .data(links.filter(d => d.edgeType && d.edgeType !== 'mentions'))
-        .join('text')
-        .text(d => d.edgeType)
-        .attr('font-size', '8px')
-        .attr('fill', textColor)
-        .attr('opacity', 0.65)
-        .attr('text-anchor', 'middle')
-        .attr('font-family', 'monospace')
-        .attr('pointer-events', 'none');
-
-    // --- Draw nodes ---
-    const node = g.append('g')
-        .selectAll('g')
-        .data(nodes)
-        .join('g')
-        .attr('class', 'kb-node')
-        .call(d3.drag()
-            .on('start', (event, d) => {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                d.fx = d.x;
-                d.fy = d.y;
-            })
-            .on('drag', (event, d) => {
-                d.fx = event.x;
-                d.fy = event.y;
-            })
-            .on('end', (event, d) => {
-                if (!event.active) simulation.alphaTarget(0);
-                d.fx = null;
-                d.fy = null;
-            })
-        );
-
-    // Node circles — size scales with edge count, clamped to [6, 24]
-    function nodeRadius(d) {
-        if (d.isDangling) return 3;
-        const edges = (d.incoming || 0) + (d.outgoing || 0);
-        if (d.thumbnail) {
-            if (edges === 0) return 12;
-            return Math.min(20, 12 + Math.log2(edges) * 2);
-        }
-        if (edges === 0) return 4;
-        return Math.min(10, 4 + Math.log2(edges) * 1.5);
-    }
-
-    // Clip paths for thumbnail nodes
-    const defs = g.append('defs');
-    nodes.filter(d => d.thumbnail).forEach(d => {
-        defs.append('clipPath')
-            .attr('id', 'clip-' + d.id.replace(/[^a-zA-Z0-9-]/g, '_'))
-            .append('circle')
-            .attr('r', nodeRadius(d))
-            .attr('cx', 0).attr('cy', 0);
+    const ok = KBGraph3D.mount(svgEl, {
+        tooltipEl: document.getElementById('kb-graph-tooltip'),
+        onOpen: (node) => editFile(node.id + '.md'),
+        getDescription: _kbNodeDescription,
     });
+    if (!ok) { showEmpty('WebGL is not available in this browser.'); return; }
+    KBGraph3D.setData({ nodes, links });
+    kbGraphRendered = { data, orphans: kbGraphShowOrphans };
 
-    // Thumbnail nodes: image + border
-    node.filter(d => d.thumbnail).each(function(d) {
-        const r = nodeRadius(d);
-        const el = d3.select(this);
-        el.append('image')
-            .attr('href', d.thumbnail)
-            .attr('x', -r).attr('y', -r)
-            .attr('width', r * 2).attr('height', r * 2)
-            .attr('clip-path', 'url(#clip-' + d.id.replace(/[^a-zA-Z0-9-]/g, '_') + ')')
-            .attr('preserveAspectRatio', 'xMidYMid slice')
-            .attr('cursor', 'pointer');
-        el.append('circle')
-            .attr('r', r)
-            .attr('fill', 'none')
-            .attr('stroke', '#fff')
-            .attr('stroke-width', 2)
-            .attr('cursor', 'pointer');
-    });
-
-    // Plain circle nodes (no thumbnail)
-    node.filter(d => !d.thumbnail).append('circle')
-        .attr('r', d => nodeRadius(d))
-        .attr('fill', d => getNodeColor(d))
-        .attr('stroke', d => d.isDangling ? '#dc2626' : (getNodeColor(d) === '#ffffff' ? '#9ca3af' : '#fff'))
-        .attr('stroke-width', 1.5)
-        .attr('cursor', 'pointer');
-
-    // Node labels
-    node.append('text')
-        .text(d => d.label)
-        .attr('x', d => d.thumbnail ? nodeRadius(d) + 4 : 12)
-        .attr('y', 4)
-        .attr('font-size', '10px')
-        .attr('fill', textColor)
-        .attr('font-family', 'monospace');
-
-    // Tooltip
-    const tooltip = document.getElementById('kb-graph-tooltip');
-    node.on('mouseenter', function(event, d) {
-        const title = d.fullTitle;
-        const info = [title];
-        if (!d.isDangling) info.push('Type: ' + (d.type || '—'));
-        if (d.tags.length > 0) info.push('Tags: ' + d.tags.join(', '));
-        info.push('In: ' + d.incoming + ' | Out: ' + d.outgoing);
-        if (d.isDangling) info.push('(dangling)');
-
-        tooltip.innerHTML = info.join('<br>');
-        tooltip.classList.remove('hidden');
-
-        const rect = container.getBoundingClientRect();
-        // Position relative to the container
-        tooltip.style.left = (event.clientX - rect.left + 10) + 'px';
-        tooltip.style.top = (event.clientY - rect.top - 10) + 'px';
-        tooltip.style.position = 'absolute';
-    });
-    node.on('mousemove', function(event) {
-        const rect = container.getBoundingClientRect();
-        tooltip.style.left = (event.clientX - rect.left + 10) + 'px';
-        tooltip.style.top = (event.clientY - rect.top - 10) + 'px';
-    });
-    node.on('mouseleave', function() {
-        tooltip.classList.add('hidden');
-    });
-
-    // Click to open file editor
-    node.on('click', function(event, d) {
-        if (d.isDangling) return;
-        editFile(d.id + '.md');
-    });
-
-    // --- Tick ---
-    simulation.on('tick', () => {
-        link
-            .attr('x1', d => d.source.x)
-            .attr('y1', d => d.source.y)
-            .attr('x2', d => d.target.x)
-            .attr('y2', d => d.target.y);
-
-        linkLabel
-            .attr('x', d => (d.source.x + d.target.x) / 2)
-            .attr('y', d => (d.source.y + d.target.y) / 2);
-
-        node.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
-    });
-
-    // Re-apply active filters after re-render
-    setTimeout(() => _applyGraphFilters(), 50);
+    // Re-apply active search / type filters after a re-render
+    _applyGraphFilters();
 }
-
-// Debounced resize handler for graph
-let _kbGraphResizeTimer = null;
-window.addEventListener('resize', function() {
-    clearTimeout(_kbGraphResizeTimer);
-    _kbGraphResizeTimer = setTimeout(function() {
-        if (kbGraphMode === 'graph' && kbGraphData) {
-            renderKBGraph();
-        }
-    }, 300);
-});
 // ==================== Tools Tab ====================
 let allToolsDefs = [];
 let assignedToolIds = [];
@@ -10905,6 +10665,8 @@ window.softSwitchAgent = async function (newId, opts = {}) {
     // Reset KB state so the Knowledge tab doesn't show stale data
     kbGraphData = null;
     kbGraphDataEpoch = -1;
+    kbGraphRendered = null;
+    if (window.KBGraph3D) KBGraph3D.dispose();
     kbTree = [];
     kbTreeState = {};
 
