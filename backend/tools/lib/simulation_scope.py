@@ -183,9 +183,11 @@ def cleanup_simulation(sim_id: str, root: str | None = None,
     report = {'simulation_id': sim_id, 'root': resolved,
               'removed': [], 'warnings': []}
 
-    # 1. Backend pools (docker container / bwrap keeper), keyed by unique sim id.
+    # 1. Backend pools (docker container / podman container / bwrap keeper),
+    #    keyed by the unique sim id.
     for mod_name, fn_name in (
         ('backend.tools.lib.backends.docker_backend', '_destroy_container'),
+        ('backend.tools.lib.backends.podman_backend', '_destroy_container'),
         ('backend.tools.lib.backends.bwrap_backend', '_destroy_keeper'),
     ):
         try:
