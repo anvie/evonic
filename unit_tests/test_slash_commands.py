@@ -275,3 +275,115 @@ def test_list_available_commands_includes_help_when_enabled():
         names = {cmd.name for cmd in list_available_commands("agent-123")}
 
     assert "help" in names
+
+
+# ==================== disabled_slash_commands enforcement ====================
+
+
+def _agent_row(disabled="", is_super=0, help_enabled=1):
+    return {
+        "id": "agent-123",
+        "is_super": is_super,
+        "disabled_slash_commands": disabled,
+        "help_enabled": help_enabled,
+    }
+
+
+def _execute_model(agent_row):
+    with patch("models.db.db.get_agent", return_value=agent_row), \
+         patch("models.db.db.get_super_agent", return_value=None), \
+         patch("models.db.db.get_agent_model", return_value={
+             "name": "Sonnet 5.5", "model_name": "claude-sonnet-5-5", "shortcode": "36",
+         }), \
+         patch("models.db.db.get_agent_state", return_value=None):
+        return execute_command("model", "", "session-123", "agent-123", "user-123")
+
+
+def _execute_plan(agent_row):
+    from backend.agent_state import AgentState
+
+    with patch("models.db.db.get_agent", return_value=agent_row), \
+         patch("models.db.db.get_super_agent", return_value=None), \
+         patch("models.chat.agent_chat_manager.get") as get_chat:
+        chat_db = get_chat.return_value
+        chat_db.get_session_state.return_value = AgentState(mode="execute").serialize()
+        chat_db.get_agent_state.return_value = None
+        return execute_command("plan", "", "session-123", "agent-123", "user-123")
+
+
+def test_wildcard_disabled_slash_commands_suppresses_builtin():
+    """`*` must block execution, not just hide the command from listings."""
+    assert _execute_model(_agent_row(disabled="*")) is COMMAND_SUPPRESSED
+
+
+def test_wildcard_disabled_slash_commands_never_runs_handler():
+    with patch("models.db.db.get_agent", return_value=_agent_row(disabled="*")), \
+         patch("models.db.db.get_super_agent", return_value=None), \
+         patch("models.db.db.get_agent_model") as get_agent_model:
+        response = execute_command("model", "", "session-123", "agent-123", "user-123")
+
+    assert response is COMMAND_SUPPRESSED
+    get_agent_model.assert_not_called()
+
+
+def test_explicit_disabled_list_suppresses_listed_commands():
+    for name in ("clear", "model"):
+        with patch("models.db.db.get_agent", return_value=_agent_row(disabled="clear,model")), \
+             patch("models.db.db.get_super_agent", return_value=None):
+            response = execute_command(name, "", "session-123", "agent-123", "user-123")
+
+        assert response is COMMAND_SUPPRESSED, name
+
+
+def test_explicit_disabled_list_keeps_unlisted_command_working():
+    response = _execute_plan(_agent_row(disabled="clear,model"))
+
+    assert response == "Switched to plan mode."
+
+
+def test_inverse_disabled_list_suppresses_everything_except_allowed():
+    assert _execute_model(_agent_row(disabled="!plan")) is COMMAND_SUPPRESSED
+    assert _execute_plan(_agent_row(disabled="!plan")) == "Switched to plan mode."
+
+
+def test_super_agent_exempt_from_disabled_slash_commands():
+    response = _execute_model(_agent_row(disabled="*", is_super=1))
+
+    assert response is not COMMAND_SUPPRESSED
+    assert response.startswith("**Current model:**")
+
+
+def test_empty_disabled_slash_commands_keeps_command_working():
+    response = _execute_model(_agent_row(disabled=""))
+
+    assert response is not COMMAND_SUPPRESSED
+    assert response.startswith("**Current model:**")
+
+
+def test_unknown_command_still_falls_through_when_wildcard_disabled():
+    with patch("models.db.db.get_agent", return_value=_agent_row(disabled="*")), \
+         patch("models.db.db.get_super_agent", return_value=None):
+        response = execute_command("definitely-not-a-command", "", "session-123", "agent-123", "user-123")
+
+    assert response is None
+
+
+def test_wildcard_disabled_with_help_off_suppresses_help_and_other_commands():
+    """Regression: nuwaira_deck (is_super=0, disabled='*', help_enabled=0) leaked /model."""
+    row = _agent_row(disabled="*", help_enabled=0)
+
+    assert _execute_model(row) is COMMAND_SUPPRESSED
+    with patch("models.db.db.get_agent", return_value=row), \
+         patch("models.db.db.get_super_agent", return_value=None):
+        assert execute_command("help", "", "session-123", "agent-123", "user-123") is COMMAND_SUPPRESSED
+
+
+def test_disabled_slash_commands_lookup_failure_treats_command_as_enabled():
+    with patch("models.db.db.get_agent", side_effect=RuntimeError("db down")), \
+         patch("models.db.db.get_agent_model", return_value={
+             "name": "Sonnet 5.5", "model_name": "claude-sonnet-5-5", "shortcode": "36",
+         }), \
+         patch("models.db.db.get_agent_state", return_value=None):
+        response = execute_command("model", "", "session-123", "agent-123", "user-123")
+
+    assert response is not COMMAND_SUPPRESSED

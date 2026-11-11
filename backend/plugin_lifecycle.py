@@ -914,6 +914,11 @@ class PluginManager:
                     clean[name] = str(val)
             except (ValueError, TypeError):
                 return {'error': f'Invalid value for {var_def.get("label", name)}: expected {var_type}'}
+            # Variables named *_JSON hold structured config; reject malformed JSON
+            # here so a broken value is never persisted and then silently ignored.
+            json_error = self._validate_json_variable(name, var_def, clean[name])
+            if json_error:
+                return {'error': json_error}
 
         from models.db import db
         for name, val in clean.items():
@@ -921,6 +926,26 @@ class PluginManager:
 
         self.reload_plugin(plugin_id)
         return {'success': True, 'config': self.get_plugin_config(plugin_id)}
+
+    @staticmethod
+    def _validate_json_variable(name: str, var_def: Dict[str, Any],
+                                value: Any) -> Optional[str]:
+        """Return an error message when a *_JSON variable does not hold valid JSON."""
+        if not str(name).upper().endswith('_JSON'):
+            return None
+        label = var_def.get('label', name)
+        text = str(value if value is not None else '').strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as e:
+            return (f'Invalid JSON in {label}: {e.msg} '
+                    f'(line {e.lineno}, column {e.colno})')
+        if not isinstance(parsed, (dict, list)):
+            return (f'Invalid JSON in {label}: expected an object or array, '
+                    f'got {type(parsed).__name__}')
+        return None
 
     # ── Per-Agent Plugin Settings ──
 
