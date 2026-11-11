@@ -1,5 +1,5 @@
 """
-filter_pipeline.py — 8-stage compression pipeline for RTK.
+filter_pipeline.py — ordered compression pipeline for RTK.
 
 Takes raw command output text and a CompiledFilter, runs through
 an ordered sequence of transformations, and returns compressed text.
@@ -8,6 +8,21 @@ Usage:
     from token_compressor.filter_pipeline import compress
     result = compress(raw_output, compiled_filter, exit_code=0)
 
+Stages, in order:
+    1. strip_ansi              — drop ANSI escape sequences
+    2. json_compact            — JSON-only: prune keys/strings/lists, then
+                                 re-serialise (short-circuits the rest when it
+                                 applies; tool results are one json.dumps line,
+                                 so the line-based stages could only corrupt it)
+    3. replace                 — per-line regex substitutions
+    4. match_output            — whole-output short circuit
+    5. strip_lines             — drop matching lines
+    6. keep_lines              — keep only matching lines
+    7. truncate_lines_at       — cap line length
+    8. head_lines / tail_lines — keep head and/or tail
+    9. max_lines               — absolute line cap
+   10. on_empty                — replacement text for empty output
+
 Critical invariants:
     - exit_code != 0  → output passes through unchanged
     - any exception    → fail-open, return original output
@@ -15,9 +30,10 @@ Critical invariants:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from .filter_schema import CompiledFilter
 
@@ -80,6 +96,14 @@ def _run_pipeline(text: str, flt: CompiledFilter) -> str:
     if flt.strip_ansi:
         text = _stage_strip_ansi(text)
 
+    # Stage 2 — json_compact (single-line JSON tool results)
+    # When it applies, the payload has been replaced by a smaller, still valid
+    # JSON document, so the line-based stages are skipped: they would mangle it.
+    if flt.has_json_stage():
+        compacted = _stage_json_compact(text, flt)
+        if compacted is not None:
+            return compacted
+
     # Stage 2 — replace (line-by-line substitutions)
     if flt.replace:
         text = _stage_replace(text, flt)
@@ -127,6 +151,62 @@ def _run_pipeline(text: str, flt: CompiledFilter) -> str:
 def _stage_strip_ansi(text: str) -> str:
     """Remove ANSI escape sequences (colors, cursor movement, etc.)."""
     return _ANSI_RE.sub("", text)
+
+
+def _stage_json_compact(text: str, flt: CompiledFilter) -> Optional[str]:
+    """Prune a JSON payload and re-serialise it compactly.
+
+    Returns the compacted text, or None when the stage does not apply: the
+    output is not JSON, a container was expected but a scalar was found, the
+    payload is below ``json_compact_above``, or compaction would not shrink it.
+
+    Applying the stage replaces the payload wholesale, so the caller skips the
+    line-based stages — they would break the JSON.
+    """
+    if flt.json_compact_above is not None and len(text) <= flt.json_compact_above:
+        return None
+
+    try:
+        data: Any = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+
+    if not isinstance(data, (dict, list)):
+        return None
+
+    try:
+        pruned = _json_prune(data, flt)
+    except Exception:
+        logger.warning(
+            "filter_pipeline: json compaction failed — keeping original output",
+            exc_info=True,
+        )
+        return None
+
+    result = json.dumps(pruned, ensure_ascii=False)
+    if len(result) >= len(text):
+        return None
+    return result
+
+
+def _json_prune(node: Any, flt: CompiledFilter) -> Any:
+    """Recursively drop keys, cap string lengths and cap list lengths."""
+    if isinstance(node, dict):
+        drop = set(flt.json_drop_keys)
+        return {k: _json_prune(v, flt) for k, v in node.items() if k not in drop}
+    if isinstance(node, list):
+        items = [_json_prune(v, flt) for v in node]
+        limit = flt.json_max_items
+        if limit is not None and len(items) > limit:
+            hidden = len(items) - limit
+            return items[:limit] + [f"...[{hidden} more items]"]
+        return items
+    if isinstance(node, str):
+        limit = flt.json_max_string
+        if limit is not None and len(node) > limit:
+            return node[: max(0, limit - 1)].rstrip() + "…"
+        return node
+    return node
 
 
 def _stage_replace(text: str, flt: CompiledFilter) -> str:

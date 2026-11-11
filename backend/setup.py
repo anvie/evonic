@@ -342,8 +342,9 @@ def build_system_prompt(tone_text: str = "") -> str:
             base_prompt = f.read()
 
     if "{communication_style}" in base_prompt:
-        return base_prompt.replace("{communication_style}", tone_text.strip())
-    return base_prompt
+        base_prompt = base_prompt.replace("{communication_style}", tone_text.strip())
+    # Defensive: an unresolved style placeholder must never reach the model.
+    return base_prompt.replace("{communication_style}", "")
 
 
 def _derive_agent_id(name: str) -> str:

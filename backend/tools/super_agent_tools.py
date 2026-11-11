@@ -25,10 +25,9 @@ def _ensure_kb_dir(agent_id: str) -> str:
 
 
 def _write_system_prompt(agent_id: str, content: str):
-    path = os.path.join(AGENTS_DIR, agent_id, 'SYSTEM.md')
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(content)
+    """Persist SYSTEM.md, rotating a backup of the previous version first."""
+    from backend.system_prompt_store import write_system_prompt
+    write_system_prompt(os.path.join(AGENTS_DIR, agent_id), content)
 
 
 def _read_system_prompt(agent_id: str) -> str:
@@ -550,18 +549,10 @@ def _exec_set_owner_name(args: dict) -> dict:
         return {'error': 'Name is required.'}
     db.set_setting('owner_name', name)
 
-    # Copy defaults/super_agent_system_prompt.md → agents/<id>/SYSTEM.md
-    agent_id = db.get_setting('super_agent_id')
-    if agent_id:
-        default_path = os.path.join(BASE_DIR, 'defaults', 'super_agent_system_prompt.md')
-        if os.path.isfile(default_path):
-            try:
-                with open(default_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                _write_system_prompt(agent_id, content)
-            except Exception:
-                pass
-
+    # Only the setting is stored. Never rewrite SYSTEM.md here: this tool used
+    # to copy defaults/super_agent_system_prompt.md verbatim, wiping the
+    # operator's customisations and leaking a literal {communication_style}
+    # placeholder. Personalisation is applied at runtime (build_system_prompt).
     return {'success': True, 'message': f"Owner name saved: {name}"}
 
 
