@@ -2,6 +2,12 @@
 
 Exa is a search engine built for AI agents — it returns clean, structured results with full-text content. The Python SDK (`exa-py`) reads the API key from the `EXA_API_KEY` environment variable.
 
+## The `exa_search` tool
+
+For a plain web search you do not need code: call `exa_search` with a `query` (and optionally `num_results`, `category`,
+`include_domains`, `start_published_date`). It returns each result's title, url, date and text. Use the SDK below only
+for what the tool does not cover (answers, similar pages, structured output).
+
 ## Quick Start
 
 ```python
