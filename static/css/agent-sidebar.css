@@ -149,12 +149,12 @@ html.dark {
     opacity: 1;
     border-color: #ec4899 #ec4899 transparent transparent;
     animation: agent-asking-spin 1.2s linear infinite;
+    box-shadow: 0 0 6px rgba(236, 72, 153, 0.5);
 }
 
 @keyframes agent-asking-spin {
-    0%   { transform: rotate(0deg);   box-shadow: 0 0 3px rgba(236, 72, 153, 0.35); }
-    50%  { transform: rotate(180deg); box-shadow: 0 0 10px rgba(236, 72, 153, 0.65); }
-    100% { transform: rotate(360deg); box-shadow: 0 0 3px rgba(236, 72, 153, 0.35); }
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
 }
 
 /* Reduced motion: keep the pink ring visible without the spin/glow animation */
