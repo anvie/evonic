@@ -1,0 +1,241 @@
+{# Update dialog shared by the plugin and skill pages: drop a zip, review the diff, confirm twice.
+   Needs: pkg_kind ('plugin' | 'skill'), pkg_id. The page opens it with openUpdate(). #}
+<!-- Update {{ pkg_kind }} modal -->
+<div id="upd-modal" class="hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="upd-title">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeUpdate()"></div>
+    <div class="relative flex flex-col h-full items-center justify-center p-4">
+        <div class="relative w-full max-w-3xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-600 flex flex-col max-h-[90vh]">
+            <div class="flex items-start justify-between gap-4 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+                <div class="min-w-0">
+                    <h3 id="upd-title" class="text-base font-semibold text-gray-800 dark:text-gray-100">Update {{ pkg_kind }}</h3>
+                    <p id="upd-subtitle" class="text-xs text-gray-500 dark:text-gray-400 mt-1">Drop the new version as a .zip to see what will change.</p>
+                </div>
+                <button onclick="closeUpdate()" aria-label="Close" title="Close (Esc)" class="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 py-4">
+                <!-- Step 1: pick a file -->
+                <div id="upd-step-drop">
+                    <label id="upd-drop" class="upd-drop" for="upd-file-input">
+                        <svg class="w-10 h-10 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.9A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                        <span class="text-sm font-medium">Drop the new {{ pkg_kind }} .zip here, or click to browse</span>
+                        <span class="text-xs">It must be a build of this same {{ pkg_kind }}. Nothing changes until you confirm.</span>
+                    </label>
+                    <input id="upd-file-input" type="file" accept=".zip" class="hidden">
+                    <p id="upd-error" class="hidden mt-3 text-sm text-red-600 dark:text-red-400"></p>
+                    <p id="upd-loading" class="hidden mt-3 text-sm text-gray-500 dark:text-gray-400">Comparing with the installed version...</p>
+                </div>
+                <!-- Step 2: review the diff -->
+                <div id="upd-step-review" class="hidden">
+                    <div class="flex flex-wrap items-center gap-3 mb-3">
+                        <div class="flex items-center gap-2 font-mono text-sm">
+                            <span id="upd-old-v" class="px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"></span>
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+                            <span id="upd-new-v" class="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300"></span>
+                        </div>
+                        <div id="upd-summary" class="flex flex-wrap gap-2 text-xs"></div>
+                    </div>
+                    <p id="upd-warn" class="try-warn hidden mb-3"></p>
+                    <div id="upd-files" class="space-y-2"></div>
+                </div>
+            </div>
+            <div class="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-600">
+                <button id="upd-back" onclick="resetUpdate()" class="hidden px-3 py-2 text-sm text-gray-600 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors">Choose another file</button>
+                <span class="flex-1"></span>
+                <button onclick="closeUpdate()" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors">Cancel</button>
+                <button id="upd-confirm" onclick="confirmUpdate()" disabled class="hidden px-4 py-2 text-sm bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md font-medium transition-colors">Update {{ pkg_kind }}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const PKG_KIND = '{{ pkg_kind }}';
+const PKG_ID = '{{ pkg_id }}';
+const PKG_API = `/api/${PKG_KIND}s/${encodeURIComponent(PKG_ID)}`;
+
+function updNode(tag, className, text) {
+    const n = document.createElement(tag);
+    if (className) n.className = className;
+    if (text !== undefined) n.textContent = text;
+    return n;
+}
+function pkgName() {
+    const el = document.querySelector('.pd-title');
+    const t = el ? el.textContent.trim() : '';
+    return t && t !== 'Loading...' ? t : PKG_ID;
+}
+
+// ==================== Update (drop zip -> diff -> confirm) ====================
+
+let updToken = null;
+
+function updShow(step) {
+    document.getElementById('upd-step-drop').classList.toggle('hidden', step !== 'drop');
+    document.getElementById('upd-step-review').classList.toggle('hidden', step !== 'review');
+    document.getElementById('upd-back').classList.toggle('hidden', step !== 'review');
+    document.getElementById('upd-confirm').classList.toggle('hidden', step !== 'review');
+}
+
+function openUpdate() {
+    resetUpdate();
+    document.getElementById('upd-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function discardStaged() {
+    if (!updToken) return;
+    fetch(`${PKG_API}/update/discard`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token: updToken}),
+    }).catch(() => {});
+    updToken = null;
+}
+
+function resetUpdate() {
+    discardStaged();
+    document.getElementById('upd-file-input').value = '';
+    document.getElementById('upd-error').classList.add('hidden');
+    document.getElementById('upd-loading').classList.add('hidden');
+    document.getElementById('upd-subtitle').textContent = `Drop the new version of "${pkgName()}" as a .zip to see what will change.`;
+    updShow('drop');
+}
+
+function closeUpdate() {
+    discardStaged();
+    document.getElementById('upd-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+function updError(msg) {
+    const el = document.getElementById('upd-error');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+}
+
+async function previewUpdate(file) {
+    document.getElementById('upd-error').classList.add('hidden');
+    if (!file || !file.name.toLowerCase().endsWith('.zip')) { updError('Please choose a .zip file.'); return; }
+    const form = new FormData();
+    form.append('file', file);
+    document.getElementById('upd-loading').classList.remove('hidden');
+    try {
+        const res = await fetch(`${PKG_API}/update/preview`, {method: 'POST', body: form});
+        const data = await res.json().catch(() => ({error: `Upload failed (${res.status})`}));
+        if (!res.ok || data.error) { updError(data.error || 'Upload failed'); return; }
+        renderUpdateDiff(data);
+    } catch (e) {
+        updError('Network error: ' + e.message);
+    } finally {
+        document.getElementById('upd-loading').classList.add('hidden');
+    }
+}
+
+function diffLineClass(line) {
+    if (line.startsWith('@@')) return 'hunk';
+    if (line.startsWith('+')) return 'add';
+    if (line.startsWith('-')) return 'del';
+    return '';
+}
+
+function renderUpdateDiff(data) {
+    updToken = data.token;
+    document.getElementById('upd-old-v').textContent = 'v' + (data.old.version || '?');
+    document.getElementById('upd-new-v').textContent = 'v' + (data.new.version || '?');
+    document.getElementById('upd-subtitle').textContent = `Review the changes to "${data.old.name || PKG_ID}" before applying them.`;
+
+    const sm = data.summary;
+    document.getElementById('upd-summary').replaceChildren(
+        ...[['added', sm.added], ['modified', sm.modified], ['removed', sm.removed]].filter(([, n]) => n)
+            .map(([k, n]) => updNode('span', 'upd-tag ' + k, `${n} ${k}`)));
+
+    const warn = document.getElementById('upd-warn');
+    const messages = {
+        same: 'This is the same version number as the installed plugin.',
+        older: `This is an older version (v${data.new.version || '?'}) than the installed one (v${data.old.version || '?'}). Applying it is a downgrade.`,
+    };
+    warn.textContent = messages[data.version_relation] || '';
+    warn.classList.toggle('hidden', !messages[data.version_relation]);
+
+    const box = document.getElementById('upd-files');
+    box.replaceChildren();
+    if (!data.changes.length) {
+        box.append(updNode('p', 'text-sm text-gray-500 dark:text-gray-400 text-center py-6', 'No file differs from the installed version.'));
+    }
+    data.changes.forEach((c, i) => {
+        const d = updNode('details', 'upd-file');
+        if (data.changes.length <= 3 && !c.binary && c.diff) d.open = true;
+        const sum = updNode('summary');
+        const stat = c.binary ? updNode('span', 'text-xs text-gray-400', 'binary / large') : updNode('span', 'text-xs font-mono');
+        if (!c.binary) {
+            const plus = updNode('span', 'text-emerald-600 dark:text-emerald-400', '+' + c.added);
+            const minus = updNode('span', 'text-red-600 dark:text-red-400', ' -' + c.removed);
+            stat.append(plus, minus);
+        }
+        sum.append(updNode('span', 'upd-tag ' + c.status, c.status), updNode('span', 'font-mono flex-1 min-w-0 break-all text-gray-800 dark:text-gray-100', c.path), stat);
+        d.append(sum);
+        if (c.diff) {
+            const pre = updNode('div', 'upd-diff');
+            c.diff.split('\n').forEach(line => pre.append(updNode('div', diffLineClass(line), line)));
+            d.append(pre);
+        } else {
+            d.append(updNode('p', 'px-3 py-3 text-xs text-gray-500 dark:text-gray-400', c.binary ? 'No line diff for binary or very large files.' : 'No textual change.'));
+        }
+        box.append(d);
+    });
+    document.getElementById('upd-confirm').disabled = false;
+    updShow('review');
+}
+
+async function confirmUpdate() {
+    if (!updToken) return;
+    const name = pkgName();
+    const confirmed = await showConfirm({
+        title: `Update "${name}"?`,
+        message: `This replaces the installed files with the uploaded version (${document.getElementById('upd-old-v').textContent} → ${document.getElementById('upd-new-v').textContent}) and reloads the plugin. Local edits to its files are lost. Your settings are kept. If the update fails, the current version is restored.`,
+        confirmText: 'Update',
+        danger: true
+    });
+    if (!confirmed) return;
+
+    const btn = document.getElementById('upd-confirm');
+    btn.disabled = true; btn.textContent = 'Updating...';
+    try {
+        const res = await fetch(`${PKG_API}/update/apply`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token: updToken}),
+        });
+        const data = await res.json().catch(() => ({error: `Update failed (${res.status})`}));
+        if (!res.ok || data.error) { alert(data.error || 'Update failed'); btn.disabled = false; return; }
+        updToken = null;
+        window.location.reload();
+    } catch (e) {
+        alert('Update failed: ' + e.message);
+        btn.disabled = false;
+    } finally {
+        btn.textContent = 'Update plugin';
+    }
+}
+
+function setupUpdateControls() {
+    const drop = document.getElementById('upd-drop'), input = document.getElementById('upd-file-input');
+    input.addEventListener('change', () => previewUpdate(input.files[0]));
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', e => previewUpdate(e.dataTransfer.files[0]));
+}
+document.addEventListener('DOMContentLoaded', setupUpdateControls);
+
+
+// Escape and a click outside the panel close the dialog.
+document.addEventListener('keydown', e => {
+    const m = document.getElementById('upd-modal');
+    if (e.key === 'Escape' && !m.classList.contains('hidden') && (document.getElementById('confirmModal')?.classList.contains('hidden') ?? true)) closeUpdate();
+});
+document.addEventListener('DOMContentLoaded', () => {
+    const root = document.getElementById('upd-modal');
+    const isOutside = t => t === root || (t.parentElement === root && (t.classList.contains('absolute') || t.classList.contains('h-full')));
+    let down = false;
+    root.addEventListener('mousedown', e => { down = isOutside(e.target); });
+    root.addEventListener('click', e => { if (down && isOutside(e.target)) closeUpdate(); down = false; });
+});
+</script>

@@ -62,7 +62,10 @@
                  onclick="document.getElementById('file-input').click()">
                 <svg class="w-10 h-10 mx-auto mb-3 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
                 <p class="text-sm text-gray-600 dark:text-gray-300 font-medium">Click or drag & drop a .zip file</p>
-                <p id="file-name" class="text-xs text-gray-400 dark:text-gray-500 mt-2"></p>
+                <div id="file-chip" style="display:none;align-items:center;gap:.5rem;max-width:100%;margin-top:.75rem;padding:.375rem .75rem;border-radius:9px;border:1px solid rgb(129 140 248 / .35);background:rgb(99 102 241 / .1);color:#6366f1;font-size:.8125rem;font-weight:500">
+                    <svg style="flex:none;width:1rem;height:1rem" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/></svg>
+                    <span id="file-name" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                </div>
             </div>
             <input type="file" id="file-input" accept=".zip" class="hidden" onchange="onFileSelected(this)">
         </div>
@@ -77,6 +80,11 @@
 </div>
 
 <script>
+function setFileName(name) {
+    document.getElementById('file-name').textContent = name;
+    document.getElementById('file-chip').style.display = name ? 'inline-flex' : 'none';
+}
+
 let selectedFile = null;
 let allPlugins = [];
 
@@ -190,7 +198,7 @@ async function togglePlugin(pluginId, enabled) {
 
 function onFileSelected(input) {
     selectedFile = input.files[0];
-    document.getElementById('file-name').textContent = selectedFile ? selectedFile.name : '';
+    setFileName(selectedFile ? selectedFile.name : '');
     document.getElementById('upload-btn').disabled = !selectedFile;
 }
 
@@ -224,7 +232,7 @@ function closeUploadModal() {
     document.getElementById('upload-modal').classList.add('hidden');
     selectedFile = null;
     document.getElementById('file-input').value = '';
-    document.getElementById('file-name').textContent = '';
+    setFileName('');
     document.getElementById('upload-btn').disabled = true;
 }
 
@@ -243,7 +251,7 @@ if (dropZone) {
         const file = ev.dataTransfer.files[0];
         if (file && file.name.endsWith('.zip')) {
             selectedFile = file;
-            document.getElementById('file-name').textContent = file.name;
+            setFileName(file.name);
             document.getElementById('upload-btn').disabled = false;
         }
     });
