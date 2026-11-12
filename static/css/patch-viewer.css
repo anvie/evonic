@@ -1,0 +1,65 @@
+/* Patch / diff viewer (see js/patch-viewer.js). Always dark, like a code editor. */
+.pv { display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.8125rem; }
+
+.pv-summary { color: #6b7280; font-size: 0.75rem; }
+.pv-stat-add { color: #3fb950; font-weight: 600; }
+.pv-stat-del { color: #f85149; font-weight: 600; margin-left: 0.4rem; }
+.pv-summary .pv-stat-del { margin-left: 0; }
+
+.pv-preamble, .pv-plain {
+    margin: 0; padding: 0.75rem 1rem; border-radius: 0.5rem;
+    background: #1e1e2e; color: #9399b2;
+    font: 0.75rem/1.5 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    white-space: pre-wrap; word-break: break-word; overflow-x: auto;
+}
+.pv-plain { color: #cdd6f4; }
+
+.pv-file {
+    background: #1e1e2e; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 0.625rem; overflow: hidden;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+.pv-file-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: 0.5rem 0.875rem; background: #181825; border-bottom: 1px solid #313244;
+}
+.pv-fname { color: #cba6f7; font-weight: 600; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-stat { display: flex; flex-shrink: 0; font-size: 0.75rem; }
+.pv-meta {
+    padding: 0.4rem 0.875rem; color: #6c7086; font-size: 0.7rem; line-height: 1.5;
+    white-space: pre-wrap; border-bottom: 1px solid #313244;
+}
+
+.pv-scroll { overflow-x: auto; }
+.pv-scroll::-webkit-scrollbar { height: 6px; }
+.pv-scroll::-webkit-scrollbar-thumb { background: #585b70; border-radius: 3px; }
+
+.pv-table { border-collapse: collapse; width: 100%; min-width: max-content; font-size: 0.75rem; line-height: 1.6; }
+.pv-col-ln { width: 3.25rem; }
+.pv-col-sign { width: 1.25rem; }
+
+.pv-ln {
+    padding: 0 0.6rem; text-align: right; color: #585b70; user-select: none; vertical-align: top;
+    font-variant-numeric: tabular-nums;
+}
+.pv-sign { text-align: center; user-select: none; vertical-align: top; color: #585b70; }
+.pv-code { padding-right: 1rem; white-space: pre; }
+
+.pv-add { background: rgba(46, 160, 67, 0.16); }
+.pv-add .pv-sign { color: #3fb950; }
+.pv-add .pv-ln { color: #56a56a; background: rgba(46, 160, 67, 0.12); }
+.pv-del { background: rgba(248, 81, 73, 0.16); }
+.pv-del .pv-sign { color: #f85149; }
+.pv-del .pv-ln { color: #c9605b; background: rgba(248, 81, 73, 0.12); }
+.pv-ctx .pv-code { color: #a6adc8; }
+
+.pv-chg { color: inherit; border-radius: 2px; }
+.pv-add .pv-chg { background: rgba(63, 185, 80, 0.38); }
+.pv-del .pv-chg { background: rgba(248, 81, 73, 0.4); }
+
+.pv-hunk td {
+    padding: 0.3rem 0.875rem; background: #24273a; color: #89b4fa;
+    border-top: 1px solid #313244; border-bottom: 1px solid #313244;
+}
+.pv-hunk-ctx { margin-left: 0.75rem; color: #6c7086; }
+.pv-note td { padding: 0 0.875rem 0 4.5rem; color: #585b70; font-style: italic; }

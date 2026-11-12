@@ -2448,6 +2448,10 @@ async function _renderViewerContent($body, url, filename, category) {
         } else if (_TEXT_EXTS.includes(ext) || category === 'text') {
             const text = await (await fetch(url)).text();
             _viewerRawContent = text;
+            if ((ext === 'patch' || ext === 'diff') && window.EvPatchViewer) {
+                $body.html(window.EvPatchViewer.render(text));
+                return;
+            }
             $body.html(`<pre class="bg-gray-50 dark:bg-gray-900 rounded-md p-4 text-sm text-gray-800 dark:text-gray-200 overflow-x-auto max-h-[70vh] whitespace-pre-wrap font-mono">${_escape(text)}</pre>`);
         } else {
             $body.html(

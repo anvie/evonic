@@ -3185,7 +3185,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=78" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=79" defer></script>
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=14" defer></script>
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
@@ -10031,6 +10031,10 @@ async function renderArtifactContent(filename, category, fileUrl, ext, body, isS
             const text = await res.text();
             if (isStale()) return null;
             raw = text;
+            if ((ext === 'patch' || ext === 'diff') && window.EvPatchViewer) {
+                body.innerHTML = window.EvPatchViewer.render(text);
+                return raw;
+            }
             const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             body.innerHTML = `<pre class="bg-gray-50 dark:bg-gray-900 rounded-md p-4 text-sm text-gray-800 dark:text-gray-200 overflow-x-auto max-h-[70vh] whitespace-pre-wrap font-mono">${escaped}</pre>`;
         } else {
