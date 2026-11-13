@@ -5,13 +5,13 @@ from backend.workplaces.switch_note import build_switch_note, describe_workplace
 
 
 def test_describe_tunnel_workplace_has_device_and_path_but_no_ip():
-    wp = {'id': 'w1', 'name': 'praditya', 'type': 'tunnel', 'config': '{}'}
-    connector = {'device_name': 'ubuntu-4gb-nbg1-1', 'ip_addresses': '91.99.139.15, 2a01:4f8::1'}
+    wp = {'id': 'w1', 'name': 'demo-workplace', 'type': 'tunnel', 'config': '{}'}
+    connector = {'device_name': 'demo-connector', 'ip_addresses': '203.0.113.10, 2001:db8::1'}
 
-    text = describe_workplace(wp, '/home/deploy/workspace', connector)
+    text = describe_workplace(wp, '/srv/workspace', connector)
 
-    assert text == '"praditya" (Evonet tunnel · device ubuntu-4gb-nbg1-1 · working directory /home/deploy/workspace)'
-    assert '91.99.139.15' not in text
+    assert text == '"demo-workplace" (Evonet tunnel · device demo-connector · working directory /srv/workspace)'
+    assert '203.0.113.10' not in text
 
 
 def test_describe_remote_workplace_omits_ssh_host():
@@ -29,10 +29,10 @@ def test_describe_no_workplace_is_local_workspace():
 
 
 def test_switch_note_marks_earlier_results_as_stale():
-    note = build_switch_note('"praditya" (Evonet tunnel)', 'the local workspace (working directory /ws)',
+    note = build_switch_note('"demo-workplace" (Evonet tunnel)', 'the local workspace (working directory /ws)',
                              'the local workspace')
 
-    assert note.startswith('[SYSTEM] Workplace switched from "praditya" (Evonet tunnel) to the local workspace')
+    assert note.startswith('[SYSTEM] Workplace switched from "demo-workplace" (Evonet tunnel) to the local workspace')
     assert 'run on the local workspace' in note
     assert 'came from the previous workplace' in note
 

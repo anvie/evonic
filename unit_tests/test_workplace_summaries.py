@@ -10,7 +10,7 @@ from routes.workplaces import workplaces_bp
 
 def _seed():
     tunnel = db.create_workplace({'name': 'build-server', 'type': 'tunnel',
-                                  'config': {'workspace_path': '/home/deploy/ws'}})
+                                  'config': {'workspace_path': '/srv/ws'}})
     db.create_connector({'workplace_id': tunnel, 'connector_token': 'ect_secret_token',
                          'device_name': 'build-01', 'platform': 'linux', 'version': '1.2.8'})
     db.update_connector(db.get_connector_by_workplace(tunnel)['id'], {'ip_addresses': '203.0.113.10'})
@@ -27,7 +27,7 @@ def test_summaries_carry_display_fields_without_secrets():
 
     assert items[tunnel]['connector'] == {'device_name': 'build-01', 'platform': 'linux', 'version': '1.2.8',
                                           'last_seen_at': None, 'ip_addresses': '203.0.113.10'}
-    assert items[tunnel]['workspace_path'] == '/home/deploy/ws'
+    assert items[tunnel]['workspace_path'] == '/srv/ws'
     assert items[remote]['connector'] is None
     assert {items[remote][k] for k in ('host', 'username', 'port')} == {'staging.example.com', 'deploy', 2222}
     dumped = json.dumps(list(items.values()))

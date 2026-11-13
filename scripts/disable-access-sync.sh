@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Archive and disable the access-sync bare repository on rigel2.
-# Run as root on rigel2. The default mode is a read-only dry-run.
+# Archive and disable the access-sync bare repository on the git server.
+# Run as root on the git server. The default mode is a read-only dry-run.
 set -Eeuo pipefail
 
-REPO_PATH="${ACCESS_SYNC_REPO:-/home/git/access-sync.git}"
-ARCHIVE_ROOT="${ACCESS_SYNC_ARCHIVE_ROOT:-/root/access-sync-archives}"
+REPO_PATH="${ACCESS_SYNC_REPO:-/srv/git/access-sync.git}"
+ARCHIVE_ROOT="${ACCESS_SYNC_ARCHIVE_ROOT:-/var/backups/access-sync-archives}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 ARCHIVE_DIR="$ARCHIVE_ROOT/$STAMP"
 EXECUTE=0
 
 usage() {
     cat <<'EOF'
-Usage: disable-access-sync-rigel2.sh [--dry-run] [--execute]
+Usage: disable-access-sync.sh [--dry-run] [--execute]
 
 Archives the bare access-sync repository and, with --execute, disables:
   * the repository path (renamed to *.disabled-<timestamp>, mode 000)
@@ -19,8 +19,8 @@ Archives the bare access-sync repository and, with --execute, disables:
   * authorized_keys entries explicitly labelled access-sync
 
 Environment overrides:
-  ACCESS_SYNC_REPO          default: /home/git/access-sync.git
-  ACCESS_SYNC_ARCHIVE_ROOT  default: /root/access-sync-archives
+  ACCESS_SYNC_REPO          default: /srv/git/access-sync.git
+  ACCESS_SYNC_ARCHIVE_ROOT  default: /var/backups/access-sync-archives
 
 The script never deletes the repository or its archives.
 EOF
@@ -106,7 +106,7 @@ for file in "${AUTH_FILES[@]}"; do
     [[ -r "$file" ]] || continue
     if grep -qi 'access-sync' "$file"; then
         cp -a "$file" "$file.disabled-${STAMP}"
-        sed -i '/access-sync/I s/^/# disabled by disable-access-sync-rigel2 /' "$file"
+        sed -i '/access-sync/I s/^/# disabled by disable-access-sync-git-server /' "$file"
         chmod 600 "$file"
     fi
 done

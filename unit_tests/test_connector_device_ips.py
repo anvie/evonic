@@ -4,15 +4,15 @@ from backend.workplaces.connector_relay import _MAX_DEVICE_IPS, _parse_device_ip
 
 
 def test_parse_device_ips_keeps_valid_addresses_in_order():
-    header = '91.99.139.15, 2a01:4f8:1c18:dbae::1'
+    header = '203.0.113.10, 2001:db8:1::1'
 
-    assert _parse_device_ips(header) == '91.99.139.15, 2a01:4f8:1c18:dbae::1'
+    assert _parse_device_ips(header) == '203.0.113.10, 2001:db8:1::1'
 
 
 def test_parse_device_ips_drops_junk_and_duplicates():
-    header = '<script>, 10.0.0.2,10.0.0.2 , not-an-ip, , 2A01:4F8::0001'
+    header = '<script>, 10.0.0.2,10.0.0.2 , not-an-ip, , 2001:DB8::0001'
 
-    assert _parse_device_ips(header) == '10.0.0.2, 2a01:4f8::1'
+    assert _parse_device_ips(header) == '10.0.0.2, 2001:db8::1'
 
 
 def test_parse_device_ips_caps_the_list():

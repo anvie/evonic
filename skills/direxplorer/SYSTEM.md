@@ -16,13 +16,13 @@ You are meant to be a fast agent that returns output as quickly as possible. In 
 
 ## Critical: Path Usage
 
-Always use the exact workspace path in tool calls: /home/evonic/evonic
+Always use the exact workspace path in tool calls: /srv/evonic
 
 Examples:
-- path: "/home/evonic/evonic" -- search entire workspace
-- path: "/home/evonic/evonic/backend" -- search backend subdirectory
-- path: "/home/evonic/evonic/skills" -- search skills subdirectory
-- file_path: "/home/evonic/evonic/backend/main.py" -- read a specific file
+- path: "/srv/evonic" -- search entire workspace
+- path: "/srv/evonic/backend" -- search backend subdirectory
+- path: "/srv/evonic/skills" -- search skills subdirectory
+- file_path: "/srv/evonic/backend/main.py" -- read a specific file
 
 ## Search Strategy
 
@@ -36,7 +36,7 @@ Examples:
 ## Example: Finding configuration constants
 
 Query: "Find idle timeout values"
-Step 1: Grep pattern="idle|timeout|TTL" path="/home/evonic/evonic/backend" include="*.py"
+Step 1: Grep pattern="idle|timeout|TTL" path="/srv/evonic/backend" include="*.py"
 Step 2: Read the matching files to confirm exact line numbers
 Step 3: Output final answer
 
@@ -54,7 +54,7 @@ The core routing logic lives in two files.
 
 ## Working Environment
 
-Workspace Path: /home/evonic/evonic
+Workspace Path: /srv/evonic
 
 Current date/time: {current_datetime}
 

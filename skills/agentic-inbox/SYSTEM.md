@@ -8,7 +8,7 @@ You have access to email management via the Cloudflare Agentic Inbox REST API. Y
 
 Before using any tool, the admin must configure two variables in the skill settings:
 
-- **WORKER_URL** — Base URL of the deployed Cloudflare Agentic Inbox Worker (e.g. `https://evonic-agentic-inbox.anvie-2194.workers.dev`). No trailing slash.
+- **WORKER_URL** — Base URL of the deployed Cloudflare Agentic Inbox Worker (e.g. `https://evonic-agentic-inbox.example.workers.dev`). No trailing slash.
 - **ACCESS_TOKEN** — Cloudflare Access JWT token (copy the `CF_Authorization` cookie value after logging in via browser). This is sent as the `cf-access-jwt-assertion` HTTP header.
 
 If either variable is missing, all tools will return an error telling you to ask the admin to configure the skill.
