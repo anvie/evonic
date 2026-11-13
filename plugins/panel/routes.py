@@ -4,6 +4,9 @@ Panel Plugin — Flask Route Handlers
 Provides:
 - GET  /plugin/panel/<agent_id>/render       → HTML panel UI with action buttons
 - GET  /plugin/panel/<agent_id>/actions      → JSON list of enabled actions
+- PATCH|PUT /plugin/panel/<agent_id>/actions/<int:action_id> → Edit (label/slash command)
+- DELETE /plugin/panel/<agent_id>/actions/<int:action_id> → Remove a button
+- PUT  /plugin/panel/<agent_id>/actions/reorder → Persist drag-and-drop button order
 - POST /plugin/panel/<agent_id>/execute/<int:action_id> → Execute action (script/prompt)
 - GET  /plugin/panel/<agent_id>/execution/<execution_id>/status → Poll execution status
 - GET  /plugin/panel/<agent_id>/log          → Execution log entries
@@ -237,6 +240,41 @@ def create_blueprint():
         _emit_panel_updated(agent_id)
         return jsonify({"status": "deleted", "action_id": action_id})
 
+    # ── PUT /plugin/panel/<agent_id>/actions/reorder ───────────────────────────
+    # Used by the Panel tab's edit mode when a button is dragged to a new slot.
+    # The body carries the complete id order so a partial/lost update can never
+    # silently scramble the panel.
+
+    @bp.route("/<agent_id>/actions/reorder", methods=["PUT"])
+    def panel_reorder_actions(agent_id: str):
+        """Persist a new display order for the panel's action buttons."""
+        agent, error = _check_agent_access(agent_id)
+        if error:
+            return jsonify(error[0]), error[1]
+
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "A JSON object body is required"}), 400
+
+        order = payload.get("order")
+        if not isinstance(order, list):
+            return jsonify({"error": "order must be a list of action ids"}), 400
+
+        # bool is an int subclass — reject it explicitly so true/false cannot
+        # sneak through as 1/0 and reorder the wrong buttons.
+        for value in order:
+            if isinstance(value, bool) or not isinstance(value, int):
+                return jsonify({"error": "order must contain integer action ids"}), 400
+
+        db = panel_db_factory(agent_id)
+        try:
+            actions = db.reorder_actions(order)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        _emit_panel_updated(agent_id)
+        return jsonify({"status": "reordered", "actions": actions})
+
     # ── POST /plugin/panel/<agent_id>/execute/<int:action_id> ────────────
 
     @bp.route("/<agent_id>/execute/<int:action_id>", methods=["POST"])
@@ -371,6 +409,13 @@ _TRASH_SVG = (
     '<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
     '<line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>'
 )
+# Drag handle glyph: six dots, the conventional "grab to reorder" affordance.
+_GRIP_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" '
+    'stroke="none" aria-hidden="true">'
+    '<circle cx="9" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/>'
+    '<circle cx="15" cy="6" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>'
+)
 
 
 def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
@@ -475,13 +520,25 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
   .pnl-edit-mode .pnl-item-tools { display:flex; }
   /* In edit mode the action button itself is inert: no pointer events, no
      focus, and marked aria-disabled so assistive tech announces it. */
-  .pnl-edit-mode .panel-btn { pointer-events:none; padding-right:4.5rem; }
+  .pnl-edit-mode .panel-btn { pointer-events:none; padding-right:5.5rem; }
   .pnl-tool { display:inline-flex; align-items:center; justify-content:center; width:1.5rem; height:1.5rem; padding:0; border:none; border-radius:.375rem; background:transparent; color:#4b5563; cursor:pointer; }
   .pnl-tool:hover { background:#e5e7eb; }
   .pnl-tool:focus-visible { outline:2px solid #6366f1; outline-offset:1px; }
   .pnl-tool svg { width:.9rem; height:.9rem; }
   .pnl-tool-edit:hover { color:#4338ca; }
   .pnl-tool-del:hover { color:#b91c1c; background:#fee2e2; }
+  /* ── Drag-and-drop reordering (edit mode only) ──────────────────────── */
+  .pnl-tool-drag { cursor:grab; }
+  .pnl-tool-drag:active { cursor:grabbing; }
+  .pnl-tool-drag:hover { color:#4338ca; }
+  .pnl-edit-mode .pnl-item[draggable="true"] { cursor:grab; }
+  .pnl-item.pnl-dragging { opacity:.4; }
+  /* Insertion marker: a line on the edge the button will land against. */
+  .pnl-item.pnl-drop-before::before, .pnl-item.pnl-drop-after::after { content:""; position:absolute; left:0; right:0; height:2px; background:#6366f1; border-radius:2px; }
+  .pnl-item.pnl-drop-before::before { top:-3px; }
+  .pnl-item.pnl-drop-after::after { bottom:-3px; }
+  .pnl-item.pnl-reorder-bump { animation:pnl-bump .18s ease-out; }
+  @keyframes pnl-bump { from { transform:scale(.985); } to { transform:scale(1); } }
   .pnl-toast { position:fixed; left:50%; bottom:1.25rem; transform:translateX(-50%); background:#1e293b; color:#f8fafc; font-size:.8rem; padding:.5rem .9rem; border-radius:.5rem; border:1px solid #334155; box-shadow:0 8px 24px rgba(15,23,42,.45); z-index:60; }
   .pnl-toast.pnl-toast-err { background:#7f1d1d; border-color:#b91c1c; }
   .dark .pnl-search { background:#374151; border-color:#4b5563; color:#f3f4f6; }
@@ -502,7 +559,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
       <h2 class="pnl-title">Panel — <span>{_escape_html(agent_name)}</span></h2>
       <button id="pnl-edit-toggle" class="pnl-edit-toggle" type="button" aria-pressed="false" title="Edit panel buttons">{_PENCIL_SVG}<span id="pnl-edit-toggle-label">Edit</span></button>
     </div>
-    <p id="pnl-edit-hint" class="pnl-edit-hint pnl-hidden">Edit mode: buttons are paused. Use the pencil to edit or the trash to remove a button, then click Done.</p>
+    <p id="pnl-edit-hint" class="pnl-edit-hint pnl-hidden">Edit mode: buttons are paused. Drag a grip to reorder, use the pencil to edit or the trash to remove a button, then click Done.</p>
     <div class="pnl-search-wrap">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.3-4.3m1.8-4.7a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z"/></svg>
       <input id="pnl-search" class="pnl-search" type="search" placeholder="Filter buttons..." autocomplete="off">
@@ -535,6 +592,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
         html += f"""      <div class="pnl-item" data-action-id="{aid}">
         <button class="panel-btn {color_class}{disabled_class}" data-action-id="{aid}" data-action-type="{atype}" data-label="{label}" data-search="{label_lower}" {disabled_attr}><span class="pnl-dot"></span><span class="pnl-hour">&#8987;</span><span class="pnl-label">{label}</span>{cmd_badge}</button>
         <div class="pnl-item-tools">
+          <button class="pnl-tool pnl-tool-drag" type="button" draggable="true" data-action-id="{aid}" title="Drag to reorder (or focus and press Alt+&#8593;/&#8595;)" aria-label="Reorder {label}">{_GRIP_SVG}</button>
           <button class="pnl-tool pnl-tool-edit" type="button" data-action-id="{aid}" title="Edit button" aria-label="Edit {label}">{_PENCIL_SVG}</button>
           <button class="pnl-tool pnl-tool-del" type="button" data-action-id="{aid}" title="Delete button" aria-label="Delete {label}">{_TRASH_SVG}</button>
         </div>
@@ -604,6 +662,11 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
   let termFresh = true;
   let currentRunBody = null;
   let editMode = false;
+  // Drag-and-drop reordering state (edit mode only): the card being dragged,
+  // and the id order the server is believed to have (for change detection and
+  // rollback if the save fails).
+  let dragItem = null;
+  let orderSnapshot = [];
 
   const termBody = document.getElementById('pnl-term-body');
   const badge = document.getElementById('pnl-badge');
@@ -843,6 +906,9 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
         delete btn.dataset.pnlWasDisabled;
       }
     });
+    // Cards are only draggable while editing, so a normal click can never be
+    // mistaken for a drag. Entering the mode also snapshots the current order.
+    setReorderEnabled(editMode);
     try { sessionStorage.setItem(EDIT_STORE_KEY, editMode ? '1' : '0'); } catch (e) {}
   }
 
@@ -916,7 +982,9 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
     const item = btn.closest('.pnl-item');
     if (item) {
       item.querySelectorAll('.pnl-tool').forEach(function(tool) {
-        const verb = tool.classList.contains('pnl-tool-edit') ? 'Edit ' : 'Delete ';
+        let verb = 'Delete ';
+        if (tool.classList.contains('pnl-tool-edit')) verb = 'Edit ';
+        else if (tool.classList.contains('pnl-tool-drag')) verb = 'Reorder ';
         tool.setAttribute('aria-label', verb + label);
       });
     }
@@ -992,6 +1060,8 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
         if (actions[i].id === actionId) actions.splice(i, 1);
       }
       refreshGridEmptyState();
+      // A deleted card must not linger in the order used to detect drags.
+      orderSnapshot = currentOrder();
       editToast('Button removed.');
     } catch (err) {
       editToast('Network error: ' + err.message, true);
@@ -1016,6 +1086,168 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
         e.stopPropagation();
         removeAction(parseInt(delTool.dataset.actionId, 10));
       }
+    });
+  }
+
+  // ── Drag-and-drop reordering ──────────────────────────────────────────
+  // In edit mode every card is draggable: the card follows the pointer live
+  // inside the grid, an insertion line shows where it will land, and on drop
+  // the new id order is PUT to the API so it survives a reload. Grip buttons
+  // are focusable, so keyboard users reorder with Alt+ArrowUp / Alt+ArrowDown.
+  const REORDER_URL = '/plugin/panel/' + AGENT_ID + '/actions/reorder';
+
+  function gridItems() {
+    return Array.prototype.slice.call(btnGrid.querySelectorAll('.pnl-item'));
+  }
+
+  function currentOrder() {
+    return gridItems().map(function(item) {
+      return parseInt(item.dataset.actionId, 10);
+    });
+  }
+
+  // Keep the in-memory `actions` list in the same order as the grid.
+  function syncActionsOrder(ids) {
+    const byId = {};
+    actions.forEach(function(a) { byId[a.id] = a; });
+    const next = [];
+    ids.forEach(function(id) { if (byId[id]) next.push(byId[id]); });
+    actions.length = 0;
+    Array.prototype.push.apply(actions, next);
+  }
+
+  function clearDropMarkers() {
+    gridItems().forEach(function(item) {
+      item.classList.remove('pnl-drop-before');
+      item.classList.remove('pnl-drop-after');
+    });
+  }
+
+  function setReorderEnabled(on) {
+    gridItems().forEach(function(item) { item.draggable = !!on; });
+    if (on) orderSnapshot = currentOrder();
+    clearDropMarkers();
+  }
+
+  // Show the insertion line and move the dragged card into that slot.
+  function moveItemTo(dragged, target, clientY) {
+    if (!dragged || !target || dragged === target) return;
+    const rect = target.getBoundingClientRect();
+    const after = clientY > rect.top + rect.height / 2;
+    clearDropMarkers();
+    target.classList.add(after ? 'pnl-drop-after' : 'pnl-drop-before');
+    const next = after ? target.nextElementSibling : target;
+    if (next === dragged) return;
+    btnGrid.insertBefore(dragged, next);
+  }
+
+  // Move one slot up (-1) or down (+1). Returns false when already at an edge.
+  function moveItemBy(item, delta) {
+    const items = gridItems();
+    const index = items.indexOf(item);
+    const targetIndex = index + delta;
+    if (index === -1 || targetIndex < 0 || targetIndex >= items.length) return false;
+    if (delta < 0) {
+      btnGrid.insertBefore(item, items[targetIndex]);
+    } else {
+      btnGrid.insertBefore(item, items[targetIndex].nextElementSibling);
+    }
+    item.classList.add('pnl-reorder-bump');
+    setTimeout(function() { item.classList.remove('pnl-reorder-bump'); }, 240);
+    return true;
+  }
+
+  // Put the cards back into a known order after a failed save.
+  function restoreOrder(ids) {
+    ids.forEach(function(id) {
+      const item = btnGrid.querySelector('.pnl-item[data-action-id="' + id + '"]');
+      if (item) btnGrid.appendChild(item);
+    });
+  }
+
+  async function persistOrder() {
+    const order = currentOrder();
+    if (!order.length) return;
+    if (order.join(',') === orderSnapshot.join(',')) return; // nothing moved
+
+    const previous = orderSnapshot.slice();
+    orderSnapshot = order.slice();
+    try {
+      const resp = await fetch(REORDER_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: order })
+      });
+      const data = await resp.json().catch(function() { return {}; });
+      if (!resp.ok) throw new Error(data.error || 'Could not save the new order.');
+      syncActionsOrder(order);
+      editToast('Order saved.');
+    } catch (err) {
+      restoreOrder(previous);
+      orderSnapshot = previous;
+      editToast(err.message || 'Could not save the new order.', true);
+    }
+  }
+
+  if (btnGrid) {
+    btnGrid.addEventListener('dragstart', function(e) {
+      if (!editMode) { e.preventDefault(); return; }
+      // The grip is its own drag source (some browsers will not start a drag
+      // from inside a <button>), so resolve the card it belongs to.
+      const item = e.target.closest ? e.target.closest('.pnl-item') : null;
+      if (!item || !item.draggable) { e.preventDefault(); return; }
+      dragItem = item;
+      // Firefox only starts a drag when some payload is set.
+      try { e.dataTransfer.setData('text/plain', item.dataset.actionId); } catch (err) {}
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        // Drag the whole card, not just the 1.5rem grip.
+        try { e.dataTransfer.setDragImage(item, 16, 16); } catch (err) {}
+      }
+      item.classList.add('pnl-dragging');
+    });
+
+    // Required for the grid to accept a drop.
+    btnGrid.addEventListener('dragover', function(e) {
+      if (!dragItem) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      const target = e.target.closest ? e.target.closest('.pnl-item') : null;
+      if (!target || target === dragItem) { clearDropMarkers(); return; }
+      moveItemTo(dragItem, target, e.clientY);
+    });
+
+    btnGrid.addEventListener('drop', function(e) {
+      if (!dragItem) return;
+      e.preventDefault();
+    });
+
+    btnGrid.addEventListener('dragleave', function(e) {
+      if (e.target === btnGrid) clearDropMarkers();
+    });
+
+    btnGrid.addEventListener('dragend', function() {
+      if (!dragItem) return;
+      dragItem.classList.remove('pnl-dragging');
+      clearDropMarkers();
+      dragItem = null;
+      persistOrder();
+    });
+
+    // Keyboard equivalent: focus a grip and press Alt+ArrowUp / Alt+ArrowDown.
+    btnGrid.addEventListener('keydown', function(e) {
+      if (!editMode || !e.altKey) return;
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      const handle = e.target.closest ? e.target.closest('.pnl-tool-drag') : null;
+      if (!handle) return;
+      const item = handle.closest('.pnl-item');
+      if (!item) return;
+      e.preventDefault();
+      if (!moveItemBy(item, e.key === 'ArrowUp' ? -1 : 1)) return;
+      handle.focus();
+      const items = gridItems();
+      editToast('Moved to position ' + (items.indexOf(item) + 1) + ' of ' + items.length + '.');
+      persistOrder();
     });
   }
 

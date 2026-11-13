@@ -4,6 +4,7 @@
 
 ### Features
 
+- The Agent Panel's edit mode now supports drag-and-drop reordering. Every button gains a grip handle; drag it to a new slot (or focus it and press `Alt+↑`/`Alt+↓`) and the panel saves the new order immediately, so it survives a reload and reaches every open tab. (task #922)
 - Tools a plugin lends an agent are now remembered for the conversation they were lent to, not only for the message that carried them. A grant is stored per session (`session_tool_grants`), always expires (72 hours, refreshed when the tool is lent again), is capped at eight tools, and is refused outside agent-to-agent sessions, for another plugin's tools, for core tool names and for disabled plugins. `notify_agent(lend_tools=..., lend_tools_from=...)` lends them; the agent keeps the tool in its later turns of that session, and the tool still never enters its assignment.
 
 ### Improvements

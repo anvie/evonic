@@ -195,6 +195,42 @@ class PanelDB:
             ).fetchone()
             return dict(row) if row else None
 
+    def reorder_actions(self, ordered_ids: List[int]) -> List[Dict[str, Any]]:
+        """Persist a new display order for this agent's actions.
+
+        `ordered_ids` must list every action of this agent exactly once, in the
+        intended display order. Sort order is rewritten densely (0, 1, 2, ...)
+        so the stored order always matches the list exactly and never depends on
+        pre-existing gaps or ties.
+
+        Raises ValueError when the list is not a complete, duplicate-free set of
+        this agent's action ids — callers should turn that into a 400.
+        Returns the re-ordered actions.
+        """
+        try:
+            ids = [int(i) for i in ordered_ids]
+        except (TypeError, ValueError):
+            raise ValueError("order must contain integer action ids")
+
+        if len(set(ids)) != len(ids):
+            raise ValueError("order contains duplicate action ids")
+
+        existing = {a["id"] for a in self.list_actions()}
+        if set(ids) != existing:
+            raise ValueError(
+                "order must list every panel action of this agent exactly once"
+            )
+
+        now = _now()
+        with self._connect() as conn:
+            conn.executemany(
+                "UPDATE panel_actions SET sort_order = ?, updated_at = ? "
+                "WHERE id = ? AND agent_id = ?",
+                [(index, now, action_id, self.agent_id)
+                 for index, action_id in enumerate(ids)]
+            )
+        return self.list_actions()
+
     def find_by_slash_command(self, name: str) -> Optional[Dict[str, Any]]:
         """Return the enabled action assigned to `name`, or None."""
         name = (name or '').strip().lower()
