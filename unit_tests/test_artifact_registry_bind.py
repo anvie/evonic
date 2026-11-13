@@ -67,7 +67,9 @@ def test_docker_container_cmd_includes_artifacts_bind(tmp_path, monkeypatch):
     assert cid == b"cid123"
     assert calls, "docker run should have been invoked"
 
-    run_cmd = calls[0]
+    # The image is inspected once before the container starts (PIT-373), so the
+    # run call is not necessarily first.
+    run_cmd = next(c for c in calls if c and c[0] == 'run')
     assert "-v" in run_cmd
     mounts = [run_cmd[i + 1] for i, a in enumerate(run_cmd) if a == "-v"]
     expected = f"{docker_backend._ARTIFACTS_ROOT}/rina/artifacts:/workspace/shared/agents/rina/artifacts:rw"
@@ -89,7 +91,9 @@ def test_docker_container_cmd_skips_artifacts_bind_for_no_agent(monkeypatch, tmp
         "sess-y", agent_id="", workspace=str(tmp_path), persistent=False
     )
     assert err is None and cid == b"cid123"
-    run_cmd = calls[0]
+    # The image is inspected once before the container starts (PIT-373), so the
+    # run call is not necessarily first.
+    run_cmd = next(c for c in calls if c and c[0] == 'run')
     mounts = [run_cmd[i + 1] for i, a in enumerate(run_cmd) if a == "-v"]
     assert not any("/workspace/shared/agents/" in m for m in mounts)
 
@@ -266,7 +270,9 @@ def test_docker_skips_artifacts_bind_when_workspace_is_base(monkeypatch):
         'sess-w', agent_id='rina', workspace=base, persistent=False
     )
     assert err is None and cid == b'cid123'
-    run_cmd = calls[0]
+    # The image is inspected once before the container starts (PIT-373), so the
+    # run call is not necessarily first.
+    run_cmd = next(c for c in calls if c and c[0] == 'run')
     mounts = [run_cmd[i + 1] for i, a in enumerate(run_cmd) if a == '-v']
     assert not any('/workspace/shared/agents/' in m for m in mounts)
 

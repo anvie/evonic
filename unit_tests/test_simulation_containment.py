@@ -198,7 +198,7 @@ def test_docker_container_binds_sim_artifacts_root(monkeypatch, tmp_path):
             persistent=False, artifacts_root=artifacts_root,
         )
         assert err is None and cid == b"cid"
-        run_cmd = calls[0]
+        run_cmd = next(c for c in calls if c and c[0] == 'run')
         return [run_cmd[i + 1] for i, a in enumerate(run_cmd) if a == "-v"]
 
     # (a) workspace == simulation root: the workspace mount already exposes

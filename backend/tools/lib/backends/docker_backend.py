@@ -34,6 +34,8 @@ try:
         SANDBOX_IMAGE,
         SANDBOX_MAX_CONTAINERS,
         SANDBOX_PERSISTENT_CONTAINER_ENABLED,
+        SANDBOX_IMAGE_CHECK_TTL,
+        SANDBOX_IMAGE_CHECK_TIMEOUT,
     )
 except ImportError:
     SANDBOX_WORKSPACE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
@@ -44,6 +46,8 @@ except ImportError:
     SANDBOX_IMAGE = 'evonic-sandbox:latest'
     SANDBOX_MAX_CONTAINERS = 10
     SANDBOX_PERSISTENT_CONTAINER_ENABLED = True
+    SANDBOX_IMAGE_CHECK_TTL = 60
+    SANDBOX_IMAGE_CHECK_TIMEOUT = 5
 
 # Directory containing the evonic helper package (mounted into the container)
 _HELPERS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'runpy_helpers'))
@@ -132,6 +136,80 @@ def _claim_runtime(runtime: str) -> None:
 def get_active_runtime() -> str:
     """Return the runtime currently owning the container pool ('' if unused)."""
     return _ACTIVE_RUNTIME
+
+
+# PIT-373: cache the one `<runtime> image inspect` per image so a turn does not
+# pay for it on every tool call.  The value is (error_or_None, checked_at, ttl).
+_image_cache: dict = {}
+
+
+def _reset_image_cache() -> None:
+    """Clear the cached image verdict (tests and a manual rebuild)."""
+    with _pool_lock:
+        _image_cache.clear()
+
+
+def sandbox_image_error(image: str = None, timeout: int = None) -> str:
+    """Return a precise error when the sandbox image cannot be used, else ''.
+
+    This is deliberately one cheap `image inspect` (no pull, no copy).  It runs
+    before a container is created so a missing image becomes a fast, named
+    error instead of a `run` that tries a pull while the model guesses
+    "workspace down".  Positive verdicts are cached for
+    ``SANDBOX_IMAGE_CHECK_TTL``; negative ones for a third of that, so a manual
+    build is picked up without restarting the platform.
+    """
+    image = image or SANDBOX_IMAGE
+    timeout = SANDBOX_IMAGE_CHECK_TIMEOUT if timeout is None else timeout
+    now = time.time()
+    with _pool_lock:
+        cached = _image_cache.get(image)
+    if cached is not None:
+        error, checked_at, ttl = cached
+        if now - checked_at < ttl:
+            return error or ''
+
+    short_ttl = max(1, SANDBOX_IMAGE_CHECK_TTL // 3)
+    try:
+        result = _docker('image', 'inspect', image, timeout=timeout)
+    except FileNotFoundError:
+        error = (
+            f'The container runtime `{_RUNTIME_NAME}` is not installed on this '
+            f'host, so the sandbox image `{image}` cannot be used. The agent '
+            'cannot read or write files until it is installed and the image is built.')
+        with _pool_lock:
+            _image_cache[image] = (error, now, short_ttl)
+        return error
+    except subprocess.TimeoutExpired:
+        error = (
+            f'`{_RUNTIME_NAME} image inspect {image}` did not answer within '
+            f'{timeout}s. The container runtime is not responding; the agent '
+            'cannot read or write files until it is healthy.')
+        with _pool_lock:
+            _image_cache[image] = (error, now, short_ttl)
+        return error
+
+    if result.returncode == 0:
+        with _pool_lock:
+            _image_cache[image] = ('', now, SANDBOX_IMAGE_CHECK_TTL)
+        return ''
+
+    stderr = (result.stderr or '').strip()
+    lowered = stderr.lower()
+    if ('no such image' in lowered or 'not found' in lowered
+            or 'pull access denied' in lowered):
+        error = (
+            f'The sandbox image `{image}` is not present on this host; the '
+            'agent cannot read or write files until it is built. Build it with:\n'
+            f'    {_RUNTIME_NAME} build -t {image} docker/tools')
+    else:
+        error = (
+            f'The sandbox backend cannot use {_RUNTIME_NAME}: '
+            f'{stderr or f"{_RUNTIME_NAME} image inspect failed"}. The agent '
+            'cannot read or write files until the runtime is usable.')
+    with _pool_lock:
+        _image_cache[image] = (error, now, short_ttl)
+    return error
 
 
 def _ensure_reaper_running() -> None:
@@ -516,6 +594,12 @@ def _get_or_create_container(
     if needs_destroy:
         _destroy_container(pool_key)
 
+    # PIT-373: check the image before `run` so a missing image is a fast, named
+    # error instead of a pull attempt the model narrates as "workspace down".
+    image_error = sandbox_image_error()
+    if image_error:
+        return None, image_error
+
     with _pool_lock:
         count = len(_containers)
     if count >= SANDBOX_MAX_CONTAINERS:
@@ -583,7 +667,18 @@ def _get_or_create_container(
             result = _docker(*cmd)
 
     if result.returncode != 0:
-        return None, f'Failed to start container: {result.stderr.strip()}'
+        stderr = result.stderr.strip()
+        lowered = stderr.lower()
+        # A missing image is a host-provisioning fault, not a sandbox fault, and
+        # docker's own wording ("pull access denied", "No such image") does not
+        # say what to do about it.  The run returns immediately in this case, so
+        # naming the cause here costs nothing.
+        if 'no such image' in lowered or 'pull access denied' in lowered:
+            return None, (
+                f'The sandbox image `{SANDBOX_IMAGE}` is not present on this '
+                'host; the agent cannot read or write files until it is built. '
+                f'Build it with:\n    {_RUNTIME_NAME} build -t {SANDBOX_IMAGE} docker/tools')
+        return None, f'Failed to start container: {stderr}'
 
     container_id = result.stdout.strip()
     with _pool_lock:
@@ -776,10 +871,20 @@ class DockerBackend(ExecutionBackend):
         try:
             stdout, stderr = self._poll_proc(proc, _PATH_PREFIX + script, timeout + 5, t0)
             if stdout is None:
-                # Process was killed externally
+                if proc.returncode is not None and proc.returncode < 0:
+                    # Process was killed externally
+                    return {
+                        'error': 'Execution stopped by user',
+                        'exit_code': -9,
+                        'execution_time': round(time.time() - t0, 3),
+                    }
+                # PIT-373: a timeout is a timeout, not a user stop.  Reporting
+                # every None as "stopped by user" let a hung tool call read as a
+                # deliberate halt, and the model filled the gap with its own
+                # infrastructure guess.
                 return {
-                    'error': 'Execution stopped by user',
-                    'exit_code': -9,
+                    'error': f'Execution timed out after {timeout}s',
+                    'exit_code': -1,
                     'execution_time': round(time.time() - t0, 3),
                 }
         finally:
