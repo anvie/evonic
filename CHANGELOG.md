@@ -1414,7 +1414,7 @@
 - **Prompt-only skill badges** - show skills without tools as badges with divider line between Tasks and Skills
 - **State API with loaded skills** - `/api/state` now exposes `loaded_skills` with skill badges rendered in sessions page (#359)
 - **SSE bridge state-change trigger** - add `use_skill`/`unload_skill` to SSE state-change trigger list (#358)
-- **Remove `Regular` category badge** - removed from non-system plugin cards (Robin feedback)
+- **Remove `Regular` category badge** - removed from non-system plugin cards (user feedback)
 - **User-directory plugin UI refactor** - migrated to evonic standard styling with profile section cleanup (#331)
 - **Evonet GUI improvements** - Clear button in toolbar (#343), version number in window title, FyneApp.toml for macOS metadata
 - **Translate remaining Indonesian to English** - all Indonesian copy in `cli/commands.py` translated (#342)

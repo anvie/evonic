@@ -9,11 +9,11 @@ from models.chat import is_human_facing_external_user_id
 
 class SenderIdContextTests(unittest.TestCase):
     def test_sender_id_is_rendered_with_display_name(self):
-        with patch.object(context.db, 'get_user_display_name', return_value='Robin'):
+        with patch.object(context.db, 'get_user_display_name', return_value='Demo'):
             result = context.build_user_identity_context('telegram-main', 'sender-42')
 
         self.assertIn('## Current User', result)
-        self.assertIn('**Robin**', result)
+        self.assertIn('**Demo**', result)
         self.assertIn('Channel sender ID: `sender-42`.', result)
         self.assertIn('This identity is provided by the chat channel', result)
 

@@ -79,17 +79,17 @@ class SuperAgentPromptTests(unittest.TestCase):
         custom = "You are my custom super agent.\n\nRule: answer in Indonesian.\n"
         self.write_prompt(custom)
 
-        result = super_agent_tools._exec_set_owner_name({"name": "Robin"})
+        result = super_agent_tools._exec_set_owner_name({"name": "Demo"})
 
         self.assertTrue(result.get("success"))
-        self.assertEqual(db.get_setting("owner_name"), "Robin")
+        self.assertEqual(db.get_setting("owner_name"), "Demo")
         self.assertEqual(self.read_prompt(), custom)
 
     def test_set_owner_name_does_not_seed_a_prompt_file(self):
         if os.path.exists(self.prompt_path):
             os.remove(self.prompt_path)
 
-        super_agent_tools._exec_set_owner_name({"name": "Robin"})
+        super_agent_tools._exec_set_owner_name({"name": "Demo"})
 
         self.assertFalse(os.path.exists(self.prompt_path))
 
@@ -158,11 +158,11 @@ class SuperAgentPromptTests(unittest.TestCase):
 
     def test_owner_name_is_injected_after_onboarding(self):
         self.write_prompt("Base prompt.\n")
-        db.set_setting("owner_name", "Robin")
+        db.set_setting("owner_name", "Demo")
 
         prompt = context.build_system_prompt(self.agent_dict())
 
-        self.assertIn("**Robin**", prompt)
+        self.assertIn("**Demo**", prompt)
         self.assertNotIn("First-Time Onboarding", prompt)
 
 

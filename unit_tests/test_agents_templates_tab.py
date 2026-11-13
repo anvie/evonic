@@ -203,7 +203,7 @@ def test_create_from_template_produces_agent(client, repo_root):
 # ---------------------------------------------------------------------------
 
 def test_templates_tab_ships_new_template_action_next_to_refresh(client, repo_root):
-    """Robin asked for a "create new template" action beside the Refresh button."""
+    """Requested: a "create new template" action beside the Refresh button."""
     login(client)
     html = client.get("/agents").get_data(as_text=True)
 

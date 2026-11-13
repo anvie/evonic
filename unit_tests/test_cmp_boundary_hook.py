@@ -209,11 +209,11 @@ def test_branch_paths_named_from_the_turn_envelope():
     name is applied exactly once (immutable afterwards)."""
     ms = _session_with_two_paths()
     with _detect('indep_branch',
-                 new_path={'title': 'Blog robin.blog.com', 'action': 'create article'}):
+                 new_path={'title': 'Blog example.com', 'action': 'create article'}):
         result = on_turn_boundary(AGENT, ms, FakeChatlog(),
-                                  'buatkan tulisan blog untuk robin.blog.com dong')
+                                  'buatkan tulisan blog untuk example.com dong')
     record = ms.cmp['paths'][result['target']]
-    assert record['title'] == 'Blog robin.blog.com'
+    assert record['title'] == 'Blog example.com'
     assert record['action'] == 'create article'
 
 
