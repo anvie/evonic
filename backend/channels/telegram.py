@@ -1132,7 +1132,7 @@ class TelegramChannel(BaseChannel):
 
     def _do_send(self, external_user_id: str, text: str):
         if not self._app:
-            return
+            raise RuntimeError('the Telegram bot is not connected')
         text = _strip_markdown(text)
         for chunk in _split_message(text):
             self._run_async(self._app.bot.send_message(chat_id=external_user_id, text=chunk))
@@ -1153,6 +1153,7 @@ class TelegramChannel(BaseChannel):
             self.send_message(external_user_id, text, session_id=session_id)
             return
         if not self._app:
+            self._store_send_error(external_user_id, 'the Telegram bot is not connected')
             return
         with self._buf_lock:
             pending = self._buf.pop(external_user_id, None)
@@ -1171,7 +1172,7 @@ class TelegramChannel(BaseChannel):
                     chat_id=external_user_id, text=chunk, reply_markup=markup))
             self._last_sent[external_user_id] = time.time()
         except Exception as e:
-            self._store_send_error(external_user_id, str(e))
+            self._store_send_failure(external_user_id, e)
             return
         from backend.event_stream import event_stream
         event_stream.emit('message_sent', {

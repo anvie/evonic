@@ -117,7 +117,7 @@ class BaseChannel(ABC):
                 self._do_send(external_user_id, text, session_id=session_id)
             self._last_sent[external_user_id] = time.time()
         except Exception as e:
-            self._store_send_error(external_user_id, str(e))
+            self._store_send_failure(external_user_id, e)
 
     def send_message(self, external_user_id: str, text: str, session_id: str = None):
         """Immediate path: cancel any pending buffer for this chat, merge + send now.
@@ -139,7 +139,7 @@ class BaseChannel(ABC):
                 self._do_send(external_user_id, text, session_id=session_id)
             self._last_sent[external_user_id] = time.time()
         except Exception as e:
-            self._store_send_error(external_user_id, str(e))
+            self._store_send_failure(external_user_id, e)
 
     def send_message_with_actions(self, external_user_id: str, text: str,
                                   actions: list, session_id: str = None):
@@ -174,7 +174,7 @@ class BaseChannel(ABC):
                 self._store_send_error(external_user_id, "send_file returned False")
             return result
         except Exception as e:
-            self._store_send_error(external_user_id, str(e))
+            self._store_send_failure(external_user_id, e)
             return False
 
     def _do_send_file(self, external_user_id: str, file_path: str,
@@ -183,11 +183,27 @@ class BaseChannel(ABC):
         """Actual file delivery — override in subclass. Returns False by default."""
         return False
 
-    def _store_send_error(self, external_user_id: str, error: str):
-        """Store a send error with current timestamp, then purge expired entries."""
+    def _store_send_error(self, external_user_id: str, error: str, unknown: bool = False):
+        """Store a send error with current timestamp, then purge expired entries.
+
+        ``unknown``: the send may still have gone out (it timed out after it was handed over), so whether the person
+        got it is not known. A caller must not send it again on its own: that may deliver it twice.
+        """
         with self._send_errors_lock:
-            self._send_errors[external_user_id] = (error, time.time())
+            self._send_errors[external_user_id] = (error, time.time(), unknown)
             self._cleanup_send_errors()
+
+    @staticmethod
+    def send_outcome_unknown(exc: BaseException) -> bool:
+        """True when a send that raised ``exc`` may still have been delivered: a timeout after the request was made."""
+        return isinstance(exc, TimeoutError) or any(
+            'timeout' in k.__name__.lower() or 'timedout' in k.__name__.lower() for k in type(exc).__mro__)
+
+    def _store_send_failure(self, external_user_id: str, exc: BaseException):
+        """Store what a send that raised went wrong with, and whether it may still have gone out. A timeout's message
+        is often empty, so its class names it."""
+        self._store_send_error(external_user_id, str(exc) or type(exc).__name__,
+                               unknown=self.send_outcome_unknown(exc))
 
     def _cleanup_send_errors(self):
         """Remove send error entries older than _send_error_ttl seconds.
@@ -195,7 +211,7 @@ class BaseChannel(ABC):
         Called with _send_errors_lock already held.
         """
         cutoff = time.time() - self._send_error_ttl
-        expired = [uid for uid, (_, ts) in self._send_errors.items() if ts < cutoff]
+        expired = [uid for uid, entry in self._send_errors.items() if entry[1] < cutoff]
         for uid in expired:
             del self._send_errors[uid]
 
@@ -205,21 +221,53 @@ class BaseChannel(ABC):
         Returns None if the last send was successful, no send has occurred,
         or the entry has expired.
         """
+        outcome = self.get_send_outcome(external_user_id)
+        return outcome['error'] if outcome else None
+
+    def get_send_outcome(self, external_user_id: str) -> Optional[dict]:
+        """The last send failure for a user, then cleared: ``{'error', 'unknown'}``, or None (as ``get_send_error``)."""
         with self._send_errors_lock:
             entry = self._send_errors.pop(external_user_id, None)
             if entry is None:
                 return None
-            error, ts = entry
+            error, ts = entry[0], entry[1]
             if time.time() - ts > self._send_error_ttl:
                 return None
-            return error
+            return {'error': error, 'unknown': bool(entry[2]) if len(entry) > 2 else False}
+
+    def sends_later(self) -> bool:
+        """True when ``send_message`` only puts the text in a queue this channel sends from later."""
+        return False
+
+    def deliver(self, external_user_id: str, text: str, actions: list = None,
+                session_id: str = None) -> dict:
+        """Send now and say what became of it: ``{'status': 'sent' | 'queued' | 'failed' | 'unknown', 'error'}``.
+
+        ``queued``: a channel that sends from a queue of its own took it; whether it then arrived is not reported here.
+        ``unknown``: the send timed out after it was handed over, so it may have arrived. Do not send it again unasked.
+        A failure a send left behind earlier is cleared first, so the answer is about this send only.
+        """
+        self.get_send_outcome(external_user_id)
+        if not self.is_running:
+            return {'status': 'failed', 'error': 'the channel is not running'}
+        try:
+            if actions:
+                self.send_message_with_actions(external_user_id, text, actions, session_id=session_id)
+            else:
+                self.send_message(external_user_id, text, session_id=session_id)
+        except Exception as e:                       # a subclass that lets an error out
+            self._store_send_failure(external_user_id, e)
+        outcome = self.get_send_outcome(external_user_id)
+        if outcome is None:
+            return {'status': 'queued' if self.sends_later() else 'sent', 'error': None}
+        return {'status': 'unknown' if outcome['unknown'] else 'failed', 'error': outcome['error']}
 
     def has_send_error(self, external_user_id: str) -> bool:
         with self._send_errors_lock:
             entry = self._send_errors.get(external_user_id)
             if entry is None:
                 return False
-            _, ts = entry
+            ts = entry[1]
             if time.time() - ts > self._send_error_ttl:
                 del self._send_errors[external_user_id]
                 return False

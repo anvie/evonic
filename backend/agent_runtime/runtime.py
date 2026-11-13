@@ -3307,13 +3307,26 @@ class AgentRuntime:
         """Admin takeover: save message as assistant and send via channel.
 
         ``actions`` (see backend.channel_actions) are validated up front and
-        raise ChannelActionError when malformed.
+        raise ChannelActionError when malformed. True when the session exists
+        and the message was saved, whatever the channel did with it; use
+        ``deliver_as_bot`` to know that.
+        """
+        return self.deliver_as_bot(session_id, text, metadata=metadata, actions=actions)['saved']
+
+    def deliver_as_bot(self, session_id: str, text: str,
+                       metadata: dict | None = None,
+                       actions: list | None = None) -> dict:
+        """``send_as_bot``, saying what became of the send: ``{'saved', 'status', 'error'}``.
+
+        ``status`` is ``sent`` (or ``queued``, by a channel that sends from a queue), ``failed``, ``unknown`` (it timed
+        out after it was handed over and may have arrived: do not send it again unasked), ``no_channel`` (a session with
+        no channel, such as the web chat, where the saved message is what the person reads) or ``no_session``.
         """
         from backend.channel_actions import normalize_actions
         actions = normalize_actions(actions)
         session = db.get_session_with_details(session_id)
         if not session:
-            return False
+            return {'saved': False, 'status': 'no_session', 'error': 'session not found'}
         meta = {'admin_takeover': True}
         if metadata:
             meta.update(metadata)
@@ -3338,18 +3351,16 @@ class AgentRuntime:
             'sender': 'admin',
         })
         # Send via channel if available
-        if session.get('channel_id'):
-            instance = channel_manager._active.get(session['channel_id'])
-            if instance and instance.is_running:
-                try:
-                    if actions:
-                        instance.send_message_with_actions(
-                            session['external_user_id'], text, actions)
-                    else:
-                        instance.send_message(session['external_user_id'], text)
-                except Exception as e:
-                    _logger.error("send_as_bot channel error: %s", e)
-        return True
+        if not session.get('channel_id'):
+            return {'saved': True, 'status': 'no_channel', 'error': None}
+        instance = channel_manager._active.get(session['channel_id'])
+        if not instance or not instance.is_running:
+            _logger.error("send_as_bot: channel %s is not running", session['channel_id'])
+            return {'saved': True, 'status': 'failed', 'error': 'the channel is not running'}
+        result = instance.deliver(session['external_user_id'], text, actions=actions or None)
+        if result['status'] not in ('sent', 'queued'):
+            _logger.error("send_as_bot channel error (%s): %s", result['status'], result['error'])
+        return {'saved': True, **result}
 
     def send_file_as_bot(self, session_id: str, file_path: str,
                          caption: str | None = None,

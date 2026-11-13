@@ -1407,6 +1407,9 @@ class WhatsAppChannel(BaseChannel):
         _logger.debug(
             "Suppressing WhatsApp intermediate output for channel %s", self.channel_id)
 
+    def sends_later(self) -> bool:
+        return bool(self._dispatcher)
+
     def send_message(self, external_user_id: str, text: str,
                      session_id: str = None):
         """Queue final output and absorb pending intermediate messages."""

@@ -42,6 +42,11 @@ class PluginSDK:
         Resolves (or creates) a session from agent_id + external_user_id + channel_id,
         saves the message as an assistant message, and sends it via the channel.
 
+        Returns ``{"success", "session_id", "outcome", "error"?}``. ``success`` is True only when the channel took the
+        message (``outcome`` ``sent``, or ``queued`` by a channel that sends from a queue). ``outcome`` ``unknown`` means
+        the send timed out after it was handed over and may have arrived: do not send it again on your own. The message
+        is saved in the session's history whatever the outcome.
+
         ``actions`` is an optional list of ``{label, namespace, payload}``
         interactive choices: buttons where the channel supports them, numbered
         text options elsewhere. Handle them with
@@ -64,8 +69,12 @@ class PluginSDK:
 
         session_id = db.get_or_create_session(agent_id, external_user_id,
                                               resolved_channel_id)
-        success = agent_runtime.send_as_bot(session_id, text, actions=actions or None)
-        return {"success": success, "session_id": session_id}
+        result = agent_runtime.deliver_as_bot(session_id, text, actions=actions or None)
+        out = {"success": result['status'] in ('sent', 'queued', 'no_channel'),
+               "session_id": session_id, "outcome": result['status']}
+        if result.get('error'):
+            out["error"] = result['error']
+        return out
 
     def send_file(self, agent_id: str, external_user_id: str,
                   channel_id: str, file_path: str,
