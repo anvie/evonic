@@ -57,6 +57,14 @@ def execute(agent: dict, args: dict) -> Any:
         return {"error": str(e), "server": server, "tool": tool}
 
     text = content_to_text(result.get("content"))
+    structured = result.get("structuredContent")
+    if structured is not None:
+        try:
+            sjson = json.dumps(structured, ensure_ascii=False, indent=1)
+        except (TypeError, ValueError):
+            sjson = str(structured)
+        if sjson not in text:
+            text = (text + "\n" if text else "") + sjson
     if len(text) > _MAX_RESULT_CHARS:
         text = text[:_MAX_RESULT_CHARS] + "\n...[output truncated by mcp_call]"
 
