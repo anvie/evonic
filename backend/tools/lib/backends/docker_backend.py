@@ -583,7 +583,18 @@ def _get_or_create_container(
             result = _docker(*cmd)
 
     if result.returncode != 0:
-        return None, f'Failed to start container: {result.stderr.strip()}'
+        stderr = result.stderr.strip()
+        lowered = stderr.lower()
+        # A missing image is a host-provisioning fault, not a sandbox fault, and
+        # docker's own wording ("pull access denied", "No such image") does not
+        # say what to do about it.  The run returns immediately in this case, so
+        # naming the cause here costs nothing.
+        if 'no such image' in lowered or 'pull access denied' in lowered:
+            return None, (
+                f'The sandbox image `{SANDBOX_IMAGE}` is not present on this '
+                'host; the agent cannot read or write files until it is built. '
+                f'Build it with:\n    {_RUNTIME_NAME} build -t {SANDBOX_IMAGE} docker/tools')
+        return None, f'Failed to start container: {stderr}'
 
     container_id = result.stdout.strip()
     with _pool_lock:
