@@ -42,7 +42,7 @@ The super agent's default system prompt lives in `defaults/super_agent_system_pr
 - `backend/tools/` — all tool implementations (bash, read_file, write_file, patch, etc.)
 - `backend/tools/registry.py` — tool registry; defines built-in tools and their factories
 - `backend/channels/` — channel adapters (Telegram, etc.)
-- `plugins/` — installable plugins (kanban, plugin_creator, auto_improver, etc.)
+- `plugins/` — installable plugins (kanban, plugin_creator, mcp_client, etc.)
 - `models/` — database layer: `db.py` (connection), `schema.py` (ORM models), `chat.py`, `chatlog.py` (per-agent SQLite)
 
 ### Agent State
