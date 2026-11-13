@@ -269,10 +269,10 @@ class TestDatabaseIndividualResults:
         db.save_individual_test_result(
             run_id=run_id,
             test_id="test_abc",
-            domain="krasan_villa",
+            domain="villa_demo",
             level=2,
             prompt="What rooms are available?",
-            response="Bismo and Sindoro are available",
+            response="Room A and Room B are available",
             expected='{"tools": ["check_availability"]}',
             score=0.8,
             status="passed",
@@ -281,11 +281,11 @@ class TestDatabaseIndividualResults:
             model_name="gemma-4"
         )
         
-        results = db.get_individual_test_results(run_id, "krasan_villa", 2)
+        results = db.get_individual_test_results(run_id, "villa_demo", 2)
         
         assert len(results) == 1
         assert results[0]["test_id"] == "test_abc"
-        assert results[0]["domain"] == "krasan_villa"
+        assert results[0]["domain"] == "villa_demo"
         assert results[0]["level"] == 2
         assert results[0]["score"] == 0.8
     

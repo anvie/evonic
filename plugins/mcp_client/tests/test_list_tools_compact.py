@@ -79,7 +79,7 @@ class FakeServer:
 
 class FakeManager:
     def __init__(self, servers: dict[str, list[dict]] | None = None):
-        self.servers = {"nuwaira-deck": _tools()} if servers is None else servers
+        self.servers = {"demo-deck": _tools()} if servers is None else servers
 
     def server_names(self) -> list[str]:
         return list(self.servers)
@@ -128,9 +128,9 @@ def _size(payload) -> int:
 
 class TestDefaultListing:
     def test_is_compact_but_names_every_tool(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck"})
+        payload = tool.execute({}, {"server": "demo-deck"})
 
-        assert payload["server"] == "nuwaira-deck"
+        assert payload["server"] == "demo-deck"
         assert payload["tool_count"] == len(_TOOL_NAMES)
         assert payload["shown"] == len(_TOOL_NAMES)
         assert [t["name"] for t in payload["tools"]] == _TOOL_NAMES
@@ -139,11 +139,11 @@ class TestDefaultListing:
         assert payload["hint"]
 
     def test_omits_raw_schemas(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck"})
+        payload = tool.execute({}, {"server": "demo-deck"})
         assert all("input_schema" not in t for t in payload["tools"])
 
     def test_renders_argument_signatures(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck"})
+        payload = tool.execute({}, {"server": "demo-deck"})
         by_name = {t["name"]: t for t in payload["tools"]}
 
         args = by_name["deck_list"]["args"]
@@ -152,18 +152,18 @@ class TestDefaultListing:
         assert "limit:integer?" in args
 
     def test_renders_enum_values(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck"})
+        payload = tool.execute({}, {"server": "demo-deck"})
         by_name = {t["name"]: t for t in payload["tools"]}
         assert "mode:string[fast|precise|draft]?" in by_name["deck_list"]["args"]
 
     def test_trims_long_descriptions(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck"})
+        payload = tool.execute({}, {"server": "demo-deck"})
         for entry in payload["tools"]:
             assert len(entry["description"]) <= 200
 
     def test_all_servers_envelope(self, tool):
         tool._fake_lib.mcp_manager = FakeManager(
-            {"nuwaira-deck": _tools(3), "claude-code": []}
+            {"demo-deck": _tools(3), "claude-code": []}
         )
         payload = tool.execute({}, {})
         assert len(payload["servers"]) == 2
@@ -178,19 +178,19 @@ class TestDefaultListing:
 
 class TestNamesOnly:
     def test_returns_names_without_descriptions(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck", "names_only": True})
+        payload = tool.execute({}, {"server": "demo-deck", "names_only": True})
 
         assert payload["tool_count"] == len(_TOOL_NAMES)
         assert payload["tools"] == _TOOL_NAMES
         assert _size(payload) < 2000
 
     def test_accepts_truthy_strings(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck", "names_only": "true"})
+        payload = tool.execute({}, {"server": "demo-deck", "names_only": "true"})
         assert payload["tools"][0] == _TOOL_NAMES[0]
 
     def test_combines_with_filter(self, tool):
         payload = tool.execute(
-            {}, {"server": "nuwaira-deck", "names_only": True, "filter": "illustration"}
+            {}, {"server": "demo-deck", "names_only": True, "filter": "illustration"}
         )
         assert payload["tool_count"] == len(_TOOL_NAMES)
         assert all(n.startswith("illustration") for n in payload["tools"])
@@ -201,7 +201,7 @@ class TestNamesOnly:
 
 class TestFilter:
     def test_substring_match_includes_full_schema(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck", "filter": "illustration"})
+        payload = tool.execute({}, {"server": "demo-deck", "filter": "illustration"})
 
         names = [t["name"] for t in payload["tools"]]
         assert names == [n for n in _TOOL_NAMES if "illustration" in n]
@@ -211,27 +211,27 @@ class TestFilter:
         assert "note" in payload
 
     def test_matches_description_text_too(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck", "filter": "presentation artefact"})
+        payload = tool.execute({}, {"server": "demo-deck", "filter": "presentation artefact"})
         assert payload["shown"] == len(_TOOL_NAMES)
 
     def test_regex_match(self, tool):
         payload = tool.execute(
-            {}, {"server": "nuwaira-deck", "filter": "^deck_(list|create)$"}
+            {}, {"server": "demo-deck", "filter": "^deck_(list|create)$"}
         )
         assert [t["name"] for t in payload["tools"]] == ["deck_list", "deck_create"]
 
     def test_is_case_insensitive(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck", "filter": "ILLUSTRATION"})
+        payload = tool.execute({}, {"server": "demo-deck", "filter": "ILLUSTRATION"})
         assert payload["shown"] == 6
 
     def test_no_match_returns_empty_list(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck", "filter": "nothing-here"})
+        payload = tool.execute({}, {"server": "demo-deck", "filter": "nothing-here"})
         assert payload["tools"] == []
         assert payload["shown"] == 0
         assert payload["tool_count"] == len(_TOOL_NAMES)
 
     def test_filtered_subset_is_small(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck", "filter": "illustration"})
+        payload = tool.execute({}, {"server": "demo-deck", "filter": "illustration"})
         assert _size(payload) < 8000
 
 
@@ -245,7 +245,7 @@ class TestIncludeSchema:
         assert all("input_schema" in t for t in payload["tools"])
 
     def test_oversized_payload_drops_schemas_and_explains(self, tool):
-        payload = tool.execute({}, {"server": "nuwaira-deck", "include_schema": True})
+        payload = tool.execute({}, {"server": "demo-deck", "include_schema": True})
         assert _size(payload) < 25000
         assert all("input_schema" not in t for t in payload["tools"])
         assert "filter=" in payload["note"]
@@ -259,7 +259,7 @@ class TestErrors:
         db_mod = types.ModuleType("models.db")
         db_mod.db = types.SimpleNamespace(get_setting=lambda key: "0")
         monkeypatch.setitem(sys.modules, "models.db", db_mod)
-        assert "disabled" in tool.execute({}, {"server": "nuwaira-deck"})["error"]
+        assert "disabled" in tool.execute({}, {"server": "demo-deck"})["error"]
 
     def test_unknown_server_reports_error(self, tool):
         payload = tool.execute({}, {"server": "nope"})

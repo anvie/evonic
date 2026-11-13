@@ -2,7 +2,7 @@
   "id": "kb_update_person_1",
   "name": "Update existing person",
   "description": "A new fact about a known person updates that doc by slug.",
-  "prompt": "EXISTING documents:\n[budi] Budi :: Backend engineer at Nuwaira.\n\nSOURCE:\nBudi baru saja dipromosikan menjadi engineering lead di Nuwaira.\n\nReturn only the JSON object:",
+  "prompt": "EXISTING documents:\n[budi] Budi :: Backend engineer at Acme Corp.\n\nSOURCE:\nBudi baru saja dipromosikan menjadi engineering lead di Acme Corp.\n\nReturn only the JSON object:",
   "expected": {
     "expect_actions": {
       "update": [

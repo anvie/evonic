@@ -190,7 +190,7 @@ def test_generic_title_word_does_not_short_circuit():
 
 def test_llm_sees_recent_deliverable_tail():
     """The just-delivered reply reaches the prompt — the branch cue for
-    'invoice done' → 'rebuild krasan-cli' style borderline cases, and the
+    'invoice done' → 'rebuild demo-cli' style borderline cases, and the
     substance for the card delta."""
     ms = _session()
     client = _client({'route': 'dep_branch', 'target': 'A2'})
@@ -226,7 +226,7 @@ def test_hook_passes_last_final_to_detector():
                return_value={'decision': 'continue', 'target': None,
                              'layer': 'LLM', 'reason': 'x'}) as det:
         on_turn_boundary({'id': 'a1', 'enable_cmp': 1, 'enable_agent_state': 1},
-                         ms, Log(), 'tolong rebuild krasan-cli sekarang setelah invoice tadi')
+                         ms, Log(), 'tolong rebuild demo-cli sekarang setelah invoice tadi')
     assert det.call_args[1]['recent_tail'] == 'Invoice sudah selesai dibuat.'
 
 

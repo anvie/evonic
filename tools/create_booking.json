@@ -44,16 +44,16 @@
     }
   },
   "mock_response": {
-    "booking_id": "KRS-2026-0415",
+    "booking_id": "BK-2026-0415",
     "status": "confirmed",
-    "customer_name": "Budi Santoso",
-    "phone": "081234567890",
-    "room": "Sindoro",
+    "customer_name": "Jane Doe",
+    "phone": "081200000000",
+    "room": "Room B",
     "check_in": "2026-04-10",
     "check_out": "2026-04-12",
     "guests": 2,
     "total_price": 1000000,
-    "message": "Booking berhasil! Silakan transfer DP 50% ke rekening BCA 1234567890"
+    "message": "Booking berhasil! Please transfer a 50% deposit to the account on file"
   },
   "mock_response_type": "json",
   "created_at": "2026-04-07T00:00:00.000000",

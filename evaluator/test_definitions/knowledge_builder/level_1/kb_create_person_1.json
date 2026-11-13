@@ -2,7 +2,7 @@
   "id": "kb_create_person_1",
   "name": "Create person doc",
   "description": "Author a person doc (and the company they work at) from a simple fact.",
-  "prompt": "EXISTING documents:\n(none yet)\n\nSOURCE:\nUser bertemu Budi, seorang backend engineer di Nuwaira.\n\nReturn only the JSON object:",
+  "prompt": "EXISTING documents:\n(none yet)\n\nSOURCE:\nUser bertemu Budi, seorang backend engineer di Acme Corp.\n\nReturn only the JSON object:",
   "expected": {
     "expect_actions": {
       "create": [
@@ -11,7 +11,7 @@
           "type": "person"
         },
         {
-          "title": "Nuwaira",
+          "title": "Acme Corp",
           "type": [
             "company",
             "organization"

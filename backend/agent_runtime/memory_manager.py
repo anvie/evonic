@@ -163,7 +163,7 @@ NAMING — the `title` is the subject's PURE canonical name ONLY. Put nicknames,
   - title "Dewi Anggraini Putri", aliases ["DAP"]
 The aliases let other names still resolve to this one doc.
 
-LINKING IS MANDATORY — every named entity you mention in a `body` MUST be wrapped in an inline [[Wiki Link]]: people, places, organizations, companies, products, venues, events. This is how the knowledge graph connects — a body with no links is WRONG. ESPECIALLY every PERSON's name MUST be a [[link]] — never leave a person as plain text. Link the entity's canonical name, e.g. "User bertemu [[Budi Santoso]] di [[Jakarta]] di kantor [[Nuwaira]]." Do NOT wrap "User" in a link.
+LINKING IS MANDATORY — every named entity you mention in a `body` MUST be wrapped in an inline [[Wiki Link]]: people, places, organizations, companies, products, venues, events. This is how the knowledge graph connects — a body with no links is WRONG. ESPECIALLY every PERSON's name MUST be a [[link]] — never leave a person as plain text. Link the entity's canonical name, e.g. "User bertemu [[Budi Santoso]] di [[Jakarta]] di kantor [[Acme Corp]]." Do NOT wrap "User" in a link.
 
 LINKING EXCEPTIONS — do NOT link in these cases:
   - DISAMBIGUATION / NOTES about a DIFFERENT entity with a similar name. If a doc mentions another person only to clarify "this is NOT the same person", leave it as plain text — linking would create a false connection in the knowledge graph.

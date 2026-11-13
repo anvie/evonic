@@ -40,7 +40,7 @@ def _filter(**overrides):
 def _big_listing(tools: int = 34) -> str:
     """A listing roughly the size of the payload that caused the truncation."""
     payload = {
-        "server": "nuwaira-deck",
+        "server": "demo-deck",
         "tool_count": tools,
         "shown": tools,
         "tools": [

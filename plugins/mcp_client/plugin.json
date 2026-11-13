@@ -13,7 +13,7 @@
       "label": "MCP Servers (JSON)",
       "type": "textarea",
       "default": "{\"claude-code\": {\"command\": \"claude\", \"args\": [\"mcp\", \"serve\"], \"env\": {}, \"cwd\": null, \"enabled\": true}}",
-      "description": "JSON object mapping server name to {command, args, env, cwd, enabled} for a local (stdio) server, or {url, headers, enabled} for a remote (Streamable HTTP) one, e.g. {\"nuwaira-deck\": {\"url\": \"https://deck.example/mcp\", \"headers\": {\"Authorization\": \"Bearer nwd_...\"}}}. Only admins can edit this; agents can never supply commands, only a server name. For the claude-code preset, set cwd to the directory Claude Code should operate in."
+      "description": "JSON object mapping server name to {command, args, env, cwd, enabled} for a local (stdio) server, or {url, headers, enabled} for a remote (Streamable HTTP) one, e.g. {\"demo-deck\": {\"url\": \"https://deck.example/mcp\", \"headers\": {\"Authorization\": \"Bearer nwd_...\"}}}. Only admins can edit this; agents can never supply commands, only a server name. For the claude-code preset, set cwd to the directory Claude Code should operate in."
     },
     {
       "name": "CALL_TIMEOUT_SECONDS",
