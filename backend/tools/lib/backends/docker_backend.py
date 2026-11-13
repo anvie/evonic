@@ -196,7 +196,8 @@ def sandbox_image_error(image: str = None, timeout: int = None) -> str:
 
     stderr = (result.stderr or '').strip()
     lowered = stderr.lower()
-    if 'no such image' in lowered or 'not found' in lowered:
+    if ('no such image' in lowered or 'not found' in lowered
+            or 'pull access denied' in lowered):
         error = (
             f'The sandbox image `{image}` is not present on this host; the '
             'agent cannot read or write files until it is built. Build it with:\n'

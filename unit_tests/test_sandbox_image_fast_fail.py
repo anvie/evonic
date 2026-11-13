@@ -10,6 +10,8 @@ kernel's retransmit budget before anyone learned the host was down.
 
 from unittest.mock import patch
 
+import pytest
+
 from backend.tools.lib.backends import docker_backend
 
 
@@ -18,6 +20,15 @@ class _Result:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+
+
+@pytest.fixture(autouse=True)
+def _fresh_image_cache():
+    """The verdict cache is module-global; a negative one must not leak into
+    another test (it is cached for a third of the TTL)."""
+    docker_backend._reset_image_cache()
+    yield
+    docker_backend._reset_image_cache()
 
 
 def test_missing_image_names_the_image_and_the_build_command(monkeypatch, tmp_path):
