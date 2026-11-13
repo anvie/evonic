@@ -254,6 +254,12 @@ SSH_IDLE_TIMEOUT = _get_env_int("SSH_IDLE_TIMEOUT", 1800, min_val=1, max_val=432
 # covers TCP connect + banner + auth; 5 s is enough for a tailnet host that is
 # actually up and keeps a failed turn well under the 10 s budget.
 SSH_CONNECT_TIMEOUT = _get_env_int("SSH_CONNECT_TIMEOUT", 5, min_val=1, max_val=300)
+# How long a cached "sandbox image is/isn't present" answer is trusted.  A
+# positive answer is re-checked on this TTL; a negative one sooner, so a manual
+# build is picked up without restarting the platform.
+SANDBOX_IMAGE_CHECK_TTL = _get_env_int("SANDBOX_IMAGE_CHECK_TTL", 60, min_val=1, max_val=3600)
+SANDBOX_IMAGE_CHECK_TIMEOUT = _get_env_int(
+    "SANDBOX_IMAGE_CHECK_TIMEOUT", 5, min_val=1, max_val=60)
 
 # Tunnel Workplace connector relay (WebSocket server for Evonet)
 CONNECTOR_WS_HOST = os.getenv("CONNECTOR_WS_HOST", "0.0.0.0")
