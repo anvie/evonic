@@ -33,18 +33,19 @@ The execution backend is resolved per session through
 | bwrap                | the bubblewrap sandbox                          |
 | SSH / remote         | that machine                                    |
 | tunnel (Evonet)      | that device                                     |
-| none + sandboxing off| `LocalBackend` — the host, same as bash/runpy   |
+| none + sandboxing off| **refused** — nothing runs on the Evonic host   |
 
 The tool never spawns a process itself. A workplace that cannot be reached
 raises from the backend registry and `runts` returns that as an error: **a
 missing workplace fails loudly and nothing runs on the host.**
 
-The one case that does reach the host is the case that already reaches it for
-`bash` and `runpy`: an agent with `sandbox_enabled=0` **and** no workplace
-assigned. The backend registry picks `LocalBackend` there by configuration, not
-because a workplace went missing; refusing it only in `runts` would make it
-behave differently from the two tools it sits beside, so it is left alone
-deliberately.
+The bare host backend is refused too. An agent with `sandbox_enabled=0` and no
+workplace resolves to `LocalBackend` — Evonic's own process tree — and `runts`
+answers with an error naming the reason instead of executing there. `bash` and
+`runpy` still allow that configuration; this one divergence is deliberate and
+is the acceptance rule for this tool ("fails loudly instead of running on the
+host"), not an oversight. The check is `type(backend) is LocalBackend`, so
+`BwrapBackend` — which subclasses `LocalBackend` — is unaffected.
 
 The working directory is the backend's own — the workplace root in every
 environment (Docker's container workdir, the local workspace dir, the remote
@@ -77,11 +78,11 @@ construction. Two layers close that:
    fails closed when `ENABLED` is off, rejects a missing/blank/non-string
    `code`, and caps the snippet at 120 000 bytes (one argv string is limited to
    `MAX_ARG_STRLEN` = 131 072 bytes by the kernel).
-2. The handler runs the code through the same HMADS safety pipeline `bash` and
+2. The tool's `execute()` runs the code through the same HMADS safety pipeline `bash` and
    `runpy` use, with the bash pattern set (TypeScript is not Python; a snippet
    that shells out or wipes a tree matches the shell rules) and the full agent
    context, so `dangerous` is refused and `requires_approval` goes to the normal
-   approval flow. That scan lives in the handler rather than the guard because
+   approval flow. That scan lives in the tool module rather than the guard because
    the guard hook only receives the agent id and a slim gate context.
 
 ## Getting it in front of an agent
