@@ -33,7 +33,9 @@ function _walkSanitize(node) {
         if (child.nodeType === Node.ELEMENT_NODE) {
             const tag = child.tagName.toLowerCase();
             if (!ALLOWED_TAGS.has(tag)) {
-                // Replace with its children (keep text content)
+                // Replace with its children (keep text content). Sanitize them
+                // first: once hoisted they are no longer in this loop's snapshot.
+                _walkSanitize(child);
                 while (child.firstChild) node.insertBefore(child.firstChild, child);
                 node.removeChild(child);
                 continue;
