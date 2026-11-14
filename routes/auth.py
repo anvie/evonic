@@ -95,6 +95,9 @@ def _is_safe_redirect_url(target):
     # Reject protocol-relative URLs (//evil.com)
     if target.startswith('//'):
         return False
+    # Browsers treat a backslash as a slash, so /\evil.com acts like //evil.com
+    if '\\' in target:
+        return False
     # Must be a relative path starting with /
     return target.startswith('/')
 

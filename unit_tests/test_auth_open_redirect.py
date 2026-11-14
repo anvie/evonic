@@ -157,3 +157,8 @@ class TestIsSafeRedirectUrl(unittest.TestCase):
         self.assertFalse(self.check("javascript:alert(1)"))
         self.assertFalse(self.check("data:text/html,<script>"))
         self.assertFalse(self.check(""))
+
+    def test_backslash_rejected(self):
+        self.assertFalse(self.check("/\\evil.com"))
+        self.assertFalse(self.check("/\\/evil.com"))
+        self.assertFalse(self.check("/path\\evil"))
