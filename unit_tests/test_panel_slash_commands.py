@@ -192,3 +192,15 @@ def test_action_without_params_ignores_args():
     routes = _load_panel_routes()
     action = {'label': 'Restart', 'params': '[]'}
     assert routes._map_positional_args(action, 'restart', 'whatever') == ({}, None)
+
+
+def test_substitute_params_quotes_each_value():
+    routes = _load_panel_routes()
+    assert routes._substitute_params("echo {{a}} {{b}} {{c}}", {"a": "x y", "b": "z"}) == "echo 'x y' z {{c}}"
+    assert routes._substitute_params("echo {{a}}", {}) == "echo {{a}}"
+
+
+def test_substitute_params_does_not_expand_placeholders_inside_values():
+    routes = _load_panel_routes()
+    out = routes._substitute_params("run {{a}} {{b}}", {"a": "{{b}}", "b": "; id #"})
+    assert out == "run '{{b}}' '; id #'"

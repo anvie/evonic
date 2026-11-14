@@ -1307,6 +1307,19 @@ def _notify_script_completion(agent_id: str, action: dict, exit_code,
         pass  # Best-effort; never break the execution flow
 
 
+def _substitute_params(content: str, user_params: dict) -> str:
+    """Replace {{param}} placeholders with shell-quoted values in one pass.
+
+    A single pass keeps a value that itself looks like ``{{other}}`` from being
+    expanded again, which would let a later parameter break out of its quotes.
+    """
+    if not user_params:
+        return content
+    pattern = re.compile(r"\{\{(" + "|".join(re.escape(str(k)) for k in user_params) + r")\}\}")
+    quoted = {str(k): shlex.quote(str(v)) for k, v in user_params.items()}
+    return pattern.sub(lambda m: quoted[m.group(1)], content)
+
+
 def _run_script(agent_id: str, agent: dict, action: dict, user_params: dict,
                 execution_id: str, lock: threading.Lock,
                 session_id: str = None,
@@ -1323,9 +1336,7 @@ def _run_script(agent_id: str, agent: dict, action: dict, user_params: dict,
     try:
         content = action.get("content", "")
 
-        # Substitute {{param}} placeholders (sanitized to prevent command injection)
-        for key, value in user_params.items():
-            content = content.replace(f"{{{{{key}}}}}", shlex.quote(str(value)))
+        content = _substitute_params(content, user_params)
 
         max_timeout = _get_max_timeout()
 
