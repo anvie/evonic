@@ -1066,6 +1066,7 @@ class SchemaMixin:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tests_domain ON tests(domain_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tests_level ON tests(domain_id, level)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_level_scores_run ON level_scores(run_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_test_results_run ON test_results(run_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_individual_results_run ON individual_test_results(run_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_individual_results_test ON individual_test_results(test_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_channels_agent ON channels(agent_id)")
