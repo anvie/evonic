@@ -3378,7 +3378,7 @@ function openPlanModal(planFile) {
                 content.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-400"><span class="text-sm">\u26A0\uFE0F Plan file is empty.</span></div>';
                 return;
             }
-            content.innerHTML = '<div class="recap-prose">' + marked.parse(data.content) + '</div>';
+            content.innerHTML = '<div class="recap-prose">' + sanitize(marked.parse(data.content)) + '</div>';
             ui.addCopyButtons(content);
         })
         .catch(function(err) {
@@ -3450,7 +3450,7 @@ function savePlanFile() {
             // Re-render preview
             var content = document.getElementById('plan-modal-content');
             if (newContent) {
-                content.innerHTML = '<div class="recap-prose">' + marked.parse(newContent) + '</div>';
+                content.innerHTML = '<div class="recap-prose">' + sanitize(marked.parse(newContent)) + '</div>';
                 ui.addCopyButtons(content);
             } else {
                 content.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-400"><span class="text-sm">\u26A0\uFE0F Plan file is empty.</span></div>';

@@ -6658,14 +6658,14 @@ function _cdRenderPending(approvals) {
         return;
     }
     container.innerHTML = approvals.map(a => {
-        const pairDisplay = a.pair_code || '-';
-        const userName = a.user_name || '-';
+        const pairDisplay = escapeHtml(a.pair_code || '-');
+        const userName = escapeHtml(a.user_name || '-');
         const createdAt = a.created_at ? new Date(a.created_at + 'Z').toLocaleString() : '-';
         return `
         <div class="flex items-center justify-between p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
             <div class="min-w-0 flex-1 mr-2">
                 <div class="text-xs font-medium text-gray-800 dark:text-gray-100 truncate">${userName}</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">ID: ${a.external_user_id}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">ID: ${escapeHtml(a.external_user_id)}</div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">Code: ${pairDisplay}</div>
                 <div class="text-xs text-gray-400">${createdAt}</div>
             </div>
@@ -6688,11 +6688,11 @@ function _cdRenderAllowlist(users, userNames, namesNeeded) {
         const needsName = namesNeeded && namesNeeded.includes(u);
         const nameDisplay = needsName
             ? '<span class="text-amber-600 dark:text-amber-400 italic">(name pending...)</span>'
-            : (name ? `<span class="text-gray-600 dark:text-gray-400">— ${name}</span>` : '<span class="text-gray-400 italic">unknown</span>');
+            : (name ? `<span class="text-gray-600 dark:text-gray-400">— ${escapeHtml(name)}</span>` : '<span class="text-gray-400 italic">unknown</span>');
         return `
         <div class="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700/50 rounded-md border border-gray-100 dark:border-gray-600">
             <div class="flex items-center gap-2 min-w-0">
-                <span class="text-xs text-gray-700 dark:text-gray-300 font-mono flex-shrink-0">${u}</span>
+                <span class="text-xs text-gray-700 dark:text-gray-300 font-mono flex-shrink-0">${escapeHtml(u)}</span>
                 <span class="text-xs truncate">${nameDisplay}</span>
             </div>
             <button onclick="removeAllowedUser('${u}')" class="text-xs text-red-500 hover:text-red-700 flex-shrink-0 ml-2">Remove</button>
