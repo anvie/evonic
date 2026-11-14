@@ -8,9 +8,11 @@ construction.  This guard closes that gap through the plugin API
 validates and limits the ``code`` field before anything is dispatched, and
 fails closed when the ENABLED variable is off.
 
-The content safety scan (HMADS) stays in the handler, where the full agent
-context — ``safety_checker_enabled``, ``is_super``, ``_skip_safety`` — is
-available; the guard hook only receives agent_id and a slim gate context.
+The content safety scan (HMADS) stays in the tool module
+(``backend/tools/runts.py``), where the full agent context —
+``safety_checker_enabled``, ``is_super``, ``_skip_safety`` — is available; the
+guard hook only receives agent_id and a slim gate context, and would re-block
+an approved call because it never sees ``_skip_safety``.
 """
 
 from __future__ import annotations
