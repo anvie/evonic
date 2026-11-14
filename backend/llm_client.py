@@ -22,6 +22,10 @@ from backend.normalizer import normalize_llm_text
 from evaluator.api_logger import log_api_call
 from evaluator.gemma4_parser import is_gemma4_format, strip_gemma4_thinking
 
+# Read timeout (seconds between bytes, not total) when a model sets none, so a
+# stalled provider cannot hang an agent thread forever.
+DEFAULT_READ_TIMEOUT = 900
+
 # ── Centralized error formatting ──────────────────────────────────────────────
 
 _LLM_ERROR_MESSAGES = {
@@ -1240,6 +1244,7 @@ class LLMClient:
         except Exception:
             max_retries = self.max_retries if self.max_retries is not None else 5
         last_error_result = None
+        read_timeout = self.timeout or DEFAULT_READ_TIMEOUT
 
         for attempt in range(1 + max_retries):
             try:
@@ -1250,7 +1255,7 @@ class LLMClient:
                     except Exception:
                         pass
                 response = requests.post(
-                    url, json=payload, headers=headers, timeout=(10, self.timeout),
+                    url, json=payload, headers=headers, timeout=(10, read_timeout),
                     stream=use_stream,
                 )
                 if use_stream and response.status_code in (400, 422):
@@ -1260,7 +1265,7 @@ class LLMClient:
                     payload["stream"] = False
                     payload.pop("stream_options", None)
                     response = requests.post(
-                        url, json=payload, headers=headers, timeout=(10, self.timeout)
+                        url, json=payload, headers=headers, timeout=(10, read_timeout)
                     )
                 duration_ms = int((time.time() - start_time) * 1000)
 
@@ -1610,7 +1615,7 @@ class LLMClient:
                     messages,
                     None,
                     elapsed_ms,
-                    error=f"[attempt {attempt + 1}/{1 + max_retries}] Timeout after {self.timeout}s",
+                    error=f"[attempt {attempt + 1}/{1 + max_retries}] Timeout after {read_timeout}s",
                     log_file=log_file,
                 )
                 last_error_result = {
@@ -1618,7 +1623,7 @@ class LLMClient:
                     "duration_ms": elapsed_ms,
                     "success": False,
                     "error_type": "request_timeout",
-                    "error_detail": f"HTTP request timed out after {self.timeout} seconds.",
+                    "error_detail": f"HTTP request timed out after {read_timeout} seconds.",
                 }
                 if attempt < max_retries:
                     time.sleep(min(2 ** (attempt + 1), 60))

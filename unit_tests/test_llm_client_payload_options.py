@@ -169,3 +169,19 @@ def test_reasoning_effort_never_reaches_the_ollama_protocol():
     assert result["success"] is True, result
     assert post.call_args.args[0].endswith("/api/chat")
     assert "reasoning_effort" not in post.call_args.kwargs["json"]
+
+
+def _read_timeout_used(**overrides):
+    client = _client(**overrides)
+    with patch("backend.llm_client.requests.post", return_value=_response(_openai_body())) as post, \
+         patch("backend.llm_client.log_api_call"):
+        client.chat_completion([{"role": "user", "content": "ping"}])
+    return post.call_args.kwargs["timeout"]
+
+
+def test_read_timeout_defaults_when_model_has_none():
+    assert _read_timeout_used(timeout=None) == (10, 900)
+
+
+def test_explicit_model_timeout_wins():
+    assert _read_timeout_used(timeout=30) == (10, 30)
