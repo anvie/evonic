@@ -66,6 +66,19 @@ class WorkplaceManager:
         if workplace_type == 'remote':
             return self._connect_remote(workplace_id, config)
 
+        if workplace_type == 'exec':
+            # A pitura sandbox machine's own `POST /exec` (PIT-399). The cache
+            # key ignores the sandbox flag: the machine is the sandbox.
+            exec_key = (workplace_id, False)
+            with self._lock:
+                if exec_key in self._backends:
+                    return self._backends[exec_key]
+            backend = self._create_exec(workplace_id, config)
+            with self._lock:
+                self._backends[exec_key] = backend
+            self._set_status(workplace_id, 'connected')
+            return backend
+
         if workplace_type == 'tunnel':
             tunnel_key = (workplace_id, False)
             with self._lock:
@@ -112,6 +125,14 @@ class WorkplaceManager:
         if workplace_type == 'remote':
             try:
                 self._connect_remote(workplace_id, config)
+                return {'ok': True, 'status': 'connected'}
+            except Exception as e:
+                return {'ok': False, 'error': str(e)}
+
+        if workplace_type == 'exec':
+            try:
+                self._create_exec(workplace_id, config)
+                self._set_status(workplace_id, 'connected')
                 return {'ok': True, 'status': 'connected'}
             except Exception as e:
                 return {'ok': False, 'error': str(e)}
@@ -317,6 +338,21 @@ class WorkplaceManager:
         except Exception as e:
             self._set_status(workplace_id, 'error', str(e))
             raise RuntimeError(f"Failed to connect remote workplace '{workplace_id}': {e}") from e
+
+    def _create_exec(self, workplace_id: str, config: dict) -> ExecutionBackend:
+        """A sandbox machine's `POST /exec` needs an address and a session token.
+
+        Both come from the machine's create call, so an exec workplace with
+        neither is a configuration error worth naming rather than an empty
+        shell that answers "command not found" for every tool.
+        """
+        if not (config.get('url') and config.get('token')):
+            msg = ('an exec workplace needs `url` and `token` — the machine\'s '
+                   '/exec endpoint and the SANDBOX_EXEC_TOKEN the dashboard minted')
+            self._set_status(workplace_id, 'error', msg)
+            raise RuntimeError(msg)
+        from backend.workplaces.backends.exec_workplace import ExecWorkplaceBackend
+        return ExecWorkplaceBackend(config=config, workplace_id=workplace_id)
 
 
 # Module-level singleton

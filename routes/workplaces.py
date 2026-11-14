@@ -57,8 +57,8 @@ def api_create_workplace():
 
     if not name:
         return jsonify({'error': 'name is required'}), 400
-    if workplace_type not in ('local', 'remote', 'tunnel', 'bwrap'):
-        return jsonify({'error': 'type must be local, remote, tunnel, or bwrap'}), 400
+    if workplace_type not in ('local', 'remote', 'tunnel', 'bwrap', 'exec'):
+        return jsonify({'error': 'type must be local, remote, tunnel, bwrap, or exec'}), 400
 
     config = data.get('config', {})
     if isinstance(config, str):

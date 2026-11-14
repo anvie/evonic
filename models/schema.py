@@ -1074,7 +1074,7 @@ class SchemaMixin:
                 CREATE TABLE IF NOT EXISTS workplaces (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    type TEXT NOT NULL CHECK(type IN ('local', 'remote', 'tunnel', 'bwrap')),
+                    type TEXT NOT NULL CHECK(type IN ('local', 'remote', 'tunnel', 'bwrap', 'exec')),
                     config TEXT NOT NULL DEFAULT '{}',
                     status TEXT DEFAULT 'disconnected',
                     error_msg TEXT,
@@ -1118,22 +1118,23 @@ class SchemaMixin:
                 except sqlite3.OperationalError:
                     pass
 
-            # Migration: add 'bwrap' to the workplaces.type CHECK constraint.
-            # Guarded by sqlite_master so it only runs while the existing table's
-            # CHECK does not yet include 'bwrap'. Uses create-new/copy/drop/rename
-            # (instead of renaming the old table first) so REFERENCES workplaces
-            # clauses in tunnel_connectors/agents are not rewritten by SQLite.
+            # Migration: add 'bwrap' (and 'exec' — an HTTP exec endpoint's
+            # POST /exec) to the workplaces.type CHECK constraint. Guarded by
+            # sqlite_master so it only runs while the existing table's CHECK lacks
+            # either. Uses create-new/copy/drop/rename (instead of renaming the old
+            # table first) so REFERENCES workplaces clauses in
+            # tunnel_connectors/agents are not rewritten by SQLite.
             row = cursor.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='workplaces'"
             ).fetchone()
-            if row and "'bwrap'" not in row[0]:
+            if row and not ("'bwrap'" in row[0] and "'exec'" in row[0]):
                 try:
                     cursor.execute("DROP TABLE IF EXISTS workplaces_new")
                     cursor.execute("""
                         CREATE TABLE workplaces_new (
                             id TEXT PRIMARY KEY,
                             name TEXT NOT NULL,
-                            type TEXT NOT NULL CHECK(type IN ('local', 'remote', 'tunnel', 'bwrap')),
+                            type TEXT NOT NULL CHECK(type IN ('local', 'remote', 'tunnel', 'bwrap', 'exec')),
                             config TEXT NOT NULL DEFAULT '{}',
                             status TEXT DEFAULT 'disconnected',
                             error_msg TEXT,
