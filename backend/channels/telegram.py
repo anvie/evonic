@@ -11,6 +11,11 @@ from backend.channels.base import BaseChannel, strip_system_tags, unique_attachm
 
 _logger = logging.getLogger(__name__)
 
+# Tool-call notification timing: coalesce a burst of calls into one line, and
+# retry after this interval while a reply is still streaming into the chat.
+_TOOL_NOTIFY_WINDOW = 5.0
+_TOOL_NOTIFY_RETRY = 1.0
+
 
 def _sanitize_filename(name: str) -> str:
     """Sanitize a filename to a safe ASCII slug, max 120 chars."""
@@ -457,6 +462,7 @@ class TelegramChannel(BaseChannel):
         self._approval_required_handler = None
         self._approval_resolved_handler = None
         self._tool_executed_handler = None
+        self._tool_timers: Dict[str, threading.Timer] = {}
         self._ask_user_required_handler = None
         self._ask_user_resolved_handler = None
 
@@ -1015,18 +1021,44 @@ class TelegramChannel(BaseChannel):
         event_stream.on('ask_user_required', _on_ask_user_required)
         event_stream.on('ask_user_resolved', _on_ask_user_resolved)
         # Tool-call notifications — OFF by default. Operator opt-in via the
-        # channel config `show_tool_calls: true`; not every deployment wants the
-        # internal tool loop echoed into the chat.
+        # channel config `show_tool_calls: true` (Channel detail → Tool-call
+        # notifications); not every deployment wants the internal tool loop
+        # echoed into the chat.
         if self.config.get('show_tool_calls', False):
             # Coalesce tool calls in a short window into one compact line, so a
             # 100-tool loop collapses to a handful of messages instead of 100.
             _tool_pending: dict = {}  # external_user_id -> {last, counts, any_error}
-            _TOOL_WINDOW = 5.0
+
+            def _tool_busy(user_id: str) -> bool:
+                # A reply mid-stream is exactly the state where the outbound
+                # buffer still holds coalesced text for this chat.
+                with self._buf_lock:
+                    return user_id in self._buf or user_id in self._buf_timers
+
+            def _schedule_tool_notify(user_id: str, delay: float):
+                old = self._tool_timers.pop(user_id, None)
+                if old:
+                    old.cancel()
+                timer = threading.Timer(delay, _flush_tool_notify, args=[user_id])
+                timer.daemon = True
+                self._tool_timers[user_id] = timer
+                timer.start()
 
             def _flush_tool_notify(user_id: str):
-                entry = _tool_pending.pop(user_id, None)
+                self._tool_timers.pop(user_id, None)
+                entry = _tool_pending.get(user_id)
                 if not entry:
                     return
+                if not self._running:
+                    # Channel torn down while the line was queued: drop it.
+                    _tool_pending.pop(user_id, None)
+                    return
+                if _tool_busy(user_id):
+                    # The reply is still streaming — hold the line and look again
+                    # shortly. Never send into the middle of a reply.
+                    _schedule_tool_notify(user_id, _TOOL_NOTIFY_RETRY)
+                    return
+                _tool_pending.pop(user_id, None)
                 parts = [f"{name} ({n}x)" for name, n in sorted(entry['counts'].items())]
                 icon = '\u26a0\ufe0f' if entry['any_error'] else '\U0001f6e0\ufe0f'
                 try:
@@ -1042,20 +1074,18 @@ class TelegramChannel(BaseChannel):
                     return
                 now = time.time()
                 entry = _tool_pending.get(user_id)
-                if entry and now - entry['last'] < _TOOL_WINDOW:
+                if entry:
                     name = data.get('tool_name', '')
                     entry['counts'][name] = entry['counts'].get(name, 0) + 1
                     entry['any_error'] = entry['any_error'] or data.get('has_error', False)
                     entry['last'] = now
                     return
-                if entry:
-                    _flush_tool_notify(user_id)
                 _tool_pending[user_id] = {
                     'last': now,
                     'counts': {data.get('tool_name', ''): 1},
                     'any_error': data.get('has_error', False),
                 }
-                threading.Timer(_TOOL_WINDOW, _flush_tool_notify, args=[user_id]).start()
+                _schedule_tool_notify(user_id, _TOOL_NOTIFY_WINDOW)
 
             self._tool_executed_handler = _on_tool_executed
             event_stream.on('tool_executed', _on_tool_executed)
@@ -1111,6 +1141,11 @@ class TelegramChannel(BaseChannel):
             event_stream.off('ask_user_resolved', self._ask_user_resolved_handler)
         if self._tool_executed_handler:
             event_stream.off('tool_executed', self._tool_executed_handler)
+            self._tool_executed_handler = None
+        # A queued tool notification must not fire into a torn-down channel.
+        for _timer in list(self._tool_timers.values()):
+            _timer.cancel()
+        self._tool_timers.clear()
         import asyncio
         loop = self._loop
         if loop and loop.is_running():
