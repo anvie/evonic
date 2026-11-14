@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Features
+
+- Telegram can post a compact **tool-call notification** in the chat: when the agent runs tools, one line per burst (`🛠️ Tool: read_file (3x), bash (1x)`, `⚠️` if any call errored) instead of one message per call. Off by default — turn it on with **Channel detail → Tool-call notifications** (the `show_tool_calls` channel config key; existing deployments change nothing on upgrade). The line is held until the reply that is streaming finishes, so it never lands in the middle of an answer.
+
 ## [1.6.0] - 2026-10-31
 
 ### Features

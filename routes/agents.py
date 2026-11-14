@@ -1412,6 +1412,20 @@ def api_update_channel(agent_id, channel_id):
     except ValueError as e:
         return jsonify({'error': str(e)}), 409
 
+    # `show_tool_calls` decides at start() whether the tool listeners are
+    # registered, so a running channel must restart to pick the change up —
+    # otherwise the toggle would save and silently do nothing.
+    if 'config' in data and 'show_tool_calls' in (data.get('config') or {}):
+        from backend.channels.registry import channel_manager
+        if channel_manager.is_running(channel_id):
+            try:
+                channel_manager.stop_channel(channel_id)
+                channel_manager.start_channel(channel_id)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    "Channel %s restart after config change failed: %s", channel_id, e)
+
     # Sync running state with enabled flag if it was changed
     if 'enabled' in data:
         from backend.channels.registry import channel_manager
