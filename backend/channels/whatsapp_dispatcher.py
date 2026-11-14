@@ -16,6 +16,7 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
+from backend.channels.text_utils import split_message as _split_message
 
 _logger = logging.getLogger(__name__)
 
@@ -689,24 +690,3 @@ def _natural_whatsapp_format(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Message splitting (4096-char WhatsApp limit)
 # ---------------------------------------------------------------------------
-
-def _split_message(text: str, max_len: int = 4096) -> list:
-    """Split text into chunks within WhatsApp's message size limit."""
-    if len(text) <= max_len:
-        return [text]
-    chunks = []
-    while text:
-        if len(text) <= max_len:
-            chunks.append(text)
-            break
-        split_at = -1
-        for sep in ('\n\n', '\n', ' '):
-            pos = text.rfind(sep, 0, max_len)
-            if pos > 0:
-                split_at = pos
-                break
-        if split_at <= 0:
-            split_at = max_len
-        chunks.append(text[:split_at])
-        text = text[split_at:].lstrip('\n')
-    return chunks

@@ -13,6 +13,7 @@ import requests
 from typing import Dict, Any, Optional
 from backend.channels.base import BaseChannel, strip_system_tags, unique_attachment_path
 from backend.channels.whatsapp_dispatcher import WhatsAppOutboundDispatcher
+from backend.channels.text_utils import split_message as _split_message
 
 _logger = logging.getLogger(__name__)
 # Bridge (Node/Baileys) stdout is routed to logs/baileys.log via EVONIC_LOG_ROUTES
@@ -148,28 +149,6 @@ def _whatsapp_format(text: str) -> str:
     text = text.strip()
 
     return text
-
-
-def _split_message(text: str, max_len: int = 4096) -> list:
-    """Split text into chunks within WhatsApp's message size limit."""
-    if len(text) <= max_len:
-        return [text]
-    chunks = []
-    while text:
-        if len(text) <= max_len:
-            chunks.append(text)
-            break
-        split_at = -1
-        for sep in ('\n\n', '\n', ' '):
-            pos = text.rfind(sep, 0, max_len)
-            if pos > 0:
-                split_at = pos
-                break
-        if split_at <= 0:
-            split_at = max_len
-        chunks.append(text[:split_at])
-        text = text[split_at:].lstrip('\n')
-    return chunks
 
 
 def _read_global_setting(key: str, default: str) -> str:

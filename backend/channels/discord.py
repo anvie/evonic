@@ -21,6 +21,7 @@ import threading
 from typing import Dict, Any, Optional, List, Tuple
 
 from backend.channels.base import BaseChannel, strip_system_tags, unique_attachment_path
+from backend.channels.text_utils import sanitize_filename as _sanitize_filename, human_size as _human_size
 
 _logger = logging.getLogger(__name__)
 
@@ -33,29 +34,6 @@ _VIDEO_MAX_BYTES = 20 * 1024 * 1024
 
 # Matches a bot mention (<@id> or <@!id>) so it can be stripped from guild text.
 _MENTION_RE = re.compile(r'<@!?(\d+)>')
-
-
-def _sanitize_filename(name: str) -> str:
-    """Sanitize a filename to a safe ASCII slug, max 120 chars."""
-    if not name:
-        return 'file'
-    cleaned = re.sub(r'[^A-Za-z0-9._-]', '_', name)[:120]
-    return cleaned or 'file'
-
-
-def _human_size(size_bytes: Optional[int]) -> str:
-    """Render a byte count as a human-friendly string."""
-    if size_bytes is None or size_bytes < 0:
-        return '0B'
-    units = ['B', 'KB', 'MB', 'GB']
-    n = float(size_bytes)
-    for unit in units:
-        if n < 1024 or unit == units[-1]:
-            if unit == 'B':
-                return f"{int(n)}{unit}"
-            return f"{n:.1f}{unit}"
-        n /= 1024
-    return f"{int(size_bytes)}B"
 
 
 def _split_message(text: str, max_len: int = _DISCORD_MAX_LEN) -> List[str]:
