@@ -111,9 +111,3 @@ def begin_enrollment() -> str:
 def confirm_enrollment() -> None:
     """Mark the already-stored enrollment secret as verified."""
     db.set_setting(_TOTP_CONFIRMED_KEY, '1')
-
-
-def save_secret(secret: str) -> None:
-    """Persist a newly verified TOTP secret without exposing it in plaintext."""
-    db.set_setting(_TOTP_SECRET_KEY, _encrypt(secret))
-    confirm_enrollment()

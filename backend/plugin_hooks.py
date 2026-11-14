@@ -367,9 +367,3 @@ def get_state_summary(agent_state) -> dict:
         "states": agent_state.states,
         "registered_namespaces": list(_state_handlers.keys()),
     }
-
-# Re-export registry lists for lifecycle cleanup (plugin unload)
-def _get_all_registries():
-    return (_tool_guards, _message_interceptors, _builtin_suppressors,
-            _turn_context_providers, _busy_message_providers, _turn_gates,
-            _tool_result_gates, _attachment_policies)

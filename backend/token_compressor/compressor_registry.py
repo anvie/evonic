@@ -409,34 +409,3 @@ def reset_registry() -> None:
     """Clear the singleton (useful for testing)."""
     global _registry
     _registry = None
-
-
-def is_compression_enabled(agent_id: Optional[str] = None) -> bool:
-    """Check whether RTK compression is enabled for the given agent.
-
-    Priority:
-    1. RTK_NO_COMPRESS env var — force-disables globally (via TOOL_COMPRESSION_ENABLED)
-    2. Per-agent tool_compression_enabled column (default: True)
-
-    Args:
-        agent_id: The agent ID to check. If None, only env var is checked.
-
-    Returns:
-        True if compression should proceed, False if it should be skipped.
-    """
-    # Global env var takes highest priority
-    if not TOOL_COMPRESSION_ENABLED:
-        return False
-
-    # Per-agent toggle: check DB if agent_id provided
-    if agent_id:
-        try:
-            from models.db import db
-            agent = db.get_agent(agent_id)
-            if agent and not agent.get("tool_compression_enabled", True):
-                return False
-        except Exception:
-            # Fail-open: if DB check fails, don't block compression
-            pass
-
-    return True

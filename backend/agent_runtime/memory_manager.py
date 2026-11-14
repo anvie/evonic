@@ -494,17 +494,6 @@ def create_collection_tool(agent_id: str, session_id: str, name: str,
     }
 
 
-def switch_collection_tool(agent_id: str, session_id: str, name: str) -> dict:
-    """Switch the active collection (or 'root'). Backs the `switch_collection` tool."""
-    name = (name or "").strip()
-    if name.lower() in ("", "root", "/"):
-        _set_active_collection(agent_id, session_id, "")
-        return {"result": "Active collection set to root (top-level knowledge base)."}
-    folder = evomem_writer.slugify(name)
-    if not folder or evomem_writer.read_doc(agent_id, f"{folder}/index") is None:
-        return {"error": f"No collection named '{name}'. Create it with create_collection first."}
-    _set_active_collection(agent_id, session_id, folder)
-    return {"result": f"Active collection is now '{folder}'.", "folder": folder}
 
 
 def _kb_doc_listing(agent_id: str, limit: int = 400):
@@ -1883,106 +1872,6 @@ def _store_with_conflict_detection(agent_id: str, session_id: str, content: str,
     return {"id": memory_id, "dimension": dimension, "superseded": superseded_ids}
 
 
-def extract_and_store_memories(agent: dict, session_id: str, summary: str,
-                                llm_lock: threading.Lock) -> None:
-    """Extract memorable facts from a conversation summary and persist them.
-
-    Runs in a background thread after summarization. Non-fatal on any error.
-    """
-    agent_id = agent['id']
-    try:
-        # Step 1: Extract facts from summary
-        prompt = _EXTRACT_PROMPT.format(summary=summary)
-        with llm_lock:
-            result = llm_client.chat_completion(
-                messages=[{"role": "user", "content": prompt}],
-                tools=None,
-                temperature=0.0,
-                enable_thinking=False,
-                max_tokens=1024,
-            )
-        if not result.get('success'):
-            return
-
-        choice = result['response'].get('choices', [{}])[0]
-        if choice.get('finish_reason') == 'length':
-            return
-
-        raw = choice.get('message', {}).get('content', '')
-        raw, _ = strip_thinking_tags(raw)
-        raw = _strip_code_fences(raw)
-
-        try:
-            facts = json.loads(raw)
-        except json.JSONDecodeError:
-            return
-        if not isinstance(facts, list) or not facts:
-            return
-
-        # Filter out malformed entries
-        facts = [f for f in facts
-                 if isinstance(f, dict) and f.get('content', '').strip()]
-        if not facts:
-            return
-
-        # Step 2: Get existing memories for deduplication
-        existing = db.get_all_memories(agent_id)
-
-        if existing:
-            existing_text = "\n".join(
-                f"[id={m['id']}] ({m['category']}) {m['content']}"
-                for m in existing[:60]  # cap to avoid huge prompts
-            )
-            new_text = "\n".join(
-                f"- ({f.get('category', 'general')}) {f['content']}"
-                for f in facts
-            )
-            dedup_prompt = _DEDUP_PROMPT.format(
-                existing=existing_text,
-                new_facts=new_text,
-            )
-            with llm_lock:
-                dedup_result = llm_client.chat_completion(
-                    messages=[{"role": "user", "content": dedup_prompt}],
-                    tools=None,
-                    temperature=0.0,
-                    enable_thinking=False,
-                    max_tokens=1024,
-                )
-            if dedup_result.get('success'):
-                dedup_choice = dedup_result['response'].get('choices', [{}])[0]
-                dedup_raw = dedup_choice.get('message', {}).get('content', '')
-                dedup_raw, _ = strip_thinking_tags(dedup_raw)
-                dedup_raw = _strip_code_fences(dedup_raw)
-                try:
-                    operations = json.loads(dedup_raw)
-                    if isinstance(operations, list):
-                        for op in operations:
-                            if op is None:
-                                continue
-                            action = op.get('action')
-                            if action == 'add' and op.get('content', '').strip():
-                                _store_with_conflict_detection(
-                                    agent_id, session_id, op['content'].strip(),
-                                    op.get('category', 'general'), llm_lock)
-                            elif action == 'update' and op.get('id') and op.get('content', '').strip():
-                                dim = _extract_dimension(op['content'].strip(),
-                                                         op.get('category', 'general'), llm_lock)
-                                db.update_memory(agent_id, int(op['id']),
-                                                 op['content'].strip(), op.get('category'),
-                                                 dimension=dim)
-                        return  # dedup handled all facts
-                except (json.JSONDecodeError, KeyError, ValueError):
-                    pass  # fall through to simple add
-
-        # No existing memories or dedup failed: add all new facts directly
-        for fact in facts:
-            _store_with_conflict_detection(
-                agent_id, session_id, fact['content'].strip(),
-                fact.get('category', 'general'), llm_lock)
-
-    except Exception as e:
-        print(f"[MemoryManager] Extraction failed for agent {agent_id} (non-fatal): {e}")
 
 
 # ─── KB knowledge extraction (summarizer → curated KB pages) ─────────────────
@@ -2339,13 +2228,6 @@ def _strip_code_fences(text: str) -> str:
     return text.strip()
 
 
-def _extract_last_user_query(messages: list) -> Optional[str]:
-    for msg in reversed(messages):
-        if msg.get('role') == 'user':
-            content = msg.get('content')
-            if isinstance(content, str) and content.strip():
-                return content[:300]
-    return None
 
 
 def _sanitize_fts_query(query: str) -> str:

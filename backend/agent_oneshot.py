@@ -59,19 +59,6 @@ def _blocked(agent: dict, agent_id: str, acl_sender: Optional[str]) -> Optional[
     return None
 
 
-def resolve_human_route(agent_id: str, prefer: str = 'auto') -> Optional[dict]:
-    """Where a message to the person this agent serves should go: its active channel session, otherwise its web
-    chat session (``prefer='web'`` goes to the web chat first, for testing). None when it has neither."""
-    from backend.agent_runtime import notifier
-    if prefer != 'web':
-        uid, cid = notifier._resolve_agent_target(agent_id)
-        sid = db.get_session_id(agent_id, uid, cid) if uid else None
-        if sid:
-            return {'kind': 'channel', 'session_id': sid, 'external_user_id': uid, 'channel_id': cid}
-    web = notifier._resolve_web_fallback(agent_id)
-    if web:
-        return {'kind': 'web', 'session_id': web['id'], 'external_user_id': web['external_user_id'], 'channel_id': None}
-    return None
 
 
 def ask(agent_id: str, message: str, *, tag: str = 'SYSTEM', sender: str = 'oneshot',

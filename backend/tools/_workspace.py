@@ -81,18 +81,6 @@ def is_self_path(file_path: str) -> bool:
     return bool(file_path) and (file_path.startswith(_SELF_PREFIX) or file_path == '/_self')
 
 
-def missing_slash_self_hint(file_path: str) -> Optional[str]:
-    """Return a hint string when file_path starts with '_self/' without leading slash.
-
-    Small models sometimes drop the leading '/' when constructing /_self/... paths.
-    This hint tells them to use the correct prefix.
-    """
-    if file_path and (file_path.startswith('_self/') or file_path == '_self'):
-        return (
-            f"If you meant to access an agent directory, "
-            f"use the prefix `/_self/` (with a leading slash)."
-        )
-    return None
 
 
 def resolve_self_path(agent_id: str, file_path: str, agent: dict = None) -> Optional[str]:

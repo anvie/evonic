@@ -68,10 +68,6 @@ def _is_textish(mime_type: Optional[str], path: str) -> bool:
     return ext in _TEXTISH_EXTS
 
 
-def _is_pdf(mime_type: Optional[str], path: str) -> bool:
-    if mime_type and mime_type.lower() == 'application/pdf':
-        return True
-    return path.lower().endswith('.pdf')
 
 
 def _is_anydoc(mime_type: Optional[str], path: str) -> bool:

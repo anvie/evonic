@@ -97,41 +97,6 @@ Respond with exactly one word: NEW_TASK or CONTINUATION"""
 _CONTINUATION_MAX_WORDS = 6
 
 
-def classify_continuation(previous_goal: str, user_message: str) -> str:
-    """Classify a message as 'new_task' or 'continuation' of previous_goal.
-
-    Defaults to 'continuation' on any error — re-planning by surprise is
-    worse than staying in the current flow.
-    """
-    text = (user_message or "").strip()
-    if not text or not (previous_goal or "").strip():
-        return "continuation"
-    if len(text.split()) <= _CONTINUATION_MAX_WORDS:
-        return "continuation"
-
-    try:
-        client = _get_classifier_client('cmp_model_id')
-        response = classifier_chat(
-            client,
-            [{"role": "system",
-              "content": _CONTINUATION_SYSTEM.format(goal=previous_goal.strip()[:1000])},
-             {"role": "user", "content": text[:4000]}],
-            max_tokens=1024, log_label="CMP continuation",
-            source="cmp", archive_category="boundary")
-        if not response.get("success"):
-            _logger.warning("Continuation classifier LLM call failed: %s",
-                            response.get("error_type"))
-            return "continuation"
-        msg = (response.get("response", {}).get("choices") or [{}])[0].get("message", {})
-        content = (msg.get("content") or "").strip().upper()
-        if not content:
-            content = (msg.get("reasoning_content") or "").strip().upper()
-        result = "new_task" if "NEW_TASK" in content else "continuation"
-        _logger.info("Message classified as %s (LLM)", result)
-        return result
-    except Exception as e:
-        _logger.warning("Continuation classifier failed, defaulting to continuation: %s", e)
-        return "continuation"
 
 
 def classifier_chat(client, messages, max_tokens: int, log_label: str = "classifier",
