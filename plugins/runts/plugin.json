@@ -1,0 +1,40 @@
+{
+  "id": "runts",
+  "name": "Run TS",
+  "version": "1.0.0",
+  "description": "Adds the runts agent tool: run a JavaScript/TypeScript snippet with bun inside the agent's workplace (the active execution backend), beside runpy for Python. Stateless per call — nothing survives between calls except files you write into the workspace.",
+  "author": "Evonic",
+  "enabled": true,
+  "events": [],
+  "tools_file": "tools.json",
+  "variables": [
+    {
+      "name": "ENABLED",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": true,
+      "description": "Kill switch. When disabled, runts fails closed without running anything."
+    },
+    {
+      "name": "TIMEOUT_SECONDS",
+      "label": "Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Wall-clock limit for one snippet. Clamped to 1..300."
+    },
+    {
+      "name": "MAX_OUTPUT_BYTES",
+      "label": "Maximum output (bytes)",
+      "type": "number",
+      "default": 65536,
+      "description": "Per-stream cap applied to stdout and stderr before the result is returned. Default 65536 matches the backends' own 64 KB cap."
+    },
+    {
+      "name": "BUN_BIN",
+      "label": "Bun binary",
+      "type": "string",
+      "default": "bun",
+      "description": "bun executable to invoke inside the workplace. Set an absolute path when bun is not on the workplace PATH (e.g. /home/agent/.bun/bin/bun)."
+    }
+  ]
+}
