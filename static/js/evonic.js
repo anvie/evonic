@@ -21,6 +21,12 @@
     //  Agent Quick Search (Ctrl+G / Cmd+G) — command-palette style
     // ============================================================
 
+    // Disabled agents cannot process messages, so they are never offered here even though
+    // /api/agents returns them (the management pages need the full list).
+    function isAgentEnabled(a) {
+        return !(a.enabled === 0 || a.enabled === false || a.enabled === '0');
+    }
+
     function fetchAgents() {
         if (agentsCache) return Promise.resolve(agentsCache);
         if (agentsPromise) return agentsPromise;  // deduplicate concurrent calls
@@ -28,7 +34,7 @@
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 agentsCache = (data.agents || []).filter(function (a) {
-                    return a.id && a.name;
+                    return a.id && a.name && isAgentEnabled(a);
                 });
                 agentsPromise = null;
                 return agentsCache;
@@ -176,7 +182,7 @@
             return;
         }
         if (!shown.length && !currentQuery && !agentsCache.length) {
-            listEl.innerHTML = '<div class="qs-empty">No agents yet</div>';
+            listEl.innerHTML = '<div class="qs-empty">No enabled agents</div>';
             countEl.textContent = '';
             return;
         }
@@ -197,7 +203,6 @@
                 '<div class="qs-main"><div class="qs-name">' + mark(a.name, currentQuery) + '</div>' +
                 '<div class="qs-id">' + mark(a.id, currentQuery) + '</div></div>' +
                 (a.id === here ? '<span class="qs-badge qs-badge-cur">Current</span>' : '') +
-                (a.enabled === 0 || a.enabled === false ? '<span class="qs-badge qs-badge-off">disabled</span>' : '') +
                 '<span class="qs-go" aria-hidden="true">' + ICON_ENTER + '</span></div>';
         });
         listEl.innerHTML = html;
