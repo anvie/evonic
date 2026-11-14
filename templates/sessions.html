@@ -901,7 +901,7 @@ html.dark #chat-room { border-color: var(--color-gray-700, #364153); background:
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=79"></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=80"></script>
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1"></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=14"></script>
 <script>
@@ -913,7 +913,6 @@ let sidebarPollTimer = null;
 let _selectGeneration = 0;  // incremented on every selectSession call; guards stale async renders
 let _sseThinkingId = null;  // active thinking bubble from SSE
 let _sessionTurn = { phase: 'idle', lastSeq: 0, terminalSeq: 0 };
-let _pendingIntermediateResponse = null;  // queued intermediate response, shown when next thinking event starts
 const _seenRealtimeMessages = new Set();
 const _optimisticMessages = new Map();
 // client_message_id -> last bubble rendered for it. /goal yields a second
@@ -1007,11 +1006,6 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         _beginSessionTurn(data.ts || null);
     } else if (evtName === 'thinking') {
         _beginSessionTurn();
-        // Clear any pending intermediate response — it was already shown inside the bubble
-        // via a response_chunk timeline entry. We no longer split the bubble.
-        if (_pendingIntermediateResponse !== null) {
-            _pendingIntermediateResponse = null;
-        }
         if (!_sseThinkingId) {
             _sseThinkingId = chatUI.showThinkingIndicator();
         }
@@ -1039,7 +1033,15 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         if (data.content && !data.is_final) {
             // Intermediate response: post it in the chat and continue in a fresh thinking bubble.
             _beginSessionTurn();
-            _sseThinkingId = chatUI.splitForIntermediate(_sseThinkingId, data.content, data.timestamp);
+            if (typeof chatUI.splitForIntermediate === 'function') {
+                _sseThinkingId = chatUI.splitForIntermediate(_sseThinkingId, data.content, data.timestamp);
+            } else {
+                // The chat-ui bundle is out of date: degrade to a plain bubble instead of
+                // throwing here and dropping the remainder of this SSE turn.
+                if (_sseThinkingId) { chatUI.finalizeThinkingBubble(_sseThinkingId); _sseThinkingId = null; }
+                chatUI.appendMessage('assistant', data.content, { timestamp: data.timestamp });
+                _sseThinkingId = chatUI.showThinkingIndicator();
+            }
         } else if (data.content && _sseThinkingId) {
             chatUI.appendTimelineEntry(_sseThinkingId, {type: 'response', content: data.content});
         }
@@ -1165,8 +1167,12 @@ function renderEntries(entries) {
                 chatUI.appendMessage('system', '', {metadata: {workplace_switch: result.workplace_switch}, timestamp: entry.ts});
             }
         } else if (type === 'intermediate') {
-            if (!thinkingId) thinkingId = chatUI.showThinkingIndicator();
-            chatUI.appendTimelineEntry(thinkingId, {type: 'response', content: entry.content});
+            // Text the agent wrote before a tool call: it belongs in the chat as its own
+            // message, with the reasoning trail split around it.
+            if (thinkingId) { chatUI.finalizeThinkingBubble(thinkingId); thinkingId = null; }
+            if (entry.content) {
+                chatUI.appendMessage('assistant', entry.content, {timestamp: entry.ts ? new Date(entry.ts).toISOString() : null});
+            }
         } else if (type === 'final') {
             const meta = entry.metadata || {};
             console.log('[renderEntries] FINAL entry #%d thinkingId=%s content_len=%d content_preview=%s _pendingReplyText=%s',
@@ -1245,6 +1251,9 @@ function renderInterleavedHistory(msg) {
     for (const g of groups) {
         const thinkId = chatUI.showThinkingIndicator();
         for (const entry of g) {
+            // 'response' entries are intermediate agent text: they are posted as their own
+            // message below, not as a reasoning-trail row.
+            if (entry.type === 'response') continue;
             chatUI.appendTimelineEntry(thinkId, entry);
         }
         chatUI.finalizeThinkingBubble(thinkId);
@@ -1384,7 +1393,6 @@ async function selectSession(sessionId, opts = {}) {
     currentAgentId = null;
     _sseThinkingId = null;
     _sessionTurn = { phase: 'idle', lastSeq: 0, terminalSeq: 0 };
-    _pendingIntermediateResponse = null;
     _pendingSlashResponse = null;
     _pendingReplyText = null;
     _pendingFileUpload = false;
@@ -1633,15 +1641,6 @@ function connectSessionStream(sessionId, afterSeq = 0) {
             return;
         }
 
-        // Flush any pending intermediate response before closing
-        if (_pendingIntermediateResponse !== null) {
-            if (_sseThinkingId) {
-                chatUI.finalizeThinkingBubble(_sseThinkingId);
-                _sseThinkingId = null;
-            }
-            chatUI.appendMessage('assistant', _pendingIntermediateResponse);
-            _pendingIntermediateResponse = null;
-        }
         if (_sseThinkingId) {
             chatUI.finalizeThinkingBubble(_sseThinkingId);
             _sseThinkingId = null;

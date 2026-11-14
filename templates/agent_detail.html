@@ -3185,7 +3185,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=79" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=80" defer></script>
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=14" defer></script>
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
@@ -6851,8 +6851,12 @@ function renderEntries(entries) {
                 chatUI.appendMessage('system', '', {metadata: {workplace_switch: result.workplace_switch}, timestamp: entry.ts});
             }
         } else if (type === 'intermediate') {
-            if (!thinkingId) thinkingId = chatUI.showThinkingIndicator();
-            chatUI.appendTimelineEntry(thinkingId, {type: 'response', content: entry.content});
+            // Text the agent wrote before a tool call: it belongs in the chat as its own
+            // message, with the reasoning trail split around it.
+            if (thinkingId) { chatUI.finalizeThinkingBubble(thinkingId); thinkingId = null; }
+            if (entry.content) {
+                chatUI.appendMessage('assistant', entry.content, {timestamp: entry.ts});
+            }
         } else if (type === 'final') {
             const meta = entry.metadata || {};
             if (thinkingId) { chatUI.finalizeThinkingBubble(thinkingId, meta.thinking_duration); thinkingId = null; }
@@ -7065,7 +7069,15 @@ function _handleAgentRealtime(evtName, data, sessionId) {
     }
     if (evtName === 'response_chunk' && data.content && !data.is_final) {
         // Intermediate response: post it in the chat and continue in a fresh thinking bubble.
-        turn = chatUI.splitForIntermediate(turn, data.content, data.timestamp);
+        if (typeof chatUI.splitForIntermediate === 'function') {
+            turn = chatUI.splitForIntermediate(turn, data.content, data.timestamp);
+        } else {
+            // The chat-ui bundle is out of date: degrade to a plain bubble instead of
+            // throwing here and dropping the remainder of this SSE turn.
+            if (turn) { chatUI.finalizeThinkingBubble(turn); }
+            chatUI.appendMessage('assistant', data.content, {timestamp: data.timestamp});
+            turn = chatUI.showThinkingIndicator();
+        }
         _currentTurn.thinkingId = turn;
         return;
     }
