@@ -35,7 +35,10 @@ def _is_rate_limited(ip: str) -> bool:
     with _login_attempts_lock:
         # Purge expired entries for this IP
         timestamps = [t for t in _login_attempts.get(ip, []) if now - t < _WINDOW_SECONDS]
-        _login_attempts[ip] = timestamps
+        if timestamps:
+            _login_attempts[ip] = timestamps
+        else:
+            _login_attempts.pop(ip, None)
         return len(timestamps) >= _MAX_ATTEMPTS
 
 
