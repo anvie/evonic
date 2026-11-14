@@ -7,7 +7,6 @@ from ._lp import (
     LightpandaError,
     config,
     cookie_plan,
-    cookie_profiles,
     obey_robots,
     plan_cookie_names,
     run_cli,
@@ -55,13 +54,9 @@ def execute(agent: dict, args: dict) -> dict:
         use_cookies = args.get("use_cookies")
         use_cookies = True if use_cookies is None else bool(use_cookies)
         save_jar = bool(args.get("save_jar"))
-        # Per-site profiles: pick by URL, unless the caller forces one.
-        prefer = str(args.get("profile") or "").strip()
-        if prefer and prefer not in cookie_profiles(cfg):
-            raise LightpandaError(f"unknown cookie profile '{prefer}'; "
-                                  f"known: {sorted(cookie_profiles(cfg))}")
-        plan = cookie_plan(cfg, url, use=use_cookies, save_jar=save_jar,
-                           prefer=prefer or None)
+        # The cookie dump is host-filtered by Lightpanda itself, so one jar
+        # covers every site in it without leaking across domains.
+        plan = cookie_plan(cfg, use=use_cookies, save_jar=save_jar)
         cmd += plan["args"]
         if dump in _CAPPED:
             cmd += ["--dump-max-bytes", str(max_bytes)]
@@ -97,7 +92,7 @@ def execute(agent: dict, args: dict) -> dict:
         content = payload.get("content")
         cookie_meta = {"used": bool(plan["args"]),
                        "source": plan["source"],
-                       "profile": plan["profile"],
+                       "domains": plan.get("domains", []),
                        "names": plan_cookie_names(plan),
                        "saved_jar": bool(save_jar and plan["source"] == "jar")}
         if dump in ("png", "pdf") and isinstance(content, str) and content:

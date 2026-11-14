@@ -1,43 +1,56 @@
-"""lightpanda_cookies — manage per-site cookie profiles.
+"""lightpanda_cookies — paste and inspect the browser cookie dump.
 
-Profiles live in the skill config variable ``lightpanda_cookie_profiles``, i.e.
-exactly what the skill settings page edits, so the agent and the UI always see
-the same data. Cookie values are credentials: they are never echoed back in a
-tool result, never logged, and the materialized jars on disk are 0600.
+The dump lives in the skill config variable ``lightpanda_cookies_txt``, i.e.
+exactly the textarea on the skill settings page, so the agent and the UI always
+see the same data. A dump is a Netscape ``cookies.txt``: seven tab-separated
+columns per line (domain, includeSubdomains, path, secure, expiry, name, value),
+so no per-site pattern list is needed — Lightpanda filters the jar per host
+while browsing.
+
+Cookie values are credentials: they are never echoed in a tool result, never
+logged, and the materialized jars on disk are 0600.
 """
 
 import json
 import os
+import time
 
 from ._lp import (
-    PROFILES_VAR,
+    COOKIE_DIRNAME,
+    COOKIES_VAR,
+    DUMP_FILENAME,
     SKILL_ID,
     LightpandaError,
     config,
+    cookie_domains,
     cookie_file,
     cookie_plan,
-    cookie_profiles,
-    match_profile,
-    plan_cookie_names,
-    profile_items,
-    profile_slug,
+    cookie_text,
+    cookies_for_url,
+    cookies_from_header,
+    domain_matches,
+    dump_cookies,
+    merge_cookies,
+    parse_cookie_text,
     run_cli,
+    state_dir,
+    to_netscape,
     truncate,
     validate_url,
+    _pattern_host,
 )
 
 ACTIONS = ("status", "set", "delete", "clear", "verify")
 VERIFY_URL = "https://httpbin.org/cookies"
 
 
-# ── config plumbing ──────────────────────────────────────────────────────────
+# ── config plumbing ─────────────────────────────────────────────────────────
 
-def _write_profiles(profiles: dict) -> dict:
-    """Persist the profiles map into the skill config (the settings-page value)."""
-    payload = json.dumps(profiles, ensure_ascii=False, indent=2)
+def _write_dump(text: str) -> dict:
+    """Persist the dump text into the skill config (the settings-page value)."""
     try:
         from backend.skills_manager import skills_manager  # type: ignore
-        result = skills_manager.set_skill_config(SKILL_ID, {PROFILES_VAR: payload})
+        result = skills_manager.set_skill_config(SKILL_ID, {COOKIES_VAR: text})
         if isinstance(result, dict) and result.get("success"):
             return {"stored_in": "skill_config"}
         return {"stored_in": "failed", "error": str(result)}
@@ -45,131 +58,174 @@ def _write_profiles(profiles: dict) -> dict:
         return {"stored_in": "failed", "error": f"{type(e).__name__}: {e}"}
 
 
-def _profile_meta(pattern: str, raw: str) -> dict:
-    """Describe one profile without leaking values."""
-    try:
-        items = profile_items(pattern, raw, pattern if "://" in pattern else None)
-        names = sorted({c["name"] for c in items})
-        count = len(items)
-    except LightpandaError as e:
-        return {"site": pattern, "valid": False, "error": str(e)}
-    return {"site": pattern, "valid": True, "cookies": count, "names": names}
+def _store(text: str) -> dict:
+    saved = _write_dump(text)
+    if saved.get("stored_in") == "failed":
+        raise LightpandaError(f"could not save the cookie dump: {saved.get('error')}")
+    # A stale jar must never outlive the text it came from.
+    jar = state_dir() / COOKIE_DIRNAME / DUMP_FILENAME
+    if not text.strip():
+        try:
+            jar.unlink()
+        except OSError:
+            pass
+    return saved
 
 
-# ── actions ──────────────────────────────────────────────────────────────────
-
-def _status(args: dict) -> dict:
-    cfg = config()
-    profiles = cookie_profiles(cfg)
-    rows = [_profile_meta(p, raw) for p, raw in sorted(profiles.items())]
-    legacy = cookie_file(cfg)
-    out = {
-        "action": "status",
-        "profiles": rows,
-        "profile_count": len(rows),
-        "config_var": PROFILES_VAR,
-        "legacy_jar": {"path": str(legacy), "exists": legacy.is_file()},
-    }
-    if not rows:
-        out["hint"] = ("No per-site profiles yet. Add them in Settings → Lightpanda → "
-                       "Cookie profiles, or call action='set' with site + cookies.")
-    out["match_order"] = ("Most specific pattern wins: full URL prefix > longest host > "
-                          "wildcard host > bare host. No match falls back to the legacy jar.")
-    out["applies_to"] = ("lightpanda_fetch only. lightpanda_run and MCP sessions "
-                         "(lightpanda_read/act) ignore --cookie in Lightpanda 1.0.4.")
-    return out
-
-
-def _set(args: dict) -> dict:
-    site = str(args.get("site") or args.get("pattern") or "").strip()
-    if not site:
-        raise LightpandaError("'site' is required, e.g. site='x.com' or site='https://x.com/i/lists/'")
-
+def _payload(args: dict) -> str:
+    """Raw dump text from `file` or the `cookies` argument."""
     file_path = args.get("file")
-    source = None
     if file_path:
         path = os.path.expanduser(str(file_path))
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
-                source = f.read()
+                return f.read()
         except OSError as e:
             raise LightpandaError(f"cannot read cookie file '{path}': {e}") from e
-    elif args.get("netscape"):
-        source = str(args["netscape"])
-    elif args.get("cookies") is not None:
-        source = args["cookies"]
-    else:
-        raise LightpandaError("provide 'cookies' (string / Netscape / JSON), 'netscape' or 'file'")
-
+    source = args.get("cookies")
+    if source is None:
+        source = args.get("dump")
+    if source is None:
+        raise LightpandaError(
+            "provide 'cookies' (the cookies.txt dump) or 'file' (path to it)")
     if isinstance(source, (list, dict)):
         source = json.dumps(source, ensure_ascii=False)
-    source = str(source).strip()
-    if not source:
-        raise LightpandaError("cookie payload is empty")
+    return str(source)
 
-    items = profile_items(site, source, site if "://" in site else None)
-    names = sorted({c["name"] for c in items})
 
-    profiles = cookie_profiles(config())
-    profiles[site] = source
-    saved = _write_profiles(profiles)
-    if saved.get("stored_in") == "failed":
-        raise LightpandaError(f"could not save the profile: {saved.get('error')}")
+def _truthy(value) -> bool:
+    return value is True or str(value).strip().lower() in ("true", "yes", "1")
 
-    return {
-        "action": "set",
-        "site": site,
-        "stored": len(items),
-        "names": names,
-        "profile_count": len(profiles),
-        **saved,
-        "note": ("Values are stored, not echoed. Selected automatically by "
-                 "lightpanda_fetch for URLs matching this pattern; run action='verify' to prove it."),
+
+def _expiry_view(items) -> dict:
+    now = time.time()
+    stamps = [c["expires"] for c in items if c.get("expires")]
+    expired = sum(1 for s in stamps if s < now)
+    out = {"expired": expired}
+    if stamps:
+        soonest = min(s for s in stamps if s >= now) if any(s >= now for s in stamps) else None
+        out["soonest_expiry"] = (time.strftime("%Y-%m-%d", time.localtime(soonest))
+                                 if soonest else None)
+    return out
+
+
+# ── actions ─────────────────────────────────────────────────────────────────
+
+def _status(args: dict) -> dict:
+    cfg = config()
+    text = cookie_text(cfg)
+    items, error = [], None
+    if text:
+        try:
+            items = parse_cookie_text(text)
+        except LightpandaError as e:
+            error = str(e)
+    domains = cookie_domains(items)
+    jar = state_dir() / COOKIE_DIRNAME / DUMP_FILENAME
+    out = {
+        "action": "status",
+        "config_var": COOKIES_VAR,
+        "configured": bool(text),
+        "storage": {"lines": len(text.splitlines()) if text else 0,
+                    "bytes": len(text.encode("utf-8")),
+                    "jar": {"path": str(jar), "exists": jar.is_file()}},
+        "cookie_count": len(items),
+        "domain_count": len(domains),
+        "domains": [{"domain": d, "cookies": len(names), "names": names}
+                    for d, names in domains.items()],
+        "http_only": sum(1 for c in items if c.get("httpOnly")),
+        "secure": sum(1 for c in items if c.get("secure")),
+        **_expiry_view(items),
     }
+    if error:
+        out["error"] = error
+        out["hint"] = ("The textarea does not parse as a dump. Paste the browser "
+                       "export as-is: 7 tab-separated columns per line, starting "
+                       "with the domain.")
+    elif not items:
+        out["hint"] = (f"No cookie dump yet. Paste one into Settings → Lightpanda → "
+                       f"Cookies, or call action='set' with cookies=<dump>. "
+                       f"Legacy jar at {cookie_file(cfg)} is "
+                       f"{'present' if cookie_file(cfg).is_file() else 'absent'}.")
+    out["applies_to"] = ("Cookie dumps apply to lightpanda_fetch only. lightpanda_run "
+                         "and MCP sessions (lightpanda_read/act) ignore --cookie in "
+                         "Lightpanda 1.0.4.")
+    return out
+
+
+def _set(args: dict) -> dict:
+    cfg = config()
+    source = _payload(args)
+    if not source.strip():
+        raise LightpandaError("cookie payload is empty")
+    site = str(args.get("site") or "").strip()
+
+    if site and "\t" not in source and source[:1] not in ("[", "{"):
+        # A bare `auth_token=...; ct0=...` header needs a host to belong to.
+        new_items = cookies_from_header(site, source)
+    else:
+        new_items = parse_cookie_text(source)
+
+    existing = dump_cookies(cfg)
+    merged = _truthy(args.get("merge"))
+    items = merge_cookies(existing, new_items) if merged else new_items
+    text = to_netscape(items)
+    saved = _store(text)
+
+    names = sorted({c["name"] for c in items})
+    out = {
+        "action": "set",
+        "mode": "merge" if merged else "replace",
+        "stored": len(items),
+        "added": len(items) - len(existing) if merged else len(items),
+        "replaced": 0 if merged else len(existing),
+        "names": names,
+        "domains": sorted(cookie_domains(items)),
+        **saved,
+        "note": ("Values are stored, not echoed. lightpanda_fetch sends them "
+                 "automatically; run action='verify' to prove it."),
+    }
+    if any(not c.get("expires") for c in new_items):
+        out["warning"] = ("Some cookies have no expiry column (0). If the paste came "
+                          "from a session cookie, sign in again for a lasting export.")
+    return out
 
 
 def _delete(args: dict) -> dict:
-    site = str(args.get("site") or args.get("pattern") or "").strip()
+    site = str(args.get("site") or args.get("domain") or "").strip()
     if not site:
-        raise LightpandaError("'site' is required")
+        raise LightpandaError("'site' is required, e.g. site='x.com'")
+    host = _pattern_host(site)
+    if not host:
+        raise LightpandaError(f"cannot read a host from site='{site}'")
     cfg = config()
-    profiles = cookie_profiles(cfg)
-    if site not in profiles:
+    items = dump_cookies(cfg)
+    keep = [c for c in items if not domain_matches(c["domain"], host)]
+    removed = len(items) - len(keep)
+    if not removed:
         return {"action": "delete", "site": site, "deleted": False,
-                "reason": "no such profile", "known": sorted(profiles)}
-    profiles.pop(site)
-    saved = _write_profiles(profiles)
-    if saved.get("stored_in") == "failed":
-        raise LightpandaError(f"could not save: {saved.get('error')}")
-    # Drop the materialized jar too, so a stale file can never be sent.
-    jar = cookie_file(cfg).parent / "cookies" / f"{profile_slug(site)}.json"
-    removed_jar = False
-    try:
-        jar.unlink()
-        removed_jar = True
-    except OSError:
-        pass
-    return {"action": "delete", "site": site, "deleted": True, "jar_removed": removed_jar,
-            "remaining": sorted(profiles)}
+                "reason": "no cookies for that site",
+                "known_domains": sorted(cookie_domains(items))}
+    saved = _store(to_netscape(keep) if keep else "")
+    return {"action": "delete", "site": site, "deleted": True,
+            "removed": removed, "remaining": len(keep),
+            "remaining_domains": sorted(cookie_domains(keep)), **saved}
 
 
 def _clear(args: dict) -> dict:
-    confirmed = args.get("confirm") is True or str(args.get("confirm")).lower() in ("true", "yes", "1")
-    if not confirmed:
-        raise LightpandaError("confirm=true is required to delete cookies")
-    profiles = cookie_profiles(config())
-    removed = len(profiles)
-    saved = _write_profiles({})
-    if saved.get("stored_in") == "failed":
-        raise LightpandaError(f"could not save: {saved.get('error')}")
-    return {"action": "clear", "cleared": removed, "profiles_left": 0}
+    if not _truthy(args.get("confirm")):
+        raise LightpandaError("confirm=true is required to delete the cookie dump")
+    cfg = config()
+    removed = len(dump_cookies(cfg))
+    saved = _store("")
+    return {"action": "clear", "removed": removed, **saved}
 
 
 def _verify(args: dict) -> dict:
     cfg = config()
     url = validate_url(args.get("url") or VERIFY_URL)
-    pattern, _raw = match_profile(cfg, url)
-    plan = cookie_plan(cfg, url, save_jar=False)
+    items = dump_cookies(cfg)
+    plan = cookie_plan(cfg, save_jar=False)
 
     cmd = ["fetch", "--dump", "markdown", "--json", "--dump-max-bytes", "60000"]
     cmd += plan["args"]
@@ -185,27 +241,29 @@ def _verify(args: dict) -> dict:
         except json.JSONDecodeError:
             payload = {}
     body = str(payload.get("content") or "")
-    names = plan_cookie_names(plan)
 
+    offered = cookies_for_url(items, url)
     out = {
         "action": "verify",
         "url": url,
-        "profile": plan["profile"],
         "source": plan["source"],
-        "cookies_attached": names,
-        "cookie_count": len(names),
+        "dump_cookies": len(items),
+        "offered_to_this_host": sorted({c["name"] for c in offered}),
         "http_status": payload.get("http_status"),
         "bytes": len(body.encode("utf-8")),
     }
+    if plan["source"] is None:
+        out["hint"] = "No cookie dump configured; this fetch was anonymous."
+    elif not offered:
+        out["hint"] = ("The dump has no cookie for this host, so nothing was sent. "
+                       f"Known domains: {sorted(cookie_domains(items))}")
     expect = args.get("expect")
     if expect:
         out["expect"] = str(expect)
         out["expect_found"] = str(expect) in body
-    if not pattern:
-        out["hint"] = ("No profile matches this URL; the legacy jar was used (if present). "
-                       f"Known sites: {sorted(cookie_profiles(cfg))}")
-    elif payload.get("http_status") in (401, 403, 302):
-        out["hint"] = "Cookies were sent but the site still refuses this session — they are probably expired."
+    if offered and payload.get("http_status") in (401, 403, 302):
+        out["hint"] = ("Cookies were sent but the site still refuses the session — "
+                       "they are probably expired. Export again after signing in.")
     if args.get("show_body"):
         out["body"], _ = truncate(body, 2000)
     return out

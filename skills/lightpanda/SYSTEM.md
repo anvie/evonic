@@ -63,60 +63,62 @@ lightpanda_mcp(tool="evaluate",
                arguments={"script": "return document.querySelectorAll('tr').length"})
 ```
 
-## Authenticated pages (per-site cookie profiles)
+## Authenticated pages (browser cookie dump)
 
-Cookies are configured **per site** in Settings → Skills → Lightpanda → *Cookie profiles*:
-one row is a match pattern plus that site's cookies, so several sites each keep their own
-session. The same data is what `lightpanda_cookies` reads and writes. Values are never echoed
-back by a tool result, and the jars materialized on disk are `0600` outside the repository.
+Cookies come from **one textarea** in Settings → Skills → Lightpanda → *Cookies*: paste a
+Netscape `cookies.txt` export from the browser exactly as it comes. There is nothing else to
+configure — the domain column on each line says which site the cookie belongs to, so several
+sites each keep their own session. `lightpanda_cookies` reads and writes that same value, so
+the UI and the agent never disagree. Values are never echoed back by a tool result, and the
+jar materialized on disk is `0600` outside the repository.
 
-**Match patterns** — the most specific pattern wins (URL prefix > longer host > wildcard > host):
-
-| Pattern | Matches |
-|---------|---------|
-| `x.com` | `x.com` and any subdomain (`www.x.com`) |
-| `*.internal.lan` | `app.internal.lan` |
-| `https://x.com/i/lists/` | only URLs starting with that prefix (beats `x.com`) |
-
-No match → the legacy single jar (`Cookie jar path`) is used when it exists.
-
-**Value formats** (detected from the content):
-
-- `name=value; name2=value2` — quickest for one or two cookies.
-- **Netscape `cookies.txt`** (curl/browser extensions), `#HttpOnly_` lines included.
-- **Puppeteer/CDP JSON array**: `[{name, value, domain, path, secure, httpOnly, expires?}]`.
+Format: 7 tab-separated columns per line — domain, includeSubdomains, path, secure, expiry,
+name, value. `#HttpOnly_` lines and `#` comments are accepted.
 
 ```
-lightpanda_cookies(action="set", site="x.com", cookies="auth_token=...; ct0=...")
-lightpanda_cookies(action="status")     # sites + cookie NAMES only, never values
-lightpanda_cookies(action="verify", url="https://x.com/i/lists/123", expect="@handle")
-lightpanda_cookies(action="delete", site="x.com")
-lightpanda_cookies(action="clear", confirm=true)
+# Netscape HTTP Cookie File
+.x.com	TRUE	/	TRUE	1790000000	auth_token	...
+.x.com	TRUE	/	TRUE	1790000000	ct0	...
 ```
 
-**Then fetch** — the profile matching the URL is attached automatically
-(`use_cookies` defaults to true; `profile="x.com"` forces one):
+Lightpanda filters the jar per host itself (checked: a `.example.com` cookie is never offered
+to httpbin.org), so unrelated sites cannot mix while same-site subdomains and redirects keep
+their session. With an empty textarea the legacy single jar (`Cookie jar path`) is used when
+it exists.
 
 ```
-lightpanda_fetch(url="https://example.com/private", wait_until="networkidle", wait_ms=8000)
-lightpanda_fetch(url="...", profile="x.com")      # force a profile
-lightpanda_fetch(url="...", use_cookies=False)    # anonymous
+lightpanda_cookies(action=“set“, cookies=“<the whole cookies.txt>“, merge=true)
+lightpanda_cookies(action=“set“, site=“x.com“, cookies=“auth_token=...; ct0=...“)
+lightpanda_cookies(action=“status“)     # domains + cookie NAMES only, never values
+lightpanda_cookies(action=“verify“, url=“https://x.com/i/lists/123“, expect=“@handle“)
+lightpanda_cookies(action=“delete“, site=“x.com“)
+lightpanda_cookies(action=“clear“, confirm=true)
 ```
 
-The result reports `cookies: {source, profile, names}`, so always check which session was used.
+`set` replaces the dump unless `merge=true`; the same domain+path+name is overwritten. A bare
+`name=value; name2=value2` header carries no domain, so pair it with `site`.
+
+**Then fetch** — the dump is attached automatically (`use_cookies` defaults to true):
+
+```
+lightpanda_fetch(url=“https://example.com/private“, wait_until=“networkidle“, wait_ms=8000)
+lightpanda_fetch(url=“...“, use_cookies=False)    # anonymous
+```
+
+The result reports `cookies: {source, domains, names}`, so always check which session was used.
 
 **Hard limits in Lightpanda 1.0.4 — check these before promising a workflow:**
 
 - `lightpanda fetch` **does** apply the jar (HttpOnly included). This is the supported path.
 - `lightpanda run` (PandaScript) accepts `--cookie` but **ignores it** — a `new Page()` sees no
-  cookies. `lightpanda_run(mode="cli")` therefore reports `cookies.applied: false`.
+  cookies. `lightpanda_run(mode=“cli“)` therefore reports `cookies.applied: false`.
 - The MCP server (`lightpanda_read` / `act` / `mcp` on the interactive session) **cannot be
   seeded**: it loads the jar but never applies it to browsing sessions, and there is no
   `setCookies` MCP tool. `evaluate` + `document.cookie` works only for non-HttpOnly cookies.
 - So: authenticated reading = `lightpanda_fetch`. Authenticated *interaction* is not available;
   say so instead of retrying.
 
-**Etiquette:** cookies are the user's credentials for their own account. Never paste them into
+**Etiquette:** cookies are the user’s credentials for their own account. Never paste them into
 chat, commits, or a report. Do not use them to bypass paywalls, CAPTCHAs, or rate limits, and
 not to scrape a site in violation of its terms.
 
@@ -200,7 +202,7 @@ Playwright-style prefixes (`text=`, `role=`, `xpath=`) fail with `InvalidSelecto
 - V8 coverage is broad but not complete; heavy SPA frameworks may render partially. When the
   content is missing, check `goto`'s notes (bot challenge, 403/429, WebGL) before retrying.
 - Pages behind a JS challenge usually cannot be read; report that instead of retrying.
-- Logged-in pages need a cookie profile (or the legacy jar) plus `lightpanda_fetch`; interactive
+- Logged-in pages need the cookie dump (or the legacy jar) plus `lightpanda_fetch`; interactive
   MCP sessions are always anonymous in 1.0.4 (see *Authenticated pages*).
 
 ## Configuration
@@ -214,8 +216,8 @@ Skill settings (Agent → Skills → Lightpanda):
 | MCP port | `9223` | Server port; change it if something else owns 9223 |
 | Obey robots.txt | off | Politeness default for every fetch |
 | Block private networks | on | SSRF guard |
-| Cookie profiles (per site) | `{}` | Match pattern → cookies for that site; used automatically by `lightpanda_fetch` |
-| Cookie jar path (legacy) | `<state>/cookies.json` | Single jar used only when no profile matches |
+| Cookies (cookies.txt dump) | empty | Pasted Netscape dump; `lightpanda_fetch` sends it, filtered per host |
+| Cookie jar path (legacy) | `<state>/cookies.json` | Single jar used only when the dump is empty |
 
 Telemetry is disabled for every child process (`LIGHTPANDA_DISABLE_TELEMETRY=true`) and core
 dumps are suppressed (`LIGHTPANDA_DISABLE_CORE_DUMP=1`).

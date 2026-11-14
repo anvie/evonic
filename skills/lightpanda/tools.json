@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "lightpanda_fetch",
-      "description": "Fetch a URL with Lightpanda's CLI and return the page as markdown, semantic tree, HTML, structured data, or a rendered PNG/PDF file. No server and no setup: the fastest way to read a single page. Waits for load by default; raise wait_until/wait_ms for JS-heavy pages. Cookies are attached by default: the per-site profile matching the URL is used (configure them in Settings → Lightpanda → Cookie profiles), so login-gated pages work. Only this tool applies cookies — the MCP session tools and lightpanda_run ignore them.",
+      "description": "Fetch a URL with Lightpanda’s CLI and return the page as markdown, semantic tree, HTML, structured data, or a rendered PNG/PDF file. No server and no setup: the fastest way to read a single page. Waits for load by default; raise wait_until/wait_ms for JS-heavy pages. Cookies from the browser dump (Settings → Lightpanda → Cookies, a Netscape cookies.txt) are attached by default; Lightpanda filters them per host, so each site keeps its own session and login-gated pages work. Only this tool applies cookies — the MCP session tools and lightpanda_run ignore them.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -90,16 +90,12 @@
           "use_cookies": {
             "type": "boolean",
             "default": true,
-            "description": "Attach cookies: the per-site profile matching the URL, else the legacy jar. Set false to fetch anonymously."
-          },
-          "profile": {
-            "type": "string",
-            "description": "Force one configured cookie profile (its match pattern, e.g. 'x.com') instead of matching the URL."
+            "description": "Attach the cookie dump (else the legacy jar, if configured). Set false to fetch anonymously."
           },
           "save_jar": {
             "type": "boolean",
             "default": false,
-            "description": "Legacy jar only: write cookies the server set or rotated back to the jar after the fetch."
+            "description": "Legacy jar only: write cookies the server set or rotated back to the jar. The dump text stays the source of truth."
           },
           "inject_script": {
             "type": "string",
@@ -348,7 +344,7 @@
     "type": "function",
     "function": {
       "name": "lightpanda_cookies",
-      "description": "Manage per-site cookie profiles used by lightpanda_fetch. Each profile maps a match pattern (host like x.com, wildcard like *.x.com, or a URL prefix like https://x.com/i/lists/) to that site's cookies, so several sites keep separate sessions. The same data is editable in Settings → Lightpanda → Cookie profiles. Accepts 'name=value; name2=value2' text, a Netscape cookies.txt, a Puppeteer/CDP JSON array, or a file path. Cookie VALUES are never echoed back - status/set return names and counts only.",
+      "description": "Manage the cookie dump that lightpanda_fetch sends. The dump is a Netscape cookies.txt export — one cookie per line, 7 tab-separated columns (domain, includeSubdomains, path, secure, expiry, name, value), '#HttpOnly_' prefixed lines accepted — pasted straight from the browser; it is the same value as the textarea in Settings → Lightpanda → Cookies. The domain column decides which site each cookie belongs to, so there are no per-site patterns to maintain and unrelated sites never share a session. Also accepts a Puppeteer/CDP JSON array, a bare 'auth_token=...; ct0=...' header together with site, or a file path. Cookie VALUES are never echoed back: results list names, domains and counts only.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -362,27 +358,28 @@
               "verify"
             ],
             "default": "status",
-            "description": "status: list configured sites plus the legacy jar. set: store or update one site's cookies. delete: remove one site. clear: remove all sites (needs confirm=true). verify: fetch a URL with the matched profile and report status, bytes and the cookie names attached."
-          },
-          "site": {
-            "type": "string",
-            "description": "set/delete: the match pattern, e.g. 'x.com', '*.x.com' or 'https://x.com/i/lists/'."
+            "description": "status: show the dump's domains, cookie names, counts and expiry state. set: store a dump (replace, or merge). delete: drop every cookie of one domain. clear: remove the whole dump (needs confirm=true). verify: fetch a URL with the dump attached and report the status, bytes and the cookie names that host received."
           },
           "cookies": {
             "type": "string",
-            "description": "set: the cookie payload for that site - 'auth_token=...; ct0=...' text, a Netscape cookies.txt blob, or a JSON array string."
+            "description": "set: the cookies.txt dump to store as-is. Also accepts a JSON array, or a 'name=value; name2=value2' header when site is given."
           },
-          "netscape": {
+          "site": {
             "type": "string",
-            "description": "Raw contents of a Netscape cookies.txt file (one cookie per line, tab-separated)."
+            "description": "delete: domain to drop, e.g. 'x.com'. set: host to attach a bare header payload to. Optional otherwise."
+          },
+          "merge": {
+            "type": "boolean",
+            "default": false,
+            "description": "set only: append to the existing dump instead of replacing it. Same domain+path+name is overwritten by the new value."
           },
           "file": {
             "type": "string",
-            "description": "Path to an existing cookie file (Netscape or JSON); read and imported."
+            "description": "set: path to a cookie file to import instead of pasting the text (Netscape or JSON)."
           },
           "url": {
             "type": "string",
-            "description": "verify only: URL to fetch with the matched profile (default https://httpbin.org/cookies)."
+            "description": "verify only: URL to fetch with the dump attached (default https://httpbin.org/cookies)."
           },
           "expect": {
             "type": "string",
@@ -390,7 +387,7 @@
           },
           "confirm": {
             "type": "boolean",
-            "description": "clear only: must be true to delete the stored cookies."
+            "description": "clear only: must be true to delete the stored dump."
           },
           "wait_ms": {
             "type": "integer",
@@ -402,7 +399,7 @@
           },
           "show_body": {
             "type": "boolean",
-            "description": "verify only: include a truncated response body (values redacted in reports, but the body itself may contain them)."
+            "description": "verify only: include a truncated response body (the body may contain cookie values echoed by the site)."
           }
         },
         "required": []

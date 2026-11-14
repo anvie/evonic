@@ -260,63 +260,6 @@ function valueFor(variable) {
     return settingsState[variable.name] !== undefined ? settingsState[variable.name] : (variable.default || '');
 }
 
-// ── cookies widget (type: 'cookies') ─────────────────────────────────────────
-// Rows of pattern -> cookie text, serialized into the hidden [data-var] input.
-function parseCookieMap(raw) {
-    if (raw && typeof raw === 'object') return raw;
-    try {
-        const parsed = JSON.parse(String(raw || '{}'));
-        return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-    } catch (e) { return {}; }
-}
-
-function cookieRowsHtml(map) {
-    let rows = Object.entries(map || {});
-    if (!rows.length) rows = [['', '']];
-    return rows.map(([site, value]) => {
-        // Most profiles store text; a hand-written object is shown as JSON.
-        const shown = (value && typeof value === 'object') ? JSON.stringify(value, null, 1) : String(value || '');
-        return `
-        <div class="flex items-start gap-2" data-cookie-row>
-            <input type="text" data-cookie-site value="${esc(site)}" placeholder="x.com" class="${inputClass()} font-mono text-xs w-40 flex-shrink-0">
-            <textarea data-cookie-value rows="2" placeholder="auth_token=...; ct0=..." class="${inputClass()} font-mono text-xs flex-1">${esc(shown)}</textarea>
-            <button type="button" data-cookie-remove title="Remove" class="mt-1 px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-600 text-gray-500 hover:text-red-600">&times;</button>
-        </div>`;
-    }).join('');
-}
-
-function syncCookiesWidget(widget) {
-    const map = {};
-    widget.querySelectorAll('[data-cookie-row]').forEach(row => {
-        const site = (row.querySelector('[data-cookie-site]').value || '').trim();
-        const value = (row.querySelector('[data-cookie-value]').value || '').trim();
-        if (site && value) map[site] = value;
-    });
-    const hidden = widget.querySelector('input[data-var]');
-    if (hidden) hidden.value = JSON.stringify(map);
-}
-
-document.addEventListener('input', event => {
-    const widget = event.target.closest && event.target.closest('[data-cookies-widget]');
-    if (widget) syncCookiesWidget(widget);
-});
-
-document.addEventListener('click', event => {
-    const widget = event.target.closest && event.target.closest('[data-cookies-widget]');
-    if (!widget) return;
-    const rows = widget.querySelector('[data-cookies-rows]');
-    if (event.target.closest('[data-cookie-remove]')) {
-        const row = event.target.closest('[data-cookie-row]');
-        if (row) row.remove();
-        if (!rows.querySelector('[data-cookie-row]')) rows.innerHTML = cookieRowsHtml({});
-        syncCookiesWidget(widget);
-    } else if (event.target.closest('[data-cookies-add]')) {
-        rows.insertAdjacentHTML('beforeend', cookieRowsHtml({}));
-        const added = rows.querySelector('[data-cookie-row]:last-child input[data-cookie-site]');
-        if (added) added.focus();
-    }
-});
-
 function renderSettingField(v) {
     const val = valueFor(v);
     if (v.type === 'boolean') {
@@ -346,20 +289,10 @@ function renderSettingField(v) {
         return `<div class="mb-4">${labelHtml}<select data-var="${esc(v.name)}" data-type="select" ${v.options_source ? `data-options-source="${esc(v.options_source)}"` : ''} data-current="${esc(String(val))}" class="${inputClass()}"><option value="">${esc(v.empty_label || '— Default —')}</option>${optsHtml}</select>${descHtml}</div>`;
     }
     if (v.type === 'textarea') {
-        return `<div class="mb-4">${labelHtml}<textarea data-var="${esc(v.name)}" data-type="textarea" rows="8" placeholder="${esc(String(v.default || ''))}" class="${inputClass()}">${esc(String(val))}</textarea>${descHtml}</div>`;
-    }
-    if (v.type === 'cookies') {
-        // Key/value rows (match pattern -> cookie text). The hidden input keeps a
-        // JSON object in sync so capture/save need no special casing.
-        const map = parseCookieMap(val);
-        return `<div class="mb-4" data-cookies-widget>
-            ${labelHtml}
-            <input type="hidden" data-var="${esc(v.name)}" data-type="string" value="${esc(JSON.stringify(map))}">
-            <div data-cookies-rows class="space-y-2">${cookieRowsHtml(map)}</div>
-            <button type="button" data-cookies-add class="mt-2 px-3 py-1.5 text-xs font-medium rounded-md border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/40">+ Add site</button>
-            <p class="text-xs text-gray-400 dark:text-gray-500 mt-2">Key = match pattern: a host (<code>x.com</code>, also matches <code>www.x.com</code>), a wildcard host (<code>*.internal.lan</code>), or a URL prefix (<code>https://x.com/i/lists/</code>). The most specific pattern wins. Value = <code>name=value; name2=value2</code>, a Netscape <code>cookies.txt</code>, or a Puppeteer JSON array. Stored as skill config; only <code>lightpanda_fetch</code> applies them.</p>
-            ${descHtml}
-        </div>`;
+        // `rows` and `monospace` are optional manifest hints (cookie dumps etc.).
+        const rows = esc(String(v.rows || 8));
+        const mono = v.monospace ? ' font-mono text-xs' : '';
+        return `<div class="mb-4">${labelHtml}<textarea data-var="${esc(v.name)}" data-type="textarea" rows="${rows}" spellcheck="false" placeholder="${esc(String(v.default || ''))}" class="${inputClass()}${mono}">${esc(String(val))}</textarea>${descHtml}</div>`;
     }
     if (v.allow_custom && Array.isArray(v.options) && v.options.length) {
         // Combobox: pick a known value, or choose "Custom…" to type any value.

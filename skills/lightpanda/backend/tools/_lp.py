@@ -140,21 +140,29 @@ def cookie_args(cfg: dict | None = None, use: bool = True,
     return args
 
 
-# ── per-site cookie profiles ──────────────────────────────────────────────────
+# ── cookies from a browser dump ─────────────────────────────────────────────
 #
-# One config variable (``lightpanda_cookie_profiles``) holds a JSON object that
-# maps a match pattern to that site's cookies, so several sites can each keep
-# their own session. Patterns are either a host (``x.com``, also matching
-# ``www.x.com``), a wildcard host (``*.x.com``), or a full URL prefix
-# (``https://intranet.local/app``). The most specific pattern wins; when none
-# matches, the single legacy jar (``lightpanda_cookie_file``) is used.
+# One config variable, ``lightpanda_cookies_txt``, holds a raw Netscape
+# ``cookies.txt`` dump — the format every “export cookies” extension writes.
+# There are no patterns to maintain: each line names its own domain, and
+# Lightpanda filters the jar per host while browsing (checked: a cookie for
+# ``.example.com`` is never offered to httpbin.org). Unrelated sessions
+# therefore cannot mix, while same-site subdomains and redirects keep theirs.
 
-PROFILES_VAR = "lightpanda_cookie_profiles"
-PROFILE_DIRNAME = "cookies"
+COOKIES_VAR = "lightpanda_cookies_txt"
+COOKIE_DIRNAME = "cookies"
+DUMP_FILENAME = "cookies-dump.json"
+NETSCAPE_HEADER = "# Netscape HTTP Cookie File"
+
+
+def cookie_text(cfg: dict | None = None) -> str:
+    """The pasted dump as text (empty string when nothing is configured)."""
+    cfg = config() if cfg is None else cfg
+    return str(cfg.get(COOKIES_VAR) or "").strip()
 
 
 def parse_cookie_string(text: str) -> list[dict]:
-    """`a=1; b=2` cookie-header text -> [{'name', 'value'}]; junk is skipped."""
+    """`a=1; b=2` cookie-header text -> [{’name’, ’value’}]; junk is skipped."""
     out: list[dict] = []
     for chunk in (text or "").split(";"):
         line = " ".join(chunk.split())
@@ -168,140 +176,140 @@ def parse_cookie_string(text: str) -> list[dict]:
     return out
 
 
-def cookie_profiles(cfg: dict | None = None) -> dict[str, str]:
-    """Parse the profiles variable into {pattern: raw cookies}. Bad data -> {}."""
-    cfg = config() if cfg is None else cfg
-    raw = cfg.get(PROFILES_VAR)
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text:
-            return {}
-        try:
-            raw = json.loads(text)
-        except json.JSONDecodeError:
-            return {}
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, str] = {}
-    for key, val in raw.items():
-        pattern = str(key).strip()
-        if not pattern:
+def parse_cookie_text(text) -> list[dict]:
+    """Parse a pasted dump: Netscape cookies.txt, Puppeteer JSON, or JSON list.
+
+    A bare `a=1; b=2` header has no domain column, so it cannot be a dump; call
+    ``cookies_from_header(site, text)`` for that case instead.
+    """
+    if isinstance(text, (list, dict)):
+        return normalize_cookies(text)
+    raw = str(text or "").strip()
+    if not raw:
+        raise LightpandaError("the cookie dump is empty")
+    if raw[:1] in ("[", "{"):
+        return normalize_cookies(raw)
+    items = parse_netscape(raw)
+    if not items:
+        hint = ""
+        if "\t" not in raw:
+            hint = (" — this looks like a `name=value; ...` header, which carries no "
+                    "domain; pass site=’example.com’ as well")
+        raise LightpandaError(
+            "no Netscape cookie lines found (expected 7 tab-separated columns: "
+            f"domain, includeSubdomains, path, secure, expiry, name, value){hint}")
+    return normalize_cookies(items)
+
+
+def cookies_from_header(site: str, text: str) -> list[dict]:
+    """`auth_token=...; ct0=...` plus a host -> canonical cookies for that host."""
+    host = _pattern_host(site)
+    if not host:
+        raise LightpandaError(f"cannot read a host from site=’{site}’")
+    pairs = parse_cookie_string(text)
+    if not pairs:
+        raise LightpandaError("no `name=value` pairs found in the cookie text")
+    return normalize_cookies([{**pair, "domain": host, "path": "/",
+                               "secure": False, "httpOnly": False} for pair in pairs])
+
+
+def dump_cookies(cfg: dict | None = None) -> list[dict]:
+    """Cookies in the configured dump; unparseable text behaves like no dump."""
+    text = cookie_text(cfg)
+    if not text:
+        return []
+    try:
+        return parse_cookie_text(text)
+    except LightpandaError:
+        return []
+
+
+def merge_cookies(*groups) -> list[dict]:
+    """Union of cookie lists: a later (domain, path, name) replaces the earlier."""
+    seen: dict[tuple, dict] = {}
+    for items in groups:
+        if not items:
             continue
-        if isinstance(val, dict):
-            val = val.get("cookies", val.get("value", ""))
-        if isinstance(val, (list, dict)):
-            val = json.dumps(val)
-        text = str(val or "").strip()
-        if text:
-            out[pattern] = text
-    return out
+        for cookie in normalize_cookies(list(items)):
+            key = (cookie["domain"].lower(), cookie["path"] or "/", cookie["name"])
+            seen[key] = cookie
+        # Re-inserting keeps the newest value but the original position, so the
+        # textarea does not shuffle every time a site is appended.
+    return list(seen.values())
 
 
-def _pattern_host(pattern: str) -> str:
-    """Host part of a pattern: `x.com`, `*.x.com`, or the host of a full URL."""
-    text = (pattern or "").strip().lower()
-    if "://" in text:
-        return (urlparse(text).hostname or "").lower()
-    text = text.lstrip("*.").strip(".")
-    return text.split("/")[0]
+def to_netscape(items) -> str:
+    """Canonical cookies -> Netscape cookies.txt (what the textarea stores)."""
+    lines = [NETSCAPE_HEADER]
+    for cookie in normalize_cookies(items):
+        domain = cookie["domain"]
+        host = f"#HttpOnly_{domain}" if cookie.get("httpOnly") else domain
+        include = "TRUE" if domain.startswith(".") else "FALSE"
+        value = (str(cookie.get("value") or "")
+                 .replace("\t", " ").replace("\r", "").replace("\n", ""))
+        lines.append("\t".join([host, include, cookie.get("path") or "/",
+                                "TRUE" if cookie.get("secure") else "FALSE",
+                                str(cookie.get("expires") or 0), cookie["name"], value]))
+    return "\n".join(lines) + "\n"
 
 
-def match_profile(cfg: dict | None = None, url: str | None = None):
-    """Pick the most specific (pattern, raw) for `url`. -> (None, None) if none."""
-    profiles = cookie_profiles(cfg)
-    if not profiles or not url:
-        return None, None
-    text = url.strip().lower()
-    host = (urlparse(text).hostname or "").lower()
-    best, best_score = None, -1
-    for pattern in profiles:
-        key = pattern.strip().lower()
-        if "://" in key:
-            if not text.startswith(key.rstrip("/")):
-                continue
-            score = len(key)
-        else:
-            target = _pattern_host(key)
-            if not target:
-                continue
-            if host != target and not host.endswith("." + target):
-                continue
-            score = len(target)
-        if score > best_score:
-            best, best_score = pattern, score
-    return (best, profiles[best]) if best is not None else (None, None)
+def cookie_domains(items) -> dict[str, list[str]]:
+    """{domain: sorted cookie names} — the redacted view of a dump."""
+    out: dict[str, list[str]] = {}
+    for cookie in items:
+        out.setdefault(cookie["domain"], []).append(cookie["name"])
+    return {d: sorted(set(n)) for d, n in sorted(out.items())}
 
 
-def _profile_items(pattern: str, raw: str, url: str | None) -> list[dict]:
-    """Normalize one profile's payload into the canonical cookie list."""
-    text = str(raw or "").strip()
-    if text[:1] in ("[", "{"):
-        items = normalize_cookies(text)
-    elif "\t" in text or text.startswith("#"):
-        items = parse_netscape(text) or parse_cookie_string(text)
-    else:
-        items = parse_cookie_string(text)
-    domain = _pattern_host(pattern) or (urlparse(url or "").hostname or "").lower()
-    if not domain:
-        raise LightpandaError(f"cannot infer a cookie domain for profile '{pattern}'")
-    prepared = []
-    for item in items:
-        if not item.get("domain"):
-            # Header-string cookies carry no flags: keep them non-secure so the
-            # jar also works for plain-http sites (the file never leaves the box).
-            item = {**item, "domain": domain, "path": "/", "secure": False,
-                    "httpOnly": False}
-        prepared.append(item)
-    return normalize_cookies(prepared)
+def domain_matches(domain: str, host: str) -> bool:
+    """Would a browser send a cookie owned by `domain` to `host`? (RFC 6265-ish)"""
+    d = (domain or "").strip().lower().lstrip(".")
+    h = (host or "").strip().lower()
+    if not d or not h:
+        return False
+    return h == d or h.endswith("." + d)
 
 
-def profile_slug(pattern: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", (pattern or "").strip().lower()).strip("-")
-    return (slug or "profile")[:60]
+def cookies_for_url(items, url: str) -> list[dict]:
+    """The subset of `items` a browser would offer to `url`’s host."""
+    host = (urlparse(url or "").hostname or "").lower()
+    return [c for c in items if domain_matches(c["domain"], host)]
 
 
-def profile_items(pattern: str, raw: str, url: str | None = None) -> list[dict]:
-    """Normalize one profile payload into canonical cookies (public wrapper)."""
-    return _profile_items(pattern, raw, url)
+def materialize_dump(cfg: dict | None = None, items=None) -> Path | None:
+    """Write the whole dump to its own 0600 jar; -> path, or None when empty."""
+    cfg = config() if cfg is None else cfg
+    items = dump_cookies(cfg) if items is None else items
+    if not items:
+        return None
+    return save_cookies(items, state_dir() / COOKIE_DIRNAME / DUMP_FILENAME)
 
 
-def materialize_profile(pattern: str, raw: str, url: str | None = None) -> Path:
-    """Write one profile to its own 0600 jar and return the path."""
-    items = _profile_items(pattern, raw, url)
-    path = state_dir() / PROFILE_DIRNAME / f"{profile_slug(pattern)}.json"
-    return save_cookies(items, path)
-
-
-def cookie_plan(cfg: dict | None = None, url: str | None = None,
-                use: bool = True, save_jar: bool = False,
-                prefer: str | None = None) -> dict:
+def cookie_plan(cfg: dict | None = None, use: bool = True,
+                save_jar: bool = False) -> dict:
     """Decide which cookie source a CLI call should use.
 
-    ``prefer`` forces one configured pattern instead of matching the URL.
-    Returns ``{'args', 'profile', 'file', 'source'}`` where source is
-    'profile', 'jar' or None.
+    ``{’args’, ’source’, ’file’, ’names’, ’domains’}``, where source is ’dump’
+    (the textarea), ’jar’ (the legacy single jar) or None. The dump is the source
+    of truth, so a live jar is never written back over it.
     """
     cfg = config() if cfg is None else cfg
-    plan: dict = {"args": [], "profile": None, "file": None, "source": None}
+    plan: dict = {"args": [], "source": None, "file": None,
+                  "names": [], "domains": []}
     if not use:
         return plan
-    if prefer:
-        profiles = cookie_profiles(cfg)
-        pattern, raw = (prefer, profiles[prefer]) if prefer in profiles else (None, None)
-    else:
-        pattern, raw = match_profile(cfg, url)
-    if pattern:
-        try:
-            path = materialize_profile(pattern, raw, url)
-            plan.update({"args": ["--cookie", str(path)], "profile": pattern,
-                         "file": str(path), "source": "profile"})
-            return plan
-        except LightpandaError:
-            pass  # broken profile: fall back to the legacy jar instead of failing
+    items = dump_cookies(cfg)
+    path = materialize_dump(cfg, items) if items else None
+    if path is not None:
+        plan.update({"args": ["--cookie", str(path)], "source": "dump",
+                     "file": str(path), "domains": sorted(cookie_domains(items)),
+                     "names": sorted({c["name"] for c in items})})
+        return plan
     legacy = cookie_file(cfg)
     if legacy.is_file():
-        plan.update({"args": ["--cookie", str(legacy)], "file": str(legacy),
-                     "source": "jar", "profile": None})
+        plan.update({"args": ["--cookie", str(legacy)], "source": "jar",
+                     "file": str(legacy), "names": plan_cookie_names({"file": str(legacy)}),
+                     "domains": sorted(cookie_domains(load_cookies(legacy)))})
         if save_jar:
             plan["args"] += ["--cookie-jar", str(legacy)]
     return plan
@@ -312,11 +320,22 @@ def plan_cookie_names(plan: dict) -> list[str]:
     path = plan.get("file")
     if not path:
         return []
+    if plan.get("names"):
+        return list(plan["names"])
     try:
         items = normalize_cookies(Path(path).read_text(encoding="utf-8", errors="replace"))
     except (OSError, LightpandaError):
         return []
     return sorted({c["name"] for c in items})
+
+
+def _pattern_host(pattern: str) -> str:
+    """Host part of a site string: `x.com`, `*.x.com`, or the host of a URL."""
+    text = (pattern or "").strip().lower()
+    if "://" in text:
+        return (urlparse(text).hostname or "").lower()
+    text = text.lstrip("*.").strip(".")
+    return text.split("/")[0]
 
 
 # ── binary resolution ───────────────────────────────────────────────────────

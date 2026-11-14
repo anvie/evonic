@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import sys
+import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,10 +173,42 @@ def test_server_args_reflect_safety_settings():
     assert "--block-private-networks" not in args
 
 
-# ── cookie profiles (per-site) ────────────────────────────────────────────────
+# ── cookies from a browser dump ─────────────────────────────────────────────
 
-def _profiles_cfg(mapping):
-    return {LP.PROFILES_VAR: json.dumps(mapping)}
+DUMP = (
+    "# Netscape HTTP Cookie File\n"
+    ".x.com\tTRUE\t/\tTRUE\t1790000000\tauth_token\tsecret1\n"
+    "#HttpOnly_.x.com\tTRUE\t/\tTRUE\t1790000000\tct0\tsecret2\n"
+    "httpbin.org\tFALSE\t/\tFALSE\t0\tho_key\talpha\n"
+)
+
+
+def _dump_cfg(text, **extra):
+    return {LP.COOKIES_VAR: text, **extra}
+
+
+PKG = "evonic_lightpanda_toolpkg"
+
+
+def _load_tool(name):
+    """Import a tool module standalone, reusing the already-loaded `_lp`.
+
+    The skill’s directory is not on sys.path in tests, so a synthetic package
+    stands in for `backend.tools` and `from ._lp import ...` resolves to LP.
+    """
+    mod_name = f"{PKG}.{name}"
+    if mod_name in sys.modules:
+        return sys.modules[mod_name]
+    if PKG not in sys.modules:
+        pkg = types.ModuleType(PKG)
+        pkg.__path__ = [str(TOOLS_DIR)]
+        sys.modules[PKG] = pkg
+    sys.modules[f"{PKG}._lp"] = LP
+    spec = importlib.util.spec_from_file_location(mod_name, TOOLS_DIR / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_parse_cookie_string_skips_junk():
@@ -186,103 +219,211 @@ def test_parse_cookie_string_skips_junk():
     assert items[2]["value"] == "x y"
 
 
-def test_cookie_profiles_parsing():
-    cfg = _profiles_cfg({"x.com": "a=1", "empty.com": "  ", "obj.com": {"cookies": "b=2"}})
-    profiles = LP.cookie_profiles(cfg)
-    assert set(profiles) == {"x.com", "obj.com"}
-    assert profiles["obj.com"] == "b=2"
-    # already-parsed dict, and broken JSON, both behave
-    assert LP.cookie_profiles({LP.PROFILES_VAR: {"y.com": "c=3"}}) == {"y.com": "c=3"}
-    assert LP.cookie_profiles({LP.PROFILES_VAR: "{not json"}) == {}
-    assert LP.cookie_profiles({}) == {}
+def test_parse_cookie_text_reads_netscape_dump():
+    items = LP.parse_cookie_text(DUMP)
+    assert [(c["domain"], c["name"]) for c in items] == [
+        (".x.com", "auth_token"), (".x.com", "ct0"), ("httpbin.org", "ho_key")]
+    # `#HttpOnly_` is a flag, not part of the domain
+    assert items[1]["httpOnly"] is True and items[0]["httpOnly"] is False
+    assert items[0]["secure"] is True and items[2]["secure"] is False
+    assert "expires" not in items[2]          # expiry 0 = session cookie
+    assert items[0]["expires"] == 1790000000
 
 
-def test_match_profile_host_and_subdomain():
-    cfg = _profiles_cfg({"x.com": "a=1"})
-    assert LP.match_profile(cfg, "https://x.com/home")[0] == "x.com"
-    assert LP.match_profile(cfg, "https://www.x.com/home")[0] == "x.com"
-    assert LP.match_profile(cfg, "https://notx.com/")[0] is None
+def test_parse_cookie_text_accepts_json_and_rejects_junk():
+    assert LP.parse_cookie_text('[{"name":"a","value":"1","domain":"x.com"}]')[0]["name"] == "a"
+    assert LP.parse_cookie_text([{"name": "b", "value": "2", "domain": "y.com"}])[0]["name"] == "b"
+    for junk in ("", "just some words", "a=1; b=2"):
+        try:
+            LP.parse_cookie_text(junk)
+        except LP.LightpandaError as e:
+            assert "cookie" in str(e).lower()
+        else:
+            raise AssertionError(f"should reject {junk!r}")
 
 
-def test_match_profile_wildcard():
-    # Like a browser cookie domain (`.internal.lan`), the wildcard also covers
-    # the apex host, but never a lookalike.
-    cfg = _profiles_cfg({"*.internal.lan": "s=1"})
-    assert LP.match_profile(cfg, "https://app.internal.lan/x")[0] == "*.internal.lan"
-    assert LP.match_profile(cfg, "https://internal.lan/x")[0] == "*.internal.lan"
-    assert LP.match_profile(cfg, "https://evilinternal.lan/x")[0] is None
+def test_header_payload_needs_a_site():
+    items = LP.cookies_from_header("https://x.com/i/lists/1", "auth_token=abc; ct0=def")
+    assert [(c["domain"], c["name"]) for c in items] == [(".x.com".lstrip("."), "auth_token"),
+                                                         ("x.com", "ct0")]
+    try:
+        LP.cookies_from_header("", "a=1")
+    except LP.LightpandaError:
+        pass
+    else:
+        raise AssertionError("a header payload without a host must fail")
 
 
-def test_match_profile_url_prefix_beats_host():
-    cfg = _profiles_cfg({"x.com": "a=1", "https://x.com/i/lists/": "b=2"})
-    pattern, raw = LP.match_profile(cfg, "https://x.com/i/lists/2116931999046991892")
-    assert pattern == "https://x.com/i/lists/"
-    assert raw == "b=2"
-    assert LP.match_profile(cfg, "https://x.com/settings")[0] == "x.com"
+def test_to_netscape_roundtrip_keeps_flags():
+    items = LP.parse_cookie_text(DUMP)
+    again = LP.parse_cookie_text(LP.to_netscape(items))
+    assert again == items
+    text = LP.to_netscape([{**items[0], "value": "has\ttab"}])
+    assert "\t" not in text.splitlines()[1].split("\t")[6]
+    assert text.startswith(LP.NETSCAPE_HEADER)
 
 
-def test_match_profile_longest_host_wins():
-    cfg = _profiles_cfg({"corp.com": "a=1", "app.corp.com": "b=2"})
-    assert LP.match_profile(cfg, "https://app.corp.com/")[0] == "app.corp.com"
-    assert LP.match_profile(cfg, "https://other.corp.com/")[0] == "corp.com"
+def test_merge_cookies_overwrites_and_keeps_order():
+    old = LP.parse_cookie_text(DUMP)
+    new = [{"name": "ho_key", "value": "beta", "domain": "httpbin.org",
+            "path": "/", "secure": False, "httpOnly": False},
+           {"name": "fresh", "value": "1", "domain": "other.org",
+            "path": "/", "secure": False, "httpOnly": False}]
+    merged = LP.merge_cookies(old, new)
+    assert [c["name"] for c in merged] == ["auth_token", "ct0", "ho_key", "fresh"]
+    assert next(c for c in merged if c["name"] == "ho_key")["value"] == "beta"
 
 
-def test_cookie_plan_selects_profile_and_materializes_jar(tmp_path, monkeypatch):
-    monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path))
-    cfg = _profiles_cfg({"httpbin.org": "ho_key=ho_val; ns_key=ns_val"})
-    plan = LP.cookie_plan(cfg, "https://httpbin.org/cookies")
-    assert plan["source"] == "profile" and plan["profile"] == "httpbin.org"
-    assert plan["args"][0] == "--cookie"
+def test_domain_matches_is_suffix_safe():
+    assert LP.domain_matches(".x.com", "x.com")
+    assert LP.domain_matches(".x.com", "www.x.com")
+    assert LP.domain_matches("httpbin.org", "httpbin.org")
+    assert not LP.domain_matches(".x.com", "notx.com")
+    assert not LP.domain_matches(".x.com", "")
+    assert not LP.domain_matches("sub.x.com", "x.com")
+
+
+def test_cookies_for_url_filters_by_host():
+    items = LP.parse_cookie_text(DUMP)
+    assert [c["name"] for c in LP.cookies_for_url(items, "https://httpbin.org/cookies")] == ["ho_key"]
+    assert [c["name"] for c in LP.cookies_for_url(items, "https://x.com/home")] == [
+        "auth_token", "ct0"]
+    assert LP.cookies_for_url(items, "https://elsewhere.org/") == []
+
+
+def test_dump_cookies_tolerates_broken_text():
+    assert LP.dump_cookies({LP.COOKIES_VAR: "garbage"}) == []
+    assert LP.dump_cookies({}) == []
+    assert len(LP.dump_cookies(_dump_cfg(DUMP))) == 3
+
+
+def test_cookie_plan_materializes_the_dump(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path / "state"))
+    plan = LP.cookie_plan(_dump_cfg(DUMP))
+    assert plan["source"] == "dump"
+    assert plan["args"][:2] == ["--cookie", str(LP.Path(plan["file"]))]
     jar = LP.Path(plan["file"])
     assert jar.is_file()
     assert oct(os.stat(jar).st_mode & 0o777) == "0o600"
-    assert LP.plan_cookie_names(plan) == ["ho_key", "ns_key"]
+    assert LP.plan_cookie_names(plan) == ["auth_token", "ct0", "ho_key"]
+    assert plan["domains"] == [".x.com", "httpbin.org"]
+    # the dump is the source of truth: no jar is written back over it
+    assert "--cookie-jar" not in LP.cookie_plan(_dump_cfg(DUMP), save_jar=True)["args"]
 
 
-def test_cookie_plan_isolation_between_sites(tmp_path, monkeypatch):
-    monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path))
-    cfg = _profiles_cfg({"httpbin.org": "a=1", "example.com": "b=2"})
-    one = LP.cookie_plan(cfg, "https://httpbin.org/cookies")
-    two = LP.cookie_plan(cfg, "https://example.com/")
-    assert LP.plan_cookie_names(one) == ["a"]
-    assert LP.plan_cookie_names(two) == ["b"]
-
-
-def test_cookie_plan_use_false_and_prefer():
-    cfg = _profiles_cfg({"x.com": "a=1"})
-    assert LP.cookie_plan(cfg, "https://x.com/", use=False)["args"] == []
-    forced = LP.cookie_plan(cfg, "https://elsewhere.org/", prefer="x.com")
-    assert forced["profile"] == "x.com"
-    assert LP.cookie_plan(cfg, "https://elsewhere.org/", prefer="nope.com")["source"] is None
+def test_cookie_plan_use_false_and_empty_dump(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path / "state"))
+    assert LP.cookie_plan(_dump_cfg(DUMP), use=False)["args"] == []
+    empty = LP.cookie_plan(_dump_cfg("   "))
+    assert empty == {"args": [], "source": None, "file": None, "names": [], "domains": []}
 
 
 def test_cookie_plan_falls_back_to_legacy_jar(tmp_path, monkeypatch):
     monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path))
     legacy = tmp_path / "cookies.json"
-    legacy.write_text(json.dumps([{"name": "old", "value": "1", "domain": "nowhere.org"}]), encoding="utf-8")
-    plan = LP.cookie_plan({LP.PROFILES_VAR: "{}"}, "https://nowhere.org/",
-                          save_jar=True, )
+    legacy.write_text(json.dumps([{"name": "old", "value": "1", "domain": "nowhere.org"}]),
+                      encoding="utf-8")
+    plan = LP.cookie_plan({}, save_jar=True)
     assert plan["source"] == "jar"
     assert LP.plan_cookie_names(plan) == ["old"]
     assert "--cookie-jar" in plan["args"]
 
 
-def test_manifest_declares_per_site_cookie_profiles():
+def test_manifest_declares_the_cookie_textarea():
     manifest = json.loads((SKILL_DIR / "skill.json").read_text(encoding="utf-8"))
     variables = {v["name"]: v for v in manifest["variables"]}
-    profiles = variables["lightpanda_cookie_profiles"]
-    assert profiles["type"] == "cookies"
-    assert profiles["default"] == "{}"
-    assert profiles["label"]
+    dump = variables["lightpanda_cookies_txt"]
+    assert dump["type"] == "textarea"
+    assert dump["default"] == ""
+    assert dump["label"] and "cookies.txt" in dump["description"]
+    assert dump["monospace"] is True and dump["rows"] >= 10
+    assert "lightpanda_cookie_profiles" not in variables
     # the legacy single jar stays available as a fallback
     assert variables["lightpanda_cookie_file"]["type"] == "string"
 
 
-def test_settings_page_renders_the_cookies_widget():
+def test_tools_json_drops_the_profile_param():
+    defs = json.loads((SKILL_DIR / "tools.json").read_text(encoding="utf-8"))
+    fetch = next(d for d in defs if d["function"]["name"] == "lightpanda_fetch")
+    assert "profile" not in fetch["function"]["parameters"]["properties"]
+    cookies = next(d for d in defs if d["function"]["name"] == "lightpanda_cookies")
+    props = cookies["function"]["parameters"]["properties"]
+    assert props["action"]["enum"] == ["status", "set", "delete", "clear", "verify"]
+    assert set(props) >= {"cookies", "site", "merge", "file", "confirm"}
+    assert "netscape" not in props
+
+
+def test_settings_page_has_no_cookies_widget_left():
     source = (ROOT / "templates" / "skill_detail.html").read_text(encoding="utf-8")
-    assert "v.type === 'cookies'" in source
-    assert "data-cookies-widget" in source
-    # the widget must stay in sync with a plain [data-var] input so that the
-    # existing capture/save path needs no special casing
-    assert "function syncCookiesWidget(widget)" in source
-    assert "input type=\"hidden\" data-var=" in source or "input type='hidden' data-var=" in source
+    assert "data-cookies-widget" not in source
+    assert "syncCookiesWidget" not in source
+    assert "=== 'cookies'" not in source
+    # a dump textarea is just the generic textarea renderer plus manifest hints
+    assert "v.rows || 8" in source and "v.monospace" in source
+
+
+# ── tool behaviour ──────────────────────────────────────────────────────────
+
+def _tool_with_store(tmp_path, monkeypatch):
+    """Load the tool with config reads/writes backed by an in-memory dict."""
+    monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path / "state"))
+    tool = _load_tool("lightpanda_cookies")
+    store = {"text": ""}
+    monkeypatch.setattr(tool, "_write_dump",
+                        lambda text: (store.update(text=text), {"stored_in": "skill_config"})[1])
+    monkeypatch.setattr(tool, "config", lambda: {tool.COOKIES_VAR: store["text"]})
+    monkeypatch.setattr(tool, "cookie_file", lambda cfg=None: tmp_path / "legacy.json")
+    return tool, store
+
+
+def test_tool_set_status_delete_clear(tmp_path, monkeypatch):
+    tool, store = _tool_with_store(tmp_path, monkeypatch)
+
+    out = tool.execute({}, {"action": "set", "cookies": DUMP})
+    assert out["stored"] == 3 and out["mode"] == "replace"
+    assert out["domains"] == [".x.com", "httpbin.org"]
+    assert "secret1" not in json.dumps(out)          # values never leak
+    assert not LP.cookie_file({"lightpanda_cookie_file": str(tmp_path / "x")}).is_file()
+
+    status = tool.execute({}, {"action": "status"})
+    assert status["cookie_count"] == 3 and status["domain_count"] == 2
+    assert {d["domain"] for d in status["domains"]} == {".x.com", "httpbin.org"}
+    assert "secret1" not in json.dumps(status)
+
+    # merging a single-domain dump keeps the others
+    merged = tool.execute({}, {"action": "set", "cookies": DUMP, "merge": True})
+    assert merged["mode"] == "merge" and merged["stored"] == 3
+
+    deleted = tool.execute({}, {"action": "delete", "site": "x.com"})
+    assert deleted["deleted"] is True and deleted["removed"] == 2
+    assert deleted["remaining_domains"] == ["httpbin.org"]
+
+    assert "confirm" in tool.execute({}, {"action": "clear"})["error"]
+    cleared = tool.execute({}, {"action": "clear", "confirm": True})
+    assert cleared["removed"] == 1 and store["text"] == ""
+    assert tool.execute({}, {"action": "status"})["configured"] is False
+
+
+def test_tool_set_accepts_header_with_site(tmp_path, monkeypatch):
+    tool, store = _tool_with_store(tmp_path, monkeypatch)
+    out = tool.execute({}, {"action": "set", "site": "x.com",
+                            "cookies": "auth_token=abc; ct0=def"})
+    assert out["names"] == ["auth_token", "ct0"]
+    assert all(line.split("\t")[0].endswith("x.com") for line in store["text"].splitlines()[1:])
+    # a bare header without a site is refused with a pointer to `site`
+    err = tool.execute({}, {"action": "set", "cookies": "auth_token=abc"})
+    assert "site" in err["error"]
+
+
+def test_tool_set_rejects_empty_payload(tmp_path, monkeypatch):
+    tool, _store = _tool_with_store(tmp_path, monkeypatch)
+    assert "empty" in tool.execute({}, {"action": "set", "cookies": "   "})["error"]
+    assert "error" in tool.execute({}, {"action": "set"})
+
+
+def test_tool_status_reports_unparseable_dump(tmp_path, monkeypatch):
+    tool, store = _tool_with_store(tmp_path, monkeypatch)
+    store["text"] = "this is not a dump"
+    status = tool.execute({}, {"action": "status"})
+    assert status["cookie_count"] == 0 and "error" in status
+    assert "dump" in status["hint"].lower()

@@ -1,8 +1,8 @@
 {
   "id": "lightpanda",
   "name": "Lightpanda Browser",
-  "version": "1.2.0",
-  "description": "Headless browser built from scratch in Zig (16x less memory, 9x faster than Chromium). Fetches pages to markdown / semantic tree / HTML, drives interactive browsing through 40 MCP tools (click, fill, extract, screenshot, evaluate), and replays deterministic PandaScript. Uses a local binary only. Per-site cookie profiles (configure them on this settings page) let lightpanda_fetch reach login-gated pages, one session per site.",
+  "version": "1.3.0",
+  "description": "Headless browser built from scratch in Zig (16x less memory, 9x faster than Chromium). Fetches pages to markdown / semantic tree / HTML, drives interactive browsing through 40 MCP tools (click, fill, extract, screenshot, evaluate), and replays deterministic PandaScript. Uses a local binary only. Paste a browser cookies.txt dump on this settings page and lightpanda_fetch reaches login-gated pages, with each site keeping its own session.",
   "brief": "You can browse the web with Lightpanda — a fast, low-memory headless browser. Load this skill with `use_skill('lightpanda')` to fetch pages as markdown, read the semantic tree, click/fill forms, extract structured data, take screenshots, or run PandaScript.",
   "author": "Evonic",
   "tools_file": "tools.json",
@@ -45,18 +45,20 @@
       "description": "Refuse requests to private/internal IPs after DNS resolution (SSRF guard). Disable only to reach a trusted intranet host."
     },
     {
-      "name": "lightpanda_cookie_profiles",
-      "label": "Cookie profiles (per site)",
-      "type": "cookies",
-      "default": "{}",
-      "description": "One entry per site: key = match pattern (host 'x.com' also matches www.x.com, wildcard '*.x.com', or a URL prefix 'https://x.com/i/lists/'), value = that site's cookies ('name=value; name2=value2', a Netscape cookies.txt, or a Puppeteer JSON array). The most specific pattern wins. Used by lightpanda_fetch only."
+      "name": "lightpanda_cookies_txt",
+      "label": "Cookies (paste a cookies.txt dump)",
+      "type": "textarea",
+      "rows": 14,
+      "monospace": true,
+      "default": "",
+      "description": "Paste the browser's cookies.txt export as-is: one cookie per line, 7 tab-separated columns (domain, includeSubdomains, path, secure, expiry, name, value), '#HttpOnly_' prefixed lines are fine. The domain column decides which site each cookie belongs to, so nothing else needs configuring and unrelated sites never share a session. Treat it as credentials: it is stored in skill config and only lightpanda_fetch applies it."
     },
     {
       "name": "lightpanda_cookie_file",
       "label": "Legacy single cookie jar (optional)",
       "type": "string",
       "default": "",
-      "description": "Advanced/legacy: path to ONE cookie jar used when no per-site profile matches (Netscape cookies.txt or Puppeteer JSON). Empty = <state dir>/cookies.json. Prefer the per-site profiles above."
+      "description": "Advanced/legacy: path to ONE cookie jar used only when the dump above is empty (Netscape cookies.txt or Puppeteer JSON). Empty = <state dir>/cookies.json. Prefer the dump textarea."
     }
   ],
   "requirements": {

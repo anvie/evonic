@@ -486,7 +486,7 @@ class SkillsManager:
                     clean[name] = float(val) if '.' in str(val) else int(val)
                 elif var_type == 'boolean':
                     clean[name] = val if isinstance(val, bool) else str(val).lower() in ('true', '1', 'yes')
-                elif var_type in ('json', 'cookies'):
+                elif var_type == 'json':
                     # Structured values must stay parseable, otherwise the skill
                     # silently breaks at tool-call time. Empty = "not configured".
                     text = str(val)
