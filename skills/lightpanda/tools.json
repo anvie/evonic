@@ -1,0 +1,186 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_fetch",
+      "description": "Fetch a URL with Lightpanda's CLI and return the page as markdown, semantic tree, HTML, structured data, or a rendered PNG/PDF file. No server and no setup: the fastest way to read a single page. Waits for load by default; raise wait_until/wait_ms for JS-heavy pages.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "Absolute http(s) URL to fetch."},
+          "dump": {
+            "type": "string",
+            "enum": ["markdown", "html", "semantic_tree", "semantic_tree_text", "structured_data", "png", "pdf"],
+            "description": "Output format. 'markdown' (default) is the most token-efficient read; 'semantic_tree_text' is a compact role/name outline; 'structured_data' returns JSON-LD/OpenGraph/meta; 'png' and 'pdf' are saved to a file and the path is returned."
+          },
+          "wait_until": {
+            "type": "string",
+            "enum": ["load", "domcontentloaded", "networkalmostidle", "networkidle", "settled", "done"],
+            "description": "Load state to wait for. Default 'load'. Use 'domcontentloaded' plus wait_selector for pages whose ads hold 'load' back."
+          },
+          "wait_ms": {"type": "integer", "description": "Maximum wait in milliseconds (default 5000)."},
+          "wait_selector": {"type": "string", "description": "Also wait for this CSS selector to appear before dumping."},
+          "wait_script": {"type": "string", "description": "Also wait until this JS expression is truthy before dumping."},
+          "selector": {"type": "string", "description": "Dump only the first element matching this CSS selector."},
+          "strip_mode": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["js", "css", "ui", "invisible", "shell", "clutter"]},
+            "description": "Tag groups to remove from the dump. 'clutter' keeps only main content."
+          },
+          "with_frames": {"type": "boolean", "description": "Include iframe contents in the dump."},
+          "markdown_alternate": {"type": "boolean", "description": "With dump=markdown, prefer a markdown alternate the page links (rel=alternate type=text/markdown)."},
+          "obey_robots": {"type": "boolean", "description": "Honor robots.txt. Defaults to the skill setting (off)."},
+          "max_bytes": {"type": "integer", "description": "Cap on returned content in bytes (default 200000). Truncation is marked explicitly."},
+          "timeout": {"type": "number", "description": "Hard timeout for the whole fetch in seconds (default 120)."}
+        },
+        "required": ["url"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_read",
+      "description": "Read the page currently loaded in this agent's Lightpanda browsing session, optionally navigating to a URL first. Keeps session state (cookies, form input, current page) across calls, so use it after lightpanda_act.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "Optional absolute http(s) URL to navigate to before reading."},
+          "format": {
+            "type": "string",
+            "enum": ["markdown", "tree", "html", "links", "structured_data"],
+            "description": "markdown (default, best for reasoning), tree (semantic outline with node ids), html (raw), links (all links with resolved href), structured_data (JSON-LD/OpenGraph)."
+          },
+          "selector": {"type": "string", "description": "Scope to the first element matching this CSS selector (markdown/html/tree)."},
+          "backend_node_id": {"type": "integer", "description": "Scope to this node id (from a previous tree/read result)."},
+          "max_depth": {"type": "integer", "description": "With format=tree, limit the depth of the outline."},
+          "limit": {"type": "integer", "description": "With format=links, return at most this many links."},
+          "max_bytes": {"type": "integer", "description": "Cap on returned content in bytes (default 200000)."},
+          "wait_until": {"type": "string", "enum": ["load", "domcontentloaded", "networkalmostidle", "networkidle", "settled", "done"], "description": "Navigation wait strategy when url is given (default load)."},
+          "timeout": {"type": "number", "description": "Per-call timeout in seconds (default 45)."}
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_act",
+      "description": "Perform one interaction in this agent's browsing session: navigate, click, fill, press a key, select an option, toggle a checkbox, hover, scroll, or wait. Elements are addressed with a plain CSS selector (preferred) or a backend_node_id from a previous read/tree. Returns the page URL, title and HTTP status from Lightpanda.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["goto", "click", "fill", "press", "select_option", "set_checked", "hover", "scroll", "wait_for_selector", "wait_for_script", "wait_for_state"],
+            "description": "The interaction to perform."
+          },
+          "url": {"type": "string", "description": "For action=goto: absolute http(s) URL."},
+          "selector": {"type": "string", "description": "Plain CSS selector of the target (no Playwright prefixes such as text= or role=)."},
+          "backend_node_id": {"type": "integer", "description": "Alternative target id from a previous tree/read result."},
+          "value": {"type": "string", "description": "For fill / select_option: the text or option value."},
+          "key": {"type": "string", "description": "For press: key name such as Enter, Tab, Escape, a."},
+          "checked": {"type": "boolean", "description": "For set_checked: true to check, false to uncheck."},
+          "script": {"type": "string", "description": "For wait_for_script: a JS expression that must become truthy."},
+          "state": {"type": "string", "enum": ["load", "domcontentloaded", "networkalmostidle", "networkidle", "settled", "done"], "description": "For wait_for_state: load state to wait for."},
+          "x": {"type": "integer", "description": "For scroll: horizontal offset."},
+          "y": {"type": "integer", "description": "For scroll: vertical offset."},
+          "wait_until": {"type": "string", "enum": ["load", "domcontentloaded", "networkalmostidle", "networkidle", "settled", "done"], "description": "For goto: event that completes navigation (default load)."},
+          "timeout_ms": {"type": "integer", "description": "Action timeout in milliseconds (default 10000 for goto, 5000 for waits)."},
+          "timeout": {"type": "number", "description": "Protocol timeout for the call in seconds (default 45)."}
+        },
+        "required": ["action"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_extract",
+      "description": "Extract structured data from the current page (or a URL) using a schema object that maps output field names to CSS-selector specs. Cheaper and more reliable than reading markdown when you know what you want.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "object",
+            "description": "Mapping of output field -> CSS selector spec, e.g. {\"title\": \"h1\", \"links\": [\"a@href\"]}. Passed to Lightpanda as a JSON object literal."
+          },
+          "url": {"type": "string", "description": "Optional absolute http(s) URL to navigate to first."},
+          "save": {"type": "string", "description": "Optional bridge-store key so later lightpanda_mcp evaluate calls can read the result as lp.<name>."},
+          "max_bytes": {"type": "integer", "description": "Cap on returned content in bytes (default 200000)."},
+          "timeout": {"type": "number", "description": "Per-call timeout in seconds (default 45)."}
+        },
+        "required": ["schema"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_screenshot",
+      "description": "Render the page (or one element) to a PNG file and return its path. Lightpanda renders its computed text layout, not pixel-accurate browser output, so use this for layout/visual checks, not for pixel comparison. The base64 payload never enters the conversation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "Optional absolute http(s) URL to navigate to first."},
+          "selector": {"type": "string", "description": "Render only this element."},
+          "full_page": {"type": "boolean", "description": "Render the whole content height instead of one viewport (default false)."},
+          "path": {"type": "string", "description": "Optional destination file path. Defaults to the skill cache directory."},
+          "timeout": {"type": "number", "description": "Per-call timeout in seconds (default 45)."}
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_run",
+      "description": "Run a PandaScript — vanilla JavaScript with Lightpanda's native browser primitives (new Page(), page.goto(), page.extract()) — in this agent's session. Deterministic and token-free, ideal for repeating a multi-step extraction. Cookies and storage persist across runs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "script": {"type": "string", "description": "PandaScript source code."},
+          "path": {"type": "string", "description": "Alternatively, a script file path (relative to the Lightpanda server working directory)."},
+          "timeout_ms": {"type": "integer", "description": "Stop the script after this many milliseconds (default 60000)."},
+          "max_bytes": {"type": "integer", "description": "Cap on returned output in bytes (default 200000)."}
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_mcp",
+      "description": "Raw passthrough to any Lightpanda MCP tool, for capabilities the wrappers do not cover: evaluate (JS in page), interactiveElements, findElement, nodeDetails, detectForms, getCookies, getEnv, consoleLogs, popups, pageTools/callPageTool, download, acceptCookies, login, classify, search, session_new/list/close. Reading: markdown/html/tree/links/structuredData. Acting: goto/click/fill/press/selectOption/setChecked/hover/scroll/waitForSelector/waitForScript/waitForState. Scripting: run/save/evaluate/extract. Image payloads are saved to files and returned as paths.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tool": {"type": "string", "description": "MCP tool name, e.g. 'evaluate', 'interactiveElements', 'getCookies', 'search'."},
+          "arguments": {"type": "object", "description": "Arguments for that tool, matching Lightpanda's own schema (see SYSTEM.md for the catalog)."},
+          "max_bytes": {"type": "integer", "description": "Cap on returned text in bytes (default 200000)."},
+          "timeout": {"type": "number", "description": "Per-call timeout in seconds (default 45)."}
+        },
+        "required": ["tool"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_status",
+      "description": "Diagnose the Lightpanda setup: binary path/version/source, whether the MCP server is running (host, port, pid, log path), active browsing sessions, and the current safety settings. Call this first when a Lightpanda tool fails.",
+      "parameters": {"type": "object", "properties": {}, "required": []}
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_stop",
+      "description": "Stop the auto-started Lightpanda MCP server and drop all browsing sessions, freeing its memory. The next interactive tool call starts a fresh server automatically.",
+      "parameters": {"type": "object", "properties": {}, "required": []}
+    }
+  }
+]

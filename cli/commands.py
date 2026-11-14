@@ -4275,7 +4275,7 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
             binary = rec["binary"]
             name = binary["name"]
             src = f"{rec['source_type']} '{rec['source_id']}'"
-            res = _rc.check_binary(binary)
+            res = _rc.check_binary(binary, rec["dir"])
 
             if res["status"] == "ok":
                 ver = f" {res['current']}" if res["current"] else ""
@@ -4310,7 +4310,7 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
                     print(f"  {_DIM}│{_RESET} {ln}")
 
                 outcome = _rc.run_fix_script(binary, rec["dir"], on_output=_rail)
-                recheck = _rc.check_binary(binary)
+                recheck = _rc.check_binary(binary, rec["dir"])
                 # Close the rail with the outcome — the rail terminator doubles
                 # as the result line, so there's no duplicate status line.
                 if outcome.get("ran") and recheck["status"] == "ok":
@@ -4464,21 +4464,36 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
         results.append(_warn(f"WhatsApp bridge check failed: {e}"))
 
 
-    # ── 18. Plugin Checks ────────────────────────────────────
+    # ── 18. Plugin & Skill Checks ────────────────────────────────────
+    # Plugins and skills both expose doctor hooks (doctor_check / doctor_fix in
+    # handler.py resp. backend/doctor.py). Each source is guarded separately so
+    # a broken hook in one cannot hide the other's report.
+    plugin_reports = []
+    skill_reports = []
     try:
         from backend.plugin_doctor import run_plugin_doctor
-        reports = run_plugin_doctor(fix=fix)
-        if not reports:
-            _section("18. Plugin Checks")
-            _info("No enabled plugin provides doctor checks")
-        for rep in reports:
-            _section(f"Plugin · {rep['name']}")
-            for finding in rep["findings"]:
-                results.append({"ok": _ok, "warn": _warn, "fail": _fail}[finding.level](finding.message))
-            fixes_applied.extend(f"[{rep['name']}] {line}" for line in rep["fixes"])
+        plugin_reports = run_plugin_doctor(fix=fix)
     except Exception as e:
-        _section("18. Plugin Checks")
         results.append(_fail(f"Plugin doctor failed: {e}"))
+    try:
+        from backend.skill_doctor import run_skill_doctor
+        skill_reports = run_skill_doctor(fix=fix)
+    except Exception as e:
+        results.append(_fail(f"Skill doctor failed: {e}"))
+
+    if not plugin_reports and not skill_reports:
+        _section("18. Plugin & Skill Checks")
+        _info("No enabled plugin or skill provides doctor checks")
+    for rep in plugin_reports:
+        _section(f"Plugin · {rep['name']}")
+        for finding in rep["findings"]:
+            results.append({"ok": _ok, "warn": _warn, "fail": _fail}[finding.level](finding.message))
+        fixes_applied.extend(f"[{rep['name']}] {line}" for line in rep["fixes"])
+    for rep in skill_reports:
+        _section(f"Skill · {rep['name']}")
+        for finding in rep["findings"]:
+            results.append({"ok": _ok, "warn": _warn, "fail": _fail}[finding.level](finding.message))
+        fixes_applied.extend(f"[{rep['name']}] {line}" for line in rep["fixes"])
 
     _flush_section()
     _DOCTOR_ACTIVE = False

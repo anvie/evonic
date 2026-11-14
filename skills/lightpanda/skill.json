@@ -1,0 +1,59 @@
+{
+  "id": "lightpanda",
+  "name": "Lightpanda Browser",
+  "version": "1.0.0",
+  "description": "Headless browser built from scratch in Zig (16x less memory, 9x faster than Chromium). Fetches pages to markdown / semantic tree / HTML, drives interactive browsing through 40 MCP tools (click, fill, extract, screenshot, evaluate), and replays deterministic PandaScript. Uses a local binary only.",
+  "brief": "You can browse the web with Lightpanda — a fast, low-memory headless browser. Load this skill with `use_skill('lightpanda')` to fetch pages as markdown, read the semantic tree, click/fill forms, extract structured data, take screenshots, or run PandaScript.",
+  "author": "Evonic",
+  "tools_file": "tools.json",
+  "lazy_tools": true,
+  "default_enabled": true,
+  "variables": [
+    {
+      "name": "lightpanda_bin",
+      "label": "Binary path",
+      "type": "string",
+      "default": "",
+      "description": "Explicit path to the lightpanda executable. Empty = auto-detect ($LIGHTPANDA_BIN, skills/lightpanda/bin/lightpanda, then PATH)."
+    },
+    {
+      "name": "lightpanda_host",
+      "label": "MCP host",
+      "type": "string",
+      "default": "127.0.0.1",
+      "description": "Interface the auto-started MCP (HTTP) server binds to."
+    },
+    {
+      "name": "lightpanda_port",
+      "label": "MCP port",
+      "type": "string",
+      "default": "9223",
+      "description": "TCP port of the auto-started MCP (HTTP) server."
+    },
+    {
+      "name": "lightpanda_obey_robots",
+      "label": "Obey robots.txt",
+      "type": "boolean",
+      "default": false,
+      "description": "Fetch and honor robots.txt for every request. Recommended for crawling, leave off for pages you are authorized to read."
+    },
+    {
+      "name": "lightpanda_block_private_networks",
+      "label": "Block private networks",
+      "type": "boolean",
+      "default": true,
+      "description": "Refuse requests to private/internal IPs after DNS resolution (SSRF guard). Disable only to reach a trusted intranet host."
+    }
+  ],
+  "requirements": {
+    "binaries": [
+      {
+        "name": "lightpanda",
+        "version": "1.0.0",
+        "version_command": "lightpanda version",
+        "fix_script": "scripts/install.sh",
+        "search_paths": ["bin"]
+      }
+    ]
+  }
+}

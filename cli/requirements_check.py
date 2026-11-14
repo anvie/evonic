@@ -12,10 +12,16 @@ under ``--fix``::
           "name": "obscura",                       // command checked on PATH
           "version": "1.2.0",                       // optional minimum version
           "version_command": "obscura --version",   // optional; default "<name> --version"
-          "fix_script": "scripts/install.sh"        // optional; path relative to skill/plugin dir
+          "fix_script": "scripts/install.sh",       // optional; path relative to skill/plugin dir
+          "search_paths": ["bin"]                   // optional; extra dirs, relative to skill/plugin dir
         }
       ]
     }
+
+``search_paths`` lets a component keep its binary inside its own directory (a
+self-contained, no-sudo install) instead of on ``PATH``: each entry is resolved
+relative to the skill/plugin directory unless absolute, and ``~`` expands. The
+first executable match wins; ``PATH`` is always checked first.
 
 Only *enabled* skills/plugins are scanned — a disabled component's binary is not
 needed. ``fix_script`` is only ever executed when the caller passes ``--fix``.
@@ -107,14 +113,38 @@ def gather_requirements() -> List[Dict[str, Any]]:
     return records
 
 
-def check_binary(binary: Dict[str, Any]) -> Dict[str, Any]:
-    """Resolve a binary on PATH and, if a version is declared, compare it.
+def _resolve_local(binary: Dict[str, Any], source_dir: Optional[str]) -> Optional[str]:
+    """Look for the binary inside the declaring skill/plugin directory.
+
+    Each ``search_paths`` entry is joined to ``source_dir`` unless absolute
+    (``~`` expands). Returns the first executable match, or None.
+    """
+    name = binary["name"]
+    for rel in binary.get("search_paths") or []:
+        if not isinstance(rel, str) or not rel.strip():
+            continue
+        cand = os.path.expanduser(rel)
+        if not os.path.isabs(cand):
+            if not source_dir:
+                continue
+            cand = os.path.join(source_dir, cand)
+        cand = os.path.join(cand, name) if os.path.isdir(cand) else cand
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
+def check_binary(binary: Dict[str, Any], source_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Resolve a binary on PATH (then locally) and compare versions.
 
     Returns {status, name, path, current, required} where status is one of
     'ok' | 'missing' | 'outdated' | 'unknown' ('unknown' = found but version
-    could not be determined while a minimum was required)."""
+    could not be determined while a minimum was required). ``source_dir`` is
+    the declaring skill/plugin directory, needed only when the manifest
+    declares ``search_paths``.
+    """
     name = binary["name"]
-    path = shutil.which(name)
+    path = shutil.which(name) or _resolve_local(binary, source_dir)
     required = _required_min(binary.get("version", ""))
     result = {"status": "missing", "name": name, "path": path,
               "current": None, "required": required}
@@ -127,7 +157,15 @@ def check_binary(binary: Dict[str, Any]) -> Dict[str, Any]:
 
     cmd = binary.get("version_command") or f"{name} --version"
     try:
-        out = subprocess.run(shlex.split(cmd), capture_output=True, text=True, timeout=10)
+        argv = shlex.split(cmd)
+    except ValueError:
+        argv = [path, "--version"]
+    # A locally-installed binary is not on PATH, so run it by resolved path
+    # when the version command names it as argv[0].
+    if argv and argv[0] == name:
+        argv[0] = path
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=10)
         text = (out.stdout or "") + "\n" + (out.stderr or "")
     except (OSError, subprocess.SubprocessError):
         text = ""
