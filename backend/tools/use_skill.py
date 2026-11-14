@@ -60,8 +60,18 @@ def execute(agent: dict, args: dict) -> dict:
             "available_skills": available
         }
 
-    # Per-agent allowlist check (super agents are exempt)
-    if not agent.get('is_super'):
+    # Per-agent allowlist check (only the designated super agent is exempt)
+    _super_id = None
+    try:
+        from models.db import db
+        _super_id = db.get_setting('super_agent_id')
+    except Exception:
+        pass
+    # Narrow the exemption only when a designated super agent is actually
+    # configured: with the setting unset this is byte-for-byte the old
+    # behaviour (any is_super agent exempt), so upgrades never regress.
+    _exempt = bool(agent.get('is_super')) and (not _super_id or agent.get('id') == _super_id)
+    if not _exempt:
         from models.db import db
         # Sub-agents inherit parent's skill assignments
         _eid = agent.get('parent_id', agent.get('id', '')) if agent.get('is_subagent') else agent.get('id', '')
