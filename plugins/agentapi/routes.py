@@ -198,6 +198,26 @@ def _cors_enabled():
     cfg = plugin_manager.get_plugin_config('agentapi')
     return bool(cfg.get('DISABLE_CORS', False))
 
+def _apply_sandbox_exec(agent_id: str) -> None:
+    """Point this agent's tools at the sandbox machine the caller names (PIT-401).
+
+    The pitura dashboard holds a machine's per-session `/exec` endpoint and token
+    (minted at create, `server-rs/src/fly_machines.rs`), so it hands them to this
+    request instead of evonic being configured per machine. No headers = no
+    machine = the agent's own backend, which is how the docker path stays in
+    reach while this is proven.
+    """
+    from backend.tools.lib.backends.sandbox_exec_backend import (
+        clear_session, register_session,
+    )
+    url = (request.headers.get('X-Pitura-Exec-Url') or '').strip()
+    token = (request.headers.get('X-Pitura-Exec-Token') or '').strip()
+    if url and token:
+        register_session(agent_id, url, token)
+    else:
+        clear_session(agent_id)
+
+
 def _add_cors_headers(response):
     """Inject CORS headers into response when DISABLE_CORS is enabled."""
     if not _cors_enabled():
@@ -277,6 +297,11 @@ def create_blueprint():
             return jsonify({'error': f'Agent not found: {agent_id}'}), 404
         if not agent.get('is_super') and not agent.get('enabled', True):
             return jsonify({'error': f'Agent is disabled: {agent_id}'}), 503
+
+        # --- Sandbox tools (PIT-401) ---
+        # A caller that holds a sandbox machine's `/exec` names it here; every
+        # tool call in this turn then runs in the tree the preview serves.
+        _apply_sandbox_exec(agent_id)
 
         # --- Build user message ---
         user_message = _build_user_message(messages)

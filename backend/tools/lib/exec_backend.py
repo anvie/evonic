@@ -235,6 +235,19 @@ class BackendRegistry:
                 if session_id in self._backends:
                     return self._backends[session_id]
 
+        # A pitura chat request names the sandbox machine its tools belong in
+        # (`sandbox_exec_backend.register_session`, PIT-401). It wins over the
+        # agent's workplace on purpose: that workplace is the second checkout
+        # the machine already replaced. A simulation skips it, like every other
+        # override -- containment is not negotiable.
+        if not forced:
+            from backend.tools.lib.backends.sandbox_exec_backend import (
+                SandboxExecBackend, session_for,
+            )
+            machine = session_for(agent_context.get('id') or agent_context.get('agent_id') or '')
+            if machine:
+                return SandboxExecBackend(config=machine)
+
         # Extract sandbox setting from agent_context; a simulation forces it on
         # so a template that ships sandbox_enabled: false cannot escape isolation.
         sandbox_enabled = True if forced else bool(agent_context.get('sandbox_enabled', 1))
