@@ -3,37 +3,112 @@
     "type": "function",
     "function": {
       "name": "lightpanda_fetch",
-      "description": "Fetch a URL with Lightpanda's CLI and return the page as markdown, semantic tree, HTML, structured data, or a rendered PNG/PDF file. No server and no setup: the fastest way to read a single page. Waits for load by default; raise wait_until/wait_ms for JS-heavy pages.",
+      "description": "Fetch a URL with Lightpanda's CLI and return the page as markdown, semantic tree, HTML, structured data, or a rendered PNG/PDF file. No server and no setup: the fastest way to read a single page. Waits for load by default; raise wait_until/wait_ms for JS-heavy pages. Cookies are attached by default: the per-site profile matching the URL is used (configure them in Settings → Lightpanda → Cookie profiles), so login-gated pages work. Only this tool applies cookies — the MCP session tools and lightpanda_run ignore them.",
       "parameters": {
         "type": "object",
         "properties": {
-          "url": {"type": "string", "description": "Absolute http(s) URL to fetch."},
+          "url": {
+            "type": "string",
+            "description": "Absolute http(s) URL to fetch."
+          },
           "dump": {
             "type": "string",
-            "enum": ["markdown", "html", "semantic_tree", "semantic_tree_text", "structured_data", "png", "pdf"],
+            "enum": [
+              "markdown",
+              "html",
+              "semantic_tree",
+              "semantic_tree_text",
+              "structured_data",
+              "png",
+              "pdf"
+            ],
             "description": "Output format. 'markdown' (default) is the most token-efficient read; 'semantic_tree_text' is a compact role/name outline; 'structured_data' returns JSON-LD/OpenGraph/meta; 'png' and 'pdf' are saved to a file and the path is returned."
           },
           "wait_until": {
             "type": "string",
-            "enum": ["load", "domcontentloaded", "networkalmostidle", "networkidle", "settled", "done"],
+            "enum": [
+              "load",
+              "domcontentloaded",
+              "networkalmostidle",
+              "networkidle",
+              "settled",
+              "done"
+            ],
             "description": "Load state to wait for. Default 'load'. Use 'domcontentloaded' plus wait_selector for pages whose ads hold 'load' back."
           },
-          "wait_ms": {"type": "integer", "description": "Maximum wait in milliseconds (default 5000)."},
-          "wait_selector": {"type": "string", "description": "Also wait for this CSS selector to appear before dumping."},
-          "wait_script": {"type": "string", "description": "Also wait until this JS expression is truthy before dumping."},
-          "selector": {"type": "string", "description": "Dump only the first element matching this CSS selector."},
+          "wait_ms": {
+            "type": "integer",
+            "description": "Maximum wait in milliseconds (default 5000)."
+          },
+          "wait_selector": {
+            "type": "string",
+            "description": "Also wait for this CSS selector to appear before dumping."
+          },
+          "wait_script": {
+            "type": "string",
+            "description": "Also wait until this JS expression is truthy before dumping."
+          },
+          "selector": {
+            "type": "string",
+            "description": "Dump only the first element matching this CSS selector."
+          },
           "strip_mode": {
             "type": "array",
-            "items": {"type": "string", "enum": ["js", "css", "ui", "invisible", "shell", "clutter"]},
+            "items": {
+              "type": "string",
+              "enum": [
+                "js",
+                "css",
+                "ui",
+                "invisible",
+                "shell",
+                "clutter"
+              ]
+            },
             "description": "Tag groups to remove from the dump. 'clutter' keeps only main content."
           },
-          "with_frames": {"type": "boolean", "description": "Include iframe contents in the dump."},
-          "markdown_alternate": {"type": "boolean", "description": "With dump=markdown, prefer a markdown alternate the page links (rel=alternate type=text/markdown)."},
-          "obey_robots": {"type": "boolean", "description": "Honor robots.txt. Defaults to the skill setting (off)."},
-          "max_bytes": {"type": "integer", "description": "Cap on returned content in bytes (default 200000). Truncation is marked explicitly."},
-          "timeout": {"type": "number", "description": "Hard timeout for the whole fetch in seconds (default 120)."}
+          "with_frames": {
+            "type": "boolean",
+            "description": "Include iframe contents in the dump."
+          },
+          "markdown_alternate": {
+            "type": "boolean",
+            "description": "With dump=markdown, prefer a markdown alternate the page links (rel=alternate type=text/markdown)."
+          },
+          "obey_robots": {
+            "type": "boolean",
+            "description": "Honor robots.txt. Defaults to the skill setting (off)."
+          },
+          "max_bytes": {
+            "type": "integer",
+            "description": "Cap on returned content in bytes (default 200000). Truncation is marked explicitly."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Hard timeout for the whole fetch in seconds (default 120)."
+          },
+          "use_cookies": {
+            "type": "boolean",
+            "default": true,
+            "description": "Attach cookies: the per-site profile matching the URL, else the legacy jar. Set false to fetch anonymously."
+          },
+          "profile": {
+            "type": "string",
+            "description": "Force one configured cookie profile (its match pattern, e.g. 'x.com') instead of matching the URL."
+          },
+          "save_jar": {
+            "type": "boolean",
+            "default": false,
+            "description": "Legacy jar only: write cookies the server set or rotated back to the jar after the fetch."
+          },
+          "inject_script": {
+            "type": "string",
+            "description": "JavaScript expression injected at document start (runs before page scripts). Pass the code itself, not a file path."
+          }
         },
-        "required": ["url"]
+        "required": [
+          "url"
+        ]
       }
     }
   },
@@ -45,19 +120,57 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "url": {"type": "string", "description": "Optional absolute http(s) URL to navigate to before reading."},
+          "url": {
+            "type": "string",
+            "description": "Optional absolute http(s) URL to navigate to before reading."
+          },
           "format": {
             "type": "string",
-            "enum": ["markdown", "tree", "html", "links", "structured_data"],
+            "enum": [
+              "markdown",
+              "tree",
+              "html",
+              "links",
+              "structured_data"
+            ],
             "description": "markdown (default, best for reasoning), tree (semantic outline with node ids), html (raw), links (all links with resolved href), structured_data (JSON-LD/OpenGraph)."
           },
-          "selector": {"type": "string", "description": "Scope to the first element matching this CSS selector (markdown/html/tree)."},
-          "backend_node_id": {"type": "integer", "description": "Scope to this node id (from a previous tree/read result)."},
-          "max_depth": {"type": "integer", "description": "With format=tree, limit the depth of the outline."},
-          "limit": {"type": "integer", "description": "With format=links, return at most this many links."},
-          "max_bytes": {"type": "integer", "description": "Cap on returned content in bytes (default 200000)."},
-          "wait_until": {"type": "string", "enum": ["load", "domcontentloaded", "networkalmostidle", "networkidle", "settled", "done"], "description": "Navigation wait strategy when url is given (default load)."},
-          "timeout": {"type": "number", "description": "Per-call timeout in seconds (default 45)."}
+          "selector": {
+            "type": "string",
+            "description": "Scope to the first element matching this CSS selector (markdown/html/tree)."
+          },
+          "backend_node_id": {
+            "type": "integer",
+            "description": "Scope to this node id (from a previous tree/read result)."
+          },
+          "max_depth": {
+            "type": "integer",
+            "description": "With format=tree, limit the depth of the outline."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "With format=links, return at most this many links."
+          },
+          "max_bytes": {
+            "type": "integer",
+            "description": "Cap on returned content in bytes (default 200000)."
+          },
+          "wait_until": {
+            "type": "string",
+            "enum": [
+              "load",
+              "domcontentloaded",
+              "networkalmostidle",
+              "networkidle",
+              "settled",
+              "done"
+            ],
+            "description": "Navigation wait strategy when url is given (default load)."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Per-call timeout in seconds (default 45)."
+          }
         },
         "required": []
       }
@@ -73,24 +186,93 @@
         "properties": {
           "action": {
             "type": "string",
-            "enum": ["goto", "click", "fill", "press", "select_option", "set_checked", "hover", "scroll", "wait_for_selector", "wait_for_script", "wait_for_state"],
+            "enum": [
+              "goto",
+              "click",
+              "fill",
+              "press",
+              "select_option",
+              "set_checked",
+              "hover",
+              "scroll",
+              "wait_for_selector",
+              "wait_for_script",
+              "wait_for_state"
+            ],
             "description": "The interaction to perform."
           },
-          "url": {"type": "string", "description": "For action=goto: absolute http(s) URL."},
-          "selector": {"type": "string", "description": "Plain CSS selector of the target (no Playwright prefixes such as text= or role=)."},
-          "backend_node_id": {"type": "integer", "description": "Alternative target id from a previous tree/read result."},
-          "value": {"type": "string", "description": "For fill / select_option: the text or option value."},
-          "key": {"type": "string", "description": "For press: key name such as Enter, Tab, Escape, a."},
-          "checked": {"type": "boolean", "description": "For set_checked: true to check, false to uncheck."},
-          "script": {"type": "string", "description": "For wait_for_script: a JS expression that must become truthy."},
-          "state": {"type": "string", "enum": ["load", "domcontentloaded", "networkalmostidle", "networkidle", "settled", "done"], "description": "For wait_for_state: load state to wait for."},
-          "x": {"type": "integer", "description": "For scroll: horizontal offset."},
-          "y": {"type": "integer", "description": "For scroll: vertical offset."},
-          "wait_until": {"type": "string", "enum": ["load", "domcontentloaded", "networkalmostidle", "networkidle", "settled", "done"], "description": "For goto: event that completes navigation (default load)."},
-          "timeout_ms": {"type": "integer", "description": "Action timeout in milliseconds (default 10000 for goto, 5000 for waits)."},
-          "timeout": {"type": "number", "description": "Protocol timeout for the call in seconds (default 45)."}
+          "url": {
+            "type": "string",
+            "description": "For action=goto: absolute http(s) URL."
+          },
+          "selector": {
+            "type": "string",
+            "description": "Plain CSS selector of the target (no Playwright prefixes such as text= or role=)."
+          },
+          "backend_node_id": {
+            "type": "integer",
+            "description": "Alternative target id from a previous tree/read result."
+          },
+          "value": {
+            "type": "string",
+            "description": "For fill / select_option: the text or option value."
+          },
+          "key": {
+            "type": "string",
+            "description": "For press: key name such as Enter, Tab, Escape, a."
+          },
+          "checked": {
+            "type": "boolean",
+            "description": "For set_checked: true to check, false to uncheck."
+          },
+          "script": {
+            "type": "string",
+            "description": "For wait_for_script: a JS expression that must become truthy."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "load",
+              "domcontentloaded",
+              "networkalmostidle",
+              "networkidle",
+              "settled",
+              "done"
+            ],
+            "description": "For wait_for_state: load state to wait for."
+          },
+          "x": {
+            "type": "integer",
+            "description": "For scroll: horizontal offset."
+          },
+          "y": {
+            "type": "integer",
+            "description": "For scroll: vertical offset."
+          },
+          "wait_until": {
+            "type": "string",
+            "enum": [
+              "load",
+              "domcontentloaded",
+              "networkalmostidle",
+              "networkidle",
+              "settled",
+              "done"
+            ],
+            "description": "For goto: event that completes navigation (default load)."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Action timeout in milliseconds (default 10000 for goto, 5000 for waits)."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Protocol timeout for the call in seconds (default 45)."
+          }
         },
-        "required": ["action"]
+        "required": [
+          "action"
+        ]
       }
     }
   },
@@ -106,12 +288,26 @@
             "type": "object",
             "description": "Mapping of output field -> CSS selector spec, e.g. {\"title\": \"h1\", \"links\": [\"a@href\"]}. Passed to Lightpanda as a JSON object literal."
           },
-          "url": {"type": "string", "description": "Optional absolute http(s) URL to navigate to first."},
-          "save": {"type": "string", "description": "Optional bridge-store key so later lightpanda_mcp evaluate calls can read the result as lp.<name>."},
-          "max_bytes": {"type": "integer", "description": "Cap on returned content in bytes (default 200000)."},
-          "timeout": {"type": "number", "description": "Per-call timeout in seconds (default 45)."}
+          "url": {
+            "type": "string",
+            "description": "Optional absolute http(s) URL to navigate to first."
+          },
+          "save": {
+            "type": "string",
+            "description": "Optional bridge-store key so later lightpanda_mcp evaluate calls can read the result as lp.<name>."
+          },
+          "max_bytes": {
+            "type": "integer",
+            "description": "Cap on returned content in bytes (default 200000)."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Per-call timeout in seconds (default 45)."
+          }
         },
-        "required": ["schema"]
+        "required": [
+          "schema"
+        ]
       }
     }
   },
@@ -123,11 +319,91 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "url": {"type": "string", "description": "Optional absolute http(s) URL to navigate to first."},
-          "selector": {"type": "string", "description": "Render only this element."},
-          "full_page": {"type": "boolean", "description": "Render the whole content height instead of one viewport (default false)."},
-          "path": {"type": "string", "description": "Optional destination file path. Defaults to the skill cache directory."},
-          "timeout": {"type": "number", "description": "Per-call timeout in seconds (default 45)."}
+          "url": {
+            "type": "string",
+            "description": "Optional absolute http(s) URL to navigate to first."
+          },
+          "selector": {
+            "type": "string",
+            "description": "Render only this element."
+          },
+          "full_page": {
+            "type": "boolean",
+            "description": "Render the whole content height instead of one viewport (default false)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Optional destination file path. Defaults to the skill cache directory."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Per-call timeout in seconds (default 45)."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lightpanda_cookies",
+      "description": "Manage per-site cookie profiles used by lightpanda_fetch. Each profile maps a match pattern (host like x.com, wildcard like *.x.com, or a URL prefix like https://x.com/i/lists/) to that site's cookies, so several sites keep separate sessions. The same data is editable in Settings → Lightpanda → Cookie profiles. Accepts 'name=value; name2=value2' text, a Netscape cookies.txt, a Puppeteer/CDP JSON array, or a file path. Cookie VALUES are never echoed back - status/set return names and counts only.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "set",
+              "delete",
+              "clear",
+              "verify"
+            ],
+            "default": "status",
+            "description": "status: list configured sites plus the legacy jar. set: store or update one site's cookies. delete: remove one site. clear: remove all sites (needs confirm=true). verify: fetch a URL with the matched profile and report status, bytes and the cookie names attached."
+          },
+          "site": {
+            "type": "string",
+            "description": "set/delete: the match pattern, e.g. 'x.com', '*.x.com' or 'https://x.com/i/lists/'."
+          },
+          "cookies": {
+            "type": "string",
+            "description": "set: the cookie payload for that site - 'auth_token=...; ct0=...' text, a Netscape cookies.txt blob, or a JSON array string."
+          },
+          "netscape": {
+            "type": "string",
+            "description": "Raw contents of a Netscape cookies.txt file (one cookie per line, tab-separated)."
+          },
+          "file": {
+            "type": "string",
+            "description": "Path to an existing cookie file (Netscape or JSON); read and imported."
+          },
+          "url": {
+            "type": "string",
+            "description": "verify only: URL to fetch with the matched profile (default https://httpbin.org/cookies)."
+          },
+          "expect": {
+            "type": "string",
+            "description": "verify only: substring that must appear in the page to prove the session works (e.g. your handle)."
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "clear only: must be true to delete the stored cookies."
+          },
+          "wait_ms": {
+            "type": "integer",
+            "description": "verify only: extra wait before reading the response."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "verify only: hard timeout in seconds."
+          },
+          "show_body": {
+            "type": "boolean",
+            "description": "verify only: include a truncated response body (values redacted in reports, but the body itself may contain them)."
+          }
         },
         "required": []
       }
@@ -137,14 +413,40 @@
     "type": "function",
     "function": {
       "name": "lightpanda_run",
-      "description": "Run a PandaScript — vanilla JavaScript with Lightpanda's native browser primitives (new Page(), page.goto(), page.extract()) — in this agent's session. Deterministic and token-free, ideal for repeating a multi-step extraction. Cookies and storage persist across runs.",
+      "description": "Run a PandaScript - vanilla JavaScript with Lightpanda's native browser primitives (new Page(), await page.goto(), page.evaluate(), page.extract()) - in this agent's session. Deterministic and token-free, ideal for repeating a multi-step extraction. mode='mcp' runs in the interactive session; mode='cli' shells out to `lightpanda run` (no server needed, but cookies are not applied in 1.0.4).",
       "parameters": {
         "type": "object",
         "properties": {
-          "script": {"type": "string", "description": "PandaScript source code."},
-          "path": {"type": "string", "description": "Alternatively, a script file path (relative to the Lightpanda server working directory)."},
-          "timeout_ms": {"type": "integer", "description": "Stop the script after this many milliseconds (default 60000)."},
-          "max_bytes": {"type": "integer", "description": "Cap on returned output in bytes (default 200000)."}
+          "script": {
+            "type": "string",
+            "description": "PandaScript source code."
+          },
+          "path": {
+            "type": "string",
+            "description": "Alternatively, a script file path (relative to the Lightpanda server working directory)."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Stop the script after this many milliseconds (default 60000)."
+          },
+          "max_bytes": {
+            "type": "integer",
+            "description": "Cap on returned output in bytes (default 200000)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "cli"
+            ],
+            "default": "mcp",
+            "description": "mcp: run in the interactive session (default). cli: one-shot `lightpanda run` process."
+          },
+          "save_jar": {
+            "type": "boolean",
+            "default": true,
+            "description": "cli mode only: write the cookie jar back after the run."
+          }
         },
         "required": []
       }
@@ -158,12 +460,26 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "tool": {"type": "string", "description": "MCP tool name, e.g. 'evaluate', 'interactiveElements', 'getCookies', 'search'."},
-          "arguments": {"type": "object", "description": "Arguments for that tool, matching Lightpanda's own schema (see SYSTEM.md for the catalog)."},
-          "max_bytes": {"type": "integer", "description": "Cap on returned text in bytes (default 200000)."},
-          "timeout": {"type": "number", "description": "Per-call timeout in seconds (default 45)."}
+          "tool": {
+            "type": "string",
+            "description": "MCP tool name, e.g. 'evaluate', 'interactiveElements', 'getCookies', 'search'."
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Arguments for that tool, matching Lightpanda's own schema (see SYSTEM.md for the catalog)."
+          },
+          "max_bytes": {
+            "type": "integer",
+            "description": "Cap on returned text in bytes (default 200000)."
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Per-call timeout in seconds (default 45)."
+          }
         },
-        "required": ["tool"]
+        "required": [
+          "tool"
+        ]
       }
     }
   },
@@ -172,7 +488,11 @@
     "function": {
       "name": "lightpanda_status",
       "description": "Diagnose the Lightpanda setup: binary path/version/source, whether the MCP server is running (host, port, pid, log path), active browsing sessions, and the current safety settings. Call this first when a Lightpanda tool fails.",
-      "parameters": {"type": "object", "properties": {}, "required": []}
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
     }
   },
   {
@@ -180,7 +500,11 @@
     "function": {
       "name": "lightpanda_stop",
       "description": "Stop the auto-started Lightpanda MCP server and drop all browsing sessions, freeing its memory. The next interactive tool call starts a fresh server automatically.",
-      "parameters": {"type": "object", "properties": {}, "required": []}
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
     }
   }
 ]

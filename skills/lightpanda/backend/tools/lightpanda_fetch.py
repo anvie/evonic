@@ -6,7 +6,10 @@ from ._lp import (
     DEFAULT_MAX_BYTES,
     LightpandaError,
     config,
+    cookie_plan,
+    cookie_profiles,
     obey_robots,
+    plan_cookie_names,
     run_cli,
     save_png,
     truncate,
@@ -48,6 +51,18 @@ def execute(agent: dict, args: dict) -> dict:
         timeout = float(args.get("timeout") or 120)
 
         cmd = ["fetch", "--dump", dump, "--json"]
+        cfg = config()
+        use_cookies = args.get("use_cookies")
+        use_cookies = True if use_cookies is None else bool(use_cookies)
+        save_jar = bool(args.get("save_jar"))
+        # Per-site profiles: pick by URL, unless the caller forces one.
+        prefer = str(args.get("profile") or "").strip()
+        if prefer and prefer not in cookie_profiles(cfg):
+            raise LightpandaError(f"unknown cookie profile '{prefer}'; "
+                                  f"known: {sorted(cookie_profiles(cfg))}")
+        plan = cookie_plan(cfg, url, use=use_cookies, save_jar=save_jar,
+                           prefer=prefer or None)
+        cmd += plan["args"]
         if dump in _CAPPED:
             cmd += ["--dump-max-bytes", str(max_bytes)]
         if args.get("wait_until"):
@@ -58,6 +73,8 @@ def execute(agent: dict, args: dict) -> dict:
             cmd += ["--wait-selector", str(args["wait_selector"])]
         if args.get("wait_script"):
             cmd += ["--wait-script", str(args["wait_script"])]
+        if args.get("inject_script"):
+            cmd += ["--inject-script", str(args["inject_script"])]
         if args.get("selector"):
             cmd += ["--dump-selector", str(args["selector"])]
         if args.get("with_frames"):
@@ -78,6 +95,11 @@ def execute(agent: dict, args: dict) -> dict:
         payload = data.get("results", [data])[0] if isinstance(data, dict) else {}
 
         content = payload.get("content")
+        cookie_meta = {"used": bool(plan["args"]),
+                       "source": plan["source"],
+                       "profile": plan["profile"],
+                       "names": plan_cookie_names(plan),
+                       "saved_jar": bool(save_jar and plan["source"] == "jar")}
         if dump in ("png", "pdf") and isinstance(content, str) and content:
             if dump == "png":
                 path = save_png(content, prefix="dump-png")
@@ -91,7 +113,7 @@ def execute(agent: dict, args: dict) -> dict:
             return {"url": payload.get("url") or url,
                     "http_status": payload.get("http_status"),
                     "dump": dump, "file_path": str(path),
-                    "bytes": path.stat().st_size}
+                    "bytes": path.stat().st_size, "cookies": cookie_meta}
 
         text = content if isinstance(content, str) else ""
         text, truncated = truncate(text, max_bytes)
@@ -101,6 +123,7 @@ def execute(agent: dict, args: dict) -> dict:
             "dump": dump,
             "content": text,
             "bytes": len(text.encode("utf-8")),
+            "cookies": cookie_meta,
         }
         if truncated:
             result["truncated"] = True

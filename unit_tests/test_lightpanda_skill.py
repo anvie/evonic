@@ -170,3 +170,119 @@ def test_server_args_reflect_safety_settings():
                             "lightpanda_block_private_networks": False})
     assert "--obey-robots" not in args
     assert "--block-private-networks" not in args
+
+
+# ── cookie profiles (per-site) ────────────────────────────────────────────────
+
+def _profiles_cfg(mapping):
+    return {LP.PROFILES_VAR: json.dumps(mapping)}
+
+
+def test_parse_cookie_string_skips_junk():
+    items = LP.parse_cookie_string("a=1; b=2=3 ;oops; c = x y")
+    names = [i["name"] for i in items]
+    assert names == ["a", "b", "c"]
+    assert items[1]["value"] == "2=3"
+    assert items[2]["value"] == "x y"
+
+
+def test_cookie_profiles_parsing():
+    cfg = _profiles_cfg({"x.com": "a=1", "empty.com": "  ", "obj.com": {"cookies": "b=2"}})
+    profiles = LP.cookie_profiles(cfg)
+    assert set(profiles) == {"x.com", "obj.com"}
+    assert profiles["obj.com"] == "b=2"
+    # already-parsed dict, and broken JSON, both behave
+    assert LP.cookie_profiles({LP.PROFILES_VAR: {"y.com": "c=3"}}) == {"y.com": "c=3"}
+    assert LP.cookie_profiles({LP.PROFILES_VAR: "{not json"}) == {}
+    assert LP.cookie_profiles({}) == {}
+
+
+def test_match_profile_host_and_subdomain():
+    cfg = _profiles_cfg({"x.com": "a=1"})
+    assert LP.match_profile(cfg, "https://x.com/home")[0] == "x.com"
+    assert LP.match_profile(cfg, "https://www.x.com/home")[0] == "x.com"
+    assert LP.match_profile(cfg, "https://notx.com/")[0] is None
+
+
+def test_match_profile_wildcard():
+    # Like a browser cookie domain (`.internal.lan`), the wildcard also covers
+    # the apex host, but never a lookalike.
+    cfg = _profiles_cfg({"*.internal.lan": "s=1"})
+    assert LP.match_profile(cfg, "https://app.internal.lan/x")[0] == "*.internal.lan"
+    assert LP.match_profile(cfg, "https://internal.lan/x")[0] == "*.internal.lan"
+    assert LP.match_profile(cfg, "https://evilinternal.lan/x")[0] is None
+
+
+def test_match_profile_url_prefix_beats_host():
+    cfg = _profiles_cfg({"x.com": "a=1", "https://x.com/i/lists/": "b=2"})
+    pattern, raw = LP.match_profile(cfg, "https://x.com/i/lists/2116931999046991892")
+    assert pattern == "https://x.com/i/lists/"
+    assert raw == "b=2"
+    assert LP.match_profile(cfg, "https://x.com/settings")[0] == "x.com"
+
+
+def test_match_profile_longest_host_wins():
+    cfg = _profiles_cfg({"corp.com": "a=1", "app.corp.com": "b=2"})
+    assert LP.match_profile(cfg, "https://app.corp.com/")[0] == "app.corp.com"
+    assert LP.match_profile(cfg, "https://other.corp.com/")[0] == "corp.com"
+
+
+def test_cookie_plan_selects_profile_and_materializes_jar(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path))
+    cfg = _profiles_cfg({"httpbin.org": "ho_key=ho_val; ns_key=ns_val"})
+    plan = LP.cookie_plan(cfg, "https://httpbin.org/cookies")
+    assert plan["source"] == "profile" and plan["profile"] == "httpbin.org"
+    assert plan["args"][0] == "--cookie"
+    jar = LP.Path(plan["file"])
+    assert jar.is_file()
+    assert oct(os.stat(jar).st_mode & 0o777) == "0o600"
+    assert LP.plan_cookie_names(plan) == ["ho_key", "ns_key"]
+
+
+def test_cookie_plan_isolation_between_sites(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path))
+    cfg = _profiles_cfg({"httpbin.org": "a=1", "example.com": "b=2"})
+    one = LP.cookie_plan(cfg, "https://httpbin.org/cookies")
+    two = LP.cookie_plan(cfg, "https://example.com/")
+    assert LP.plan_cookie_names(one) == ["a"]
+    assert LP.plan_cookie_names(two) == ["b"]
+
+
+def test_cookie_plan_use_false_and_prefer():
+    cfg = _profiles_cfg({"x.com": "a=1"})
+    assert LP.cookie_plan(cfg, "https://x.com/", use=False)["args"] == []
+    forced = LP.cookie_plan(cfg, "https://elsewhere.org/", prefer="x.com")
+    assert forced["profile"] == "x.com"
+    assert LP.cookie_plan(cfg, "https://elsewhere.org/", prefer="nope.com")["source"] is None
+
+
+def test_cookie_plan_falls_back_to_legacy_jar(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIGHTPANDA_STATE_DIR", str(tmp_path))
+    legacy = tmp_path / "cookies.json"
+    legacy.write_text(json.dumps([{"name": "old", "value": "1", "domain": "nowhere.org"}]), encoding="utf-8")
+    plan = LP.cookie_plan({LP.PROFILES_VAR: "{}"}, "https://nowhere.org/",
+                          save_jar=True, )
+    assert plan["source"] == "jar"
+    assert LP.plan_cookie_names(plan) == ["old"]
+    assert "--cookie-jar" in plan["args"]
+
+
+def test_manifest_declares_per_site_cookie_profiles():
+    manifest = json.loads((SKILL_DIR / "skill.json").read_text(encoding="utf-8"))
+    variables = {v["name"]: v for v in manifest["variables"]}
+    profiles = variables["lightpanda_cookie_profiles"]
+    assert profiles["type"] == "cookies"
+    assert profiles["default"] == "{}"
+    assert profiles["label"]
+    # the legacy single jar stays available as a fallback
+    assert variables["lightpanda_cookie_file"]["type"] == "string"
+
+
+def test_settings_page_renders_the_cookies_widget():
+    source = (ROOT / "templates" / "skill_detail.html").read_text(encoding="utf-8")
+    assert "v.type === 'cookies'" in source
+    assert "data-cookies-widget" in source
+    # the widget must stay in sync with a plain [data-var] input so that the
+    # existing capture/save path needs no special casing
+    assert "function syncCookiesWidget(widget)" in source
+    assert "input type=\"hidden\" data-var=" in source or "input type='hidden' data-var=" in source

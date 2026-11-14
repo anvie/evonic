@@ -18,6 +18,7 @@ import contextlib
 import ipaddress
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -103,6 +104,219 @@ def block_private(cfg: dict | None = None) -> bool:
 
 def base_url(cfg: dict | None = None) -> str:
     return f"http://{host_of(cfg)}:{port_of(cfg)}"
+
+
+# ── cookies ─────────────────────────────────────────────────────────────────
+#
+# Lightpanda loads cookies from a file at process start (`--cookie`) and writes
+# the live jar back on exit (`--cookie-jar`). The CLI (`fetch`, `run`) honours
+# both; the MCP server in 1.0.4 loads the jar but never applies it to browsing
+# sessions, so interactive browsing cannot be seeded from a file.
+
+COOKIE_FILENAME = "cookies.json"
+
+
+def cookie_file(cfg: dict | None = None) -> Path:
+    """Where the shared cookie jar lives: config path, else the state dir."""
+    cfg = config() if cfg is None else cfg
+    explicit = (str(cfg.get("lightpanda_cookie_file") or "").strip()
+                or os.environ.get("LIGHTPANDA_COOKIE_FILE", "").strip())
+    if explicit:
+        return Path(os.path.expanduser(explicit)).absolute()
+    return state_dir() / COOKIE_FILENAME
+
+
+def cookie_args(cfg: dict | None = None, use: bool = True,
+                save_jar: bool = False) -> list[str]:
+    """`--cookie` (+ optionally `--cookie-jar`) flags, only if the jar exists."""
+    if not use:
+        return []
+    path = cookie_file(cfg)
+    if not path.is_file():
+        return []
+    args = ["--cookie", str(path)]
+    if save_jar:
+        args += ["--cookie-jar", str(path)]
+    return args
+
+
+# ── per-site cookie profiles ──────────────────────────────────────────────────
+#
+# One config variable (``lightpanda_cookie_profiles``) holds a JSON object that
+# maps a match pattern to that site's cookies, so several sites can each keep
+# their own session. Patterns are either a host (``x.com``, also matching
+# ``www.x.com``), a wildcard host (``*.x.com``), or a full URL prefix
+# (``https://intranet.local/app``). The most specific pattern wins; when none
+# matches, the single legacy jar (``lightpanda_cookie_file``) is used.
+
+PROFILES_VAR = "lightpanda_cookie_profiles"
+PROFILE_DIRNAME = "cookies"
+
+
+def parse_cookie_string(text: str) -> list[dict]:
+    """`a=1; b=2` cookie-header text -> [{'name', 'value'}]; junk is skipped."""
+    out: list[dict] = []
+    for chunk in (text or "").split(";"):
+        line = " ".join(chunk.split())
+        if not line or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name = name.strip()
+        if not name or " " in name:
+            continue
+        out.append({"name": name, "value": value.strip()})
+    return out
+
+
+def cookie_profiles(cfg: dict | None = None) -> dict[str, str]:
+    """Parse the profiles variable into {pattern: raw cookies}. Bad data -> {}."""
+    cfg = config() if cfg is None else cfg
+    raw = cfg.get(PROFILES_VAR)
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return {}
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, val in raw.items():
+        pattern = str(key).strip()
+        if not pattern:
+            continue
+        if isinstance(val, dict):
+            val = val.get("cookies", val.get("value", ""))
+        if isinstance(val, (list, dict)):
+            val = json.dumps(val)
+        text = str(val or "").strip()
+        if text:
+            out[pattern] = text
+    return out
+
+
+def _pattern_host(pattern: str) -> str:
+    """Host part of a pattern: `x.com`, `*.x.com`, or the host of a full URL."""
+    text = (pattern or "").strip().lower()
+    if "://" in text:
+        return (urlparse(text).hostname or "").lower()
+    text = text.lstrip("*.").strip(".")
+    return text.split("/")[0]
+
+
+def match_profile(cfg: dict | None = None, url: str | None = None):
+    """Pick the most specific (pattern, raw) for `url`. -> (None, None) if none."""
+    profiles = cookie_profiles(cfg)
+    if not profiles or not url:
+        return None, None
+    text = url.strip().lower()
+    host = (urlparse(text).hostname or "").lower()
+    best, best_score = None, -1
+    for pattern in profiles:
+        key = pattern.strip().lower()
+        if "://" in key:
+            if not text.startswith(key.rstrip("/")):
+                continue
+            score = len(key)
+        else:
+            target = _pattern_host(key)
+            if not target:
+                continue
+            if host != target and not host.endswith("." + target):
+                continue
+            score = len(target)
+        if score > best_score:
+            best, best_score = pattern, score
+    return (best, profiles[best]) if best is not None else (None, None)
+
+
+def _profile_items(pattern: str, raw: str, url: str | None) -> list[dict]:
+    """Normalize one profile's payload into the canonical cookie list."""
+    text = str(raw or "").strip()
+    if text[:1] in ("[", "{"):
+        items = normalize_cookies(text)
+    elif "\t" in text or text.startswith("#"):
+        items = parse_netscape(text) or parse_cookie_string(text)
+    else:
+        items = parse_cookie_string(text)
+    domain = _pattern_host(pattern) or (urlparse(url or "").hostname or "").lower()
+    if not domain:
+        raise LightpandaError(f"cannot infer a cookie domain for profile '{pattern}'")
+    prepared = []
+    for item in items:
+        if not item.get("domain"):
+            # Header-string cookies carry no flags: keep them non-secure so the
+            # jar also works for plain-http sites (the file never leaves the box).
+            item = {**item, "domain": domain, "path": "/", "secure": False,
+                    "httpOnly": False}
+        prepared.append(item)
+    return normalize_cookies(prepared)
+
+
+def profile_slug(pattern: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (pattern or "").strip().lower()).strip("-")
+    return (slug or "profile")[:60]
+
+
+def profile_items(pattern: str, raw: str, url: str | None = None) -> list[dict]:
+    """Normalize one profile payload into canonical cookies (public wrapper)."""
+    return _profile_items(pattern, raw, url)
+
+
+def materialize_profile(pattern: str, raw: str, url: str | None = None) -> Path:
+    """Write one profile to its own 0600 jar and return the path."""
+    items = _profile_items(pattern, raw, url)
+    path = state_dir() / PROFILE_DIRNAME / f"{profile_slug(pattern)}.json"
+    return save_cookies(items, path)
+
+
+def cookie_plan(cfg: dict | None = None, url: str | None = None,
+                use: bool = True, save_jar: bool = False,
+                prefer: str | None = None) -> dict:
+    """Decide which cookie source a CLI call should use.
+
+    ``prefer`` forces one configured pattern instead of matching the URL.
+    Returns ``{'args', 'profile', 'file', 'source'}`` where source is
+    'profile', 'jar' or None.
+    """
+    cfg = config() if cfg is None else cfg
+    plan: dict = {"args": [], "profile": None, "file": None, "source": None}
+    if not use:
+        return plan
+    if prefer:
+        profiles = cookie_profiles(cfg)
+        pattern, raw = (prefer, profiles[prefer]) if prefer in profiles else (None, None)
+    else:
+        pattern, raw = match_profile(cfg, url)
+    if pattern:
+        try:
+            path = materialize_profile(pattern, raw, url)
+            plan.update({"args": ["--cookie", str(path)], "profile": pattern,
+                         "file": str(path), "source": "profile"})
+            return plan
+        except LightpandaError:
+            pass  # broken profile: fall back to the legacy jar instead of failing
+    legacy = cookie_file(cfg)
+    if legacy.is_file():
+        plan.update({"args": ["--cookie", str(legacy)], "file": str(legacy),
+                     "source": "jar", "profile": None})
+        if save_jar:
+            plan["args"] += ["--cookie-jar", str(legacy)]
+    return plan
+
+
+def plan_cookie_names(plan: dict) -> list[str]:
+    """Cookie names a plan will send — never the values."""
+    path = plan.get("file")
+    if not path:
+        return []
+    try:
+        items = normalize_cookies(Path(path).read_text(encoding="utf-8", errors="replace"))
+    except (OSError, LightpandaError):
+        return []
+    return sorted({c["name"] for c in items})
 
 
 # ── binary resolution ───────────────────────────────────────────────────────
@@ -350,6 +564,12 @@ def _server_args(binary: Path, cfg: dict | None = None) -> list[str]:
         args.append("--obey-robots")
     if block_private(cfg):
         args.append("--block-private-networks")
+    # Forward-compatible only: 1.0.4 loads the jar but does not apply it to MCP
+    # sessions. No `--cookie-jar` here on purpose — a writeback whose load was
+    # ignored would clobber the user's jar with an empty one.
+    path = cookie_file(cfg)
+    if path.is_file():
+        args += ["--cookie", str(path)]
     return args
 
 
@@ -553,6 +773,116 @@ def shape_result(result: dict, tool: str = "", max_bytes: int = DEFAULT_MAX_BYTE
 
 
 # ── CLI helpers ─────────────────────────────────────────────────────────────
+
+def parse_netscape(text: str) -> list[dict]:
+    """Parse a Netscape cookies.txt (curl/wget format, `#HttpOnly_` included)."""
+    out: list[dict] = []
+    for line in (text or "").splitlines():
+        raw = line.strip("\r\n")
+        if not raw.strip():
+            continue
+        http_only = False
+        if raw.startswith("#HttpOnly_"):
+            http_only, raw = True, raw[len("#HttpOnly_"):]
+        elif raw.startswith("#"):
+            continue
+        parts = raw.split("\t")
+        if len(parts) < 7:
+            parts = raw.split()
+        if len(parts) < 7:
+            continue
+        domain, _flag, path, secure, expiry, name = parts[:6]
+        item = {"name": name, "value": "\t".join(parts[6:]), "domain": domain,
+                "path": path or "/", "secure": secure.strip().upper() == "TRUE",
+                "httpOnly": http_only}
+        try:
+            stamp = int(float(expiry))
+        except (TypeError, ValueError):
+            stamp = 0
+        if stamp > 0:
+            item["expires"] = stamp
+        out.append(item)
+    return out
+
+
+def normalize_cookies(items) -> list[dict]:
+    """Coerce CDP/Puppeteer JSON or Netscape text into the canonical shape."""
+    if isinstance(items, str):
+        text = items.lstrip("\ufeff").strip()
+        if text[:1] in ("[", "{"):
+            try:
+                items = json.loads(text)
+            except json.JSONDecodeError as e:
+                raise LightpandaError(f"cookies is not valid JSON: {e}") from e
+        else:
+            items = parse_netscape(text)
+    if isinstance(items, dict):
+        items = items.get("cookies") if isinstance(items.get("cookies"), list) else [items]
+    if not isinstance(items, list):
+        raise LightpandaError("cookies must be a JSON array or a Netscape cookies.txt string")
+    out: list[dict] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        value = raw.get("value")
+        domain = str(raw.get("domain") or raw.get("host") or "").strip()
+        if not name or value is None or not domain:
+            raise LightpandaError("every cookie needs name, value and domain")
+        item = {"name": name, "value": str(value), "domain": domain,
+                "path": str(raw.get("path") or "/"),
+                "secure": _as_bool(raw.get("secure"), False),
+                "httpOnly": _as_bool(raw.get("httpOnly", raw.get("httponly")), False)}
+        exp = raw.get("expires", raw.get("expirationDate"))
+        try:
+            if exp not in (None, "", -1, "-1"):
+                item["expires"] = int(float(exp))
+        except (TypeError, ValueError):
+            pass
+        if raw.get("sameSite"):
+            item["sameSite"] = str(raw["sameSite"])
+        out.append(item)
+    if not out:
+        raise LightpandaError("no usable cookies in the payload")
+    return out
+
+
+def load_cookies(path: Path | None = None) -> list[dict]:
+    path = path or cookie_file()
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    try:
+        return normalize_cookies(text)
+    except LightpandaError:
+        return []
+
+
+def save_cookies(items, path: Path | None = None) -> Path:
+    """Write the canonical JSON jar, owner-only (0600)."""
+    path = path or cookie_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = normalize_cookies(items)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=1)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def cookie_summary(items) -> dict:
+    """Redacted view: which domains and names exist, never the values."""
+    domains: dict = {}
+    for c in items:
+        domains.setdefault(c["domain"], []).append(c["name"])
+    return {"count": len(items),
+            "domains": {d: sorted(set(n)) for d, n in sorted(domains.items())},
+            "http_only": sum(1 for c in items if c.get("httpOnly")),
+            "secure": sum(1 for c in items if c.get("secure"))}
+
 
 def run_cli(args: list[str], timeout: float = 120, cfg: dict | None = None):
     """Run the lightpanda CLI once; returns the CompletedProcess."""
