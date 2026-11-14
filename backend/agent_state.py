@@ -38,6 +38,20 @@ import time
 # Project root: two levels up from this file (backend/agent_state.py → project root)
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..'))
 
+def legacy_plan_path(plan_file: str) -> str | None:
+    """Resolve an old centralized plan path, or None when it leaves <root>/plan/.
+
+    Only the plan/ directory is allowed so a plan_file chosen by the agent cannot
+    point at other project files (.env, source, sibling directories).
+    """
+    plan_dir = os.path.realpath(os.path.join(_PROJECT_ROOT, 'plan'))
+    path = os.path.normpath(os.path.join(_PROJECT_ROOT, plan_file))
+    real = os.path.realpath(path)
+    if real == plan_dir or not real.startswith(plan_dir + os.sep):
+        return None
+    return path
+
+
 # Maximum characters of plan file content injected into each LLM call
 _PLAN_FILE_MAX_CHARS = 15000
 
@@ -759,8 +773,8 @@ class AgentState:
                 candidates.append(agent_plan)
 
         # Fallback: old centralized plan path
-        legacy_path = os.path.normpath(os.path.join(_PROJECT_ROOT, self.plan_file))
-        if legacy_path.startswith(_PROJECT_ROOT):
+        legacy_path = legacy_plan_path(self.plan_file)
+        if legacy_path:
             candidates.append(legacy_path)
 
         if not candidates:

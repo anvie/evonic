@@ -2435,8 +2435,9 @@ def api_agent_plan_file_update(agent_id):
     if _os.path.realpath(agent_plan).startswith(agent_root + _os.sep):
         candidates.append(agent_plan)
 
-    legacy_path = _os.path.normpath(_os.path.join(project_root, plan_file))
-    if legacy_path.startswith(project_root):
+    from backend.agent_state import legacy_plan_path
+    legacy_path = legacy_plan_path(plan_file)
+    if legacy_path:
         candidates.append(legacy_path)
 
     if not candidates:
