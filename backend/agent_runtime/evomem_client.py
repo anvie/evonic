@@ -291,6 +291,7 @@ def get_kb_graph_metadata(agent_id: str) -> dict | None:
         vlog("get_kb_graph_metadata: brain DB not found at %s", db_path)
         return None
 
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -342,13 +343,15 @@ def get_kb_graph_metadata(agent_id: str) -> dict | None:
             for tr in target_rows:
                 target_updated_at[tr["slug"]] = tr["updated_at"]
 
-        conn.close()
         vlog("get_kb_graph_metadata: %d docs, %d link targets", len(pages), len(target_updated_at))
         return {"pages": pages, "target_updated_at": target_updated_at}
 
     except Exception:
         logger.warning("get_kb_graph_metadata failed for agent %s", agent_id, exc_info=True)
         return None
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def get_graph_for_viz(agent_id: str) -> dict | None:
@@ -367,6 +370,7 @@ def get_graph_for_viz(agent_id: str) -> dict | None:
     db_path = os.path.join(_get_evomem_dir(agent_id), ".evomem.db")
     if not os.path.isfile(db_path):
         return None
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -401,12 +405,14 @@ def get_graph_for_viz(agent_id: str) -> dict | None:
             elif r["dpid"] is None:
                 dangling.append({"source": r["s"], "target": r["d"]})
 
-        conn.close()
         vlog("get_graph_for_viz: %d nodes, %d links", len(nodes), len(links))
         return {"nodes": nodes, "links": links, "dangling": dangling}
     except Exception:
         logger.warning("get_graph_for_viz failed for agent %s", agent_id, exc_info=True)
         return None
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def get_evomem_db_mtime(agent_id: str) -> float:
@@ -448,6 +454,7 @@ def query_kb_graph(agent_id: str, filename: str) -> dict | None:
     # Normalise the filename to a slug ('notes.md' -> 'notes', 'xyz/foo.md' -> 'xyz/foo').
     slug = filename[:-3] if filename.endswith(".md") else filename
 
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -460,7 +467,6 @@ def query_kb_graph(agent_id: str, filename: str) -> dict | None:
         ).fetchone()
 
         if not page_row:
-            conn.close()
             return None
 
         page_id = page_row["id"]
@@ -535,7 +541,6 @@ def query_kb_graph(agent_id: str, filename: str) -> dict | None:
                     "tags": t_list,
                 })
 
-        conn.close()
         vlog("query_kb_graph: %s -> %d outgoing, %d incoming, %d dangling, %d same-tag",
              filename, len(outgoing), len(incoming), len(outgoing_dangling),
              len(same_tag_docs))
@@ -551,3 +556,6 @@ def query_kb_graph(agent_id: str, filename: str) -> dict | None:
         logger.warning("query_kb_graph failed for agent %s, file %s",
                        agent_id, filename, exc_info=True)
         return None
+    finally:
+        if conn is not None:
+            conn.close()
