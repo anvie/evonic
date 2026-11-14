@@ -5,7 +5,7 @@ import sqlite3
 import logging
 import threading
 
-from flask import Blueprint, render_template, jsonify, request, redirect
+from flask import Blueprint, render_template, jsonify, request, redirect, session
 
 from models.db import db
 from backend.plugin_manager import plugin_manager
@@ -129,7 +129,11 @@ def api_setup():
 
 @dashboard_bp.route('/api/setup/test-connection', methods=['POST'])
 def api_setup_test_connection():
-    """Test connectivity to an LLM endpoint. Usable before setup is complete."""
+    """Test connectivity to an LLM endpoint. Usable before setup is complete,
+    and by a logged-in admin afterwards (the route is exempt from the global auth
+    hook, so without this check anyone could use it to probe internal URLs)."""
+    if db.has_super_agent() and not session.get('authenticated'):
+        return jsonify({'error': 'Authentication required'}), 401
     data = request.get_json() or {}
     base_url = (data.get('base_url') or '').strip()
     api_key = (data.get('api_key') or '').strip() or None
