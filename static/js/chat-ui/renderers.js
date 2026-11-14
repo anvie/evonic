@@ -726,6 +726,19 @@ function _computeLineDiff(oldLines, newLines) {
     return ops.reverse();
 }
 
+// Renders unified-diff text with the shared patch viewer (js/patch-viewer.js).
+// Returns null when the viewer is unavailable or the text has no @@ hunks, so
+// callers can fall back to highlightDiff.
+function _renderPatchViewer(patchText, maxHeight) {
+    const viewer = typeof window !== 'undefined' && window.EvPatchViewer;
+    if (!viewer) return null;
+    const hasHunks = viewer.parse(patchText).files.some(f => f.hunks.length);
+    if (!hasHunks) return null;
+    const $box = $('<div class="mt-0.5">').html(viewer.render(patchText));
+    if (maxHeight) $box.css({ 'max-height': maxHeight + 'px', 'overflow-y': 'auto' });
+    return $box;
+}
+
 function _renderStrReplaceDiff(oldStr, newStr, filePath) {
     const oldLines = String(oldStr).split('\n'), newLines = String(newStr).split('\n');
     const ops = _computeLineDiff(oldLines, newLines);
@@ -742,6 +755,7 @@ function _renderStrReplaceDiff(oldStr, newStr, filePath) {
     if (hs !== -1) hunks.push([hs,he]);
 
     let html = '';
+    let patchText = filePath ? `--- ${filePath}\n+++ ${filePath}\n` : '';
     if (filePath) html += `<span class="hl-diff-filename">--- ${escape(String(filePath))}</span>\n<span class="hl-diff-filename">+++ ${escape(String(filePath))}</span>\n`;
     for (const [lo, hi] of hunks) {
         let oldLn=1,newLn=1;
@@ -749,6 +763,11 @@ function _renderStrReplaceDiff(oldStr, newStr, filePath) {
         let oldC=0,newC=0;
         for (let k=lo;k<=hi;k++) { if(ops[k].type!=='add') oldC++; if(ops[k].type!=='remove') newC++; }
         html += `<span class="hl-diff-header">@@ -${oldLn},${oldC} +${newLn},${newC} @@</span>\n`;
+        patchText += `@@ -${oldLn},${oldC} +${newLn},${newC} @@\n`;
+        for (let k = lo; k <= hi; k++) {
+            const { type, line } = ops[k];
+            patchText += (type === 'add' ? '+' : type === 'remove' ? '-' : ' ') + line + '\n';
+        }
         for (let k = lo; k <= hi;) {
             const { type, line } = ops[k];
             if (type === 'remove') {
@@ -763,7 +782,8 @@ function _renderStrReplaceDiff(oldStr, newStr, filePath) {
             k++;
         }
     }
-    return $('<pre class="diff-code-block mt-0.5" style="max-height:400px;overflow-y:auto">').html(html);
+    return _renderPatchViewer(patchText, 400)
+        || $('<pre class="diff-code-block mt-0.5" style="max-height:400px;overflow-y:auto">').html(html);
 }
 
 function _buildToolCallDetail(tool, args, paramTypes) {
@@ -792,7 +812,8 @@ function _buildToolCallDetail(tool, args, paramTypes) {
     for (const {key, value, view} of blockParams) {
         $wrap.append($('<div class="text-[10px] uppercase tracking-wide text-blue-400 font-semibold mt-1.5">').text(key));
         if (view === 'code') $wrap.append($('<pre class="runpy-code-block mt-0.5">').html(highlightPython(String(value))));
-        else if (view === 'diff') $wrap.append($('<pre class="diff-code-block mt-0.5">').html(highlightDiff(String(value))));
+        else if (view === 'diff') $wrap.append(_renderPatchViewer(String(value))
+            || $('<pre class="diff-code-block mt-0.5">').html(highlightDiff(String(value))));
         else $wrap.append($('<pre class="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 rounded p-2 overflow-x-auto font-mono text-gray-700 max-h-[300px] whitespace-pre-wrap">').text(String(value)));
     }
     return $wrap;

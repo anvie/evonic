@@ -54,4 +54,4 @@ def test_replay_forwards_safety_provenance():
 def test_cache_buster_bumped():
     for template in ('agent_detail.html', 'sessions.html'):
         src = _read('templates', template)
-        assert "filename='js/chat-ui.js') }}?v=79" in src, template
+        assert "filename='js/chat-ui.js') }}?v=80" in src, template
