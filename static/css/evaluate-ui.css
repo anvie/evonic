@@ -3,8 +3,8 @@
    Loaded AFTER each page's own <style>, so it wins on equal specificity. Colours follow the theme tokens in style.css. */
 
 /* ── page shell ── */
-html .settings-container { max-width: 1600px; margin: 0 auto; padding: 1rem; }
-html .dashboard { max-width: 1600px; margin: 0 auto; padding: 1rem; background: transparent; box-shadow: none; border-radius: 0; border: 0; }
+html .settings-container { padding: 1rem; }
+html .dashboard { padding: 1rem; background: transparent; box-shadow: none; border-radius: 0; border: 0; }
 @media (min-width: 768px) { html .settings-container, html .dashboard { padding: 1.5rem; } }
 html .settings-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; margin-bottom: 1.25rem; }
 html .settings-header h2, html .dashboard > div > h2 { display: inline-flex; align-items: center; gap: .625rem; margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -.01em; color: #111827; }
