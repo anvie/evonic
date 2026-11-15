@@ -258,7 +258,7 @@
                 <div class="rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse flex-shrink-0" style="width:30px;height:30px"></div>
             </aside>
         <div class="main-area" style="flex:1; min-width:0">
-            <main class="max-w-[1600px] mx-auto">
+            <main class="{% block main_class %}max-w-[1600px] mx-auto{% endblock %}">
                 {% block content %}{% endblock %}
             </main>
             <footer>
