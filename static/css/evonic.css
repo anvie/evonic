@@ -308,8 +308,6 @@ header::after {
 }
 
 .header-inner {
-    max-width: 1600px;
-    margin: 0 auto;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1531,7 +1529,7 @@ html.dark .ev-keys-r { color: #e2e8f0; }
 
 .ev-banner { border-bottom: 1px solid; font-size: .875rem; line-height: 1.4; }
 .ev-banner.hidden { display: none; }
-.ev-banner-in { max-width: 1600px; margin: 0 auto; padding: .5rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.ev-banner-in { padding: .5rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 .ev-banner-tx { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .ev-banner-ic { width: 16px; height: 16px; flex: none; }
 .ev-banner a { color: inherit; }
@@ -1825,8 +1823,6 @@ html.dark {
     to { transform: rotate(360deg); }
 }
 
-/* Waiting for the user's answer (ask_user): pink ring, slower spin + glow.
-   Later rule of equal specificity, so it overrides the busy ring. */
 #agent-sidebar .agent-avatar[data-asking="true"]::after {
     opacity: 1;
     border-color: #ec4899 #ec4899 transparent transparent;

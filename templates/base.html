@@ -56,7 +56,7 @@
         return html;
     }
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=58">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=59">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/recap-prose.css') }}?v=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/hljs-chat.css') }}?v=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/patch-viewer.css') }}?v=1">
@@ -178,7 +178,7 @@
         </div>
         <!-- Update notification banner (hidden by default) -->
         <div id="ev-update-banner" style="display:none">
-            <div class="max-w-[1600px] mx-auto px-4 py-2 flex items-center justify-between text-sm">
+            <div class="w-full px-4 py-2 flex items-center justify-between text-sm">
                 <div class="flex items-center gap-2">
                     <span id="ev-update-banner-text"></span>
                 </div>
@@ -258,7 +258,7 @@
                 <div class="rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse flex-shrink-0" style="width:30px;height:30px"></div>
             </aside>
         <div class="main-area" style="flex:1; min-width:0">
-            <main class="{% block main_class %}max-w-[1600px] mx-auto{% endblock %}">
+            <main class="{% block main_class %}w-full{% endblock %}">
                 {% block content %}{% endblock %}
             </main>
             <footer>
