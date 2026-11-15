@@ -433,13 +433,25 @@ def test_registry_selects_bwrap(tmp_path, monkeypatch):
 
 def test_registry_defaults_to_docker(tmp_path, monkeypatch):
     import config
+    from backend.tools.lib.backends import docker_backend
     from backend.tools.lib.exec_backend import registry
     from backend.tools.lib.backends.docker_backend import DockerBackend
+    # A container backend claims the process-global pool for its runtime. Give
+    # the runtime an empty pool (another runtime may have run earlier in this
+    # process) and put the claim back exactly as it was found.
+    saved_claim = docker_backend.get_active_runtime()
+    saved_pool = dict(docker_backend._containers)
+    docker_backend._containers.clear()
     monkeypatch.setattr(config, 'SANDBOX_BACKEND', 'docker')
-    backend = registry.get_backend('sess-docker', {
-        'sandbox_enabled': 1, 'workspace': str(tmp_path), 'agent_id': 'a1',
-    })
-    assert isinstance(backend, DockerBackend)
+    try:
+        backend = registry.get_backend('sess-docker', {
+            'sandbox_enabled': 1, 'workspace': str(tmp_path), 'agent_id': 'a1',
+        })
+        assert isinstance(backend, DockerBackend)
+    finally:
+        docker_backend._containers.clear()
+        docker_backend._containers.update(saved_pool)
+        docker_backend._ACTIVE_RUNTIME = saved_claim
 
 # ---------------------------------------------------------------------------
 # Keeper: nsenter argv, child-pid parsing, pool logic

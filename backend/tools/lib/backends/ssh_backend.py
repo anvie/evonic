@@ -61,11 +61,21 @@ class SSHBackend(ExecutionBackend):
     def _connect(self):
         import paramiko
 
+        # A host that is down must fail in seconds, not sit on the kernel's TCP
+        # retransmit budget (~130 s) and turn one bad tool call into a turn that
+        # looks hung.  Configurable because a slow-but-working host needs more.
+        try:
+            from config import SSH_CONNECT_TIMEOUT
+        except Exception:  # config is optional in isolated tests
+            SSH_CONNECT_TIMEOUT = 5
+
         kwargs = dict(
             hostname=self._host,
             port=self._port,
             username=self._username,
-            timeout=300,
+            timeout=SSH_CONNECT_TIMEOUT,
+            banner_timeout=SSH_CONNECT_TIMEOUT,
+            auth_timeout=SSH_CONNECT_TIMEOUT,
         )
 
         if self._password:

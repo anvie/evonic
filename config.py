@@ -235,10 +235,22 @@ SANDBOX_MAX_CONTAINERS = _get_env_int("SANDBOX_MAX_CONTAINERS", 10, min_val=1, m
 SANDBOX_PERSISTENT_CONTAINER_ENABLED = _get_env_bool(
     "SANDBOX_PERSISTENT_CONTAINER_ENABLED", True)
 
-# Sandbox backend selector: 'docker' (default) or 'bwrap' (Linux-only, bubblewrap).
+# Sandbox backend selector: 'docker' (default), 'podman', or 'bwrap'
+# (Linux-only, bubblewrap).
+# 'podman' uses the same OCI container model as Docker but through the
+# daemonless, usually rootless Podman CLI — suited for hosts that cannot or do
+# not want to run a Docker daemon. Containers, labels, and mounts are identical
+# to the Docker backend, and it shares its container pool implementation.
 # 'bwrap' runs each command in a lightweight namespace sandbox (no daemon/image) —
 # suited for small VPS deployments without Docker.
 SANDBOX_BACKEND = os.getenv("SANDBOX_BACKEND", "docker").strip().lower()
+# Container image used when SANDBOX_BACKEND=podman. Rootless Podman resolves
+# locally built images under the `localhost/` prefix, so building the sandbox
+# image with `podman build -t evonic-sandbox:latest docker/tools/` yields
+# `localhost/evonic-sandbox:latest` (the default below). Set this explicitly
+# when the image lives in a different registry/tag.
+SANDBOX_PODMAN_IMAGE = os.getenv(
+    "SANDBOX_PODMAN_IMAGE", "localhost/evonic-sandbox:latest").strip()
 # Opt-in virtual-memory ulimit (MB) for bwrap sandboxes; 0 disables. Hard cgroup
 # limits (systemd-run --scope) are a follow-up.
 SANDBOX_BWRAP_ULIMIT_V_MB = _get_env_int("SANDBOX_BWRAP_ULIMIT_V_MB", 0, min_val=0, max_val=65536)
@@ -246,6 +258,17 @@ SANDBOX_BWRAP_ULIMIT_V_MB = _get_env_int("SANDBOX_BWRAP_ULIMIT_V_MB", 0, min_val
 # SSH backend configuration (used by RemoteWorkplace / portals / SSHBackend)
 SSH_DEFAULT_TIMEOUT = _get_env_int("SSH_DEFAULT_TIMEOUT", 30, min_val=1, max_val=3600)   # seconds per command
 SSH_IDLE_TIMEOUT = _get_env_int("SSH_IDLE_TIMEOUT", 1800, min_val=1, max_val=43200)       # 30 min idle disconnect
+# A broken host must fail loudly in seconds, not sit on the kernel's TCP
+# retransmit budget (~130 s) before the tool returns.  Paramiko's timeout
+# covers TCP connect + banner + auth; 5 s is enough for a tailnet host that is
+# actually up and keeps a failed turn well under the 10 s budget.
+SSH_CONNECT_TIMEOUT = _get_env_int("SSH_CONNECT_TIMEOUT", 5, min_val=1, max_val=300)
+# How long a cached "sandbox image is/isn't present" answer is trusted.  A
+# positive answer is re-checked on this TTL; a negative one sooner, so a manual
+# build is picked up without restarting the platform.
+SANDBOX_IMAGE_CHECK_TTL = _get_env_int("SANDBOX_IMAGE_CHECK_TTL", 60, min_val=1, max_val=3600)
+SANDBOX_IMAGE_CHECK_TIMEOUT = _get_env_int(
+    "SANDBOX_IMAGE_CHECK_TIMEOUT", 5, min_val=1, max_val=60)
 
 # Tunnel Workplace connector relay (WebSocket server for Evonet)
 CONNECTOR_WS_HOST = os.getenv("CONNECTOR_WS_HOST", "0.0.0.0")

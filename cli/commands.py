@@ -3199,58 +3199,88 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
             if a.get("sandbox_enabled") and a.get("enabled")
         ]
 
+        backend = (os.getenv("SANDBOX_BACKEND", "docker") or "docker").strip().lower()
+        runtime_label = {
+            "docker": "Docker",
+            "podman": "Podman",
+            "bwrap": "bubblewrap",
+        }.get(backend, backend)
+
         if not sandbox_agents:
-            results.append(_ok("No agents have sandbox enabled — skipping Docker check"))
+            results.append(_ok(
+                f"No agents have sandbox enabled — skipping {runtime_label} check"
+            ))
+        elif backend == "bwrap":
+            if shutil.which("bwrap"):
+                results.append(_ok(
+                    f"{runtime_label} is available (SANDBOX_BACKEND=bwrap)"
+                ))
+            else:
+                results.append(_warn(
+                    f"{runtime_label} is not installed or not in PATH "
+                    f"(SANDBOX_BACKEND=bwrap)"
+                ))
         else:
-            docker_available = False
+            runtime_bin = "podman" if backend == "podman" else "docker"
+            runtime_available = False
             try:
                 result = subprocess.run(
-                    ["docker", "info"],
+                    [runtime_bin, "info"],
                     capture_output=True, text=True, timeout=10
                 )
                 if result.returncode == 0:
-                    docker_available = True
-                    results.append(_ok("Docker is available and responsive"))
-                    from config import SANDBOX_IMAGE, BASE_DIR
+                    runtime_available = True
+                    results.append(_ok(
+                        f"{runtime_label} is available and responsive "
+                        f"(SANDBOX_BACKEND={backend})"
+                    ))
+                    from config import SANDBOX_IMAGE, SANDBOX_PODMAN_IMAGE, BASE_DIR
+                    image = SANDBOX_PODMAN_IMAGE if backend == "podman" else SANDBOX_IMAGE
                     image_check = subprocess.run(
-                        ["docker", "image", "inspect", SANDBOX_IMAGE],
+                        [runtime_bin, "image", "inspect", image],
                         capture_output=True, text=True, timeout=30
                     )
                     if image_check.returncode == 0:
-                        results.append(_ok(f"Sandbox image '{SANDBOX_IMAGE}' is present"))
+                        results.append(_ok(f"Sandbox image '{image}' is present"))
                     else:
                         results.append(_warn(
-                            f"Sandbox image '{SANDBOX_IMAGE}' not found — bash/runpy "
+                            f"Sandbox image '{image}' not found — bash/runpy "
                             f"will fail for sandbox-enabled agents"
                         ))
                         if fix:
                             build = subprocess.run(
-                                ["docker", "build", "-t", SANDBOX_IMAGE,
+                                [runtime_bin, "build", "-t", image,
                                  os.path.join(BASE_DIR, "docker", "tools")],
                                 capture_output=True, text=True
                             )
                             if build.returncode == 0:
-                                fixes_applied.append(f"Built sandbox image '{SANDBOX_IMAGE}'")
+                                fixes_applied.append(f"Built sandbox image '{image}'")
                             else:
                                 tail = (build.stderr or build.stdout).strip().splitlines()[-1:]
                                 results.append(_fail(
-                                    f"docker build failed for '{SANDBOX_IMAGE}'"
+                                    f"{runtime_bin} build failed for '{image}'"
                                     + (f": {tail[0][:160]}" if tail else "")))
                 else:
                     results.append(_warn(
-                        f"Docker CLI found but daemon returned exit code {result.returncode}"
+                        f"{runtime_label} CLI found but `{runtime_bin} info` returned "
+                        f"exit code {result.returncode}"
                     ))
             except FileNotFoundError:
-                results.append(_warn("Docker is not installed or not in PATH"))
+                results.append(_warn(
+                    f"{runtime_label} is not installed or not in PATH "
+                    f"(SANDBOX_BACKEND={backend})"
+                ))
             except subprocess.TimeoutExpired:
-                results.append(_warn("Docker daemon timed out — may be unresponsive"))
+                results.append(_warn(
+                    f"{runtime_label} daemon timed out — may be unresponsive"
+                ))
             except Exception as e:
-                results.append(_warn(f"Docker check failed: {e}"))
+                results.append(_warn(f"{runtime_label} check failed: {e}"))
 
-            if not docker_available:
+            if not runtime_available:
                 names = [f"{a.get('name', a.get('id'))} ({a['id']})" for a in sandbox_agents]
                 results.append(_warn(
-                    f"Docker unavailable but {len(sandbox_agents)} agent(s) have "
+                    f"{runtime_label} unavailable but {len(sandbox_agents)} agent(s) have "
                     f"sandbox enabled: {', '.join(names)}"
                 ))
     except Exception as e:

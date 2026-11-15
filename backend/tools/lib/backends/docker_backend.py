@@ -34,6 +34,8 @@ try:
         SANDBOX_IMAGE,
         SANDBOX_MAX_CONTAINERS,
         SANDBOX_PERSISTENT_CONTAINER_ENABLED,
+        SANDBOX_IMAGE_CHECK_TTL,
+        SANDBOX_IMAGE_CHECK_TIMEOUT,
     )
 except ImportError:
     SANDBOX_WORKSPACE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
@@ -44,6 +46,8 @@ except ImportError:
     SANDBOX_IMAGE = 'evonic-sandbox:latest'
     SANDBOX_MAX_CONTAINERS = 10
     SANDBOX_PERSISTENT_CONTAINER_ENABLED = True
+    SANDBOX_IMAGE_CHECK_TTL = 60
+    SANDBOX_IMAGE_CHECK_TIMEOUT = 5
 
 # Directory containing the evonic helper package (mounted into the container)
 _HELPERS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'runpy_helpers'))
@@ -86,10 +90,126 @@ _PATH_PREFIX = (
 
 _CONTAINER_PREFIX = 'evonic-'
 
+# Name of the container runtime that owns the module-level pool below. Set by
+# ``_claim_runtime()``. The pool is process-global and holds only container
+# IDs/names, so it cannot serve two different runtimes at the same time.
+_ACTIVE_RUNTIME: str = ''
+
+# Runtime label recorded on pool entries and used in log/diagnostic output.
+# Container-runtime subclasses (PodmanBackend) set this to their own name so
+# the shared pool bookkeeping reports the runtime that actually owns it.
+_RUNTIME_NAME: str = 'docker'
+
 _containers: dict = {}   # session_id -> {container_id, container_name, agent_id, last_used, created_at, first_call, workspace}
 _pool_lock = threading.Lock()
 _reaper_thread: threading.Thread = None
 _monitor_thread: threading.Thread = None
+
+
+def _claim_runtime(runtime: str) -> None:
+    """Bind the module-level container pool to a single container runtime.
+
+    The pool (``_containers``), the idle reaper, the startup sweep and the
+    atexit cleanup are all process-global. Mixing two runtimes (e.g. Docker and
+    Podman) in one process would let that shared cleanup act on containers it
+    does not own (``docker rm`` against a Podman container and vice versa).
+
+    Backends call this from ``__init__``. The first runtime to claim wins,
+    re-claiming the same runtime is a no-op, and switching to a different
+    runtime is only allowed while the pool is empty (tests rely on that).
+    """
+    global _ACTIVE_RUNTIME
+    with _pool_lock:
+        if runtime == _ACTIVE_RUNTIME:
+            return
+        if _ACTIVE_RUNTIME and _containers:
+            raise RuntimeError(
+                f'Sandbox backend conflict: the {_ACTIVE_RUNTIME!r} container pool '
+                f'is already active with {len(_containers)} container(s) in this '
+                f'process; refusing to start a {runtime!r} backend. The pool is '
+                f'process-global, so use one container runtime per process '
+                f'(set SANDBOX_BACKEND and restart Evonic).'
+            )
+        _ACTIVE_RUNTIME = runtime
+
+
+def get_active_runtime() -> str:
+    """Return the runtime currently owning the container pool ('' if unused)."""
+    return _ACTIVE_RUNTIME
+
+
+# PIT-373: cache the one `<runtime> image inspect` per image so a turn does not
+# pay for it on every tool call.  The value is (error_or_None, checked_at, ttl).
+_image_cache: dict = {}
+
+
+def _reset_image_cache() -> None:
+    """Clear the cached image verdict (tests and a manual rebuild)."""
+    with _pool_lock:
+        _image_cache.clear()
+
+
+def sandbox_image_error(image: str = None, timeout: int = None) -> str:
+    """Return a precise error when the sandbox image cannot be used, else ''.
+
+    This is deliberately one cheap `image inspect` (no pull, no copy).  It runs
+    before a container is created so a missing image becomes a fast, named
+    error instead of a `run` that tries a pull while the model guesses
+    "workspace down".  Positive verdicts are cached for
+    ``SANDBOX_IMAGE_CHECK_TTL``; negative ones for a third of that, so a manual
+    build is picked up without restarting the platform.
+    """
+    image = image or SANDBOX_IMAGE
+    timeout = SANDBOX_IMAGE_CHECK_TIMEOUT if timeout is None else timeout
+    now = time.time()
+    with _pool_lock:
+        cached = _image_cache.get(image)
+    if cached is not None:
+        error, checked_at, ttl = cached
+        if now - checked_at < ttl:
+            return error or ''
+
+    short_ttl = max(1, SANDBOX_IMAGE_CHECK_TTL // 3)
+    try:
+        result = _docker('image', 'inspect', image, timeout=timeout)
+    except FileNotFoundError:
+        error = (
+            f'The container runtime `{_RUNTIME_NAME}` is not installed on this '
+            f'host, so the sandbox image `{image}` cannot be used. The agent '
+            'cannot read or write files until it is installed and the image is built.')
+        with _pool_lock:
+            _image_cache[image] = (error, now, short_ttl)
+        return error
+    except subprocess.TimeoutExpired:
+        error = (
+            f'`{_RUNTIME_NAME} image inspect {image}` did not answer within '
+            f'{timeout}s. The container runtime is not responding; the agent '
+            'cannot read or write files until it is healthy.')
+        with _pool_lock:
+            _image_cache[image] = (error, now, short_ttl)
+        return error
+
+    if result.returncode == 0:
+        with _pool_lock:
+            _image_cache[image] = ('', now, SANDBOX_IMAGE_CHECK_TTL)
+        return ''
+
+    stderr = (result.stderr or '').strip()
+    lowered = stderr.lower()
+    if ('no such image' in lowered or 'not found' in lowered
+            or 'pull access denied' in lowered):
+        error = (
+            f'The sandbox image `{image}` is not present on this host; the '
+            'agent cannot read or write files until it is built. Build it with:\n'
+            f'    {_RUNTIME_NAME} build -t {image} docker/tools')
+    else:
+        error = (
+            f'The sandbox backend cannot use {_RUNTIME_NAME}: '
+            f'{stderr or f"{_RUNTIME_NAME} image inspect failed"}. The agent '
+            'cannot read or write files until the runtime is usable.')
+    with _pool_lock:
+        _image_cache[image] = (error, now, short_ttl)
+    return error
 
 
 def _ensure_reaper_running() -> None:
@@ -233,6 +353,7 @@ def _startup_sweep() -> None:
                     'first_call': False,
                     'workspace': None,
                     'persistent': True,
+                    'runtime': _RUNTIME_NAME,
                     'pool_key': name,
                 }
                 logger.info(f'Startup sweep — adopted persistent container {name} into pool')
@@ -245,6 +366,9 @@ def _startup_sweep() -> None:
         return
     with _pool_lock:
         known_names = {info['container_name'] for info in _containers.values()}
+    # Never sweep containers owned by a sibling container runtime loaded in the
+    # same process (docker and podman backends both advertise evonic.managed=1).
+    known_names |= _sibling_container_names()
     for line in result.stdout.splitlines():
         parts = line.strip().split(None, 1)
         if len(parts) != 2:
@@ -287,10 +411,13 @@ def _reconcile_with_docker() -> None:
         pool_snapshot = [(sid, info['container_name'], bool(info.get('persistent')))
                          for sid, info in _containers.items()]
     pool_names = {name for _, name, _ in pool_snapshot}
+    # Containers owned by a sibling runtime in this process are neither orphans
+    # nor phantoms from this runtime's point of view.
+    sibling_names = _sibling_container_names()
 
     # Orphans: in Docker but not in pool → destroy if non-persistent.
     for name in live_names:
-        if name in pool_names:
+        if name in pool_names or name in sibling_names:
             continue
         if live_names[name]:
             logger.warning(f'Reconcile — persistent orphan container {name} not in pool, leaving for startup')
@@ -361,6 +488,26 @@ def _cleanup_all() -> None:
 def _container_name(session_id: str, agent_id: str = '') -> str:
     safe_session = re.sub(r'[^a-zA-Z0-9_.-]', '-', session_id)
     return f'{_CONTAINER_PREFIX}{safe_session}'
+
+
+def _effective_image() -> str:
+    """Image used for new sandbox containers.
+
+    Overridden by container subclasses that use a different image naming scheme
+    (e.g. PodmanBackend, where rootless Podman resolves locally built images
+    under the ``localhost/`` prefix).
+    """
+    return SANDBOX_IMAGE
+
+
+def _restart_policy(persistent: bool) -> str:
+    """``--restart`` value for a new container.
+
+    Persistent containers use ``unless-stopped`` so they come back after a host
+    reboot. Runtimes that cannot honour it in their default (rootless) mode
+    override this hook; the startup sweep restarts such containers instead.
+    """
+    return 'unless-stopped' if persistent else 'no'
 
 
 def _docker(*args, input_data: str = None, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -447,6 +594,12 @@ def _get_or_create_container(
     if needs_destroy:
         _destroy_container(pool_key)
 
+    # PIT-373: check the image before `run` so a missing image is a fast, named
+    # error instead of a pull attempt the model narrates as "workspace down".
+    image_error = sandbox_image_error()
+    if image_error:
+        return None, image_error
+
     with _pool_lock:
         count = len(_containers)
     if count >= SANDBOX_MAX_CONTAINERS:
@@ -480,7 +633,7 @@ def _get_or_create_container(
     cmd = [
         'run', '-d',
         *(('--rm',) if not persistent else ()),
-        '--restart=unless-stopped' if persistent else '--restart=no',
+        f'--restart={_restart_policy(persistent)}',
         '--name', name,
         f'--memory={SANDBOX_MEMORY_LIMIT}',
         f'--cpus={SANDBOX_CPU_LIMIT}',
@@ -498,7 +651,7 @@ def _get_or_create_container(
         '-v', f'{_HELPERS_DIR}:{_HELPERS_MOUNT}:ro',
         '-w', '/workspace',
         '-e', f'SCRATCH={scratch}',
-        SANDBOX_IMAGE,
+        _effective_image(),
         'sh', '-c', f'mkdir -p {scratch} && exec sleep infinity',
     ]
 
@@ -514,7 +667,18 @@ def _get_or_create_container(
             result = _docker(*cmd)
 
     if result.returncode != 0:
-        return None, f'Failed to start container: {result.stderr.strip()}'
+        stderr = result.stderr.strip()
+        lowered = stderr.lower()
+        # A missing image is a host-provisioning fault, not a sandbox fault, and
+        # docker's own wording ("pull access denied", "No such image") does not
+        # say what to do about it.  The run returns immediately in this case, so
+        # naming the cause here costs nothing.
+        if 'no such image' in lowered or 'pull access denied' in lowered:
+            return None, (
+                f'The sandbox image `{SANDBOX_IMAGE}` is not present on this '
+                'host; the agent cannot read or write files until it is built. '
+                f'Build it with:\n    {_RUNTIME_NAME} build -t {SANDBOX_IMAGE} docker/tools')
+        return None, f'Failed to start container: {stderr}'
 
     container_id = result.stdout.strip()
     with _pool_lock:
@@ -529,11 +693,37 @@ def _get_or_create_container(
             'mount_version': _MOUNT_LAYOUT_VERSION,
             'artifacts_root': effective_artifacts_root,
             'persistent': persistent,
+            'runtime': _RUNTIME_NAME,
             'pool_key': pool_key,
         }
     _ensure_reaper_running()
     _ensure_monitor_running()
     return container_id, None
+
+
+def _sibling_container_names() -> set:
+    """Return the names exported by the *other* container backend, if loaded.
+
+    Used by the sweep/reconcile loops so a container runtime never acts on
+    containers a sibling backend (DockerSubclass such as Podman) created and
+    currently owns in the same process. Returns an empty set when no sibling
+    backend module is loaded, which is the normal single-runtime case.
+    """
+    names = set()
+    import sys
+    for mod_name, attr in (
+        ('backend.tools.lib.backends.podman_backend', '_containers'),
+    ):
+        mod = sys.modules.get(mod_name)
+        if mod is None or mod is sys.modules.get(__name__):
+            continue
+        try:
+            with mod._pool_lock:
+                names.update(info.get('container_name', '')
+                             for info in getattr(mod, attr, {}).values())
+        except Exception:
+            logger.debug('Could not read sibling backend pool', exc_info=True)
+    return {n for n in names if n}
 
 
 def _destroy_container(session_id: str) -> dict:
@@ -597,10 +787,19 @@ def _get_available_helpers(container_id: str) -> dict:
 class DockerBackend(ExecutionBackend):
     """Executes bash/python inside a persistent Docker container."""
 
+    #: Container runtime that owns this backend's pool entry (Podman overrides).
+    runtime_name: str = 'docker'
+
     def __init__(self, session_id: str, agent_id: str = '', workspace: str = None,
                  is_subagent: bool = False, is_explorer: bool = False,
                  container_session_id: str = None, container_workspace: str = None,
                  persistent: bool = False, artifacts_root: str = None):
+        # The container pool is process-global; refuse to share it with another
+        # runtime (see _claim_runtime).
+        # Subclasses override ``runtime_name`` (PodmanBackend -> 'podman'), so
+        # the claim must use the class identity: claiming a hard-coded
+        # 'docker' here would immediately undo the subclass claim.
+        _claim_runtime(self.runtime_name)
         self._session_id = session_id
         self._container_session_id = container_session_id or session_id
         self._owns_container = not bool(container_session_id)
@@ -672,10 +871,20 @@ class DockerBackend(ExecutionBackend):
         try:
             stdout, stderr = self._poll_proc(proc, _PATH_PREFIX + script, timeout + 5, t0)
             if stdout is None:
-                # Process was killed externally
+                if proc.returncode is not None and proc.returncode < 0:
+                    # Process was killed externally
+                    return {
+                        'error': 'Execution stopped by user',
+                        'exit_code': -9,
+                        'execution_time': round(time.time() - t0, 3),
+                    }
+                # PIT-373: a timeout is a timeout, not a user stop.  Reporting
+                # every None as "stopped by user" let a hung tool call read as a
+                # deliberate halt, and the model filled the gap with its own
+                # infrastructure guess.
                 return {
-                    'error': 'Execution stopped by user',
-                    'exit_code': -9,
+                    'error': f'Execution timed out after {timeout}s',
+                    'exit_code': -1,
                     'execution_time': round(time.time() - t0, 3),
                 }
         finally:
@@ -1055,8 +1264,12 @@ class DockerBackend(ExecutionBackend):
         except Exception:
             return {'error': 'Failed to parse response from container'}
 
-    def docker_cp_out(self, container_path: str, host_path: str) -> dict:
-        """Copy a file from the container to the host filesystem."""
+    def runtime_cp_out(self, container_path: str, host_path: str) -> dict:
+        """Copy a file from the container to the host filesystem.
+
+        Named after the runtime rather than 'docker' because container
+        backends such as PodmanBackend inherit and reuse this implementation.
+        """
         container_id, err = _get_or_create_container(
             self._container_session_id, agent_id=self._agent_id,
             workspace=self._container_workspace,
@@ -1068,10 +1281,10 @@ class DockerBackend(ExecutionBackend):
         os.makedirs(os.path.dirname(host_path) or '.', exist_ok=True)
         result = _docker('cp', f'{container_id}:{container_path}', host_path)
         if result.returncode != 0:
-            return {'error': result.stderr.strip() or 'docker cp out failed'}
+            return {'error': result.stderr.strip() or 'runtime cp out failed'}
         return {'ok': True}
 
-    def docker_cp_in(self, host_path: str, container_path: str) -> dict:
+    def runtime_cp_in(self, host_path: str, container_path: str) -> dict:
         """Copy a file from the host filesystem into the container."""
         container_id, err = _get_or_create_container(
             self._container_session_id, agent_id=self._agent_id,
@@ -1083,8 +1296,14 @@ class DockerBackend(ExecutionBackend):
             return {'error': err}
         result = _docker('cp', host_path, f'{container_id}:{container_path}')
         if result.returncode != 0:
-            return {'error': result.stderr.strip() or 'docker cp in failed'}
+            return {'error': result.stderr.strip() or 'runtime cp in failed'}
         return {'ok': True}
+
+    # Backwards-compatible aliases: transfer_engine and other callers still use
+    # the docker-prefixed names, which mean the same thing now that the
+    # container runtime is pluggable.
+    docker_cp_out = runtime_cp_out
+    docker_cp_in = runtime_cp_in
 
     def destroy(self) -> dict:
         if not self._owns_container:
