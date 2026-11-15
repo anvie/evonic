@@ -8,12 +8,16 @@ so no per-site pattern list is needed — Lightpanda filters the jar per host
 while browsing.
 
 Cookie values are credentials: they are never echoed in a tool result, never
-logged, and the materialized jars on disk are 0600.
+logged, and the materialized jars on disk are 0600. Every result of every action
+(and every error string) goes through ``_redacted()``, which masks values raw,
+URL-encoded and name-keyed; ``verify`` redacts the fetched page body too.
 """
 
 import json
 import os
+import re
 import time
+from urllib.parse import quote, quote_plus
 
 from ._lp import (
     COOKIE_DIRNAME,
@@ -30,7 +34,6 @@ from ._lp import (
     cookies_from_header,
     domain_matches,
     dump_cookies,
-    merge_cookies,
     parse_cookie_text,
     run_cli,
     state_dir,
@@ -42,6 +45,65 @@ from ._lp import (
 
 ACTIONS = ("status", "set", "delete", "clear", "verify")
 VERIFY_URL = "https://httpbin.org/cookies"
+
+# ── redaction ────────────────────────────────────────────────────────────────
+# Kept in this module on purpose: the tool entrypoint is hot-reloaded on every
+# edit, so the redactor can never be missing while a stale ``_lp`` is still in
+# sys.modules. Nothing else in the skill touches cookie values.
+
+REDACTED = "[REDACTED]"
+MIN_REDACT_LEN = 6      # shorter values would shred unrelated prose
+
+
+def _cookie_dicts(items=None, extra_text: str = "") -> list[dict]:
+    """Cookie dicts from `items` plus whatever the request payload carries."""
+    cookies = [c for c in (items or []) if isinstance(c, dict)]
+    if extra_text:
+        try:
+            cookies += parse_cookie_text(extra_text)
+        except Exception:  # noqa: BLE001 — unparseable payload: harvest the columns
+            for line in str(extra_text).splitlines():
+                parts = line.strip("\r\n").split("\t")
+                if len(parts) >= 7:
+                    cookies.append({"name": parts[5], "value": "\t".join(parts[6:])})
+    return cookies
+
+
+def redact_cookie_values(text, items=None, extra_text: str = ""):
+    """Mask every known cookie value (raw, URL-encoded, name-keyed) in `text`."""
+    if text is None or isinstance(text, (int, float, bool)):
+        return text
+    out = str(text)
+    cookies = _cookie_dicts(items, extra_text)
+    values = {str(c.get("value") or "") for c in cookies}
+    for value in sorted((v for v in values if v), key=len, reverse=True):
+        if len(value) < MIN_REDACT_LEN:
+            continue
+        for variant in {value, quote(value, safe=""), quote_plus(value)}:
+            out = out.replace(variant, REDACTED)
+    # Whatever the literal sweep missed (short values, values the site re-encoded)
+    # is matched by cookie name: a=1, "auth_token": "...", auth_token=...
+    for cookie in cookies:
+        name = re.escape(str(cookie.get("name") or ""))
+        if not name or not cookie.get("value"):
+            continue
+        out = re.sub(rf"({name}[\"']?\s*[:=]\s*[\"']?)(?!\[REDACTED\])[^\"'&;,\s}}]+",
+                     rf"\1{REDACTED}", out)
+    return out
+
+
+def redact_deep(obj, items=None, extra_text: str = ""):
+    """Walk a tool result and redact cookie values in every string it holds."""
+    if isinstance(obj, str):
+        return redact_cookie_values(obj, items, extra_text)
+    if isinstance(obj, list):
+        return [redact_deep(v, items, extra_text) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(redact_deep(v, items, extra_text) for v in obj)
+    if isinstance(obj, dict):
+        return {k: redact_deep(v, items, extra_text) for k, v in obj.items()}
+    return obj
+
 
 
 # ── config plumbing ─────────────────────────────────────────────────────────
@@ -109,6 +171,32 @@ def _expiry_view(items) -> dict:
     return out
 
 
+def _row_key(cookie: dict) -> tuple:
+    return (str(cookie.get("domain") or "").lower(),
+            cookie.get("path") or "/", cookie.get("name"))
+
+
+def _merge_keep_rows(existing, new_items) -> list[dict]:
+    """Merge without collapsing rows: existing entries stay byte-identical.
+
+    Browser exports can legitimately repeat one (domain, path, name); rewriting
+    them through a keyed set would silently drop the extras, so only the newest
+    value for a matching key is swapped in place and everything else is appended.
+    """
+    merged = [dict(c) for c in existing]
+    positions: dict[tuple, int] = {}
+    for i, cookie in enumerate(merged):
+        positions[_row_key(cookie)] = i
+    for cookie in new_items:
+        key = _row_key(cookie)
+        if key in positions:
+            merged[positions[key]] = dict(cookie)
+        else:
+            positions[key] = len(merged)
+            merged.append(dict(cookie))
+    return merged
+
+
 # ── actions ─────────────────────────────────────────────────────────────────
 
 def _status(args: dict) -> dict:
@@ -168,17 +256,19 @@ def _set(args: dict) -> dict:
 
     existing = dump_cookies(cfg)
     merged = _truthy(args.get("merge"))
-    items = merge_cookies(existing, new_items) if merged else new_items
+    items = _merge_keep_rows(existing, new_items) if merged else new_items
     text = to_netscape(items)
     saved = _store(text)
 
+    known = {_row_key(c) for c in existing}
+    fresh = {_row_key(c) for c in new_items}
     names = sorted({c["name"] for c in items})
     out = {
         "action": "set",
         "mode": "merge" if merged else "replace",
         "stored": len(items),
-        "added": len(items) - len(existing) if merged else len(items),
-        "replaced": 0 if merged else len(existing),
+        "added": len(fresh - known) if merged else len(fresh),
+        "replaced": len(fresh & known) if merged else len(existing),
         "names": names,
         "domains": sorted(cookie_domains(items)),
         **saved,
@@ -265,19 +355,45 @@ def _verify(args: dict) -> dict:
         out["hint"] = ("Cookies were sent but the site still refuses the session — "
                        "they are probably expired. Export again after signing in.")
     if args.get("show_body"):
+        # httpbin-style endpoints echo the cookies back, so the body is redacted
+        # against the dump before it can reach the model.
         out["body"], _ = truncate(body, 2000)
+        out["body_redacted"] = True
+    return out
+
+
+def _redacted(result: dict, payload: str) -> dict:
+    """Last line of defence: mask every cookie value in a tool result.
+
+    Runs on every action *and* on error text, so neither a page body that echoes
+    cookies nor an exception message that quotes the paste can leak a value.
+    """
+    try:
+        items = dump_cookies(config())
+    except Exception:  # noqa: BLE001 — an unreadable dump must not break redaction
+        items = []
+    try:
+        out = redact_deep(result, items, payload)
+    except Exception:  # noqa: BLE001 — never return unredacted data on failure
+        return {"error": "cookie result withheld: redaction failed",
+                "names": sorted({c.get("name") for c in items if isinstance(c, dict)}),
+                "values_redacted": True}
+    if isinstance(out, dict):
+        out["values_redacted"] = True
     return out
 
 
 def execute(agent: dict, args: dict) -> dict:
+    args = args or {}
+    payload = str(args.get("cookies") or args.get("dump") or "")
     try:
-        args = args or {}
         action = str(args.get("action") or "status").strip().lower()
         if action not in ACTIONS:
             raise LightpandaError(f"unsupported action '{action}'; use one of {list(ACTIONS)}")
-        return {"status": _status, "set": _set, "delete": _delete,
-                "clear": _clear, "verify": _verify}[action](args)
+        result = {"status": _status, "set": _set, "delete": _delete,
+                  "clear": _clear, "verify": _verify}[action](args)
     except LightpandaError as e:
-        return {"error": str(e)}
+        result = {"error": str(e)}
     except Exception as e:  # noqa: BLE001 — never break the agent turn
-        return {"error": f"{type(e).__name__}: {e}"}
+        result = {"error": f"{type(e).__name__}: {e}"}
+    return _redacted(result, payload)

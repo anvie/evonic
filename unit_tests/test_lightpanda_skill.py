@@ -427,3 +427,98 @@ def test_tool_status_reports_unparseable_dump(tmp_path, monkeypatch):
     status = tool.execute({}, {"action": "status"})
     assert status["cookie_count"] == 0 and "error" in status
     assert "dump" in status["hint"].lower()
+
+
+# ── cookie values never reach the model ────────────────────────────────────
+
+def test_redact_cookie_values_handles_raw_encoded_and_short():
+    tool = _load_tool("lightpanda_cookies")
+    items = [{"name": "auth_token", "value": "secret1", "domain": ".x.com"},
+             {"name": "ho_key", "value": "ALPHAVALUE", "domain": "httpbin.org"},
+             {"name": "lang", "value": "en", "domain": "x.com"}]
+    body = '{"ho_key": "ALPHAVALUE", "lang": "en"} raw secret1 query ho_key=ALPHAVALUE'
+    out = tool.redact_cookie_values(body, items)
+    for leak in ("secret1", "ALPHAVALUE", '"en"'):
+        assert leak not in out
+    assert tool.REDACTED in out
+    assert tool.redact_cookie_values("ho_key=ALPHAVALUE", items) == f"ho_key={tool.REDACTED}"
+    # percent-encoded copies are masked too
+    enc = [{"name": "tok", "value": "sek ret/1", "domain": "x.com"}]
+    assert "sek%20ret%2F1" not in tool.redact_cookie_values("v=sek%20ret%2F1", enc)
+    # prose that merely names a cookie is untouched
+    assert tool.redact_cookie_values("names: auth_token, ho_key", items) == "names: auth_token, ho_key"
+
+
+def test_redact_deep_walks_nested_results():
+    tool = _load_tool("lightpanda_cookies")
+    items = [{"name": "ho_key", "value": "ALPHAVALUE", "domain": "httpbin.org"}]
+    payload = {"a": ["x ALPHAVALUE", {"b": "ho_key=ALPHAVALUE"}], "n": 5, "ok": True}
+    out = tool.redact_deep(payload, items)
+    assert "ALPHAVALUE" not in json.dumps(out)
+    assert out["n"] == 5 and out["ok"] is True
+
+
+def test_tool_status_and_set_mark_values_redacted(tmp_path, monkeypatch):
+    tool, _store = _tool_with_store(tmp_path, monkeypatch)
+    assert tool.execute({}, {"action": "set", "cookies": DUMP})["values_redacted"] is True
+    assert tool.execute({}, {"action": "status"})["values_redacted"] is True
+
+
+def test_tool_verify_body_is_redacted(tmp_path, monkeypatch):
+    tool, _store = _tool_with_store(tmp_path, monkeypatch)
+    store_dump = tool.execute({}, {"action": "set", "cookies": DUMP})
+    assert store_dump["stored"] == 3
+
+    body = '{\n  "cookies": {\n    "ho_key": "alpha"\n  }\n}'   # what httpbin echoes back
+    stdout = json.dumps({"results": [{"http_status": 200, "content": body}]})
+    monkeypatch.setattr(tool, "run_cli",
+                        lambda *a, **k: types.SimpleNamespace(stdout=stdout, stderr="", returncode=0))
+
+    out = tool.execute({}, {"action": "verify", "url": "https://httpbin.org/cookies",
+                            "show_body": True})
+    assert out["body_redacted"] is True
+    assert out["http_status"] == 200
+    assert "alpha" not in out["body"]
+    assert tool.REDACTED in out["body"]
+    assert "alpha" not in json.dumps(out)
+
+
+def test_tool_error_text_is_redacted(tmp_path, monkeypatch):
+    tool, _store = _tool_with_store(tmp_path, monkeypatch)
+
+    def boom(text):
+        raise RuntimeError(f"cannot store: {text}")
+
+    monkeypatch.setattr(tool, "_write_dump", boom)
+    out = tool.execute({}, {"action": "set", "cookies": DUMP})
+    assert "error" in out
+    assert "secret1" not in json.dumps(out) and "secret2" not in json.dumps(out)
+    assert tool.REDACTED in out["error"]
+
+
+def test_tool_verify_without_show_body_returns_no_content(tmp_path, monkeypatch):
+    tool, _store = _tool_with_store(tmp_path, monkeypatch)
+    tool.execute({}, {"action": "set", "cookies": DUMP})
+    stdout = json.dumps({"results": [{"http_status": 200,
+                                      "content": '{"cookies": {"ho_key": "alpha"}}'}]})
+    monkeypatch.setattr(tool, "run_cli",
+                        lambda *a, **k: types.SimpleNamespace(stdout=stdout, stderr="", returncode=0))
+    out = tool.execute({}, {"action": "verify", "url": "https://httpbin.org/cookies"})
+    assert "body" not in out
+    assert out["offered_to_this_host"] == ["ho_key"]
+
+
+def test_tool_set_merge_counts_real_additions(tmp_path, monkeypatch):
+    tool, _store = _tool_with_store(tmp_path, monkeypatch)
+    # a dump with a duplicate (domain, path, name) row must not shrink the report
+    doubled = DUMP + "httpbin.org\tFALSE\t/\tFALSE\t0\tho_key\talpha\n"
+    first = tool.execute({}, {"action": "set", "cookies": doubled})
+    assert first["stored"] == 4          # the duplicate row is kept, not dropped
+    assert first["added"] == 3           # three distinct keys
+
+    again = tool.execute({}, {"action": "set", "cookies": "ho_key=alpha; fresh=1",
+                              "site": "httpbin.org", "merge": True})
+    assert again["mode"] == "merge"
+    assert again["added"] == 1          # only `fresh` is new
+    assert again["replaced"] == 1       # ho_key exists already
+    assert again["stored"] == 5          # existing rows survive, `fresh` appended

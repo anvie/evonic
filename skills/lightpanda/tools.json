@@ -344,7 +344,7 @@
     "type": "function",
     "function": {
       "name": "lightpanda_cookies",
-      "description": "Manage the cookie dump that lightpanda_fetch sends. The dump is a Netscape cookies.txt export — one cookie per line, 7 tab-separated columns (domain, includeSubdomains, path, secure, expiry, name, value), '#HttpOnly_' prefixed lines accepted — pasted straight from the browser; it is the same value as the textarea in Settings → Lightpanda → Cookies. The domain column decides which site each cookie belongs to, so there are no per-site patterns to maintain and unrelated sites never share a session. Also accepts a Puppeteer/CDP JSON array, a bare 'auth_token=...; ct0=...' header together with site, or a file path. Cookie VALUES are never echoed back: results list names, domains and counts only.",
+      "description": "Manage the cookie dump that lightpanda_fetch sends. The dump is a Netscape cookies.txt export — one cookie per line, 7 tab-separated columns (domain, includeSubdomains, path, secure, expiry, name, value), '#HttpOnly_' prefixed lines accepted — pasted straight from the browser; it is the same value as the textarea in Settings → Lightpanda → Cookies. The domain column decides which site each cookie belongs to, so there are no per-site patterns to maintain and unrelated sites never share a session. Also accepts a Puppeteer/CDP JSON array, a bare 'auth_token=...; ct0=...' header together with site, or a file path. Cookie VALUES are never echoed back: every result is redacted before it is returned — values are masked as [REDACTED] (raw and URL-encoded, plus name-keyed matches) on all actions and on error text, and verify redacts the page body as well — so results list names, domains and counts only, with values_redacted: true.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -399,7 +399,7 @@
           },
           "show_body": {
             "type": "boolean",
-            "description": "verify only: include a truncated response body (the body may contain cookie values echoed by the site)."
+            "description": "verify only: include a truncated response body. The body is redacted first — every cookie value the site may echo back is replaced with [REDACTED] — so it is safe to return."
           }
         },
         "required": []

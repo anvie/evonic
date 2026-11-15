@@ -114,8 +114,21 @@ lightpanda_cookies(action=“delete“, site=“x.com“)
 lightpanda_cookies(action=“clear“, confirm=true)
 ```
 
-`set` replaces the dump unless `merge=true`; the same domain+path+name is overwritten. A bare
+`set` replaces the dump unless `merge=true`; on a merge the same domain+path+name is overwritten
+in place and every other row is kept exactly as it was (repeated rows in an export are not
+collapsed, so a merge can never shrink the dump). The result reports `added` (new keys) and
+`replaced` (keys that already existed) as distinct counts. A bare
 `name=value; name2=value2` header carries no domain, so pair it with `site`.
+
+**Values never leave the process.** Every `lightpanda_cookies` result is passed through a
+redactor before it reaches you, on all five actions *and* on error text: known cookie values are
+replaced with `[REDACTED]`, raw as well as URL-encoded, and anything left is masked by its name
+(`auth_token=...`, `"ct0": "..."`). Results therefore carry names, domains and counts only, plus
+`values_redacted: true`. The one action that fetches with the dump (`verify`) redacts the page
+body too, so an endpoint like httpbin `/cookies` that echoes the jar back shows
+`"ho_key": "[REDACTED]"`. If redaction itself fails the tool returns an error and no data.
+There is no parameter that exports the dump — read the textarea in the settings page for that,
+and never ask the model to reproduce a cookie value.
 
 **Then fetch** — the dump is attached automatically (`use_cookies` defaults to true):
 
