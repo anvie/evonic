@@ -408,7 +408,8 @@ def test_execute():
     passed += 1
 
     print('Test 11: /workspace is mounted and accessible')
-    r = execute(agent, {'script': 'ls /workspace | wc -l'})
+    # An agent without a workspace gets an empty private dir, so create a file to count.
+    r = execute(agent, {'script': 'touch /workspace/.selftest && ls -A /workspace | wc -l'})
     assert r.get('exit_code') == 0, r
     assert int(r['stdout'].strip()) > 0, r
     passed += 1

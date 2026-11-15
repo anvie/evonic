@@ -358,7 +358,8 @@ def test_status_without_runtime(monkeypatch):
     assert status['image'] == podman_backend.SANDBOX_PODMAN_IMAGE
 
 
-def test_status_reports_bound_container():
+def test_status_reports_bound_container(monkeypatch):
+    monkeypatch.setattr(podman_backend, 'runtime_reachable', lambda: (True, ''))
     backend = PodmanBackend('sess-3', agent_id='a1')
     podman_backend._containers['sess-3'] = {
         'container_id': 'deadbeefcafe', 'container_name': 'evonic-sess-3',

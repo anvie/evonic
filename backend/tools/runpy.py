@@ -244,7 +244,8 @@ def test_execute():
     passed += 1
 
     print('Test 10: /workspace mount is accessible')
-    r = execute(agent, {'code': 'import os; files = os.listdir("/workspace"); print(len(files))'})
+    # An agent without a workspace gets an empty private dir, so create a file to count.
+    r = execute(agent, {'code': 'import os; open("/workspace/.selftest", "w").close(); files = os.listdir("/workspace"); os.remove("/workspace/.selftest"); print(len(files))'})
     assert r.get('exit_code') == 0, r
     count = int(r['stdout'].strip())
     assert count > 0, f'Expected files in /workspace, got {count}'
