@@ -546,6 +546,12 @@ class ChatDelegationMixin:
     def get_active_dimensions(self, agent_id: str, limit: int = 50) -> List[str]:
         return self._chat_db(agent_id).get_active_dimensions(limit)
 
+    def touch_dirs(self, agent_id: str, paths) -> None:
+        self._chat_db(agent_id).touch_dirs(paths)
+
+    def get_frequent_dirs(self, agent_id: str, query: str = '', limit: int = 15) -> List[Dict[str, Any]]:
+        return self._chat_db(agent_id).get_frequent_dirs(query, limit)
+
     def supersede_memory(self, agent_id: str, old_memory_id: int, new_memory_id: int):
         self._chat_db(agent_id).supersede_memory(old_memory_id, new_memory_id)
 

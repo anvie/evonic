@@ -249,6 +249,14 @@ class AgentChatDB:
             except sqlite3.OperationalError:
                 pass
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_dimension ON memories(dimension)")
+            # Directories the agent's tools touched, ranked by use (recall mode='paths')
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS frequent_dirs (
+                    path TEXT PRIMARY KEY,
+                    hits INTEGER NOT NULL DEFAULT 1,
+                    last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
     def get_session_id(self, agent_id: str, external_user_id: str,
@@ -1122,6 +1130,27 @@ class AgentChatDB:
                 "GROUP BY dimension ORDER BY mu DESC LIMIT ?",
                 (limit,))
             return [r[0] for r in cursor.fetchall()]
+
+    def touch_dirs(self, paths):
+        """Count one more use of each directory in `paths`."""
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO frequent_dirs (path) VALUES (?) "
+                "ON CONFLICT(path) DO UPDATE SET hits = hits + 1, "
+                "last_used = CURRENT_TIMESTAMP",
+                [(p,) for p in paths])
+            conn.commit()
+
+    def get_frequent_dirs(self, query: str = '', limit: int = 15) -> List[Dict[str, Any]]:
+        """Most used directories first; `query` filters by substring of the path."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT path, hits, last_used FROM frequent_dirs "
+                "WHERE path LIKE ? ORDER BY hits DESC, last_used DESC LIMIT ?",
+                (f"%{query}%", limit))
+            return [{'path': r[0], 'hits': r[1], 'last_used': r[2]}
+                    for r in cursor.fetchall()]
 
     def supersede_memory(self, old_memory_id: int, new_memory_id: int):
         """Mark old_memory_id as superseded by new_memory_id."""

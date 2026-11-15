@@ -283,6 +283,8 @@ try:
     event_stream.on('agent_busy_changed', _on_agent_busy_changed)
     event_stream.on('summary_updated', _on_summary_updated)
     event_stream.on('doc_updated', _on_doc_updated)
+    from backend.agent_runtime.path_memory import on_tool_executed as _record_dirs
+    event_stream.on('tool_executed', _record_dirs)
     # Auto-forward sub-agent/inter-agent replies to the originating agent's session.
     # Must be registered here (not lazily in agent_messaging.py) so it fires
     # regardless of whether agent_messaging tools have been loaded yet.

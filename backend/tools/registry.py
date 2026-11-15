@@ -1092,7 +1092,7 @@ def _builtin_remember_factory(agent_context: dict):
 def _builtin_recall_factory(agent_context: dict):
     """Factory for the built-in 'recall' tool — searches long-term memory.
 
-    One tool, five modes:
+    One tool, six modes:
       - fts   (default): fast keyword search over remembered facts
       - key             : exact-key point lookup of the current value of a keyed
                           fact ('query' is the key, e.g. 'user.deploy_target')
@@ -1102,6 +1102,8 @@ def _builtin_recall_factory(agent_context: dict):
       - links           : the link neighborhood of a KB document (outgoing/incoming
                           references, dangling links, same-tag docs); 'query' is the
                           KB filename
+      - paths           : directories this agent's tools worked in most, recorded
+                          automatically ('query' optionally filters by substring)
     """
     from backend.agent_runtime.evomem_writer import EDGE_TYPES
     _edge_enum = sorted(EDGE_TYPES)
@@ -1118,12 +1120,12 @@ def _builtin_recall_factory(agent_context: dict):
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Keywords to search for; the memory key (e.g. 'user.deploy_target') when mode='key'; the entity name when mode='graph'; or the KB filename (e.g. 'evonic.md') when mode='links'."
+                        "description": "Keywords to search for; the memory key (e.g. 'user.deploy_target') when mode='key'; the entity name when mode='graph'; the KB filename (e.g. 'evonic.md') when mode='links'; or an optional substring filter (may be empty) when mode='paths'."
                     },
                     "mode": {
                         "type": "string",
-                        "enum": ["fts", "key", "think", "graph", "links"],
-                        "description": "Retrieval mode (default: fts). Use 'key' for the current value of a known memory key — fastest and most precise."
+                        "enum": ["fts", "key", "think", "graph", "links", "paths"],
+                        "description": "Retrieval mode (default: fts). Use 'key' for the current value of a known memory key — fastest and most precise. Use 'paths' for the directories you work in most."
                     },
                     "edge_type": {
                         "type": "string",
@@ -1174,6 +1176,12 @@ def _builtin_recall_factory(agent_context: dict):
                 pass
             return result
 
+        if mode == 'paths':
+            from models.db import db
+            dirs = db.get_frequent_dirs(agent_id, query)
+            if not dirs:
+                return {'frequent_dirs': [], 'hint': 'No directories recorded yet.'}
+            return {'frequent_dirs': dirs}
         if mode == 'key':
             return _augment(recall_by_key(agent_id, query))
         if mode == 'think':

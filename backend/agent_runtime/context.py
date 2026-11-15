@@ -364,6 +364,10 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         "who they advise); `query` is the entity name."
     )
     parts.append(
+        "- `recall(query=\"<optional name>\", mode=\"paths\")` — the directories you "
+        "worked in most (recorded automatically); `query` filters by substring."
+    )
+    parts.append(
         "Look facts up instead of guessing or asking the user for something you may "
         "already know."
     )
@@ -374,7 +378,8 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
     parts.append(
         "- **Recall before filesystem search**: When you need to locate a project "
         "directory, binary, configuration file, or any file path, you MUST use "
-        "`recall` first to check if the location is already stored in long-term "
+        "`recall` first (`mode=\"paths\"` lists the directories you used most) to "
+        "check if the location is already stored in long-term "
         "memory. Only after confirming the information is not in memory should you "
         "resort to filesystem exploration."
     )
