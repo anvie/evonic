@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from 'partials/toggle.html' import toggle_widget %}
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pkg-detail.css') }}?v=1">
 <style>
 /* Endpoint list: search box + tidy rows (method badges in a fixed column, monospace path, muted handler name) */
 .ep-search { position: relative; }
@@ -66,55 +67,87 @@ select.try-narrow { width: auto; flex: none; }
 html.dark .try-warn { border-color: rgb(245 158 11 / .32); background: rgb(245 158 11 / .12); color: #fcd34d; }
 .try-x { flex: none; padding: 0 .25rem; color: #94a3b8; cursor: pointer; }
 .try-x:hover { color: #ef4444; }
+/* Endpoint test dialog */
+.epm-panel { position: relative; display: flex; flex-direction: column; width: 100%; max-width: 46rem; max-height: 88vh; border-radius: 16px; border: 1px solid #e5e7eb; background: #fff; box-shadow: 0 24px 60px rgb(0 0 0 / .35); overflow: hidden; }
+html.dark .epm-panel { border-color: rgb(148 163 184 / .18); background: #111827; }
+.epm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.125rem 1.5rem 1rem; border-bottom: 1px solid #e5e7eb; }
+html.dark .epm-head { border-bottom-color: rgb(148 163 184 / .16); }
+.epm-title { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0; font-size: 1rem; font-weight: 600; color: #1f2937; } html.dark .epm-title { color: #f1f5f9; }
+.epm-body { flex: 1 1 auto; overflow-y: auto; padding: 1.25rem 1.5rem 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+.epm-bar { display: flex; flex-wrap: wrap; align-items: stretch; gap: .5rem; }
+.epm-url { flex: 1 1 14rem; min-width: 0; display: flex; align-items: center; padding: 0 .875rem; min-height: 2.5rem; border-radius: 10px; border: 1px solid #e5e7eb; background: #f9fafb; color: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8125rem; overflow-wrap: anywhere; }
+html.dark .epm-url { border-color: rgb(148 163 184 / .2); background: rgb(15 23 42 / .6); color: #e2e8f0; }
+.epm-send { display: inline-flex; align-items: center; gap: .5rem; padding: 0 1.25rem; min-height: 2.5rem; border-radius: 10px; border: 0; background: #6366f1; color: #fff; font-size: .875rem; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgb(99 102 241 / .35); transition: background-color .15s; }
+.epm-send:hover { background: #4f46e5; } .epm-send:disabled { opacity: .55; cursor: default; }
+.epm-warn { display: flex; align-items: center; gap: .5rem; padding: .5rem .75rem; border-radius: 10px; border: 1px solid #fde68a; background: #fffbeb; color: #92400e; font-size: .75rem; line-height: 1.125rem; }
+html.dark .epm-warn { border-color: rgb(245 158 11 / .3); background: rgb(245 158 11 / .1); color: #fcd34d; }
+.epm-sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .5rem; }
+.epm-sec-title { font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #64748b; } html.dark .epm-sec-title { color: #94a3b8; }
+.epm-add { display: inline-flex; align-items: center; gap: .25rem; font-size: .75rem; font-weight: 500; color: #6366f1; cursor: pointer; background: none; border: 0; padding: .125rem .25rem; border-radius: 6px; }
+.epm-add:hover { background: rgb(99 102 241 / .1); } html.dark .epm-add { color: #a5b4fc; }
+.epm-rows:empty::before { content: attr(data-empty); display: block; padding: .625rem .75rem; border-radius: 10px; border: 1px dashed #d1d5db; color: #94a3b8; font-size: .75rem; }
+html.dark .epm-rows:empty::before { border-color: rgb(148 163 184 / .25); }
+.epm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: .5rem; font-size: .75rem; color: #64748b; } html.dark .epm-meta { color: #94a3b8; }
+.epm-status { padding: .125rem .5rem; border-radius: 999px; font-weight: 700; font-size: .75rem; background: #ecfdf5; color: #047857; }
+.epm-status.bad { background: #fef2f2; color: #b91c1c; }
+html.dark .epm-status { background: rgb(16 185 129 / .16); color: #6ee7b7; } html.dark .epm-status.bad { background: rgb(239 68 68 / .16); color: #fca5a5; }
+.epm-copy { margin-left: auto; }
 </style>
 <div class="p-4 md:p-6">
     <!-- Header -->
-    <div class="flex flex-wrap justify-between items-center gap-2 mb-6">
-        <div>
-            <div class="flex flex-wrap items-center gap-2">
-                <a href="/plugins" class="text-gray-400 hover:text-gray-600 text-sm">&larr; Plugins</a>
-                <span class="text-gray-300">/</span>
-                <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100" id="plugin-title">Loading...</h2>
-                <span id="plugin-version" class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-mono"></span>
+    <a href="/plugins" class="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 mb-3 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        Plugins
+    </a>
+    <div class="pd-hero mb-6">
+        <div class="pd-top">
+            <div id="plugin-avatar" class="pd-avatar select-none">?</div>
+            <div class="pd-id">
+                <div class="pd-title-row">
+                    <h2 class="pd-title" id="plugin-title">Loading...</h2>
+                    <span id="plugin-version" class="pd-badge ver"></span>
+                    <span id="plugin-system-badge" class="pd-badge sys" style="display:none">System</span>
+                    <span id="plugin-status-badge" class="pd-badge"><i id="plugin-status-dot"></i><span id="plugin-status-text">&hellip;</span></span>
+                </div>
+                <div id="plugin-meta"></div>
             </div>
-            <div id="plugin-id-display" class="text-xs text-gray-400 font-mono mt-0.5"></div>
+            <div class="pd-actions">
+                <button onclick="openUpdate()" class="pd-btn primary">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                    Update
+                </button>
+                <button id="export-btn" onclick="exportPlugin()" class="pd-btn">Export</button>
+                <button id="uninstall-btn" onclick="uninstallPlugin()" class="pd-btn danger" style="display:none">Uninstall</button>
+            </div>
         </div>
-        <div class="ml-auto flex items-center gap-3">
+        <div class="pd-foot">
+            <div id="plugin-stats" class="flex flex-wrap items-center"></div>
             <label class="inline-flex items-center cursor-pointer gap-2">
                 {{ toggle_widget(id='plugin-enabled', onchange='toggleEnabled(this.checked)') }}
-                <span class="text-sm text-gray-600">Enabled</span>
+                <span class="text-sm text-gray-600 dark:text-gray-300">Enabled</span>
             </label>
-            <span id="export-btn" class="hidden">
-                <button onclick="exportPlugin()" class="px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 border border-indigo-200 rounded-md transition-colors">Export</button>
-            </span>
-            <span id="uninstall-btn" class="hidden">
-                <button onclick="uninstallPlugin()" class="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 border border-red-200 rounded-md transition-colors">Uninstall</button>
-            </span>
         </div>
     </div>
 
-    <!-- Meta -->
-    <div id="plugin-meta" class="text-sm text-gray-500 mb-6"></div>
-
     <!-- Tabs -->
-    <div class="border-b border-gray-200 mb-6 flex gap-0 overflow-x-auto">
-        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600" onclick="showTab('settings')" data-tab="settings">Settings</button>
-        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('endpoints')" data-tab="endpoints">Endpoints <span id="tab-endpoints-count" class="text-xs font-normal text-gray-400"></span></button>
-        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('tools')" data-tab="tools">Tools <span id="tab-tools-count" class="text-xs font-normal text-gray-400"></span></button>
-        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('about')" data-tab="about">About</button>
-        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('logs')" data-tab="logs">Logs</button>
+    <div class="mb-6"><div class="pd-tabs">
+        <button class="tab-btn pd-tab active" onclick="showTab('settings')" data-tab="settings">Settings</button>
+        <button class="tab-btn pd-tab" onclick="showTab('endpoints')" data-tab="endpoints">Endpoints <span id="tab-endpoints-count" class="text-xs font-normal opacity-60"></span></button>
+        <button class="tab-btn pd-tab" onclick="showTab('tools')" data-tab="tools">Tools <span id="tab-tools-count" class="text-xs font-normal opacity-60"></span></button>
+        <button class="tab-btn pd-tab" onclick="showTab('about')" data-tab="about">About</button>
+        <button class="tab-btn pd-tab" onclick="showTab('logs')" data-tab="logs">Logs</button>
         {% for tab in tabs %}
-        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('{{ tab.id }}')" data-tab="{{ tab.id }}">{{ tab.label }}</button>
+        <button class="tab-btn pd-tab" onclick="showTab('{{ tab.id }}')" data-tab="{{ tab.id }}">{{ tab.label }}</button>
         {% endfor %}
-    </div>
+    </div></div>
 
     <!-- Tab: Settings -->
     <div id="tab-settings" class="tab-content">
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- Left: Settings -->
             <div>
-                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
-                    <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-4">Settings</h3>
+                <div class="pd-card">
+                    <h3>Settings</h3>
                     <div id="settings-form">
                         <p class="text-sm text-gray-400">Loading...</p>
                     </div>
@@ -136,7 +169,7 @@ html.dark .try-warn { border-color: rgb(245 158 11 / .32); background: rgb(245 1
 
             <!-- Right: Events -->
             <div class="space-y-6">
-                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+                <div class="pd-card">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">Subscribed Events <span id="event-count" class="text-sm font-normal text-gray-400"></span></h3>
                     </div>
@@ -171,14 +204,10 @@ const LEVEL_STYLES = {
 
 function showTab(name) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.remove('border-indigo-500', 'text-indigo-600');
-        btn.classList.add('border-transparent', 'text-gray-500');
-    });
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.getElementById('tab-' + name).classList.remove('hidden');
     const btn = document.querySelector(`[data-tab="${name}"]`);
-    btn.classList.add('border-indigo-500', 'text-indigo-600');
-    btn.classList.remove('border-transparent', 'text-gray-500');
+    btn.classList.add('active');
 
     if (name === 'logs') {
         loadLogs();
@@ -201,15 +230,27 @@ async function loadPlugin() {
     if (!res.ok) { window.location.href = '/plugins'; return; }
     pluginData = await res.json();
 
-    document.getElementById('plugin-title').textContent = pluginData.name || pluginData.id;
+    const displayName = pluginData.name || pluginData.id;
+    document.getElementById('plugin-title').textContent = displayName;
+    document.title = displayName + ' · Plugins';
+    document.getElementById('plugin-avatar').textContent = (displayName.trim()[0] || '?').toUpperCase();
     document.getElementById('plugin-version').textContent = 'v' + (pluginData.version || '?');
-    document.getElementById('plugin-id-display').textContent = 'ID: ' + (pluginData.id || PLUGIN_ID);
     document.getElementById('plugin-enabled').checked = pluginData.enabled;
+    document.getElementById('plugin-system-badge').style.display = pluginData.is_system ? '' : 'none';
+    renderStatus(pluginData.enabled);
 
     const meta = [];
-    if (pluginData.author) meta.push('by ' + esc(pluginData.author));
-    if (pluginData.description) meta.push(esc(pluginData.description));
-    document.getElementById('plugin-meta').innerHTML = meta.join(' &mdash; ');
+    if (pluginData.description) meta.push(`<p class="pd-desc">${esc(pluginData.description)}</p>`);
+    const sub = [pluginData.author ? 'by ' + esc(pluginData.author) : '', `<span class="font-mono">${esc(pluginData.id || PLUGIN_ID)}</span>`].filter(Boolean);
+    meta.push(`<div class="pd-sub">${sub.map(x => `<span>${x}</span>`).join('')}</div>`);
+    document.getElementById('plugin-meta').innerHTML = meta.join('');
+
+    const stats = [['Events', (pluginData.events || []).length], ['Endpoints', (pluginData.endpoints || []).length], ['Tools', (pluginData.tools || []).length]];
+    document.getElementById('plugin-stats').innerHTML = stats.map(([label, n]) =>
+        `<span class="pd-stat"><b>${n}</b>${label}</span>`).join('');
+
+    // Uninstall only for non-system plugins
+    if (!pluginData.is_system) document.getElementById('uninstall-btn').style.display = '';
 
     renderSettings(pluginData.variables || [], pluginData.config || {});
     renderEvents(pluginData.events || []);
@@ -222,13 +263,6 @@ async function loadPlugin() {
         $('#plugin-tokens-section').removeClass('hidden');
     }
 
-    // Show export button for all plugins
-    document.getElementById('export-btn').classList.remove('hidden');
-
-    // Show uninstall button only for non-system plugins
-    if (!pluginData.is_system) {
-        document.getElementById('uninstall-btn').classList.remove('hidden');
-    }
 }
 
 // ==================== Settings ====================
@@ -364,11 +398,9 @@ function renderEvents(events) {
     }
 
     list.innerHTML = events.map(e => `
-        <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg dark:bg-gray-600">
-            <div class="flex-shrink-0 w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center mt-0.5">
-                <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            </div>
-            <div class="flex-1 min-w-0">
+        <div class="pd-event">
+            <i><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></i>
+            <div class="min-w-0">
                 <p class="text-sm font-medium text-gray-800 dark:text-gray-100 font-mono">${esc(e)}</p>
                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${esc(EVENT_DESCRIPTIONS[e] || 'Custom event')}</p>
             </div>
@@ -716,7 +748,7 @@ function openEndpoint(item) {
     document.getElementById('ep-query-rows').replaceChildren();
     document.getElementById('ep-body-rows').replaceChildren();
     document.getElementById('ep-test-status').textContent = '';
-    document.getElementById('ep-test-result').classList.add('hidden');
+    document.getElementById('ep-result-wrap').classList.add('hidden');
     syncEndpointMethod();
     refreshEndpointUrl();
     document.getElementById('ep-modal').classList.remove('hidden');
@@ -797,20 +829,39 @@ function closeEndpoint() {
     document.body.style.overflow = '';
 }
 
+// Show the response box: ``meta`` ({status, ok, info}) adds the status line, plain errors show just the text.
+function showEndpointResult(text, isError, meta) {
+    document.getElementById('ep-result-wrap').classList.remove('hidden');
+    const metaBox = document.getElementById('ep-result-meta');
+    metaBox.classList.toggle('hidden', !meta);
+    if (meta) {
+        const st = document.getElementById('ep-result-status');
+        st.textContent = meta.status;
+        st.classList.toggle('bad', !meta.ok);
+        document.getElementById('ep-result-info').textContent = meta.info;
+    }
+    showTryResult(document.getElementById('ep-test-result'), text, isError);
+}
+
+function copyEndpointResult() {
+    const text = document.getElementById('ep-test-result').textContent;
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => { if (window.toast) toast.show('Copied', 'success'); }).catch(() => {});
+}
+
 async function sendEndpoint() {
     const method = document.getElementById('ep-test-method').value;
-    const result = document.getElementById('ep-test-result'), status = document.getElementById('ep-test-status');
+    const status = document.getElementById('ep-test-status');
     const built = buildEndpointUrl();
     epPathFields.forEach(f => { f.input.style.borderColor = f.input.value.trim() ? '' : '#ef4444'; });
-    if (built.error) { showTryResult(result, built.error, true); return; }
+    if (built.error) { showEndpointResult(built.error, true); return; }
     const init = {method, credentials: 'same-origin', headers: {}};
     if (BODY_METHODS.includes(method)) {
         const got = buildEndpointBody();
-        if (got.error) { showTryResult(result, got.error, true); return; }
+        if (got.error) { showEndpointResult(got.error, true); return; }
         if (got.body !== undefined) { init.body = JSON.stringify(got.body); init.headers['Content-Type'] = 'application/json'; }
     }
     const button = document.getElementById('ep-test-send');
-    button.disabled = true; status.textContent = 'Sending...'; result.classList.add('hidden');
+    button.disabled = true; status.textContent = 'Sending...';
     const started = performance.now();
     try {
         const res = await fetch(built.url, init);
@@ -819,9 +870,10 @@ async function sendEndpoint() {
         try { text = JSON.stringify(JSON.parse(raw), null, 2); } catch (e) {}
         if (text.length > MAX_RESULT_CHARS) text = text.slice(0, MAX_RESULT_CHARS) + '\n... (cut)';
         const type = (res.headers.get('content-type') || '').split(';')[0];
-        showTryResult(result, `${res.status} ${res.statusText} · ${Math.round(performance.now() - started)} ms${type ? ' · ' + type : ''}\n\n${text || '(empty body)'}`, !res.ok);
+        const info = [`${Math.round(performance.now() - started)} ms`, type, `${new Blob([raw]).size} B`].filter(Boolean).join(' · ');
+        showEndpointResult(text || '(empty body)', !res.ok, {status: `${res.status} ${res.statusText}`.trim(), ok: res.ok, info});
     } catch (e) {
-        showTryResult(result, 'Network error: ' + e.message, true);
+        showEndpointResult('Network error: ' + e.message, true);
     } finally {
         button.disabled = false; status.textContent = '';
     }
@@ -1005,6 +1057,11 @@ async function saveConfig() {
     }
 }
 
+function renderStatus(enabled) {
+    document.getElementById('plugin-status-text').textContent = enabled ? 'Enabled' : 'Disabled';
+    document.getElementById('plugin-status-badge').className = 'pd-badge' + (enabled ? ' on' : '');
+}
+
 async function toggleEnabled(enabled) {
     const res = await fetch(`/api/plugins/${PLUGIN_ID}/toggle`, {
         method: 'PUT',
@@ -1015,6 +1072,8 @@ async function toggleEnabled(enabled) {
         const err = await res.json();
         alert(err.error || 'Failed to toggle');
         document.getElementById('plugin-enabled').checked = !enabled;
+    } else {
+        renderStatus(enabled);
     }
 }
 
@@ -1053,6 +1112,25 @@ async function uninstallPlugin() {
     }
     window.location.href = '/plugins';
 }
+
+// Click outside a dialog's panel to close it. The wrapper around the panel covers the backdrop, so a click
+// "outside" lands on the dialog root or that wrapper; both mousedown and click must start there, so dragging a
+// text selection out of the panel does not close it.
+const OUTSIDE_CLOSE = {
+    'tool-modal': () => closeTool(),
+    'ep-modal': () => closeEndpoint(),
+    'text-editor-modal': () => closeTextEditor(),
+};
+document.addEventListener('DOMContentLoaded', () => {
+    Object.entries(OUTSIDE_CLOSE).forEach(([id, close]) => {
+        const root = document.getElementById(id);
+        if (!root) return;
+        const isOutside = t => t === root || (t.parentElement === root && (t.classList.contains('absolute') || t.classList.contains('h-full')));
+        let downOutside = false;
+        root.addEventListener('mousedown', e => { downOutside = isOutside(e.target); });
+        root.addEventListener('click', e => { if (downOutside && isOutside(e.target)) close(); downOutside = false; });
+    });
+});
 
 // ==================== Text Editor Modal ====================
 
@@ -1123,7 +1201,7 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
 
     <!-- Tab: Endpoints -->
     <div id="tab-endpoints" class="tab-content hidden">
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+        <div class="pd-card">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">HTTP/API Endpoints <span id="endpoint-count" class="text-sm font-normal text-gray-400"></span></h3>
                     </div>
@@ -1148,7 +1226,7 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
 
     <!-- Tab: Tools -->
     <div id="tab-tools" class="tab-content hidden">
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+        <div class="pd-card">
             <div class="flex justify-between items-center mb-1">
                 <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">Agent Tools <span id="tool-count" class="text-sm font-normal text-gray-400"></span></h3>
             </div>
@@ -1167,7 +1245,7 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
 
     <!-- Tab: About -->
     <div id="tab-about" class="tab-content hidden">
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+        <div class="pd-card">
             <div id="about-content">
                 <p class="text-sm text-gray-400">Loading...</p>
             </div>
@@ -1223,6 +1301,8 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
     </div>
 </div>
 
+{% set pkg_kind = 'plugin' %}{% set pkg_id = plugin_id %}{% include 'partials/pkg_update.html' %}
+
 <!-- Tool details modal -->
 <div id="tool-modal" class="hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="tool-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeTool()"></div>
@@ -1261,48 +1341,63 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
 <div id="ep-modal" class="hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="ep-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeEndpoint()"></div>
     <div class="relative flex flex-col h-full items-center justify-center p-4">
-        <div class="relative w-full max-w-2xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-600 flex flex-col max-h-[85vh]">
-            <div class="flex items-start justify-between gap-4 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+        <div class="epm-panel">
+            <div class="epm-head">
                 <div class="min-w-0">
-                    <h3 id="ep-modal-title" class="flex flex-wrap items-center gap-1.5 text-base font-semibold text-gray-800 dark:text-gray-100"></h3>
+                    <h3 id="ep-modal-title" class="epm-title"></h3>
                     <p id="ep-modal-name" class="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono break-all"></p>
                 </div>
                 <button onclick="closeEndpoint()" aria-label="Close" title="Close (Esc)" class="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
             </div>
-            <div class="flex-1 overflow-y-auto px-6 py-4">
-                <h4 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Test</h4>
-                <p id="ep-test-warn" class="try-warn hidden mb-2">This sends a real request, signed in as you, and can change data.</p>
-                <div class="mb-3">
-                    <select id="ep-test-method" aria-label="Method" onchange="syncEndpointMethod()" class="border border-gray-300 dark:border-gray-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 rounded-md px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 font-mono"></select>
-                    <div id="ep-test-url" aria-label="Request URL" class="mt-2 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/60 text-sm font-mono break-all text-gray-700 dark:text-gray-200"></div>
+            <div class="epm-body">
+                <div>
+                    <div class="epm-bar">
+                        <select id="ep-test-method" aria-label="Method" onchange="syncEndpointMethod()" class="border border-gray-300 dark:border-gray-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 rounded-md px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 font-mono"></select>
+                        <div id="ep-test-url" aria-label="Request URL" class="epm-url"></div>
+                        <button id="ep-test-send" onclick="sendEndpoint()" class="epm-send">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z"/></svg>
+                            Send
+                        </button>
+                    </div>
+                    <p id="ep-test-warn" class="epm-warn hidden" style="margin-top:.625rem">
+                        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                        This sends a real request, signed in as you, and can change data.
+                    </p>
+                    <span id="ep-test-status" class="text-xs text-gray-500 dark:text-gray-400"></span>
                 </div>
-                <div id="ep-path-wrap" class="hidden mb-3">
-                    <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Path parameters</div>
+                <div id="ep-path-wrap" class="hidden">
+                    <div class="epm-sec-head"><span class="epm-sec-title">Path parameters</span></div>
                     <div id="ep-path-fields" class="space-y-2"></div>
                 </div>
-                <div class="mb-3">
-                    <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Query parameters</div>
-                    <div id="ep-query-rows" class="space-y-2"></div>
-                    <button type="button" class="mt-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline" onclick="addEndpointRow('ep-query-rows', false)">+ Add query parameter</button>
+                <div>
+                    <div class="epm-sec-head">
+                        <span class="epm-sec-title">Query parameters</span>
+                        <button type="button" class="epm-add" onclick="addEndpointRow('ep-query-rows', false)">+ Add</button>
+                    </div>
+                    <div id="ep-query-rows" class="epm-rows space-y-2" data-empty="No query parameters"></div>
                 </div>
-                <div id="ep-test-body-wrap" class="hidden mb-3">
-                    <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">JSON body</div>
-                    <div id="ep-body-rows" class="space-y-2"></div>
-                    <button type="button" class="mt-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline" onclick="addEndpointRow('ep-body-rows', true)">+ Add field</button>
+                <div id="ep-test-body-wrap" class="hidden">
+                    <div class="epm-sec-head">
+                        <span class="epm-sec-title">JSON body</span>
+                        <button type="button" class="epm-add" onclick="addEndpointRow('ep-body-rows', true)">+ Add field</button>
+                    </div>
+                    <div id="ep-body-rows" class="epm-rows space-y-2" data-empty="No body fields"></div>
                 </div>
-                <div class="mt-3 flex items-center gap-3">
-                    <button id="ep-test-send" onclick="sendEndpoint()" class="px-4 py-2 text-sm bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md font-medium transition-colors">Send</button>
-                    <span id="ep-test-status" class="text-sm text-gray-500 dark:text-gray-400"></span>
+                <div id="ep-result-wrap" class="hidden">
+                    <div class="epm-sec-head"><span class="epm-sec-title">Response</span></div>
+                    <div id="ep-result-meta" class="epm-meta hidden">
+                        <span id="ep-result-status" class="epm-status"></span>
+                        <span id="ep-result-info"></span>
+                        <button type="button" class="epm-add epm-copy" onclick="copyEndpointResult()">Copy</button>
+                    </div>
+                    <pre id="ep-test-result" class="try-result" style="margin-top:0"></pre>
                 </div>
-                <pre id="ep-test-result" class="try-result hidden"></pre>
             </div>
         </div>
     </div>
 </div>
-
-
 
 <!-- Text Editor Modal -->
 <div id="text-editor-modal" class="hidden fixed inset-0 z-50" role="dialog">

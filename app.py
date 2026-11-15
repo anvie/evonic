@@ -133,20 +133,30 @@ logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 app = Flask(__name__)
 
-# Add plugin template directories to Jinja loader
-from jinja2 import ChoiceLoader, FileSystemLoader
+# Plugin template directories are looked up on every render, not once at startup, so a plugin that is
+# uploaded or updated while the server runs can serve its templates without a restart.
+from jinja2 import ChoiceLoader, BaseLoader, FileSystemLoader, TemplateNotFound
 from backend.plugin_lifecycle import PLUGINS_DIR
 from pathlib import Path
-_plugin_template_dirs = []
-if Path(PLUGINS_DIR).exists():
-    for plugin_dir in Path(PLUGINS_DIR).iterdir():
-        tpl_dir = plugin_dir / 'templates'
-        if tpl_dir.exists():
-            _plugin_template_dirs.append(str(tpl_dir))
-app.jinja_loader = ChoiceLoader([
-    app.jinja_loader,
-    FileSystemLoader(_plugin_template_dirs)
-])
+
+
+class PluginTemplateLoader(BaseLoader):
+    def _loaders(self):
+        root = Path(PLUGINS_DIR)
+        if not root.is_dir():
+            return []
+        return [FileSystemLoader(str(d / 'templates')) for d in sorted(root.iterdir()) if (d / 'templates').is_dir()]
+
+    def get_source(self, environment, template):
+        for loader in self._loaders():
+            try:
+                return loader.get_source(environment, template)
+            except TemplateNotFound:
+                continue
+        raise TemplateNotFound(template)
+
+
+app.jinja_loader = ChoiceLoader([app.jinja_loader, PluginTemplateLoader()])
 sock = Sock(app)
 app.secret_key = config.SECRET_KEY
 

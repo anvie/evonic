@@ -18,6 +18,8 @@ import tempfile
 import importlib.util
 from typing import Dict, Any, List, Optional
 
+from backend.zip_validator import copytree_ignore
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS_DIR = os.path.join(BASE_DIR, 'skills')
 CONFIG_PATH = os.path.join(SKILLS_DIR, 'config.json')
@@ -305,7 +307,7 @@ class SkillsManager:
                     saved_config = f.read()
             if os.path.exists(skill_dest):
                 shutil.rmtree(skill_dest)
-            shutil.copytree(skill_src, skill_dest)
+            shutil.copytree(skill_src, skill_dest, ignore=copytree_ignore)
             if saved_config is not None:
                 with open(os.path.join(skill_dest, 'config.json'), 'w', encoding='utf-8') as f:
                     f.write(saved_config)
@@ -344,7 +346,7 @@ class SkillsManager:
                     saved_config = f.read()
             if os.path.exists(skill_dest):
                 shutil.rmtree(skill_dest)
-            shutil.copytree(source_dir, skill_dest)
+            shutil.copytree(source_dir, skill_dest, ignore=copytree_ignore)
             if saved_config is not None:
                 with open(os.path.join(skill_dest, 'config.json'), 'w', encoding='utf-8') as f:
                     f.write(saved_config)

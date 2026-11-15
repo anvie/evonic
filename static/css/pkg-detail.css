@@ -1,0 +1,69 @@
+/* Shared by the plugin and skill detail pages: header, tabs, cards, update dialog. */
+/* Update flow: drop zone + file diff */
+.upd-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem; padding: 2.5rem 1rem; border: 2px dashed #cbd5e1; border-radius: 12px; text-align: center; color: #64748b; cursor: pointer; transition: border-color .15s, background-color .15s; }
+.upd-drop:hover, .upd-drop.over { border-color: #818cf8; background: #f5f7ff; color: #4338ca; }
+html.dark .upd-drop { border-color: #475569; color: #94a3b8; }
+html.dark .upd-drop:hover, html.dark .upd-drop.over { border-color: #818cf8; background: rgb(129 140 248 / .08); color: #a5b4fc; }
+.upd-file { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+html.dark .upd-file { border-color: rgb(148 163 184 / .2); }
+.upd-file > summary { display: flex; align-items: center; gap: .625rem; padding: .5rem .75rem; cursor: pointer; list-style: none; background: #f9fafb; font-size: .8125rem; }
+.upd-file > summary::-webkit-details-marker { display: none; }
+html.dark .upd-file > summary { background: rgb(148 163 184 / .06); }
+.upd-file[open] > summary { border-bottom: 1px solid #e5e7eb; }
+html.dark .upd-file[open] > summary { border-bottom-color: rgb(148 163 184 / .2); }
+.upd-diff { margin: 0; max-height: 18rem; overflow: auto; padding: .5rem 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; line-height: 1.125rem; }
+.upd-diff div { padding: 0 .75rem; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.125rem; }
+.upd-diff .add { background: #ecfdf5; color: #065f46; } .upd-diff .del { background: #fef2f2; color: #991b1b; } .upd-diff .hunk { color: #6366f1; background: #eef2ff; }
+html.dark .upd-diff .add { background: rgb(16 185 129 / .14); color: #6ee7b7; } html.dark .upd-diff .del { background: rgb(239 68 68 / .14); color: #fca5a5; } html.dark .upd-diff .hunk { background: rgb(99 102 241 / .14); color: #a5b4fc; }
+.upd-tag { flex: none; width: 4.5rem; text-align: center; padding: .0625rem .4rem; border-radius: 6px; font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .02em; }
+.upd-tag.added { background: #ecfdf5; color: #047857; } .upd-tag.modified { background: #fffbeb; color: #b45309; } .upd-tag.removed { background: #fef2f2; color: #b91c1c; }
+html.dark .upd-tag.added { background: rgb(16 185 129 / .16); color: #6ee7b7; } html.dark .upd-tag.modified { background: rgb(245 158 11 / .16); color: #fcd34d; } html.dark .upd-tag.removed { background: rgb(239 68 68 / .16); color: #fca5a5; }
+/* Page chrome */
+.pd-hero { position: relative; overflow: hidden; border-radius: 16px; border: 1px solid #e5e7eb; background: linear-gradient(135deg, #eef2ff 0%, #ffffff 55%); padding: 1.25rem 1.5rem; }
+html.dark .pd-hero { border-color: rgb(148 163 184 / .16); background: linear-gradient(135deg, rgb(99 102 241 / .16) 0%, rgb(15 23 42 / .0) 60%), rgb(30 41 59 / .5); }
+.pd-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem 1.25rem; }
+.pd-id { flex: 1 1 18rem; min-width: 0; }
+.pd-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.pd-title { font-size: 1.5rem; line-height: 2rem; font-weight: 700; letter-spacing: -.01em; color: #1f2937; margin: 0; } html.dark .pd-title { color: #f8fafc; }
+.pd-desc { margin-top: .375rem; max-width: 48rem; font-size: .875rem; line-height: 1.375rem; color: #475569; } html.dark .pd-desc { color: #cbd5e1; }
+.pd-sub { margin-top: .375rem; font-size: .75rem; color: #94a3b8; display: flex; flex-wrap: wrap; gap: .25rem .75rem; }
+.pd-actions { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.pd-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid #e2e8f0; }
+html.dark .pd-foot { border-top-color: rgb(148 163 184 / .16); }
+.pd-badge { display: inline-flex; align-items: center; gap: .375rem; padding: .125rem .5rem; border-radius: 999px; font-size: .6875rem; font-weight: 600; background: #f1f5f9; color: #64748b; }
+html.dark .pd-badge { background: rgb(148 163 184 / .14); color: #cbd5e1; }
+.pd-badge.ver { border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; border: 1px solid #e2e8f0; background: rgb(255 255 255 / .7); }
+html.dark .pd-badge.ver { border-color: rgb(148 163 184 / .2); background: rgb(255 255 255 / .06); }
+.pd-badge.sys { background: #f3e8ff; color: #7e22ce; } html.dark .pd-badge.sys { background: rgb(168 85 247 / .16); color: #d8b4fe; }
+.pd-badge.on { background: #ecfdf5; color: #047857; } html.dark .pd-badge.on { background: rgb(16 185 129 / .16); color: #6ee7b7; }
+.pd-badge i { width: .375rem; height: .375rem; border-radius: 50%; background: #94a3b8; } .pd-badge.on i { background: #10b981; }
+.pd-avatar { flex: none; width: 3.5rem; height: 3.5rem; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; background: linear-gradient(135deg, #6366f1, #8b5cf6); box-shadow: 0 6px 16px rgb(99 102 241 / .35); }
+.pd-stat { display: flex; align-items: baseline; gap: .375rem; font-size: .8125rem; color: #64748b; }
+.pd-stat b { font-size: 1.125rem; font-weight: 700; color: #1f2937; font-variant-numeric: tabular-nums; }
+html.dark .pd-stat { color: #94a3b8; } html.dark .pd-stat b { color: #f1f5f9; }
+.pd-stat + .pd-stat { padding-left: 1rem; margin-left: .25rem; border-left: 1px solid #e5e7eb; }
+html.dark .pd-stat + .pd-stat { border-left-color: rgb(148 163 184 / .2); }
+.pd-btn { display: inline-flex; align-items: center; gap: .375rem; height: 2.125rem; padding: 0 .875rem; border-radius: 9px; font-size: .8125rem; font-weight: 500; border: 1px solid #e2e8f0; background: #fff; color: #334155; cursor: pointer; transition: background-color .15s, border-color .15s, color .15s; }
+.pd-btn:hover { background: #f8fafc; border-color: #cbd5e1; }
+html.dark .pd-btn { background: rgb(148 163 184 / .08); border-color: rgb(148 163 184 / .2); color: #e2e8f0; }
+html.dark .pd-btn:hover { background: rgb(148 163 184 / .16); }
+.pd-btn.primary { background: #6366f1; border-color: #6366f1; color: #fff; box-shadow: 0 2px 8px rgb(99 102 241 / .35); }
+.pd-btn.primary:hover { background: #4f46e5; border-color: #4f46e5; }
+.pd-btn.danger { color: #dc2626; }
+.pd-btn.danger:hover { background: #fef2f2; border-color: #fecaca; }
+html.dark .pd-btn.danger { color: #f87171; } html.dark .pd-btn.danger:hover { background: rgb(239 68 68 / .12); border-color: rgb(239 68 68 / .35); }
+.pd-tabs { display: inline-flex; max-width: 100%; gap: .25rem; padding: .25rem; border-radius: 12px; background: #f1f5f9; overflow-x: auto; }
+html.dark .pd-tabs { background: rgb(148 163 184 / .1); }
+.pd-tab { flex: none; white-space: nowrap; padding: .4rem .875rem; border-radius: 9px; font-size: .8125rem; font-weight: 500; color: #64748b; cursor: pointer; transition: background-color .15s, color .15s; }
+.pd-tab:hover { color: #1f2937; } html.dark .pd-tab:hover { color: #f1f5f9; }
+.pd-tab.active { background: #fff; color: #4338ca; box-shadow: 0 1px 3px rgb(0 0 0 / .1); }
+html.dark .pd-tab.active { background: rgb(99 102 241 / .22); color: #c7d2fe; box-shadow: none; }
+.pd-card { border-radius: 14px; border: 1px solid #e5e7eb; background: #fff; padding: 1.25rem 1.5rem; }
+html.dark .pd-card { border-color: rgb(148 163 184 / .16); background: rgb(30 41 59 / .45); }
+.pd-card > h3 { font-size: .9375rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937; } html.dark .pd-card > h3 { color: #f1f5f9; }
+#settings-form input[data-var]:not([type=checkbox]), #settings-form textarea[data-var] { border-radius: 10px; background: #f9fafb; border-color: #e5e7eb; }
+html.dark #settings-form input[data-var]:not([type=checkbox]), html.dark #settings-form textarea[data-var] { background: rgb(15 23 42 / .55); border-color: rgb(148 163 184 / .2); color: #e5e7eb; }
+.pd-event { display: flex; align-items: center; gap: .75rem; padding: .625rem .75rem; border: 1px solid #e5e7eb; border-radius: 10px; }
+html.dark .pd-event { border-color: rgb(148 163 184 / .14); }
+.pd-event i { flex: none; width: 1.75rem; height: 1.75rem; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: #fffbeb; color: #d97706; }
+html.dark .pd-event i { background: rgb(245 158 11 / .14); color: #fbbf24; }

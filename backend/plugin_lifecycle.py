@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from backend.plugin_sdk import PluginSDK
 from backend.version import minimum_version_error
+from backend.zip_validator import copytree_ignore
 from backend.plugin_hooks import (
     _tool_guards, _message_interceptors, _builtin_suppressors,
     _turn_gates, _tool_result_gates,
@@ -813,7 +814,7 @@ class PluginManager:
 
             if os.path.exists(plugin_dest):
                 shutil.rmtree(plugin_dest)
-            shutil.copytree(plugin_src, plugin_dest)
+            shutil.copytree(plugin_src, plugin_dest, ignore=copytree_ignore)
 
             self.reload_plugin(plugin_id)
             return manifest
@@ -846,7 +847,7 @@ class PluginManager:
                 return {'error': f'Plugin "{plugin_id}" is already installed. Uninstall it first or use force to overwrite.'}
             if os.path.exists(plugin_dest):
                 shutil.rmtree(plugin_dest)
-            shutil.copytree(source_dir, plugin_dest)
+            shutil.copytree(source_dir, plugin_dest, ignore=copytree_ignore)
 
         self.reload_plugin(plugin_id)
         return manifest

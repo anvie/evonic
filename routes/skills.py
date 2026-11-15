@@ -2,6 +2,7 @@
 
 import ipaddress
 import os
+import re
 import secrets
 import tempfile
 import zipfile
@@ -88,6 +89,50 @@ def api_upload_skill():
         return jsonify({'success': True, 'skill': result})
     finally:
         os.unlink(tmp_path)
+
+
+@skills_bp.route('/api/skills/<skill_id>/update/preview', methods=['POST'])
+def api_update_preview(skill_id):
+    """Stage a newer zip for an installed skill and return the diff against the installed files."""
+    from backend.skill_update import stage_update
+    if not re.match(r'^[a-zA-Z0-9_-]+$', skill_id):
+        return jsonify({'error': 'Invalid skill id'}), 400
+    file = request.files.get('file')
+    if not file or not file.filename or not file.filename.endswith('.zip'):
+        return jsonify({'error': 'File must be a .zip'}), 400
+    if request.content_length and request.content_length > MAX_UPLOAD_BYTES:
+        return jsonify({'error': f'Upload too large. Maximum is {MAX_UPLOAD_BYTES // 1024 // 1024} MB.'}), 413
+    with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        result = stage_update(skill_id, tmp_path, file.filename)
+    finally:
+        os.unlink(tmp_path)
+    if 'error' in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@skills_bp.route('/api/skills/<skill_id>/update/apply', methods=['POST'])
+def api_update_apply(skill_id):
+    """Install a previously staged update."""
+    from backend.skill_update import apply_update
+    token = (request.get_json(silent=True) or {}).get('token', '')
+    result = apply_update(skill_id, token)
+    if 'error' in result:
+        return jsonify(result), 400
+    result.pop('_dir', None)
+    audit.log_skill(user_id='admin', skill_id=skill_id, action='update', ip=request.remote_addr or '')
+    return jsonify({'success': True, 'skill': result})
+
+
+@skills_bp.route('/api/skills/<skill_id>/update/discard', methods=['POST'])
+def api_update_discard(skill_id):
+    """Drop a staged update the user backed out of."""
+    from backend.skill_update import discard_update
+    discard_update((request.get_json(silent=True) or {}).get('token', ''))
+    return jsonify({'success': True})
 
 
 @skills_bp.route('/api/skills/<skill_id>/toggle', methods=['PUT'])

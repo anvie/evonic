@@ -160,6 +160,50 @@ def api_upload_plugin():
         os.unlink(tmp_path)
 
 
+@plugins_bp.route('/api/plugins/<plugin_id>/update/preview', methods=['POST'])
+def api_update_preview(plugin_id):
+    """Stage a newer zip for an installed plugin and return the diff against the installed files."""
+    from backend.plugin_update import stage_update
+    if not re.match(r'^[a-zA-Z0-9_-]+$', plugin_id):
+        return jsonify({'error': 'Invalid plugin id'}), 400
+    file = request.files.get('file')
+    if not file or not file.filename or not file.filename.endswith('.zip'):
+        return jsonify({'error': 'File must be a .zip'}), 400
+    if request.content_length and request.content_length > MAX_UPLOAD_BYTES:
+        return jsonify({'error': f'Upload too large. Maximum is {MAX_UPLOAD_BYTES // 1024 // 1024} MB.'}), 413
+    with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        result = stage_update(plugin_id, tmp_path, file.filename)
+    finally:
+        os.unlink(tmp_path)
+    if 'error' in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@plugins_bp.route('/api/plugins/<plugin_id>/update/apply', methods=['POST'])
+def api_update_apply(plugin_id):
+    """Install a previously staged update."""
+    from backend.plugin_update import apply_update
+    token = (request.get_json(silent=True) or {}).get('token', '')
+    result = apply_update(plugin_id, token)
+    if 'error' in result:
+        return jsonify(result), 400
+    result.pop('_dir', None)
+    audit.log_plugin(user_id='admin', plugin_id=plugin_id, action='update', ip=request.remote_addr or '')
+    return jsonify({'success': True, 'plugin': result})
+
+
+@plugins_bp.route('/api/plugins/<plugin_id>/update/discard', methods=['POST'])
+def api_update_discard(plugin_id):
+    """Drop a staged update the user backed out of."""
+    from backend.plugin_update import discard_update
+    discard_update((request.get_json(silent=True) or {}).get('token', ''))
+    return jsonify({'success': True})
+
+
 @plugins_bp.route('/api/plugins/<plugin_id>/toggle', methods=['PUT'])
 def api_toggle_plugin(plugin_id):
     """Toggle a plugin's enabled/disabled state."""
