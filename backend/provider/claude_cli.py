@@ -51,6 +51,10 @@ _OUTPUT_SCHEMA = {
     "required": ["text"],
 }
 
+# Only the newest pictures are sent: older ones are long dealt with, and every
+# image costs input tokens on each turn of the agent loop.
+MAX_IMAGES = 4
+
 # Same child-env policy as pi-claude-bridge: no claude.ai cloud MCP discovery,
 # and Evonic owns context management so the CLI must not auto-compact.
 CHILD_ENV = {
@@ -178,6 +182,36 @@ def _image_block(part: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "type": "base64", "media_type": match.group(1), "data": match.group(2)}}
 
 
+_IMAGE_MARKER = re.compile(r"\[image (\d+) attached\]")
+
+
+def _stream_content(transcript: str, images: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Content blocks with each image right where the transcript mentions it.
+
+    Putting every picture in front of the text left the model matching "[image 3
+    attached]" against a pile of images, and it sometimes claimed it saw none.
+    """
+    first_sent = len(images) - MAX_IMAGES
+    blocks: List[Dict[str, Any]] = []
+    pos = 0
+
+    def add_text(text: str) -> None:
+        if text:
+            blocks.append({"type": "text", "text": text})
+
+    for match in _IMAGE_MARKER.finditer(transcript):
+        number = int(match.group(1))
+        add_text(transcript[pos:match.start()])
+        pos = match.end()
+        if number - 1 < first_sent:
+            add_text(f"[image {number}: an older picture, no longer attached]")
+        else:
+            add_text(f"[image {number}, shown below]")
+            blocks.append(images[number - 1])
+    add_text(transcript[pos:])
+    return blocks
+
+
 def _format_transcript(messages: List[Dict[str, Any]],
                        images: Optional[List[Dict[str, Any]]] = None) -> str:
     """Flatten OpenAI-style messages (incl. tool calls/results) into a transcript."""
@@ -297,8 +331,8 @@ def send_request(
         # Plain-text stdin cannot carry images; stream-json input can.
         cmd += ["--input-format", "stream-json", "--verbose"]
         cmd[cmd.index("--output-format") + 1] = "stream-json"
-        stdin_text = json.dumps({"type": "user", "message": {"role": "user", "content": [
-            *images, {"type": "text", "text": stdin_text}]}}) + "\n"
+        stdin_text = json.dumps({"type": "user", "message": {
+            "role": "user", "content": _stream_content(stdin_text, images)}}) + "\n"
 
     try:
         proc = subprocess.run(
