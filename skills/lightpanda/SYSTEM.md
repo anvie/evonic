@@ -3,7 +3,9 @@
 Lightpanda is a headless browser written from scratch in Zig — not a Chromium fork. It uses
 roughly 16x less memory and runs about 9x faster than headless Chrome, which makes it the default
 choice for reading pages, crawling, and scripted extraction. It is **not** pixel-identical to
-Chrome: WebGL and canvas are unavailable and screenshots reflect its computed text layout.
+Chrome: WebGL and canvas are unavailable, and screenshots draw the computed text layout with
+**no CSS applied** — colours, backgrounds and table layout are missing, so a PNG is a text
+outline, not a visual preview.
 
 This skill drives a **local binary** (no Docker, no Cloud, no API key). Interactive browsing goes
 through Lightpanda's own MCP server, which the skill starts on demand.
@@ -16,7 +18,7 @@ through Lightpanda's own MCP server, which the skill starts on demand.
 | Read the page you are already on | `lightpanda_read` |
 | Click, type, submit, scroll, wait | `lightpanda_act` |
 | Pull specific fields with CSS selectors | `lightpanda_extract` |
-| Save a visual snapshot to a file | `lightpanda_screenshot` |
+| Save the text layout to a PNG (no CSS) | `lightpanda_screenshot` |
 | Replay a deterministic multi-step script | `lightpanda_run` |
 | Anything else in the MCP surface | `lightpanda_mcp` |
 | Read a page behind a login, using your own cookies | `lightpanda_cookies` + `lightpanda_fetch` |
@@ -52,9 +54,26 @@ lightpanda_read(format="markdown")
 lightpanda_extract(url="https://news.example.com", schema={
   "headline": "h1",
   "author": ".byline",
-  "links": ["article a@href"]
+  "links": [{"selector": "article a", "attr": "href"}]
 })
 ```
+
+Schema values in Lightpanda 1.0.4:
+
+| Value form | Meaning |
+|------------|---------|
+| `"h1"` | CSS selector, first match, inner text |
+| `{"selector": "a", "attr": "href"}` | one element, one **real** attribute |
+| `[{"selector": "a", "attr": "href"}]` | list of matches |
+| `["a"]` | list of matches, inner text |
+
+`attr` must be a genuine HTML attribute — there is no `text` / `innerText` / `textContent`
+pseudo-attribute; use a plain selector string for inner text. A spec that matches nothing (or asks
+for a missing attribute) aborts the **whole** call with
+`no schema selector matched any element`, so keep speculative fields out of one schema.
+
+`a@href` and `a::attr(href)` are **not** supported — they fail with
+`The string did not match the expected pattern`. Use the object form.
 
 **Escape hatch: evaluate JavaScript in the page**
 
@@ -156,7 +175,8 @@ Playwright-style prefixes (`text=`, `role=`, `xpath=`) fail with `InvalidSelecto
 **Acting**
 - `click` `{selector|backendNodeId}`
 - `fill` `{value, selector|backendNodeId}`
-- `press` `{key, selector?}`
+- `press` `{key, selector|backendNodeId}` — a target is mandatory (a bare keyboard press is not
+  supported); node ids go stale when the page re-renders, so re-inspect first
 - `selectOption` `{value, selector|backendNodeId}`
 - `setChecked` `{checked, selector|backendNodeId}`
 - `hover` `{selector|backendNodeId}` · `scroll` `{x?, y?, selector?}`
@@ -164,7 +184,8 @@ Playwright-style prefixes (`text=`, `role=`, `xpath=`) fail with `InvalidSelecto
   `waitForState` `{state, timeout?}`
 
 **Data & scripting**
-- `extract` `{schema, save?}` — schema is a JSON object literal string
+- `extract` `{schema, save?}` — schema is a JSON object literal string; values follow the
+  selector / `{"selector", "attr"}` forms listed above (`a@href` is rejected)
 - `evaluate` `{script, url?, save?}` — top-level `await`/`return` supported; `save` exposes
   the value as `lp.<name>` to later evaluates
 - `run` `{script|path, timeout?}` — PandaScript
@@ -196,7 +217,9 @@ Playwright-style prefixes (`text=`, `role=`, `xpath=`) fail with `InvalidSelecto
 
 ## Limits worth remembering
 
-- No WebGL, no canvas rendering, no pixel-accurate screenshots.
+- No WebGL, no canvas rendering. Screenshots draw **text layout only**: CSS is not applied, so
+  backgrounds, colours and table/float geometry are absent. Never judge styling from a PNG; use
+  `read` / `tree` / `extract` when you need the content, and treat a screenshot as a text map.
 - Subframe (iframe) loading is off in fetch by default; MCP reads report frames as their URL.
 - One browser context per process: 16 parallel pages maximum on a CDP connection.
 - V8 coverage is broad but not complete; heavy SPA frameworks may render partially. When the
@@ -236,7 +259,10 @@ server runs from that directory, so relative paths passed to `download`/`run` re
 | Session state looks wrong / page won't advance | `lightpanda_stop` then retry; a fresh server and session are created automatically. |
 | `InvalidSelector` | Selectors must be plain CSS. Use `findElement` with `role`/`name` for text-based lookup. |
 | Empty markdown, HTTP 403/429 | Bot detection or rate limit. Slow down, honor robots, or use the site's API. |
-| Screenshot looks unstyled or sparse | Lightpanda renders computed text layout; CSS/WebGL-dependent visuals are approximate. |
+| Screenshot is unstyled (white background, no colours or table alignment) | Expected in 1.0.4 — CSS is not applied when drawing. Verify content with `read`/`tree`/`extract`; no point retrying. |
+| `extract` fails with `The string did not match the expected pattern` | Unsupported selector spec such as `a@href` or `a::attr(href)`. Use `{"selector": "a", "attr": "href"}` (single) or `[{"selector": "a", "attr": "href"}]` (list). |
+| `NodeNotFound` on `press`/`fill`/`click` | The node vanished after a JS re-render. Re-inspect with `detectForms` / `tree` / `findElement` and use the fresh `backendNodeId`. |
+| `extract` fails with `no schema selector matched any element` | One field matched nothing or asked for a missing attribute (`text`, `innerText`, ...). Split the schema and use a plain selector string for inner text. |
 
 `lightpanda_status` reports the binary version, server pid/port/log, active sessions and the
 safety settings — attach that output when reporting a problem.

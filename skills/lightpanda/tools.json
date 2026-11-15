@@ -282,7 +282,7 @@
         "properties": {
           "schema": {
             "type": "object",
-            "description": "Mapping of output field -> CSS selector spec, e.g. {\"title\": \"h1\", \"links\": [\"a@href\"]}. Passed to Lightpanda as a JSON object literal."
+            "description": "Mapping of output field -> CSS selector spec, e.g. {\"title\": \"h1\", \"links\": [{\"selector\": \"a\", \"attr\": \"href\"}]}. A value may be a selector string (inner text), an object {selector, attr} where attr is a real HTML attribute, or an array of either for lists. There is no text/innerText pseudo-attribute; a spec that matches nothing aborts the whole call with 'no schema selector matched any element'. Attribute shorthand such as a@href is NOT supported (it fails with 'The string did not match the expected pattern'). Passed to Lightpanda as a JSON object literal."
           },
           "url": {
             "type": "string",
@@ -311,7 +311,7 @@
     "type": "function",
     "function": {
       "name": "lightpanda_screenshot",
-      "description": "Render the page (or one element) to a PNG file and return its path. Lightpanda renders its computed text layout, not pixel-accurate browser output, so use this for layout/visual checks, not for pixel comparison. The base64 payload never enters the conversation.",
+      "description": "Render the page (or one element) to a PNG file and return its path. Lightpanda draws the computed text layout only: CSS is not applied, so backgrounds, colours and table/float geometry are missing and the PNG looks unstyled. Use it as a text map (order and presence of content) — never for styling checks or pixel comparison. The base64 payload never enters the conversation.",
       "parameters": {
         "type": "object",
         "properties": {
