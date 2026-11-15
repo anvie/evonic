@@ -3108,6 +3108,17 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                 </div>
             </div>
 
+            <!-- Tool-call notifications (Telegram only) -->
+            <div class="mb-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg hidden" id="cd-tool-calls-row">
+                <div class="flex items-center justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">Tool-call notifications</div>
+                        <div class="text-[10px] text-gray-400">Post one compact line per tool burst (e.g. "read_file (3x)"). Sent after the reply finishes. Off by default.</div>
+                    </div>
+                    {{ toggle_widget(id='cd-tool-calls-toggle', onchange='toggleShowToolCalls(this.checked)') }}
+                </div>
+            </div>
+
             <!-- Pending Approvals -->
             <div class="mb-4">
                 <div class="flex items-center justify-between mb-2">
@@ -6800,6 +6811,15 @@ async function _cdRefresh() {
     document.getElementById('cd-channel-type-badge').textContent = ch.type;
     document.getElementById('cd-channel-type-badge').className = `text-xs px-2 py-0.5 rounded font-medium ${badge}`;
     document.getElementById('cd-mode-toggle').checked = (mode === 'restricted');
+    // Tool-call notifications: a Telegram-only setting, read only when the
+    // channel starts its listeners.
+    const toolRow = document.getElementById('cd-tool-calls-row');
+    if (toolRow) {
+        const isTelegram = ch.type === 'telegram';
+        toolRow.classList.toggle('hidden', !isTelegram);
+        const toolToggle = document.getElementById('cd-tool-calls-toggle');
+        if (toolToggle) toolToggle.checked = !!config.show_tool_calls;
+    }
     const running = ch.running;
     document.getElementById('cd-channel-status-dot').className = `inline-block w-2 h-2 rounded-full ${running ? 'bg-green-500' : 'bg-gray-300'}`;
     document.getElementById('cd-channel-status-text').textContent = running ? 'Running' : 'Stopped';
@@ -6971,6 +6991,24 @@ async function toggleChannelMode(enabled) {
     if (data.error) { showToast(data.error, 'error'); return; }
     showToast(`Channel mode set to ${newMode}`, 'success');
     // Refresh both the channels list and detail modal
+    loadChannels();
+    _cdRefresh();
+}
+
+async function toggleShowToolCalls(enabled) {
+    const ch = await _cdGetChannelConfig();
+    if (!ch) return;
+    const config = ch.config || {};
+    config.show_tool_calls = !!enabled;
+    const res = await fetch(`/api/agents/${AGENT_ID}/channels/${_cdChannelId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({config})
+    });
+    const data = await res.json();
+    if (data.error) { showToast(data.error, 'error'); return; }
+    // The server restarts a running channel so the listener picks the new value up.
+    showToast(`Tool-call notifications ${enabled ? 'enabled' : 'disabled'}.`, 'success');
     loadChannels();
     _cdRefresh();
 }
