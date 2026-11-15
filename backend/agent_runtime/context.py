@@ -1025,8 +1025,15 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
     if agent.get('audio_enabled'):
         assigned_ids.add('transcribe_audio')
 
-    # ask_user follows the agent's setting, even if assigned by hand.
-    if agent.get('ask_user_enabled', 1):
+    # ask_user follows the agent's setting, even if assigned by hand — unless a
+    # plugin suppresses it for this agent right now. The kanban plugin hides it
+    # while autopilot works a task, because nobody is watching to answer and the
+    # tool would block the run indefinitely.
+    ask_user_available = bool(agent.get('ask_user_enabled', 1))
+    if ask_user_available:
+        from backend.plugin_manager import suppressed_tool_reason
+        ask_user_available = suppressed_tool_reason(eid, 'ask_user') is None
+    if ask_user_available:
         assigned_ids.add('ask_user')
     else:
         assigned_ids.discard('ask_user')

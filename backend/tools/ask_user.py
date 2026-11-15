@@ -84,6 +84,22 @@ def execute(agent: dict, args: dict) -> Any:
     if not _enabled_for(agent):
         return {'error': "Ask User Question is disabled for this agent. Enable it in the agent's settings."}
 
+    # A plugin may suppress this tool while the agent runs unattended (the kanban
+    # plugin does so while autopilot works a task). build_tools() already hides it,
+    # but a tool list built before that condition became true — or one reused from
+    # prefetch — can still reach us, so refuse before registering a question that
+    # nothing would answer.
+    from backend.plugin_manager import suppressed_tool_reason
+
+    suppressed = suppressed_tool_reason(agent.get('_db_agent_id') or agent.get('id') or '', 'ask_user')
+    if suppressed:
+        return {
+            'status': 'unavailable',
+            'error': f'Interactive questions are unavailable: {suppressed}. '
+                     'Decide using your best judgement and continue the task; '
+                     'do not call ask_user again in this conversation.',
+        }
+
     from backend.ask_user_store import browser_notice, build_result, normalize_questions, question_registry
 
     questions, error = normalize_questions((args or {}).get('questions'))
