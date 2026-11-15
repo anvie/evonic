@@ -435,7 +435,7 @@ Best,
 
 ```
 // WRONG — mentions author name
-Hi Robin, great PR!
+Hi Alice, great PR!
 
 // WRONG — signs as the user
 Best,

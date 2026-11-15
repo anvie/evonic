@@ -165,7 +165,7 @@ def extract_gemma4_tool_calls(text: str) -> Optional[List[Dict[str, Any]]]:
     """
     tool_calls = []
     
-    # Pattern 1: <|tool_call>function_name{...}<|tool_call|> (Robin's format)
+    # Pattern 1: <|tool_call>function_name{...}<|tool_call|> (Qwen tool-call format)
     pattern1 = r'<\|tool_call>\s*(\w+)\{([^}]*)\}\s*<\|tool_call\|>'
     
     # Pattern 2: <|tool_call>call:function_name{...}<tool_call|> (original format)

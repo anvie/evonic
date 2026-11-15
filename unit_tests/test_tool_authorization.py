@@ -86,8 +86,8 @@ class TestToolAuthorization:
         """A skill tool referenced via namespaced ID (skill:*:fn) must be allowed."""
         ctx = self._context([
             "bash",
-            "skill:claimguard:icd10_search",
-            "skill:claimguard:icd10_search2",
+            "skill:demo_clinic:icd10_search",
+            "skill:demo_clinic:icd10_search2",
         ])
         executor = registry.get_real_executor(ctx)
         result = executor("icd10_search", {"query": "diabetes"})
@@ -206,8 +206,8 @@ class TestToolAuthorization:
         in assigned_tool_ids are authorized."""
         ctx = self._context([
             "bash",
-            "skill:claimguard:icd10_search",
-            "skill:claimguard:parse_claim",
+            "skill:demo_clinic:icd10_search",
+            "skill:demo_clinic:parse_claim",
         ])
         executor = registry.get_real_executor(ctx)
         for fn in ("icd10_search", "parse_claim"):

@@ -61,11 +61,11 @@ def test_goal_scenario_end_to_end():
 
     # ── 2. blog article → A2, A1 offloaded ──────────────────────────────────
     log.append({'type': 'user', 'ts': 2000,
-                'content': 'buatkan tulisan blog untuk robin.blog.com', 'session_id': 's'})
+                'content': 'buatkan tulisan blog untuk example.com', 'session_id': 's'})
     with _decide('indep_branch', new_path={'title': 'blog',
                                            'action': 'create article'}):
         result = on_turn_boundary(AGENT, ms, log,
-                                  'buatkan tulisan blog untuk robin.blog.com')
+                                  'buatkan tulisan blog untuk example.com')
     assert result['target'] == 'A2'
     log.append({'type': 'final', 'ts': 2500, 'content': 'artikel blog selesai',
                 'session_id': 's'})

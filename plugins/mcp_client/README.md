@@ -20,7 +20,7 @@ the model sees it — the tail of the tool list then becomes invisible and the a
 starts guessing tool names. `mcp_list_tools` therefore lists compactly by default:
 
 ```json
-{"server": "nuwaira-deck", "tool_count": 34, "shown": 34,
+{"server": "demo-deck", "tool_count": 34, "shown": 34,
  "tools": [{"name": "slide_create",
             "description": "Create a slide from a layout",
             "args": "deck_id:string!, layout_id:string!, title:string?"}],
@@ -63,7 +63,7 @@ starts guessing tool names. `mcp_list_tools` therefore lists compactly by defaul
 
    ```json
    {
-     "nuwaira-deck": {
+     "demo-deck": {
        "url": "https://deck.example/mcp",
        "headers": {"Authorization": "Bearer nwd_..."}
      }

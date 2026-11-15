@@ -97,12 +97,12 @@ class TestKBSyncIntegration(unittest.TestCase):
         self.assertEqual(self._stats()["dangling_links"], 2)
 
     def test_entities_link_still_works(self):
-        """[[entities/robin]] (subdir-prefixed) continues to resolve."""
+        """[[entities/demo]] (subdir-prefixed) continues to resolve."""
         ent_dir = os.path.join(self.kb_dir, "entities")
         os.makedirs(ent_dir, exist_ok=True)
-        with open(os.path.join(ent_dir, "robin.md"), "w") as f:
-            f.write("---\ntitle: Robin\ntype: entity\n---\n# Robin")
-        self._add("linker.md", "---\ntitle: L\n---\n# L\n[[entities/robin]]")
+        with open(os.path.join(ent_dir, "demo.md"), "w") as f:
+            f.write("---\ntitle: Demo\ntype: entity\n---\n# Demo")
+        self._add("linker.md", "---\ntitle: L\n---\n# L\n[[entities/demo]]")
         self.assertGreaterEqual(self._sync().get("links_resolved", 0), 1)
 
     # ---- deletion ----

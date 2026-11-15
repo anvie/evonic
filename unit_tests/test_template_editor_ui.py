@@ -381,7 +381,7 @@ def test_simulate_route_captures_outbox_without_side_effects(
 # ---------------------------------------------------------------------------
 # 6. Typing in a repeater field must not lose focus (task #30 follow-up)
 #
-# Robin reported that the caret disappeared after every keystroke in a field of
+# Reported that the caret disappeared after every keystroke in a field of
 # the editor.  Cause: the parameters list is re-rendered on each keystroke in a
 # parameter Name/Options field, and a plain ``renderParameters()`` replaced the
 # inputs the user was typing in.  The re-render is now focus-preserving.
@@ -514,7 +514,7 @@ def test_name_and_options_edits_patch_the_row_in_place(repo_root):
     assert "updateParamNameCell(i)" in on_param
     assert "updateParamDefaultOptions(i)" in on_param
 
-    # The Name branch is the field Robin typed in: it must not re-render.
+    # The Name branch is the field that was typed in: it must not re-render.
     name_line = [ln for ln in on_param.splitlines() if 'f === "name"' in ln][0]
     assert "rerenderParameters" not in name_line
     options_line = [ln for ln in on_param.splitlines() if 'f === "options"' in ln][0]

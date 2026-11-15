@@ -289,7 +289,10 @@ function renderSettingField(v) {
         return `<div class="mb-4">${labelHtml}<select data-var="${esc(v.name)}" data-type="select" ${v.options_source ? `data-options-source="${esc(v.options_source)}"` : ''} data-current="${esc(String(val))}" class="${inputClass()}"><option value="">${esc(v.empty_label || '— Default —')}</option>${optsHtml}</select>${descHtml}</div>`;
     }
     if (v.type === 'textarea') {
-        return `<div class="mb-4">${labelHtml}<textarea data-var="${esc(v.name)}" data-type="textarea" rows="8" placeholder="${esc(String(v.default || ''))}" class="${inputClass()}">${esc(String(val))}</textarea>${descHtml}</div>`;
+        // `rows` and `monospace` are optional manifest hints (cookie dumps etc.).
+        const rows = esc(String(v.rows || 8));
+        const mono = v.monospace ? ' font-mono text-xs' : '';
+        return `<div class="mb-4">${labelHtml}<textarea data-var="${esc(v.name)}" data-type="textarea" rows="${rows}" spellcheck="false" placeholder="${esc(String(v.default || ''))}" class="${inputClass()}${mono}">${esc(String(val))}</textarea>${descHtml}</div>`;
     }
     if (v.allow_custom && Array.isArray(v.options) && v.options.length) {
         // Combobox: pick a known value, or choose "Custom…" to type any value.

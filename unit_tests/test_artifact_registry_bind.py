@@ -173,7 +173,7 @@ def test_bwrap_resolve_path_roundtrip_registry(tmp_path):
 
 def test_resolve_workspace_path_artifacts_maps_to_host_registry():
     from backend.tools._workspace import resolve_workspace_path, _SHARED_AGENTS_DIR
-    agent = {'id': 'rina', 'workspace': '/home/robin/dev/evonic/agents/rina',
+    agent = {'id': 'rina', 'workspace': '/srv/evonic/agents/rina',
              'sandbox_enabled': 1}
     resolved = resolve_workspace_path(
         agent, '/workspace/shared/agents/rina/artifacts/location-variations.md', '/workspace')
@@ -195,14 +195,14 @@ def test_resolve_workspace_path_artifacts_subagent_uses_parent():
 
 def test_resolve_workspace_path_non_artifacts_untouched():
     from backend.tools._workspace import resolve_workspace_path
-    agent = {'id': 'rina', 'workspace': '/home/robin/dev/evonic/agents/rina',
+    agent = {'id': 'rina', 'workspace': '/srv/evonic/agents/rina',
              'sandbox_enabled': 1}
     resolved = resolve_workspace_path(agent, '/workspace/pics/foo.png', '/workspace')
-    assert resolved == '/home/robin/dev/evonic/agents/rina/pics/foo.png'
+    assert resolved == '/srv/evonic/agents/rina/pics/foo.png'
     # Other agents' artifacts must NOT be hijacked to rina's registry
     other = resolve_workspace_path(
-        agent, '/workspace/shared/agents/siwa/artifacts/y.md', '/workspace')
-    assert other == '/home/robin/dev/evonic/agents/rina/shared/agents/siwa/artifacts/y.md'
+        agent, '/workspace/shared/agents/demo/artifacts/y.md', '/workspace')
+    assert other == '/srv/evonic/agents/rina/shared/agents/demo/artifacts/y.md'
 
 
 # ---------------------------------------------------------------------------

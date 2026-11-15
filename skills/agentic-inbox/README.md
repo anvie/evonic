@@ -76,7 +76,7 @@ Then set `API_KEY` as a Worker secret and add `Authorization: Bearer` support to
 → list_emails(unread_only=true, limit=5)
 → get_email(email_id="abc123")
 → reply_email(email_id="abc123", body="Got it, thanks!")
-→ send_email(from_mailbox="robin@evonic.dev", to="alice@example.com", subject="Hello", body="...")
+→ send_email(from_mailbox="agent@example.com", to="alice@example.com", subject="Hello", body="...")
 → delete_email(email_id="xyz789")
 ```
 

@@ -2,7 +2,7 @@
   "id": "kb_create_thumbnail_1",
   "name": "Create with thumbnail (HTML img)",
   "description": "An <img> tag for a subject must become that doc's thumbnail.",
-  "prompt": "EXISTING documents:\n(none yet)\n\nSOURCE:\nUser menambahkan foto profil rekannya, Dewi Anggraini Putri: <img src=\"https://cdn.example.com/dewi.webp\" alt=\"Dewi Anggraini Putri\" width=\"150\">. Dia seorang desainer produk di Nuwaira.\n\nReturn only the JSON object:",
+  "prompt": "EXISTING documents:\n(none yet)\n\nSOURCE:\nUser menambahkan foto profil rekannya, Dewi Anggraini Putri: <img src=\"https://cdn.example.com/dewi.webp\" alt=\"Dewi Anggraini Putri\" width=\"150\">. Dia seorang desainer produk di Acme Corp.\n\nReturn only the JSON object:",
   "expected": {
     "expect_actions": {
       "create": [
@@ -12,7 +12,7 @@
           "thumbnail": true
         },
         {
-          "title": "Nuwaira",
+          "title": "Acme Corp",
           "type": [
             "company",
             "organization"

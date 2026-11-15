@@ -67,7 +67,7 @@ def test_single_tool_call_multiline_value():
 MULTI_PARAM = """\
 <tool_call>
 <function=read_file>
-<parameter=path>agents/krasan_admin/SYSTEM.md</parameter>
+<parameter=path>agents/demo_admin/SYSTEM.md</parameter>
 <parameter=start_line>1</parameter>
 </function>
 </tool_call>"""
@@ -76,7 +76,7 @@ def test_multiple_params():
     calls = extract_qwen_tool_calls(MULTI_PARAM)
     assert calls is not None
     args = calls[0]['arguments']
-    assert args['path'] == 'agents/krasan_admin/SYSTEM.md'
+    assert args['path'] == 'agents/demo_admin/SYSTEM.md'
     assert args['start_line'] == '1'
 
 

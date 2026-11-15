@@ -42,7 +42,7 @@ The super agent's default system prompt lives in `defaults/super_agent_system_pr
 - `backend/tools/` — all tool implementations (bash, read_file, write_file, patch, etc.)
 - `backend/tools/registry.py` — tool registry; defines built-in tools and their factories
 - `backend/channels/` — channel adapters (Telegram, etc.)
-- `plugins/` — installable plugins (kanban, plugin_creator, auto_improver, etc.)
+- `plugins/` — installable plugins (kanban, plugin_creator, mcp_client, etc.)
 - `models/` — database layer: `db.py` (connection), `schema.py` (ORM models), `chat.py`, `chatlog.py` (per-agent SQLite)
 
 ### Agent State
@@ -106,7 +106,7 @@ falls back to SQLite FTS5 keyword search when evomem is unavailable.
 
 It follows an Extract → Deduplicate → Store → Retrieve pipeline:
 
-1. **Extract** — after conversation summarization, an LLM extracts salient facts (names, preferences, decisions, context) AND named entities + relationships (e.g. "Robin works_at Acme").
+1. **Extract** — after conversation summarization, an LLM extracts salient facts (names, preferences, decisions, context) AND named entities + relationships (e.g. "Alice works_at Acme").
 2. **Deduplicate** — new facts are compared against existing memories; duplicates are skipped, contradictions supersede the old fact (in both FTS5 and evomem).
 3. **Store** — facts become structured markdown pages (notes linked to entities via `[[wiki-links]]`); entities and typed edges build the knowledge graph. A dual-write to FTS5 is kept as a safety net.
 4. **Retrieve** — at the start of each turn, relevant memories are retrieved using the user's latest message and injected into the context under a `## Memory` heading.

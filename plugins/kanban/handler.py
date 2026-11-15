@@ -602,7 +602,7 @@ def _pre_set_execute_mode(agent_id: str, task: dict, sdk=None) -> bool:
     title = task['title']
     description = task.get('description', '')
 
-    # @FIXME(robin): we need to make the agent state in execution mode directly without this workaround.
+    # @FIXME(maintainer): we need to make the agent state in execution mode directly without this workaround.
     # Create a plan file for the task so set_mode('execute') won't reject
     plan_dir = os.path.join(PLUGIN_DIR, '..', '..', 'plan')
     os.makedirs(plan_dir, exist_ok=True)

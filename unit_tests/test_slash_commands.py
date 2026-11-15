@@ -369,7 +369,7 @@ def test_unknown_command_still_falls_through_when_wildcard_disabled():
 
 
 def test_wildcard_disabled_with_help_off_suppresses_help_and_other_commands():
-    """Regression: nuwaira_deck (is_super=0, disabled='*', help_enabled=0) leaked /model."""
+    """Regression: demo_deck (is_super=0, disabled='*', help_enabled=0) leaked /model."""
     row = _agent_row(disabled="*", help_enabled=0)
 
     assert _execute_model(row) is COMMAND_SUPPRESSED

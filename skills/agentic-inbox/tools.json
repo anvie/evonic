@@ -21,7 +21,7 @@
         "properties": {
           "mailbox": {
             "type": "string",
-            "description": "Filter by mailbox address (e.g. 'robin@evonic.dev'). Leave empty to list across all mailboxes."
+            "description": "Filter by mailbox address (e.g. 'agent@example.com'). Leave empty to list across all mailboxes."
           },
           "unread_only": {
             "type": "boolean",
@@ -67,7 +67,7 @@
         "properties": {
           "from_mailbox": {
             "type": "string",
-            "description": "The mailbox address to send from (e.g. 'robin@evonic.dev'). Must be a configured mailbox with write capability."
+            "description": "The mailbox address to send from (e.g. 'agent@example.com'). Must be a configured mailbox with write capability."
           },
           "to": {
             "type": "string",

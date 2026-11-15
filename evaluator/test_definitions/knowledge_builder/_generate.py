@@ -98,11 +98,11 @@ SCENARIOS = [
         "name": "Create person doc",
         "description": "Author a person doc (and the company they work at) from a simple fact.",
         "existing": [],
-        "source": "User bertemu Budi, seorang backend engineer di Nuwaira.",
+        "source": "User bertemu Budi, seorang backend engineer di Acme Corp.",
         "expected": {
             "expect_actions": {"create": [
                 {"title": "Budi", "type": "person"},
-                {"title": "Nuwaira", "type": ["company", "organization"]},
+                {"title": "Acme Corp", "type": ["company", "organization"]},
             ]},
             "require_links": False,
         },
@@ -164,11 +164,11 @@ SCENARIOS = [
         "source": ("User menambahkan foto profil rekannya, Dewi Anggraini Putri: "
                    "<img src=\"https://cdn.example.com/dewi.webp\" "
                    "alt=\"Dewi Anggraini Putri\" width=\"150\">. "
-                   "Dia seorang desainer produk di Nuwaira."),
+                   "Dia seorang desainer produk di Acme Corp."),
         "expected": {
             "expect_actions": {"create": [
                 {"title": "Dewi Anggraini Putri", "type": "person", "thumbnail": True},
-                {"title": "Nuwaira", "type": ["company", "organization"]},
+                {"title": "Acme Corp", "type": ["company", "organization"]},
             ]},
             "require_links": False,
         },
@@ -243,8 +243,8 @@ SCENARIOS = [
         "name": "Update existing person",
         "description": "A new fact about a known person updates that doc by slug.",
         "existing": [{"slug": "budi", "title": "Budi",
-                      "description": "Backend engineer at Nuwaira."}],
-        "source": "Budi baru saja dipromosikan menjadi engineering lead di Nuwaira.",
+                      "description": "Backend engineer at Acme Corp."}],
+        "source": "Budi baru saja dipromosikan menjadi engineering lead di Acme Corp.",
         "expected": {
             "expect_actions": {"update": [
                 {"title": "Budi", "type": "person", "slug": "budi"},

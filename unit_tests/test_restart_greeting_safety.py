@@ -52,14 +52,14 @@ class TestRestartGreetingSafety(unittest.TestCase):
             result = super_agent_tools._exec_restart({}, agent_context={
                 'id': 'nawa',
                 'channel_id': None,
-                'user_id': 'robin',
+                'user_id': 'demo-user',
                 'session_id': 'session-1',
             })
 
         payload = json.loads(stored['restart_greeting_needed'])
         self.assertEqual(payload, {
             'channel_id': None,
-            'external_user_id': 'robin',
+            'external_user_id': 'demo-user',
             'session_id': 'session-1',
         })
         self.assertEqual(result, {'result': 'Restarting...'})

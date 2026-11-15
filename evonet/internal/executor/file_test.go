@@ -264,8 +264,8 @@ func TestWriteFileB64_AbsolutePath(t *testing.T) {
 }
 
 func TestResolvePathAbs_Absolute(t *testing.T) {
-	got := resolvePathAbs("/Users/robin/Downloads/file", "/some/workdir/")
-	if got != "/Users/robin/Downloads/file" {
+	got := resolvePathAbs("/Users/demo/Downloads/file", "/some/workdir/")
+	if got != "/Users/demo/Downloads/file" {
 		t.Errorf("got %q, want absolute path returned as-is", got)
 	}
 }
@@ -278,8 +278,8 @@ func TestResolvePathAbs_Relative(t *testing.T) {
 }
 
 func TestResolvePathAbs_Cleans(t *testing.T) {
-	got := resolvePathAbs("/Users/robin/./Downloads/../Downloads/file", "/ignored/")
-	if got != "/Users/robin/Downloads/file" {
+	got := resolvePathAbs("/Users/demo/./Downloads/../Downloads/file", "/ignored/")
+	if got != "/Users/demo/Downloads/file" {
 		t.Errorf("got %q, want cleaned path", got)
 	}
 }

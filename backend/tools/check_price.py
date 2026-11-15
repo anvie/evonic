@@ -18,10 +18,10 @@ def execute(agent, args: dict) -> dict:
 
     # TODO: replace with actual DB/API lookup
     PRICE_MAP = {
-        "Bismo": {"weekday": 820000, "weekend": 900000, "cap": "2 dewasa, 2 anak"},
-        "Sindoro": {"weekday": 1800000, "weekend": 1900000, "cap": "4 dewasa, 2 anak"},
-        "Pakuwojo": {"weekday": 820000, "weekend": 900000, "cap": "2 dewasa, 2 anak"},
-        "Semeru": {"weekday": 1650000, "weekend": 1800000, "cap": "4 dewasa, 2 anak"},
+        "Room A": {"weekday": 850000, "weekend": 950000, "cap": "2 dewasa, 2 anak"},
+        "Room B": {"weekday": 1200000, "weekend": 1350000, "cap": "4 dewasa, 2 anak"},
+        "Room C": {"weekday": 850000, "weekend": 950000, "cap": "2 dewasa, 2 anak"},
+        "Room D": {"weekday": 1100000, "weekend": 1250000, "cap": "4 dewasa, 2 anak"},
     }
 
     rate = PRICE_MAP.get(unit_name)

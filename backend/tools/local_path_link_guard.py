@@ -4,7 +4,7 @@ files via local filesystem paths as clickable links in chat.
 
 Agents sometimes reference files they just created with markdown links such as
 ``[guide](docs/api-integration-guide.md)`` or
-``[guide](/home/evonic/evonic/plugins/.../guide.md)`` (or ``sandbox:`` /
+``[guide](/srv/evonic/plugins/.../guide.md)`` (or ``sandbox:`` /
 ``file:`` URIs). Such links render in the web chat as ``<a href="/home/...">``,
 which resolves to a 404 on the platform origin — the user can never open the
 file. The only supported file-delivery mechanisms are:

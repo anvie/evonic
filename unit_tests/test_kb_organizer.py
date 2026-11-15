@@ -220,14 +220,14 @@ def test_rename_doc(brain):
     """evomem_writer.rename_doc fixes a misspelled doc name, keeping the old name
     as an alias and preserving the body."""
     W.upsert_doc(AGENT, title="Yonix", doc_type="person", description="teman",
-                 body="Yonix teman SD [[Robin]].")
+                 body="Yonix teman SD [[Demo]].")
     new = W.rename_doc(AGENT, "yonix", "Yondix")
     assert new == "yondix"
     assert not os.path.exists(f"agents/{AGENT}/kb/yonix.md")     # old file gone
     d = W.read_doc(AGENT, "yondix")
     assert d["frontmatter"]["title"] == "Yondix"
     assert "Yonix" in (d["frontmatter"].get("aliases") or [])   # old name → alias
-    assert "teman SD [[Robin]]" in d["body"]                     # body preserved
+    assert "teman SD [[Demo]]" in d["body"]                     # body preserved
 
 
 def test_author_docs_rename_action(brain):

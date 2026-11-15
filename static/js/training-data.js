@@ -164,7 +164,7 @@ function _formatToolArgs(obj) {
  */
 function _mapDomainToCategory(domain) {
     const mapping = {
-        'krasan_villa': 'availability',
+        'villa_demo': 'availability',
         'booking': 'booking',
         'pricing': 'price',
         'tool_calling': 'tool_calling'

@@ -192,12 +192,12 @@ def test_entity_coverage(ev):
     """Producing all expected entities scores higher than missing one."""
     expect = {"expect_actions": {"create": [
         {"title": "Budi", "type": "person"},
-        {"title": "Nuwaira", "type": ["company", "organization"]}]}}
+        {"title": "Acme Corp", "type": ["company", "organization"]}]}}
     full = json.dumps({"docs": [
         {"action": "create", "title": "Budi", "type": "person", "description": "Engineer.",
-         "body": "Budi adalah backend engineer di [[Nuwaira]]."},
-        {"action": "create", "title": "Nuwaira", "type": "company", "description": "Company.",
-         "body": "Nuwaira adalah perusahaan tempat [[Budi]] bekerja."},
+         "body": "Budi adalah backend engineer di [[Acme Corp]]."},
+        {"action": "create", "title": "Acme Corp", "type": "company", "description": "Company.",
+         "body": "Acme Corp adalah perusahaan tempat [[Budi]] bekerja."},
     ]})
     partial = json.dumps({"docs": [
         {"action": "create", "title": "Budi", "type": "person", "description": "Engineer.",
@@ -206,7 +206,7 @@ def test_entity_coverage(ev):
     full_r = ev.evaluate(full, expect, level=1)
     partial_r = ev.evaluate(partial, expect, level=1)
     assert full_r.details["missing_entities"] == []
-    assert "Nuwaira" in partial_r.details["missing_entities"]
+    assert "Acme Corp" in partial_r.details["missing_entities"]
     assert full_r.score > partial_r.score
 
 

@@ -105,15 +105,15 @@ def test_legacy_dormant_status_renders_as_preserved_snippet():
 
 def test_root_label_is_dynamic_but_id_stays_stable():
     ms = _session()
-    mermaid = render_map(ms.cmp, 'Aisyah Krasan')
+    mermaid = render_map(ms.cmp, 'Demo Agent')
     # display label = agent name; mermaid node ID stays identifier-safe
-    assert 'Agent((Aisyah Krasan))' in mermaid
+    assert 'Agent((Demo Agent))' in mermaid
     assert 'Agent -->|create report| A1' in mermaid
     # default fallback
     assert 'Agent((Agent))' in render_map(ms.cmp)
     # state render threads the name through
-    rendered = ms.render(cmp_enabled=True, agent_name='Aisyah')
-    assert 'Agent((Aisyah))' in rendered
+    rendered = ms.render(cmp_enabled=True, agent_name='Demo Agent')
+    assert 'Agent((Demo Agent))' in rendered
 
 
 def test_mermaid_label_sanitized():

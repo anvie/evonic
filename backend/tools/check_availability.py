@@ -10,8 +10,8 @@ def execute(agent: dict, args: dict) -> dict:
             "end_date": end_date,
             "result": {
                 "available": [
-                    "Sindoro",
-                    "Bismo"
+                    "Room A",
+                    "Room B"
                     ]
                 }
             }
