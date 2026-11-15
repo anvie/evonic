@@ -123,6 +123,27 @@ class UsageDB:
             """, params).fetchone()
             return dict(row)
 
+    def agent_total_tokens(self, agent_id: str, since_iso: Optional[str] = None) -> Optional[int]:
+        """Sum total_tokens for one agent since a given ISO timestamp (UTC).
+
+        Returns None on any error so callers can fail open. Used by the
+        per-agent daily token limiter (backend/agent_runtime/runtime.py).
+        """
+        try:
+            if since_iso:
+                where, params = " AND created_at >= ?", (since_iso,)
+            else:
+                where, params = "", ()
+            with self._connect() as conn:
+                row = conn.execute(
+                    f"SELECT COALESCE(SUM(total_tokens), 0) AS total FROM token_usage "
+                    f"WHERE agent_id = ?{where}",
+                    (agent_id, *params),
+                ).fetchone()
+                return int(row['total']) if row else 0
+        except Exception:
+            return None
+
     def snapshot(self, since: Optional[str] = None, *, rollup_subagents: bool = False,
                  bucket: str = 'hour', agent_limit: int = 30) -> Dict[str, Any]:
         """Return all dashboard aggregates from one filtered SQLite snapshot."""
