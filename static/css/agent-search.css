@@ -67,8 +67,6 @@ html.dark .qs-mark { background: rgb(129 140 248 / .28); }
 .qs-badge { flex: none; padding: .125rem .5rem; border-radius: 9999px; border: 1px solid transparent; font-size: .6875rem; font-weight: 600; line-height: 1rem; }
 .qs-badge-cur { background: rgb(99 102 241 / .12); color: #4338ca; border-color: rgb(99 102 241 / .3); }
 html.dark .qs-badge-cur { background: rgb(129 140 248 / .16); color: #c7d2fe; border-color: rgb(129 140 248 / .35); }
-.qs-badge-off { background: rgb(148 163 184 / .14); color: #64748b; border-color: rgb(148 163 184 / .3); }
-html.dark .qs-badge-off { color: #94a3b8; }
 .qs-go { display: inline-flex; flex: none; color: #6366f1; opacity: 0; transform: translateX(-4px); transition: opacity .12s, transform .12s; }
 html.dark .qs-go { color: #a5b4fc; }
 .qs-go svg { width: 16px; height: 16px; }

@@ -298,6 +298,51 @@ def should_suppress_builtin(agent_id: str, tool_name: str, tool_def: dict) -> bo
     return False
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Tool Suppressor Registry
+# ══════════════════════════════════════════════════════════════════════════════
+# A suppressor states a standing reason why a tool must not exist for an agent,
+# as opposed to a tool guard, which blocks one individual call. Core consults it
+# twice: while building the tool list (so the model never sees the tool) and
+# immediately before the tool would run (so a list built earlier in the turn, or
+# a prefetched one, cannot slip through).
+#   suppressor(agent_id: str, tool_name: str) -> Optional[str]
+# Return a short human-readable reason to hide the tool, or None to keep it.
+# The first non-empty reason wins; a raising suppressor is logged and ignored so
+# a broken optional hook never hides a working tool.
+
+_tool_suppressors: list = []
+
+
+def register_tool_suppressor(fn: Callable) -> None:
+    """Register a tool suppressor."""
+    if fn not in _tool_suppressors:
+        _tool_suppressors.append(fn)
+
+
+def unregister_tool_suppressor(fn: Callable) -> None:
+    """Remove a previously registered tool suppressor."""
+    if fn in _tool_suppressors:
+        _tool_suppressors.remove(fn)
+
+
+def suppressed_tool_reason(agent_id: str, tool_name: str) -> Optional[str]:
+    """Return the first reason a plugin gives for hiding *tool_name*.
+
+    Suppressors run in registration order and the first non-empty reason wins,
+    so a later plugin cannot widen access a safety-oriented plugin removed.
+    """
+    for suppressor in list(_tool_suppressors):
+        try:
+            reason = suppressor(agent_id, tool_name)
+        except Exception:
+            _logger.exception("Plugin tool suppressor failed for %s", tool_name)
+            continue
+        if reason:
+            return str(reason)
+    return None
+
+
 # ═══════════════════════════════════════════════════════════════════
 # State Handler Registry
 # ═══════════════════════════════════════════════════════════════════

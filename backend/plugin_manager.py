@@ -39,6 +39,9 @@ from backend.plugin_hooks import (  # noqa: F401
     # Builtin Suppressor
     register_builtin_suppressor, unregister_builtin_suppressor,
     should_suppress_builtin,
+    # Tool Suppressor
+    register_tool_suppressor, unregister_tool_suppressor,
+    suppressed_tool_reason,
     # State Handler
     register_state_handler, unregister_state_handler,
     _unload_plugin_state_handlers, dispatch_state, get_state_summary,

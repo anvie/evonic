@@ -2016,6 +2016,41 @@ def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data
     return None  # label not handled
 
 
+# ─── Interactive-question suppressor ──────────────────────────────────────────
+
+def _ask_user_suppressor(agent_id: str, tool_name: str) -> Optional[str]:
+    """Hide ``ask_user`` while autopilot works a task with nobody watching.
+
+    Autopilot means the agent starts and runs a task on its own. An open question
+    card has no timeout, so the run would stall until somebody happens to look at
+    the chat. The tool is therefore suppressed while the agent has an active or
+    pending task, and only when autopilot is ON: with autopilot OFF the human is
+    present and approving the task, so asking a question is legitimate.
+    """
+    if tool_name != 'ask_user':
+        return None
+    if not _is_autopilot(agent_id):
+        return None
+
+    with _state_lock:
+        task_id = _active_tasks.get(agent_id) or _pending_tasks.get(agent_id)
+    if not task_id:
+        # After a restart the in-memory maps are empty while the board still
+        # holds the task as in-progress. Fall back to the durable row so the
+        # hole cannot reopen mid-task.
+        try:
+            from plugins.kanban.db import kanban_db
+            task = kanban_db.get_active_task_for_agent(agent_id)
+            if task:
+                task_id = task.get('id')
+        except Exception:
+            pass
+    if not task_id:
+        return None
+    return (f'autopilot is working on kanban task #{task_id} without a human '
+            'watching, so no one can answer a question')
+
+
 # ─── Tool guard ───────────────────────────────────────────────────────────────
 
 def _tool_guard(agent_id: str, tool_name: str, args: dict) -> Optional[dict]:
@@ -2533,12 +2568,14 @@ try:
     from backend.plugin_manager import (
         register_state_handler,
         register_tool_guard,
+        register_tool_suppressor,
         register_message_interceptor,
         register_builtin_suppressor,
         register_busy_message_provider,
     )
     register_state_handler('kanban', _state_handler)
     register_tool_guard(_tool_guard)
+    register_tool_suppressor(_ask_user_suppressor)
     register_message_interceptor(_message_interceptor)
     register_builtin_suppressor(_builtin_suppressor)
     register_busy_message_provider(_busy_message_provider)

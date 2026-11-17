@@ -31,7 +31,7 @@ from backend.version import minimum_version_error
 from backend.zip_validator import copytree_ignore
 from backend.plugin_hooks import (
     _tool_guards, _message_interceptors, _builtin_suppressors,
-    _turn_gates, _tool_result_gates,
+    _tool_suppressors, _turn_gates, _tool_result_gates,
     _state_handlers, _unload_plugin_state_handlers,
 )
 
@@ -330,6 +330,7 @@ class PluginManager:
 
         # Unregister side-channel and synchronous lifecycle hooks
         for registry in (_tool_guards, _message_interceptors, _builtin_suppressors,
+                         _tool_suppressors,
                          _turn_gates, _tool_result_gates):
             registry[:] = [fn for fn in registry
                            if not getattr(fn, '__module__', '').startswith(prefix)]

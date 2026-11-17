@@ -105,6 +105,29 @@ def _is_safe_redirect_url(target):
     return target.startswith('/')
 
 
+def _login_context(error=None, notice=None) -> dict:
+    """Return the context shared by every ``/login`` render branch.
+
+    ``password_configured`` and ``setup_required`` let the page explain an
+    instance that has no admin password yet, instead of showing a form that can
+    never succeed. Every ``render_template('login.html', ...)`` call site goes
+    through here so none of them can forget the flags.
+    """
+    from models.db import db
+
+    try:
+        setup_required = not db.has_super_agent()
+    except Exception:
+        setup_required = False
+    return {
+        'turnstile_site_key': config.TURNSTILE_SITE_KEY,
+        'error': error,
+        'notice': notice,
+        'password_configured': bool(config.ADMIN_PASSWORD_HASH),
+        'setup_required': setup_required,
+    }
+
+
 @auth_bp.route('/login', methods=['GET'])
 def login_page():
     if session.get('authenticated'):
@@ -117,10 +140,7 @@ def login_page():
     notice = None
     if request.args.get('ready'):
         notice = 'Setup complete. Sign in with the password you just created.'
-    return render_template('login.html',
-                           turnstile_site_key=config.TURNSTILE_SITE_KEY,
-                           error=None,
-                           notice=notice)
+    return render_template('login.html', **_login_context(notice=notice))
 
 
 @auth_bp.route('/login', methods=['POST'])
@@ -135,9 +155,10 @@ def login_submit():
 
     if _is_rate_limited(ip):
         _audit_fail('rate_limited')
-        return render_template('login.html',
-                               turnstile_site_key=config.TURNSTILE_SITE_KEY,
-                               error='Too many login attempts. Please wait 15 minutes.'), 429
+        return render_template(
+            'login.html',
+            **_login_context(error='Too many login attempts. Please wait 15 minutes.'),
+        ), 429
 
     password = request.form.get('password', '')
     turnstile_token = request.form.get('cf-turnstile-response', '')
@@ -159,28 +180,32 @@ def login_submit():
             ts_data = ts_res.json()
             if not ts_data.get('success'):
                 _audit_fail('captcha_failed')
-                return render_template('login.html',
-                                       turnstile_site_key=config.TURNSTILE_SITE_KEY,
-                                       error='Captcha verification failed. Please try again.')
+                return render_template(
+                    'login.html',
+                    **_login_context(error='Captcha verification failed. Please try again.'),
+                )
         except Exception:
             _audit_fail('captcha_error')
-            return render_template('login.html',
-                                   turnstile_site_key=config.TURNSTILE_SITE_KEY,
-                                   error='Captcha verification error. Please try again.')
+            return render_template(
+                'login.html',
+                **_login_context(error='Captcha verification error. Please try again.'),
+            )
 
     if not config.ADMIN_PASSWORD_HASH:
         _audit_fail('no_admin_configured')
-        return render_template('login.html',
-                               turnstile_site_key=config.TURNSTILE_SITE_KEY,
-                               error='Admin password not configured.')
+        return render_template(
+            'login.html',
+            **_login_context(error='Admin password not configured.'),
+        )
 
     from werkzeug.security import check_password_hash
     if not check_password_hash(config.ADMIN_PASSWORD_HASH, password):
         _audit_fail('invalid_password')
         _record_failed_attempt(ip)
-        return render_template('login.html',
-                               turnstile_site_key=config.TURNSTILE_SITE_KEY,
-                               error='Invalid password.')
+        return render_template(
+            'login.html',
+            **_login_context(error='Invalid password.'),
+        )
 
     _clear_attempts(ip)
 
