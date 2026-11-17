@@ -341,3 +341,8 @@ agent_templates/*
 !agent_templates/pentester.json
 !agent_templates/reverse_engineer.json
 !agent_templates/sysadmin.json
+
+# -------------------------------
+# Skill binaries (downloaded at runtime, per-install)
+# -------------------------------
+skills/*/bin/
