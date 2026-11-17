@@ -334,7 +334,8 @@ window.settingsModels = {
                 {},
             );
             if (result.success) {
-                if (window.toast) toast.success(this._probeSummary(result) || "Connected!", 4000);
+                if (result.probe) console.debug("[decision-probe]", result.probe);
+                if (window.toast) toast.success(this._probeToastMessage(result, "Connection successful"), 4000);
             } else {
                 if (window.toast) toast.error("Failed: " + (result.error || "Unknown error"), 6000);
             }
@@ -346,11 +347,19 @@ window.settingsModels = {
         }
     },
 
-    _probeSummary(result) {
-        const probe = result && result.probe;
-        if (!probe) return "";
-        const latency = probe.latency_ms != null ? probe.latency_ms + " ms \u00b7 " : "";
-        return (probe.model ? probe.model + " \u00b7 " : "") + latency + (probe.summary || "");
+    // Toast copy stays user-facing: no endpoint URL, contract, or probe field values.
+    // Full probe detail is rendered inside the connection-test modal via _renderProbe().
+    _probeToastMessage(result, fallback) {
+        const probe = (result && result.probe) || null;
+        const rawLatency =
+            probe && probe.latency_ms != null
+                ? probe.latency_ms
+                : result && result.latency_ms != null
+                  ? result.latency_ms
+                  : null;
+        const latency = rawLatency != null && isFinite(Number(rawLatency)) ? Math.round(Number(rawLatency)) : null;
+        const base = (fallback || "Connection successful").trim();
+        return latency != null ? base + " \u00b7 " + latency + " ms" : base;
     },
 
     testDecisionForm(btn) {
@@ -534,10 +543,8 @@ window.settingsModels = {
                 baseUrl ? { base_url: baseUrl } : {},
             );
             if (result.success) {
-                const summary = this._probeSummary(result);
-                if (window.toast) {
-                    toast.success(summary ? result.message + " \u00b7 " + summary : result.message || "Connected!", 4000);
-                }
+                if (result.probe) console.debug("[provider-probe]", result.probe);
+                if (window.toast) toast.success(this._probeToastMessage(result, "Connection successful"), 4000);
             } else {
                 if (window.toast) toast.error("Failed: " + (result.error || "Unknown error"), 6000);
             }
