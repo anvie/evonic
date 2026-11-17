@@ -1388,7 +1388,7 @@ html.dark #chat-messages time { color: #8b97ab; }
 
 /* ── Dark theme: colours inside the chat message box follow the login palette (slate surfaces, indigo accent) ── */
 html.dark #chat-messages .chat-prose.rounded-2xl { background: rgb(30 41 59 / .7); border-color: rgb(148 163 184 / .18); }   /* agent reply bubble */
-html.dark #chat-messages .rounded-2xl.bg-indigo-500 { background: #4f46e5; }                                              /* your message: the login's accent */
+html.dark #chat-messages .rounded-2xl.bg-indigo-500 { background: #3730a3; }                                              /* your message: the login's accent */
 html.dark #chat-messages .rounded-2xl.dark\:bg-gray-800 { background: rgb(30 41 59 / .7); border-color: rgb(148 163 184 / .18); }   /* Sessions: human side */
 html.dark .chat-prose code { background: rgb(10 15 28 / .55); }
 html.dark .chat-prose pre { background: rgb(10 15 28 / .72); border: 1px solid rgb(148 163 184 / .14); }

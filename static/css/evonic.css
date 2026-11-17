@@ -1305,7 +1305,7 @@ html.dark #chat-messages time { color: #8b97ab; }
 }
 
 html.dark #chat-messages .chat-prose.rounded-2xl { background: rgb(30 41 59 / .7); border-color: rgb(148 163 184 / .18); }   
-html.dark #chat-messages .rounded-2xl.bg-indigo-500 { background: #4f46e5; }                                              
+html.dark #chat-messages .rounded-2xl.bg-indigo-500 { background: #3730a3; }                                              
 html.dark #chat-messages .rounded-2xl.dark\:bg-gray-800 { background: rgb(30 41 59 / .7); border-color: rgb(148 163 184 / .18); }   
 html.dark .chat-prose code { background: rgb(10 15 28 / .55); }
 html.dark .chat-prose pre { background: rgb(10 15 28 / .72); border: 1px solid rgb(148 163 184 / .14); }
