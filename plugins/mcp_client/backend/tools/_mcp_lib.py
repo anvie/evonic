@@ -58,10 +58,22 @@ def content_to_text(content: List[dict]) -> str:
     for item in content or []:
         if not isinstance(item, dict):
             continue
-        if item.get("type") == "text":
+        itype = item.get("type")
+        if itype == "text":
             parts.append(item.get("text", ""))
+        elif itype == "resource":
+            res = item.get("resource") or {}
+            uri = res.get("uri", "")
+            if "text" in res:
+                parts.append(f"[resource {uri}]\n{res.get('text', '')}")
+            else:
+                parts.append(f"[resource {uri} ({res.get('mimeType', 'binary')}) blob omitted]")
+        elif itype == "resource_link":
+            label = item.get("name") or item.get("title") or ""
+            desc = f" - {item['description']}" if item.get("description") else ""
+            parts.append(f"[resource_link {label} {item.get('uri', '')}{desc}]")
         else:
-            parts.append(f"[{item.get('type', 'unknown')} content omitted]")
+            parts.append(f"[{itype or 'unknown'} content omitted]")
     return "\n".join(parts)
 
 
@@ -107,10 +119,13 @@ class _MCPServer:
             self._ensure_started_locked(startup_timeout)
             result = self._request(
                 "tools/call", {"name": tool, "arguments": arguments}, timeout)
-            return {
+            out = {
                 "content": result.get("content") or [],
                 "isError": bool(result.get("isError")),
             }
+            if result.get("structuredContent") is not None:
+                out["structuredContent"] = result["structuredContent"]
+            return out
 
     def _ensure_started_locked(self, startup_timeout: float) -> None:
         raise NotImplementedError
