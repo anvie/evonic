@@ -254,7 +254,7 @@ window.settingsModels = {
                         <button type="button" class="mcd-copy" aria-label="Copy registry id" data-id="${e(id)}" onclick="settingsModels.copyId(this)">${I.copy}</button></div>` : ""}
                 </div>
                 <div class="mcd-acts">
-                    ${decision ? "" : `<button type="button" class="mcd-ib mcd-test" aria-label="Ping ${e(name)}" title="Ping: send a short prompt to check this model answers" onclick="settingsModels.pingModel('${id}', this)">${I.bolt}</button>`}
+                    ${decision ? `<button type="button" class="mcd-ib mcd-test" aria-label="Test ${e(name)}" title="Test the connection source of this decision model" onclick="settingsModels.testDecision('${id}', this)">${I.bolt}</button>` : `<button type="button" class="mcd-ib mcd-test" aria-label="Ping ${e(name)}" title="Ping: send a short prompt to check this model answers" onclick="settingsModels.pingModel('${id}', this)">${I.bolt}</button>`}
                     <div class="mcd-menuwrap">
                         <button type="button" class="mcd-ib" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" onclick="settingsModels.toggleMenu(event, this)">${I.dots}</button>
                         <div class="mcd-menu" role="menu">
@@ -319,6 +319,31 @@ window.settingsModels = {
             btn.classList.remove("is-busy");
             btn.disabled = false;
         }
+    },
+
+    // Decision models answer structured profiles only, so test their connection source.
+    async testDecision(modelId, btn) {
+        const model = this.models.find((m) => m.id === modelId);
+        if (!model || btn.classList.contains("is-busy")) return;
+        btn.classList.add("is-busy");
+        btn.disabled = true;
+        try {
+            await this.testProvider(model.provider, model.base_url);
+        } finally {
+            btn.classList.remove("is-busy");
+            btn.disabled = false;
+        }
+    },
+
+    testDecisionForm(btn) {
+        const provider = document.getElementById("model-provider").value;
+        if (!provider) {
+            if (window.toast) toast.error("Select a provider first", 3000);
+            return;
+        }
+        btn.disabled = true;
+        this.testProvider(provider, document.getElementById("model-base-url").value.trim())
+            .finally(() => { btn.disabled = false; });
     },
 
     // ---- popup menus / small helpers ----
@@ -483,12 +508,12 @@ window.settingsModels = {
         }
     },
 
-    async testProvider(providerId) {
+    async testProvider(providerId, baseUrl) {
         if (window.toast) toast.show("Testing provider connection…", "info", 2000);
         try {
             const result = await apiPost(
                 "/api/providers/" + encodeURIComponent(providerId) + "/test",
-                {},
+                baseUrl ? { base_url: baseUrl } : {},
             );
             if (result.success) {
                 if (window.toast) toast.success(result.message || "Connected!", 3000);
@@ -673,6 +698,9 @@ window.settingsModels = {
         const decision = document.getElementById("model-type").value === "decision";
         document.querySelectorAll("#model-form [data-llm-only]").forEach((el) => {
             el.classList.toggle("hidden", decision);
+        });
+        document.querySelectorAll("#model-form [data-decision-only]").forEach((el) => {
+            el.classList.toggle("hidden", !decision);
         });
     },
 

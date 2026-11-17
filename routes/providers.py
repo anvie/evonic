@@ -219,6 +219,11 @@ def api_test_provider(provider_id):
     if not provider:
         return jsonify({"error": "Provider not found"}), 404
 
+    # A model may override the provider's connection source; test that instead.
+    override = ((request.get_json(silent=True) or {}).get("base_url") or "").strip()
+    if override:
+        provider = {**provider, "endpoint": override}
+
     if provider.get("api_format") == "claude_cli":
         from backend.provider.claude_cli import get_status
         status = get_status(force=True)
