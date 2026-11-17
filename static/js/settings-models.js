@@ -824,6 +824,40 @@ window.settingsModels = {
 
     /* ---- Connection test ---- */
 
+    _renderProbe(probe) {
+        const answers = Array.isArray(probe.answers) ? probe.answers : [];
+        let html =
+            '<div class="mt-2 text-green-700 dark:text-green-400 text-sm">' +
+            "<strong>Contract:</strong> " +
+            this._escapeHtml(probe.contract || "decision") +
+            " \u00b7 <strong>Model:</strong> " +
+            this._escapeHtml(probe.model || "-") +
+            " \u00b7 <strong>Latency:</strong> " +
+            (probe.latency_ms != null ? Number(probe.latency_ms) + " ms" : "-") +
+            "</div>";
+        if (answers.length > 0) {
+            html +=
+                '<ul class="mt-2 text-green-700 dark:text-green-400 text-sm list-disc pl-5">';
+            answers.forEach((answer) => {
+                const value =
+                    answer.value === true ? "yes" : answer.value === false ? "no" : answer.value;
+                const confidence =
+                    answer.confidence != null
+                        ? " \u2014 confidence " + Number(answer.confidence).toFixed(3)
+                        : "";
+                html +=
+                    "<li><code>" +
+                    this._escapeHtml(String(answer.field)) +
+                    "</code> = " +
+                    this._escapeHtml(String(value)) +
+                    this._escapeHtml(confidence) +
+                    "</li>";
+            });
+            html += "</ul>";
+        }
+        return html;
+    },
+
     _parseTestError(rawError) {
         if (!rawError) return { message: "Unknown error", detail: "" };
         const jsonMatch = rawError.match(
@@ -906,13 +940,17 @@ window.settingsModels = {
                 }
                 title.textContent = "Connection Successful";
                 title.className = "m-0 text-green-700 dark:text-green-400";
+                const probe = result.probe;
                 testStatus.innerHTML =
                     '<div class="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg">' +
                     '<div class="flex items-center gap-2 mb-3">' +
                     '<svg class="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' +
-                    '<span class="text-green-800 dark:text-green-300 font-semibold text-base">Model is reachable</span></div>' +
+                    '<span class="text-green-800 dark:text-green-300 font-semibold text-base">' +
+                    (probe ? "Decision model answered" : "Model is reachable") +
+                    "</span></div>" +
                     '<div class="text-green-700 dark:text-green-400 text-sm"><strong>Endpoint:</strong> ' +
                     this._escapeHtml(result.message) + "</div>" +
+                    (probe ? this._renderProbe(probe) : "") +
                     '<div class="text-green-600 dark:text-green-500 text-sm mt-1"><strong>Available models:</strong> ' +
                     result.available_models + "</div></div>";
             } else {

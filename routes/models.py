@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import requests
 from flask import Blueprint, jsonify, request
 
-from backend.tools.lib.model_routing_contracts import ContractValidationError, parse_capabilities
+from backend.tools.lib.model_routing_contracts import AdapterKey, ContractValidationError, parse_capabilities
 from models.db import db
 from models.mixins.models import LEGACY_MODEL_TYPES, MODEL_TYPES, normalize_model_type
 
@@ -361,6 +361,208 @@ def api_ping_model(model_id):
     return jsonify({"success": True, "latency_ms": latency, "reply": reply[:80]})
 
 
+_SYSTEMONE_PROBE_TIMEOUT = 15.0
+_SYSTEMONE_DETERMINISTIC_STATE = {
+    "statement": "The last invoice charged more than the amount quoted on the pricing page.",
+}
+
+
+def _systemone_probe_schema():
+    """Deterministic, provider-neutral probe schema for the native questions contract."""
+    from backend.tools.lib.decision_models import DecisionField, DecisionSchema, FieldKind
+
+    return DecisionSchema(
+        "decision-schema/v1",
+        (
+            DecisionField(
+                "is_negative",
+                FieldKind.BOOLEAN,
+                "True when the statement expresses dissatisfaction or a complaint.",
+            ),
+            DecisionField(
+                "category",
+                FieldKind.CHOICE,
+                "The topic the statement belongs to.",
+                choices=("billing", "technical", "other"),
+            ),
+        ),
+    )
+
+
+def _systemone_probe_invocation(invocation_profile: str):
+    from backend.tools.lib.decision_models import DecisionInvocation, DecisionProfileRef
+
+    return DecisionInvocation(
+        DecisionProfileRef(invocation_profile, "1"),
+        _systemone_probe_schema(),
+        dict(_SYSTEMONE_DETERMINISTIC_STATE),
+        policy_metadata={},
+        correlation_id=f"model-test:{invocation_profile}",
+    )
+
+
+def _systemone_diagnostic(endpoint: str, model: Dict[str, Any], invocation, timeout: float) -> Dict[str, Any]:
+    """One extra POST used only on failure, to recover the HTTP status the adapter hides."""
+    from backend.tools.lib.systemone_decision_adapter import lower_questions_request
+
+    payload = lower_questions_request(invocation, model.get("model_name"))
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if model.get("api_key"):
+        headers["Authorization"] = f"Bearer {model['api_key']}"
+    try:
+        response = requests.post(
+            endpoint, json=payload, headers=headers, timeout=timeout, allow_redirects=False
+        )
+    except requests.exceptions.Timeout:
+        return {"status_code": None, "timeout": True, "detail": f"no response within {timeout:g}s"}
+    except requests.exceptions.RequestException as exc:
+        return {"status_code": None, "detail": str(exc)[:300]}
+    detail = response.text[:300]
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            detail = str(error.get("message") or error.get("code") or detail)[:300]
+        elif error:
+            detail = str(error)[:300]
+        elif body.get("message"):
+            detail = str(body["message"])[:300]
+    return {"status_code": response.status_code, "detail": detail}
+
+
+def _systemone_failure_message(endpoint: str, diagnostic: Dict[str, Any], result) -> Dict[str, Any]:
+    """Translate a failed probe into an actionable message instead of a raw provider error."""
+    status_code = diagnostic.get("status_code")
+    detail = diagnostic.get("detail") or ""
+    if diagnostic.get("timeout"):
+        return {
+            "status_code": 408,
+            "error": f"SystemOne model did not answer within {detail} at {endpoint}.",
+        }
+    if status_code is None:
+        return {
+            "status_code": 502,
+            "error": (
+                f"The SystemOne service is not listening at {endpoint}. "
+                "The endpoint refused the connection or the route is down."
+            ),
+        }
+    if status_code in (502, 503, 504):
+        return {
+            "status_code": status_code,
+            "error": (
+                f"The SystemOne service is down at {endpoint} (HTTP {status_code}). "
+                "The route is reachable but no model is listening on the target port."
+            ),
+        }
+    if status_code == 400:
+        return {
+            "status_code": 400,
+            "error": f"SystemOne rejected the probe payload: {detail}",
+        }
+    if status_code == 404:
+        return {
+            "status_code": 404,
+            "error": (
+                f"The SystemOne endpoint path was not recognized: POST {endpoint} returned HTTP 404."
+            ),
+        }
+    if status_code == 401 or status_code == 403:
+        return {
+            "status_code": status_code,
+            "error": f"SystemOne rejected the credentials (HTTP {status_code}): {detail}",
+        }
+    error_code = result.error.code.value if getattr(result, "error", None) else "provider_error"
+    return {
+        "status_code": status_code,
+        "error": f"SystemOne probe failed at {endpoint} (HTTP {status_code}, {error_code}): {detail}",
+    }
+
+
+def _systemone_model_probe(model_id: str, model: Dict[str, Any]):
+    """Probe a native ``systemone.questions.v1`` model with its real decision contract."""
+    from backend.tools.lib.systemone_decision_adapter import SystemOneQuestionsDecisionAdapter
+
+    route = db.resolve_model_route(model_id) if hasattr(db, "resolve_model_route") else None
+    endpoint = (route.provider.endpoint if route else None) or model.get("base_url")
+    if not endpoint:
+        return jsonify({"success": False, "error": "No base_url configured", "status_code": 400}), 400
+
+    row_timeout = float(model.get("timeout") or _SYSTEMONE_PROBE_TIMEOUT)
+    timeout = min(row_timeout, _SYSTEMONE_PROBE_TIMEOUT)
+    invocation = _systemone_probe_invocation(model_id)
+    adapter_model = {
+        "id": model.get("id"),
+        "provider": model.get("provider"),
+        "model_name": model.get("model_name"),
+        "base_url": endpoint,
+        "endpoint": endpoint,
+        "api_key": model.get("api_key"),
+        "adapter_key": "systemone.questions.v1",
+        "timeout": timeout,
+    }
+    result = SystemOneQuestionsDecisionAdapter(adapter_model).decide(invocation)
+    answers = {field.key: field.value for field in result.fields}
+    if result.error is not None:
+        diagnostic = _systemone_diagnostic(endpoint, model, invocation, timeout)
+        failure = _systemone_failure_message(endpoint, diagnostic, result)
+        _logger.info(
+            "systemone probe failed model=%s endpoint=%s status=%s diagnostic=%s",
+            model_id,
+            endpoint,
+            diagnostic.get("status_code"),
+            (diagnostic.get("detail") or "")[:120],
+        )
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": failure["error"],
+                    "status_code": failure["status_code"],
+                    "latency_ms": result.timing.total_ms,
+                    "model": model.get("model_name"),
+                }
+            ),
+            failure["status_code"] if failure["status_code"] >= 400 else 502,
+        )
+
+    summary = ", ".join(
+        f"{field.key}={'yes' if field.value is True else 'no' if field.value is False else field.value}"
+        + (f" ({field.confidence:.2f})" if field.confidence is not None else "")
+        for field in result.fields
+    )
+    _logger.info("systemone probe ok model=%s endpoint=%s latency_ms=%s", model_id, endpoint, result.timing.total_ms)
+    return jsonify(
+        {
+            "success": True,
+            "message": f"SystemOne decision probe succeeded at {endpoint}",
+            "latency_ms": result.timing.total_ms,
+            "model": model.get("model_name"),
+            "answers": answers,
+            "probe": {
+                "contract": "systemone.questions.v1",
+                "endpoint": endpoint,
+                "model": model.get("model_name"),
+                "latency_ms": result.timing.total_ms,
+                "input_tokens": (result.provider.usage or {}).get("input_tokens") if result.provider else None,
+                "answers": [
+                    {
+                        "field": field.key,
+                        "value": field.value,
+                        "confidence": field.confidence,
+                        "candidates": [c.value for c in (field.candidates or ())],
+                    }
+                    for field in result.fields
+                ],
+                "summary": summary,
+            },
+        }
+    )
+
+
 @models_bp.route("/api/models/<path:model_id>/test", methods=["POST"])
 def api_test_model(model_id):
     """Test connection to model endpoint."""
@@ -390,6 +592,12 @@ def api_test_model(model_id):
             client = CodexClient(token, base_url)
             result = client.test_connection()
             return jsonify(result)
+
+        # Native decision models speak their own contract: a real decision probe
+        # replaces the OpenAI-style ``GET {base_url}/models`` health check, which
+        # does not exist under a ``/v1/systemone`` endpoint.
+        if model.get("adapter_key") == AdapterKey.SYSTEMONE_QUESTIONS_V1.value:
+            return _systemone_model_probe(model_id, model)
 
         # Try to reach the base URL
         base_url = model.get("base_url")
