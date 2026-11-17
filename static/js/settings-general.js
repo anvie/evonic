@@ -28,6 +28,7 @@ window.settingsGeneral = {
             }
             this._fill(general);
             await this._loadTwoFactorAuth();
+            await this._loadEvonetJoin();
             this._populateModelSelects(models, {
                 defaultModelId: defaultModel && defaultModel.model ? defaultModel.model.id : "",
                 defaultModelFallbackId: general.default_model_fallback_id || "",
@@ -54,6 +55,7 @@ window.settingsGeneral = {
             this._registerSpecialSaves();
             AutoSave.bind(pane);
             this._bindTwoFactorAuth();
+            this._bindEvonetJoin();
             // Repopulate model selects when the Models pane changes anything
             document.addEventListener("models:changed", async () => {
                 const models = await ModelsCache.get();
@@ -134,6 +136,103 @@ window.settingsGeneral = {
             } catch (error) {
                 toggle.checked = previous;
                 if (status) status.textContent = "Failed to save";
+                if (window.toast) toast.show(error.message, "error");
+            }
+        });
+    },
+
+    _evonetJoin: {token: "", serverUrl: ""},
+
+    _evonetJoinSnippets(token) {
+        const url = this._evonetJoin.serverUrl;
+        const script = "https://raw.githubusercontent.com/anvie/evonic/main/evonet/scripts/install.sh";
+        return {
+            oneliner: "curl -fsSL " + script + " | sh -s -- --server " + url + " --token " + token,
+            ansible: [
+                "- name: Install Evonet and join Evonic",
+                "  ansible.builtin.shell: |",
+                "    curl -fsSL " + script + " | sh -s -- --yes",
+                "  environment:",
+                "    EVONET_SERVER: " + url,
+                "    EVONET_JOIN_TOKEN: \"{{ evonet_join_token }}\"",
+                "  become: true",
+            ].join("\n"),
+        };
+    },
+
+    _renderEvonetJoin() {
+        const {token} = this._evonetJoin;
+        const input = document.getElementById("evonet-join-token");
+        if (input) input.value = token;
+        const masked = this._evonetJoinSnippets("ejt_••••••••");
+        const one = document.getElementById("evonet-join-snippet-oneliner");
+        const ans = document.getElementById("evonet-join-snippet-ansible");
+        if (one) one.textContent = masked.oneliner;
+        if (ans) ans.textContent = masked.ansible;
+    },
+
+    async _loadEvonetJoin() {
+        const toggle = document.getElementById("evonet-join-toggle");
+        if (!toggle) return;
+        const data = await apiGet("/api/settings/evonet-join");
+        if (!data || data.error) throw new Error((data && data.error) || "Failed to load Evonet join token");
+        this._evonetJoin = {token: data.token, serverUrl: data.server_url};
+        toggle.checked = !!data.enabled;
+        const details = document.getElementById("evonet-join-details");
+        if (details) details.classList.toggle("hidden", !data.enabled);
+        this._renderEvonetJoin();
+    },
+
+    _bindEvonetJoin() {
+        const toggle = document.getElementById("evonet-join-toggle");
+        if (!toggle || toggle.dataset.bound) return;
+        toggle.dataset.bound = "1";
+        const status = document.getElementById("evonet-join-status");
+        const details = document.getElementById("evonet-join-details");
+        const copy = async (text) => {
+            try {
+                await navigator.clipboard.writeText(text);
+                if (window.toast) toast.show("Copied", "success");
+            } catch (e) {
+                if (window.toast) toast.show("Copy failed", "error");
+            }
+        };
+        toggle.addEventListener("change", async () => {
+            const previous = !toggle.checked;
+            if (status) status.textContent = "Saving…";
+            try {
+                const data = await apiPut("/api/settings/evonet-join", {enabled: toggle.checked});
+                if (!data || !data.success) throw new Error((data && data.error) || "Failed to save");
+                if (details) details.classList.toggle("hidden", !data.enabled);
+                if (status) status.textContent = "Saved";
+            } catch (error) {
+                toggle.checked = previous;
+                if (status) status.textContent = "Failed to save";
+                if (window.toast) toast.show(error.message, "error");
+            }
+        });
+        document.getElementById("evonet-join-show").addEventListener("click", (e) => {
+            const input = document.getElementById("evonet-join-token");
+            const hidden = input.type === "password";
+            input.type = hidden ? "text" : "password";
+            e.target.textContent = hidden ? "Hide" : "Show";
+        });
+        document.getElementById("evonet-join-copy").addEventListener("click", () => copy(this._evonetJoin.token));
+        document.querySelectorAll("[data-evonet-copy]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const real = this._evonetJoinSnippets(this._evonetJoin.token);
+                copy(btn.dataset.evonetCopy.endsWith("ansible") ? real.ansible : real.oneliner);
+            });
+        });
+        document.getElementById("evonet-join-regenerate").addEventListener("click", async () => {
+            if (!confirm("Regenerate the join token? Scripts using the old token will stop working. Workplaces that already joined are not affected.")) return;
+            try {
+                const data = await apiPost("/api/settings/evonet-join/regenerate", {});
+                if (!data || !data.success) throw new Error((data && data.error) || "Failed to regenerate");
+                this._evonetJoin.token = data.token;
+                this._renderEvonetJoin();
+                if (window.toast) toast.show("Join token regenerated", "success");
+            } catch (error) {
                 if (window.toast) toast.show(error.message, "error");
             }
         });

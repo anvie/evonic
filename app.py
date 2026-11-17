@@ -767,7 +767,7 @@ def _close_db_connection(exc):
 def _csrf_exempt(path):
     """Return True if the path should skip CSRF validation."""
     if path in ('/login', '/logout', '/two-factor', '/setup',
-                '/api/health', '/api/connector/pair',
+                '/api/health', '/api/connector/pair', '/api/connector/join',
                 '/api/internal/skills/muktamar-agent/verify-token',
                 '/api/setup', '/api/setup/test-connection', '/api/setup/docker-status'):
         return True
@@ -851,6 +851,8 @@ def enforce_auth():
         return None  # Baileys sidecar calls this from localhost
     if request.path == '/api/connector/pair':
         return None  # Evonet pairing is unauthenticated (uses pairing code)
+    if request.path == '/api/connector/join':
+        return None  # Evonet join is unauthenticated (uses the global join token)
     if request.path.endswith('/download-binary') and request.path.startswith('/api/workplaces/'):
         return None  # Evonet binary download is unauthenticated (uses embedded connector_token)
     if request.path == '/ws/connector':

@@ -285,6 +285,79 @@ def api_cancel_pairing_code(workplace_id):
     return jsonify({'ok': True})
 
 
+def _valid_device_id(value):
+    try:
+        return str(uuid.UUID(value)) == value.lower()
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+@workplaces_bp.route('/api/connector/join', methods=['POST'])
+def api_connector_join():
+    """Self-enroll an Evonet client with the global join token (creates the workplace)."""
+    import hmac
+    data = request.get_json(silent=True) or {}
+    join_token = (data.get('join_token') or '').strip()
+    device_id = (data.get('device_id') or '').strip().lower()
+    device_name = (data.get('device_name') or 'unknown').strip()[:200]
+    platform = (data.get('platform') or 'unknown').strip()[:50]
+    version = (data.get('version') or '').strip()[:50]
+    name = (data.get('name') or '').strip()[:100] or device_name
+    workspace_path = (data.get('workspace_path') or '').strip()[:500]
+
+    stored = db.get_setting('evonet_join_token', '')
+    enabled = db.get_setting('evonet_join_enabled', '0') == '1'
+    if not (enabled and stored and join_token
+            and hmac.compare_digest(join_token.encode(), stored.encode())):
+        return jsonify({'error': 'Invalid join token or auto-register is disabled'}), 403
+    if not _valid_device_id(device_id):
+        return jsonify({'error': 'device_id must be a UUID'}), 400
+
+    prior = db.get_connector_by_device_id(device_id)
+    if prior:
+        # Rotating the token: drop any live connection that still uses the old one.
+        try:
+            from backend.workplaces.manager import workplace_manager
+            workplace_manager.disconnect(prior['workplace_id'])
+        except Exception:
+            pass
+
+    result = db.join_connector(
+        device_id=device_id,
+        connector_token='ect_' + secrets.token_hex(32),
+        name=name,
+        workspace_path=workspace_path,
+        device_name=device_name,
+        platform=platform,
+        version=version,
+    )
+    connector = result['connector']
+    workplace = db.get_workplace(result['workplace_id'])
+    workplace_name = workplace['name'] if workplace else name
+
+    try:
+        from backend.event_stream import event_stream
+        event_stream.emit('connector_paired', {
+            'workplace_id': result['workplace_id'],
+            'device_name': device_name,
+            'platform': platform,
+        })
+    except Exception:
+        pass
+
+    import config as _cfg
+    return jsonify({
+        'ok': True,
+        'created': result['created'],
+        'connector_token': connector['connector_token'],
+        'workplace_id': result['workplace_id'],
+        'workplace_name': workplace_name,
+        'home_id': result['workplace_id'],
+        'home_name': workplace_name,
+        'ws_port': getattr(_cfg, 'CONNECTOR_WS_PORT', 8081),
+    })
+
+
 # ---------------------------------------------------------------------------
 # API — Evonet connector pairing (called by the Evonet Go binary, no auth)
 # ---------------------------------------------------------------------------

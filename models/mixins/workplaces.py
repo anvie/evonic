@@ -173,6 +173,14 @@ class WorkplaceMixin:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def get_connector_by_device_id(self, device_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, workplace_id, connector_token, device_id, device_name, platform, version, last_seen_at, ip_addresses FROM tunnel_connectors WHERE device_id = ?", (device_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def get_connector_by_pairing_code(self, code: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -205,7 +213,7 @@ class WorkplaceMixin:
     def update_connector(self, connector_id: str, data: Dict[str, Any]) -> bool:
         allowed = {'connector_token', 'pairing_code', 'pairing_expires_at',
                    'device_name', 'platform', 'version', 'last_seen_at',
-                   'ip_addresses'}
+                   'ip_addresses', 'device_id'}
         updates = {k: v for k, v in data.items() if k in allowed}
         if not updates:
             return False
@@ -243,6 +251,40 @@ class WorkplaceMixin:
             'pairing_expires_at': expires_at,
         })
         return connector_id
+
+    def join_connector(self, device_id: str, connector_token: str, name: str,
+                       workspace_path: str, device_name: str, platform: str,
+                       version: str) -> Dict[str, Any]:
+        """Enroll a device via the join token. Idempotent per device_id.
+
+        Existing device: its connector token is rotated, workplace reused.
+        New device: a tunnel workplace and connector row are created.
+        Returns {'connector': <row>, 'workplace_id': str, 'created': bool}.
+        """
+        existing = self.get_connector_by_device_id(device_id)
+        if existing and self.get_workplace(existing['workplace_id']):
+            self.update_connector(existing['id'], {
+                'connector_token': connector_token,
+                'device_name': device_name,
+                'platform': platform,
+                'version': version,
+            })
+            return {'connector': self.get_connector(existing['id']),
+                    'workplace_id': existing['workplace_id'], 'created': False}
+        if existing:
+            self.delete_connector(existing['id'])
+        config = {'workspace_path': workspace_path} if workspace_path else {}
+        workplace_id = self.create_workplace({'name': name, 'type': 'tunnel', 'config': config})
+        connector_id = self.create_connector({
+            'workplace_id': workplace_id,
+            'connector_token': connector_token,
+            'device_name': device_name,
+            'platform': platform,
+            'version': version,
+        })
+        self.update_connector(connector_id, {'device_id': device_id})
+        return {'connector': self.get_connector(connector_id),
+                'workplace_id': workplace_id, 'created': True}
 
     def clear_pairing_code(self, workplace_id: str) -> None:
         existing = self.get_connector_by_workplace(workplace_id)

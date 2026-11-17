@@ -643,6 +643,43 @@ def api_two_factor_auth():
     })
 
 
+def _evonet_join_token():
+    """Return the global Evonet join token, generating it on first use."""
+    import secrets
+    token = db.get_setting('evonet_join_token', '')
+    if not token:
+        token = 'ejt_' + secrets.token_urlsafe(32)
+        db.set_setting('evonet_join_token', token)
+    return token
+
+
+@settings_bp.route('/api/settings/evonet-join', methods=['GET', 'PUT'])
+def api_evonet_join():
+    """Get or toggle Evonet auto-register (join token) enrollment."""
+    if request.method == 'PUT':
+        data = request.get_json(silent=True) or {}
+        enabled = '1' if data.get('enabled', False) else '0'
+        old_val = db.get_setting('evonet_join_enabled', '0')
+        db.set_setting('evonet_join_enabled', enabled)
+        _audit_setting_change('evonet_join_enabled', old_val, enabled)
+        return jsonify({'success': True, 'enabled': enabled == '1'})
+    return jsonify({
+        'enabled': db.get_setting('evonet_join_enabled', '0') == '1',
+        'token': _evonet_join_token(),
+        'server_url': request.host_url.rstrip('/'),
+    })
+
+
+@settings_bp.route('/api/settings/evonet-join/regenerate', methods=['POST'])
+def api_evonet_join_regenerate():
+    """Rotate the join token. Already-enrolled workplaces keep working."""
+    import secrets
+    token = 'ejt_' + secrets.token_urlsafe(32)
+    db.set_setting('evonet_join_token', token)
+    _audit_setting_change('evonet_join_token', 'previous', 'regenerated')
+    return jsonify({'success': True, 'token': token})
+
+
 @settings_bp.route('/api/settings/public-history', methods=['GET', 'PUT'])
 def api_public_history():
     """Get or set the public history page toggle."""

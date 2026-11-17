@@ -57,6 +57,8 @@ func main() {
 	switch subcommand {
 	case "pair":
 		err = cmd.RunPair(subargs)
+	case "join":
+		err = cmd.RunJoin(subargs)
 	case "start":
 		err = cmd.RunStart(subargs)
 	case "run":
@@ -127,6 +129,7 @@ func printUsage() {
 
 Usage:
   evonet pair    --code <CODE> --server <URL>   Pair with Evonic server
+  evonet join    --token <TOKEN> --server <URL> Auto-register with a join token
   evonet start                                  Connect (foreground, exits on disconnect)
   evonet run                                    Connect with auto-reconnect
   evonet status                                 Show pairing status

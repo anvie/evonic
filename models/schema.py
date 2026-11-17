@@ -1267,6 +1267,13 @@ class SchemaMixin:
             except sqlite3.OperationalError:
                 pass
 
+            # Migration: persistent client device id (Evonet join-token enrollment)
+            try:
+                cursor.execute("ALTER TABLE tunnel_connectors ADD COLUMN device_id TEXT")
+            except sqlite3.OperationalError:
+                pass
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tunnel_connectors_device ON tunnel_connectors(device_id)")
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_workplaces_type ON workplaces(type)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tunnel_connectors_workplace ON tunnel_connectors(workplace_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tunnel_connectors_token ON tunnel_connectors(connector_token)")

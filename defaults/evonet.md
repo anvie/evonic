@@ -64,6 +64,7 @@ Linux builds are always headless.
 
 | Command | Description |
 |---------|-------------|
+| `evonet join --token <TOKEN> --server <URL>` | Auto-register with the join token from System Settings (creates the workplace) |
 | `evonet pair --code <CODE> --server <URL>` | Pair with an Evonic server |
 | `evonet start` | Connect (foreground, exits on disconnect) |
 | `evonet run` | Connect with auto-reconnect (recommended) |

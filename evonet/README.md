@@ -162,10 +162,38 @@ evonet run   # auto-reconnect (recommended)
 evonet start # foreground, exits on disconnect
 ```
 
+## Auto-register with a Join Token
+
+Instead of creating a workplace in the UI first, an admin can enable **Evonet Join Token** in
+**System Settings**. Any Evonet that presents the token gets a workplace created automatically.
+Re-joining from the same device reuses its workplace (the device id is stored in
+`~/.config/evonet/device_id`). Regenerating the token does not disconnect workplaces that already joined.
+
+```bash
+evonet join --server https://your-evonic-server.com --token ejt_xxx [--name my-node] [--workdir /srv/work]
+evonet run
+```
+
+### One-line install
+
+Downloads the right release binary, verifies its checksum, joins, and installs a systemd (Linux) or
+launchd (macOS) service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/anvie/evonic/main/evonet/scripts/install.sh \
+  | sh -s -- --server https://your-evonic-server.com --token ejt_xxx
+```
+
+Missing values are prompted for when a terminal is available. For automation pass `--yes` and set
+`EVONET_SERVER` / `EVONET_JOIN_TOKEN` (keeps the token out of the process list). Other options:
+`--name`, `--workdir`, `--version <tag>`, `--no-service`. For many nodes see
+[`docs/ansible/install-evonet.yml`](docs/ansible/install-evonet.yml).
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `evonet join --token <TOKEN> --server <URL>` | Auto-register using the server's join token |
 | `evonet pair --code <CODE> --server <URL>` | Pair with an Evonic server |
 | `evonet start` | Connect (foreground, exits on disconnect) |
 | `evonet run` | Connect with automatic reconnection |
