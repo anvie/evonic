@@ -77,8 +77,8 @@ def test_manager_explorer_gets_own_agent_gate_but_shared_model_gate():
     parent_model = mgr._get_model_gate('evomodel')
     child_model = mgr._get_model_gate('evomodel')
     assert parent_model is child_model          # same model → same gate
-    parent_agent = mgr._get_agent_gate('aisyah')
-    child_agent = mgr._get_agent_gate('aisyah_explorer_1')
+    parent_agent = mgr._get_agent_gate('agent_a')
+    child_agent = mgr._get_agent_gate('agent_a_explorer_1')
     assert parent_agent is not child_agent      # distinct agent gates
 
 
@@ -92,15 +92,15 @@ def test_runtime_gates_explorer_on_its_configured_model():
     runtime._get_session_lock = MagicMock(return_value=threading.Lock())
     runtime._do_process = MagicMock(return_value={'response': 'ok'})
     agent = {
-        'id': 'aisyah_explorer_1',
-        '_db_agent_id': 'aisyah_explorer_1',
+        'id': 'agent_a_explorer_1',
+        '_db_agent_id': 'agent_a_explorer_1',
         'is_explorer': True,
         'model_id': 'explorer-model',
     }
-    ctx = SessionContext('session-1', '__agent__aisyah', None)
+    ctx = SessionContext('session-1', '__agent__agent_a', None)
 
     with patch('backend.agent_runtime.explorer.primary_model', return_value={'id': 'explorer-model'}), \
          patch('backend.agent_runtime.runtime.db.get_agent_model', return_value={'id': 'global-default'}):
         assert runtime._process_and_respond(agent, ctx) == {'response': 'ok'}
 
-    gate.assert_called_once_with('aisyah_explorer_1', 'explorer-model')
+    gate.assert_called_once_with('agent_a_explorer_1', 'explorer-model')

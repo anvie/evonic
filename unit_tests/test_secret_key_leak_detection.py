@@ -202,8 +202,8 @@ class TestFullGuardMissesKeyLeak:
     def test_send_agent_message_with_key_not_blocked_by_regex(self):
         """send_agent_message with key content — regex misses it."""
         result = injection_tool_guard(
-            "aisyah", "send_agent_message",
-            {"target_agent_id": "ferris", "message": KEY_LEAK_MESSAGE}
+            "agent_a", "send_agent_message",
+            {"target_agent_id": "agent_b", "message": KEY_LEAK_MESSAGE}
         )
         # Regex guard should pass (no PEM rule). ML may catch it if available.
         if result is not None and result.get("block"):
@@ -216,8 +216,8 @@ class TestFullGuardMissesKeyLeak:
     def test_benign_message_still_passes(self):
         """Benign content is not falsely flagged."""
         result = injection_tool_guard(
-            "aisyah", "send_agent_message",
-            {"target_agent_id": "ferris", "message": BENIGN_MESSAGE}
+            "agent_a", "send_agent_message",
+            {"target_agent_id": "agent_b", "message": BENIGN_MESSAGE}
         )
         assert result is None, f"Benign message should pass, got: {result}"
 

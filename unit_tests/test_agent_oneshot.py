@@ -118,7 +118,7 @@ def test_purge_removes_only_old_oneshot_sessions_of_that_sender(tmp_path):
 
 
 def test_ordinary_agent_to_agent_sessions_are_not_oneshot():
-    assert not agent_oneshot.is_oneshot_external_id('__agent__aisyah')
+    assert not agent_oneshot.is_oneshot_external_id('__agent__agent_a')
     assert not agent_oneshot.is_oneshot_external_id('web_user') and not agent_oneshot.is_oneshot_external_id(None)
 
 
@@ -161,7 +161,7 @@ def test_one_shot_sessions_are_not_turned_into_knowledge():
 
         def get_session_with_details(self, session_id):
             return {'oneshot': {'external_user_id': '__agent__oneshot__verifier_ab12'},
-                    'a2a': {'external_user_id': '__agent__aisyah'}}[session_id]
+                    'a2a': {'external_user_id': '__agent__agent_a'}}[session_id]
 
     def run(session_id):
         with patch('models.db.db', Db()), patch.object(mm, 'process_knowledge', lambda *a, **k: calls.append(session_id)), \

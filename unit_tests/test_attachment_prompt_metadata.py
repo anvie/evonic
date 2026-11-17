@@ -11,7 +11,7 @@ from models.db import db
 from routes.sessions import _process_upload
 
 
-def _upload_attachment(agent_id: str, session_id: str = 'aisyah-75433064'):
+def _upload_attachment(agent_id: str, session_id: str = 'agent_a-75433064'):
     body = b'authoritative attachment content\n'
     upload = FileStorage(
         stream=io.BytesIO(body),
@@ -55,7 +55,7 @@ def test_uploaded_attachment_id_reaches_model_message_and_resolves(tmp_path, mon
 
     assert attachment_id > 0
     assert f'Attachment ID: {attachment_id}' in model_message['content']
-    assert 'aisyah-75433064' in model_message['content']
+    assert 'agent_a-75433064' in model_message['content']
     assert 'Attachment ID: 75433064' not in model_message['content']
 
     result = read_attachment.execute(
@@ -68,7 +68,7 @@ def test_persisted_message_metadata_repairs_legacy_attachment_text(tmp_path):
     """SQLite-restored messages expose the ID even when old text omitted it."""
     attachment_info = _attachment_info(
         184,
-        tmp_path / 'data' / 'attachments' / 'aisyah' / 'aisyah-75433064' / 'note.txt',
+        tmp_path / 'data' / 'attachments' / 'agent_a' / 'agent_a-75433064' / 'note.txt',
         2048,
     )
     persisted_message = {
@@ -79,7 +79,7 @@ def test_persisted_message_metadata_repairs_legacy_attachment_text(tmp_path):
 
     model_message = context.build_message_entry(
         persisted_message,
-        {'id': 'aisyah', 'audio_enabled': False},
+        {'id': 'agent_a', 'audio_enabled': False},
     )
 
     assert model_message['content'].startswith('[Attached file: note.txt]')

@@ -136,8 +136,8 @@ class TestInjectionToolGuard:
     def test_pem_key_via_send_agent_message_blocked(self):
         """PEM key sent via send_agent_message is blocked."""
         result = injection_tool_guard(
-            "aisyah", "send_agent_message",
-            {"target_agent_id": "ferris", "message": KEY_LEAK_MESSAGE}
+            "agent_a", "send_agent_message",
+            {"target_agent_id": "agent_b", "message": KEY_LEAK_MESSAGE}
         )
         assert result is not None, \
             "Key leak via send_agent_message should be blocked"
@@ -147,7 +147,7 @@ class TestInjectionToolGuard:
     def test_readfile_outside_ssh_not_blocked(self):
         """read_file outside ~/.ssh/ is NOT blocked (no path guard)."""
         result = injection_tool_guard(
-            "aisyah", "read_file",
+            "agent_a", "read_file",
             {"file_path": "/home/user/dev/evonic/keys/evonic"}
         )
         assert result is None, \
@@ -156,8 +156,8 @@ class TestInjectionToolGuard:
     def test_benign_message_passes(self):
         """Benign message still passes (no false positive)."""
         result = injection_tool_guard(
-            "aisyah", "send_agent_message",
-            {"target_agent_id": "ferris", "message": BENIGN}
+            "agent_a", "send_agent_message",
+            {"target_agent_id": "agent_b", "message": BENIGN}
         )
         assert result is None, \
             f"Benign message should pass, got {result}"
@@ -257,8 +257,8 @@ class TestMLAlwaysOnBlocking:
         """KEY LEAK IS NOW BLOCKED when ML is available (always-on)."""
         _skip_if_no_ml()
         result = injection_tool_guard(
-            "aisyah", "send_agent_message",
-            {"target_agent_id": "ferris", "message": KEY_LEAK_MESSAGE}
+            "agent_a", "send_agent_message",
+            {"target_agent_id": "agent_b", "message": KEY_LEAK_MESSAGE}
         )
         assert result is not None, \
             "Key leak should be blocked when ML is always-on"

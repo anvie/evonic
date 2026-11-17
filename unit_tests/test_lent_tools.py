@@ -50,7 +50,7 @@ def store(monkeypatch):
     from models.db import db
 
     grants = {}
-    session = {'external_user_id': '__agent__privnt', 'agent_id': 'aisyah'}
+    session = {'external_user_id': '__agent__privnt', 'agent_id': 'agent_a'}
 
     def grant_session_tools(session_id, tool_ids, owner, agent_id=None, granted_by=None,
                             ttl_seconds=259200):
@@ -92,7 +92,7 @@ def names(tools):
 
 
 def test_without_metadata_nothing_is_lent(plugins):
-    context, tools = {'id': 'aisyah'}, [{'type': 'function', 'function': {'name': 'remember'}}]
+    context, tools = {'id': 'agent_a'}, [{'type': 'function', 'function': {'name': 'remember'}}]
     for metadata in (None, {}, {'lend_tools': []}, {'lend_tools': [QUEUE]}, {'lend_tools_from': OWNER}):
         ids, out = _apply_lent_tools(context, ['remember'], list(tools), metadata)
         assert ids == ['remember']
@@ -101,7 +101,7 @@ def test_without_metadata_nothing_is_lent(plugins):
 
 
 def test_the_lent_tool_is_advertised_and_authorized_for_the_turn(plugins):
-    context = {'id': 'aisyah'}
+    context = {'id': 'agent_a'}
     ids, tools = _apply_lent_tools(context, ['remember'], [], lend([QUEUE]))
     assert ids == ['remember', QUEUE]
     assert context['assigned_tool_ids'] == ['remember', QUEUE]        # the guard reads this
@@ -109,7 +109,7 @@ def test_the_lent_tool_is_advertised_and_authorized_for_the_turn(plugins):
 
 
 def test_a_tool_of_another_plugin_is_refused(plugins):
-    context = {'id': 'aisyah'}
+    context = {'id': 'agent_a'}
     ids, tools = _apply_lent_tools(context, ['remember'], [], lend(['plugin:garden:water']))
     assert ids == ['remember'] and tools == []
     assert 'assigned_tool_ids' not in context
@@ -172,47 +172,47 @@ def test_a_failing_grant_never_breaks_the_turn(plugins, store, monkeypatch):
         raise RuntimeError('database is locked')
 
     monkeypatch.setattr(db, 'grant_session_tools', boom)
-    ids, tools = _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='aisyah')
+    ids, tools = _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='agent_a')
     assert ids == [QUEUE] and names(tools) == ['privnt_digest_queue']    # the turn goes on
 
 
 def test_a_session_grant_is_honoured_on_a_later_turn(plugins, store):
-    first = _apply_lent_tools({'id': 'aisyah'}, [], [], lend([QUEUE]),
-                              session_id='s1', agent_id='aisyah')
+    first = _apply_lent_tools({'id': 'agent_a'}, [], [], lend([QUEUE]),
+                              session_id='s1', agent_id='agent_a')
     assert first[0] == [QUEUE]
     assert set(store['grants']['s1']) == {QUEUE}                        # remembered for the session
 
-    context = {'id': 'aisyah'}
-    ids, tools = _apply_lent_tools(context, ['remember'], [], {}, session_id='s1', agent_id='aisyah')
+    context = {'id': 'agent_a'}
+    ids, tools = _apply_lent_tools(context, ['remember'], [], {}, session_id='s1', agent_id='agent_a')
     assert ids == ['remember', QUEUE] and names(tools) == ['privnt_digest_queue']
     assert context['assigned_tool_ids'] == ['remember', QUEUE]
 
     # ... and another session of the same agent has nothing
-    other, tools = _apply_lent_tools({}, [], [], {}, session_id='s2', agent_id='aisyah')
+    other, tools = _apply_lent_tools({}, [], [], {}, session_id='s2', agent_id='agent_a')
     assert other == [] and tools == []
 
 
 def test_an_expired_grant_is_gone(plugins, store):
-    _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='aisyah')
+    _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='agent_a')
     store['grants']['s1'][QUEUE]['expires_at'] = time.time() - 1
-    ids, tools = _apply_lent_tools({}, [], [], {}, session_id='s1', agent_id='aisyah')
+    ids, tools = _apply_lent_tools({}, [], [], {}, session_id='s1', agent_id='agent_a')
     assert ids == [] and tools == []
 
 
 def test_a_human_session_cannot_hold_a_grant(plugins, store):
     store['session']['external_user_id'] = '628123456789@s.whatsapp.net'
-    ids, tools = _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='aisyah')
+    ids, tools = _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='agent_a')
     assert ids == [QUEUE] and names(tools) == ['privnt_digest_queue']    # this turn only
     assert store['grants'] == {}                                        # never remembered
 
-    later = _apply_lent_tools({}, [], [], {}, session_id='s1', agent_id='aisyah')
+    later = _apply_lent_tools({}, [], [], {}, session_id='s1', agent_id='agent_a')
     assert later == ([], [])
 
 
 def test_a_disabled_plugin_takes_its_lent_tools_away(plugins, store):
-    _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='aisyah')
+    _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='agent_a')
     plugins['enabled'] = False
-    ids, tools = _apply_lent_tools({}, [], [], {}, session_id='s1', agent_id='aisyah')
+    ids, tools = _apply_lent_tools({}, [], [], {}, session_id='s1', agent_id='agent_a')
     assert ids == [] and tools == []
     assert store['grants']['s1'] == {}                                  # the dead grant is dropped
 
@@ -220,6 +220,6 @@ def test_a_disabled_plugin_takes_its_lent_tools_away(plugins, store):
 def test_a_grant_can_be_revoked(plugins, store):
     from backend.agent_runtime import session_tools
 
-    _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='aisyah')
-    assert session_tools.revoke('s1', 'aisyah') == 1
-    assert _apply_lent_tools({}, [], [], {}, session_id='s1', agent_id='aisyah') == ([], [])
+    _apply_lent_tools({}, [], [], lend([QUEUE]), session_id='s1', agent_id='agent_a')
+    assert session_tools.revoke('s1', 'agent_a') == 1
+    assert _apply_lent_tools({}, [], [], {}, session_id='s1', agent_id='agent_a') == ([], [])

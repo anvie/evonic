@@ -5,9 +5,9 @@ KB markdown files on disk and index them, then assert the Obsidian-style graph:
 inline ``[[links]]`` resolved by title across folders, collections (session/group
 folders + index.md), and dangling links.
 
-Base data mirrors one of aisyah's conversations (Jakarta / Monumen Nasional /
+Base data mirrors one of a real agent's conversations (Jakarta / Monumen Nasional /
 Andi Wijaya). The only thing mocked is the authoring LLM call — its JSON output
-is fixed to a realistic aisyah-derived shape so the test is deterministic; every
+is fixed to a realistic representative shape so the test is deterministic; every
 file write, ``sync``, and graph query below is real.
 
 Isolation: ``monkeypatch.chdir(tmp_path)`` makes the evomem knowledge root
@@ -31,7 +31,7 @@ from backend.agent_runtime import memory_manager as M
 pytestmark = pytest.mark.skipif(
     not is_available(), reason="evomem binary not available")
 
-AGENT = "aisyah_kb_test"
+AGENT = "agent_a_kb_test"
 
 
 @pytest.fixture

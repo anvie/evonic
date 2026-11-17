@@ -41,9 +41,9 @@ def run(client, tool='echo_args', plugin='sample', **body):
 
 
 def test_the_tool_runs_with_the_arguments_and_sees_the_chosen_agent_as_its_caller(client):
-    res = run(client, args={'text': 'hi'}, agent_id='aisyah')
+    res = run(client, args={'text': 'hi'}, agent_id='agent_a')
     assert res.status_code == 200
-    assert res.get_json() == {'result': {'caller': 'aisyah', 'args': {'text': 'hi'}}}
+    assert res.get_json() == {'result': {'caller': 'agent_a', 'args': {'text': 'hi'}}}
 
 
 def test_the_caller_defaults_to_a_test_agent_and_no_arguments_is_fine(client):
