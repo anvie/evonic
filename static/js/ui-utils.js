@@ -316,7 +316,7 @@
         options = options || {};
         var valueFor = options.valueFor || function (model) { return model.id; };
         var labelFor = options.labelFor || function (model) {
-            return model.name + (model.model_name ? ' (' + model.model_name + ')' : '');
+            return model.name;
         };
         var providerFor = options.providerFor || function (model) { return model.provider || 'Other'; };
         // Chat pickers list LLMs only; decision pickers pass kind: 'decision'.

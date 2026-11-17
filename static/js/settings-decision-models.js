@@ -95,14 +95,9 @@ window.decisionModels = {
     isBuiltin(key) { return ["safety.command", "agent.task_complexity", "agent.path_boundary", "agent.goal_completion"].includes(key); },
     escape(value) { const el = document.createElement("div"); el.textContent = value == null ? "" : String(value); return el.innerHTML; },
 
-    // Registry ids are frozen at creation time: `generate_model_id` runs once and
-    // `update_model` never recomputes it, so a renamed model keeps its original
-    // `provider/model_name` id. Label with the live provider and upstream model
-    // name instead - that is the part of the row the endpoint actually receives.
+    // Label with the model name only; ids and upstream names stay out of pickers.
     modelLabel(model) {
-        const name = model.name || model.model_name || model.id || "";
-        const upstream = [model.provider, model.model_name].filter(Boolean).join(" · ");
-        return upstream ? `${name} (${upstream})` : String(name);
+        return String(model.name || model.model_name || model.id || "");
     },
 
     modelOptions(selected, includeEmpty) {
