@@ -1057,6 +1057,7 @@ html.dark #tab-chat.chat-fullscreen {
 .scroll-to-bottom-btn.hidden {
     display: none;
 }
+html.dark .scroll-to-bottom-btn { color: #1e1b4b; }
 
 
 /* Dark mode: form inputs */
