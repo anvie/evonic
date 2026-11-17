@@ -321,18 +321,36 @@ window.settingsModels = {
         }
     },
 
-    // Decision models answer structured profiles only, so test their connection source.
+    // Decision models answer structured profiles only: probe the model itself so the
+    // request exercises its real wire contract instead of a discovery route it lacks.
     async testDecision(modelId, btn) {
         const model = this.models.find((m) => m.id === modelId);
         if (!model || btn.classList.contains("is-busy")) return;
         btn.classList.add("is-busy");
         btn.disabled = true;
         try {
-            await this.testProvider(model.provider, model.base_url);
+            const result = await apiPost(
+                "/api/models/" + encodeURIComponent(modelId) + "/test",
+                {},
+            );
+            if (result.success) {
+                if (window.toast) toast.success(this._probeSummary(result) || "Connected!", 4000);
+            } else {
+                if (window.toast) toast.error("Failed: " + (result.error || "Unknown error"), 6000);
+            }
+        } catch (error) {
+            if (window.toast) toast.error("Connection error: " + error.message, 5000);
         } finally {
             btn.classList.remove("is-busy");
             btn.disabled = false;
         }
+    },
+
+    _probeSummary(result) {
+        const probe = result && result.probe;
+        if (!probe) return "";
+        const latency = probe.latency_ms != null ? probe.latency_ms + " ms \u00b7 " : "";
+        return (probe.model ? probe.model + " \u00b7 " : "") + latency + (probe.summary || "");
     },
 
     testDecisionForm(btn) {
@@ -516,9 +534,12 @@ window.settingsModels = {
                 baseUrl ? { base_url: baseUrl } : {},
             );
             if (result.success) {
-                if (window.toast) toast.success(result.message || "Connected!", 3000);
+                const summary = this._probeSummary(result);
+                if (window.toast) {
+                    toast.success(summary ? result.message + " \u00b7 " + summary : result.message || "Connected!", 4000);
+                }
             } else {
-                if (window.toast) toast.error("Failed: " + (result.error || "Unknown error"), 5000);
+                if (window.toast) toast.error("Failed: " + (result.error || "Unknown error"), 6000);
             }
         } catch (error) {
             if (window.toast) toast.error("Connection error: " + error.message, 5000);

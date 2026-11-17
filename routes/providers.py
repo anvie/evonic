@@ -235,6 +235,19 @@ def api_test_provider(provider_id):
     if adapter is None or not base_url:
         return jsonify({"success": False, "error": "Provider has an invalid endpoint or adapter configuration"}), 400
 
+    # Native decision providers expose no discovery route (``GET {base_url}/models``
+    # answers 404), so probe them with a real, minimal decision request instead.
+    if adapter.key is AdapterKey.SYSTEMONE_QUESTIONS_V1:
+        from backend.tools.lib import systemone_probe
+
+        payload, status = systemone_probe.run_probe(
+            base_url,
+            model_name=provider.get("model_name"),
+            api_key=provider.get("api_key"),
+            label=f"provider:{provider_id}",
+        )
+        return jsonify(payload), status
+
     # This is a synthetic discovery probe; it never submits a production prompt.
     url = f"{base_url}{adapter.discovery_path()}"
     api_format = provider.get("api_format", "openai")  # legacy auth bridge only
