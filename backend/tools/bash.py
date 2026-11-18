@@ -387,7 +387,7 @@ def test_execute():
     passed += 1
 
     print('Test 7: Timeout enforcement')
-    r = execute(agent, {'script': 'sleep 999', 'timeout': 2})
+    r = execute(agent, {'script': 'sleep 8', 'timeout': 2})
     assert 'timed out' in r.get('error', '').lower() or r.get('exit_code', 0) != 0, r
     passed += 1
 
