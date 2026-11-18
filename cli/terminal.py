@@ -1,5 +1,5 @@
 """
-`evonic terminal <agent-id>` — interactive chat room with an agent.
+`evonic chat <agent-id>` — interactive chat room with an agent.
 
 Thin client of the running server: it reuses the web chat endpoints (send,
 history, session, approve, stop) and the realtime SSE stream, authenticating
@@ -117,12 +117,12 @@ class _Stream(threading.Thread):
 
 
 class Terminal:
-    def __init__(self, agent, base, token):
+    def __init__(self, agent, base, token, model_label="default"):
         from rich.console import Console
         self.agent = agent
         self.agent_id = agent["id"]
         self.name = agent.get("name") or self.agent_id
-        self.model = agent.get("model_id") or agent.get("default_model_id") or "default"
+        self.model = model_label
         self.base = base
         self.headers = {"Authorization": f"Bearer {token}"}
         self.console = Console()
@@ -405,7 +405,7 @@ def run_terminal(agent_id):
     from cli.commands import _api_base_url, _get_db
 
     if not sys.stdin.isatty():
-        print("Error: `evonic terminal` needs an interactive terminal.")
+        print("Error: `evonic chat` needs an interactive terminal.")
         sys.exit(1)
     try:
         import rich  # noqa: F401
@@ -432,4 +432,5 @@ def run_terminal(agent_id):
         print(f"Error: Evonic server is not reachable at {base}. Start it with: ./evonic start")
         sys.exit(1)
 
-    Terminal(agent, base, config.cli_api_token()).start()
+    model = (agent.get("model_id") and db.get_model_by_id(agent["model_id"])) or db.get_default_model()
+    Terminal(agent, base, config.cli_api_token(), (model or {}).get("name") or "default").start()
