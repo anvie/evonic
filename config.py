@@ -178,6 +178,16 @@ if not _SECRET_KEY_ENV:
         "all encrypted cookies can be forged."
     )
 
+
+def cli_api_token():
+    """Local token the `evonic terminal` CLI sends as a Bearer credential.
+
+    Derived from SECRET_KEY so the server and CLI agree without extra state.
+    """
+    import hashlib
+    import hmac
+    return hmac.new(_SECRET_KEY_ENV.encode(), b"evonic-cli", hashlib.sha256).hexdigest()
+
 SECRET_KEY = _SECRET_KEY_ENV
 HOST = os.getenv("HOST", "0.0.0.0")
 # Peers allowed to set X-Forwarded-* headers (comma-separated IPs/CIDRs). Requests

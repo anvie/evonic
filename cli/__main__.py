@@ -397,6 +397,14 @@ def main():
         help="Model override for the new agent (optional, uses skillset default)",
     )
 
+    # --- terminal ---
+    terminal_parser = subparsers.add_parser(
+        "terminal",
+        help="Chat with an agent in the terminal",
+        description="Open an interactive chat session with an agent. Requires the server to be running.",
+    )
+    terminal_parser.add_argument("agent_id", help="Agent ID to chat with")
+
     # --- agent ---
     agent_parser = subparsers.add_parser(
         "agent",
@@ -980,6 +988,9 @@ def main():
                 description=args.description,
                 model=args.model,
             )
+    elif args.command == "terminal":
+        from cli.terminal import run_terminal
+        run_terminal(args.agent_id)
     elif args.command == "agent":
         if args.agent_command is None:
             agent_parser.print_help()

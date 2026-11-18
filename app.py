@@ -779,12 +779,27 @@ def _csrf_exempt(path):
     return False
 
 
+_CLI_TOKEN_PATHS = re.compile(
+    r'^/api/(agents/[^/]+/chat(/(session|approve))?|realtime/stream|sessions/[^/]+/stop)$'
+)
+
+
+def _cli_token_ok():
+    """True when the request carries the local CLI Bearer token on an allowed path."""
+    header = request.headers.get('Authorization', '')
+    if not header.startswith('Bearer ') or not _CLI_TOKEN_PATHS.match(request.path):
+        return False
+    return secrets.compare_digest(header[7:].strip(), config.cli_api_token())
+
+
 @app.before_request
 def csrf_protect():
     """Double-submit cookie CSRF protection for all state-changing requests."""
     if request.method in ('GET', 'HEAD', 'OPTIONS'):
         return None
     if _csrf_exempt(request.path):
+        return None
+    if _cli_token_ok():
         return None
     if app.testing or os.environ.get('PYTEST_CURRENT_TEST'):
         return None
@@ -884,7 +899,7 @@ def enforce_auth():
         return redirect('/setup')
 
     # --- Normal auth enforcement (super agent exists) ---
-    if session.get('authenticated'):
+    if session.get('authenticated') or _cli_token_ok():
         return None
     # Allow public history access if enabled (read-only routes only)
     if db.get_setting('public_history', '0') == '1':

@@ -14,3 +14,6 @@ tiktoken>=0.7
 tomli>=2.0
 # optional: document (PDF/Office) -> Markdown conversion for read_attachment
 firecrawl-anydoc>=0.1.6
+# terminal chat UI (./evonic terminal)
+rich>=13.7
+prompt_toolkit>=3.0

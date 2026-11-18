@@ -171,6 +171,7 @@ Create and manage agents via the web UI (`/agents`) or CLI:
 ./evonic agent enable my_bot
 ./evonic agent disable my_bot
 ./evonic agent remove my_bot
+./evonic terminal my_bot   # chat with an agent in the terminal
 ```
 
 ---
