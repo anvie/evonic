@@ -1057,7 +1057,6 @@ html.dark #tab-chat.chat-fullscreen {
 .scroll-to-bottom-btn.hidden {
     display: none;
 }
-html.dark .scroll-to-bottom-btn { color: #1e1b4b; }
 
 
 /* Dark mode: form inputs */
@@ -1702,3 +1701,8 @@ nav .nav-dd-menu a.nav-dd-current { color: #667eea; }
   .nav-dd-menu { position: static; min-width: 0; max-height: none; margin: 0 0 .25rem 2.25rem; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
   nav#site-nav .nav-dd-menu a.nav-dd-item { display: block; padding: .5rem .75rem; font-size: .875rem; }
 }
+
+/* Gruvbox Dark rotates the indigo accent to a light gold, so white text/icons on filled buttons wash out: use a dark foreground */
+html[data-theme-preset="gruvbox-dark"] :is(.ag-btn-primary, .ev-btn-primary, .btn-primary, .scroll-to-bottom-btn, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700),
+html[data-theme-preset="gruvbox-dark"] #chat-composer:not(.is-bash) .chat-send-pill { color: #1e1b4b; }
+html[data-theme-preset="gruvbox-dark"] :is(.ag-btn-primary, .ev-btn-primary, .btn-primary, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700) :is(.text-white, .ev-kbd-btn) { color: #1e1b4b; text-shadow: none; }
