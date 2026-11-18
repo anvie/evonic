@@ -32,6 +32,12 @@ html.dark .ag-card { border-color: rgb(148 163 184 / .16); background: #1e2939; 
 html.dark .ag-card:hover { border-color: rgb(129 140 248 / .5); box-shadow: 0 14px 34px -18px rgb(0 0 0 / .7); }
 .ag-card:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
 .ag-card-top { display: flex; align-items: flex-start; gap: .875rem; }
+/* Agents grid card: the avatar is a square block on the left edge of the card */
+.ag-card-media { display: grid; grid-template-columns: 7rem minmax(0, 1fr); align-items: stretch; gap: 0; padding: 0; overflow: hidden; }
+.ag-card-media .ag-media { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.ag-card-media .ag-media .ag-avatar { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; border-radius: 0; object-fit: cover; object-position: center; }
+.ag-card-media .ag-body { display: flex; flex-direction: column; gap: .5rem; min-width: 0; padding: .875rem 1rem; }
+.ag-card-media .ag-card-top { gap: .5rem; }
 .ag-avatar { width: 2.75rem; height: 2.75rem; flex: none; border-radius: 9999px; object-fit: cover; background: rgb(99 102 241 / .14); }
 .ag-title { flex: 1 1 auto; min-width: 0; }
 .ag-name-row { display: flex; align-items: center; gap: .375rem; min-width: 0; }
@@ -185,3 +191,7 @@ html.dark .ag-row-desc { color: #94a3b8; }
 .ag-row:hover .ag-icon-btn, .ag-row:focus-within .ag-icon-btn { opacity: 1; }
 @media (hover: none) { .ag-row .ag-icon-btn { opacity: 1; } }
 @media (max-width: 639.98px) { .ag-row { padding: .625rem .875rem; gap: .75rem; } .ag-row-avatar { width: 2.75rem; height: 2.75rem; } .ag-row-main::after { right: -.875rem; } }
+
+/* Keep the media card edge-to-edge (the responsive block above re-adds card padding) */
+.ag-card.ag-card-media { padding: 0; }
+@media (max-width: 420px) { .ag-card.ag-card-media { grid-template-columns: 5rem minmax(0, 1fr); } .ag-card-media .ag-body { padding: .75rem .875rem; } }
