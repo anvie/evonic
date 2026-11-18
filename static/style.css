@@ -1706,3 +1706,6 @@ nav .nav-dd-menu a.nav-dd-current { color: #667eea; }
 html[data-theme-preset="gruvbox-dark"] :is(.ag-btn-primary, .ev-btn-primary, .btn-primary, .scroll-to-bottom-btn, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700),
 html[data-theme-preset="gruvbox-dark"] #chat-composer:not(.is-bash) .chat-send-pill { color: #1e1b4b; }
 html[data-theme-preset="gruvbox-dark"] :is(.ag-btn-primary, .ev-btn-primary, .btn-primary, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700) :is(.text-white, .ev-kbd-btn) { color: #1e1b4b; text-shadow: none; }
+/* ...but the user chat bubble keeps its (darkened) fill, so it keeps white text */
+html[data-theme-preset="gruvbox-dark"] #chat-messages .rounded-2xl.bg-indigo-500,
+html[data-theme-preset="gruvbox-dark"] #chat-messages .rounded-2xl.bg-indigo-500 :is(.text-white, a) { color: #fff; }
