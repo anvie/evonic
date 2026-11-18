@@ -276,19 +276,27 @@ def api_export_plugin(plugin_id):
                 dirs[:] = [d for d in dirs if d not in ('__pycache__', '.git', 'node_modules')]
 
                 for filename in files:
-                    # Skip .pyc files (compiled bytecode) and dot-files (VCS/editor artifacts)
-                    if filename.endswith('.pyc') or filename.startswith('.'):
+                    # Skip .pyc files (compiled bytecode), .log files and dot-files (VCS/editor artifacts)
+                    if filename.endswith(('.pyc', '.log')) or filename.startswith('.'):
                         continue
                     file_path = os.path.join(root, filename)
                     arcname = os.path.relpath(file_path, plugin_dir)
                     zf.write(file_path, arcname)
+
+        try:
+            with open(manifest_path, encoding='utf-8') as f:
+                version = str(json.load(f).get('version') or '').strip()
+        except (OSError, ValueError):
+            version = ''
+        version = re.sub(r'[^a-zA-Z0-9._+-]', '_', version)
+        download_name = f'{plugin_id}-{version}.zip' if version else f'{plugin_id}.zip'
 
         buf.seek(0)
         return send_file(
             buf,
             mimetype='application/zip',
             as_attachment=True,
-            download_name=f'{plugin_id}.zip',
+            download_name=download_name,
         )
 
     except PermissionError:
