@@ -244,6 +244,12 @@
                     <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Name</label>
                     <input type="text" id="tpl-agent-name" placeholder="Name" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
                 </div>
+                <div class="sm:col-span-2">
+                    <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium" for="tpl-agent-workplace">Workplace</label>
+                    <select id="tpl-agent-workplace" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
+                        <option value="">None (default)</option>
+                    </select>
+                </div>
             </div>
 
             <div id="tpl-params-section" class="mb-4">
@@ -1172,6 +1178,7 @@ async function openTemplateCreate(id) {
     document.getElementById('tpl-resolved-summary').innerHTML = '';
     document.getElementById('tpl-agent-id').value = '';
     document.getElementById('tpl-agent-name').value = '';
+    populateTemplateWorkplaces();
     modal.classList.remove('hidden');
     try {
         const report = await fetchTemplateReport(id);
@@ -1185,6 +1192,20 @@ async function openTemplateCreate(id) {
     } catch (e) {
         console.error('create modal failed', e);
         fields.innerHTML = '<p class="text-red-500 text-xs">Failed to load template.</p>';
+    }
+}
+
+async function populateTemplateWorkplaces() {
+    const sel = document.getElementById('tpl-agent-workplace');
+    if (!sel) return;
+    sel.value = '';
+    try {
+        const res = await fetch('/api/workplaces?summary=1');
+        const list = res.ok ? await res.json() : [];
+        sel.innerHTML = '<option value="">None (default)</option>' +
+            (list || []).map(w => `<option value="${esc(w.id)}">${esc(w.name || w.id)}</option>`).join('');
+    } catch (e) {
+        console.error('load workplaces failed', e);
     }
 }
 
@@ -1295,6 +1316,8 @@ async function submitTemplateCreate() {
     const body = { params: collectTemplateParams() };
     if (agentId) body.id = agentId;
     if (agentName) body.overrides = { name: agentName };
+    const workplaceId = document.getElementById('tpl-agent-workplace').value;
+    if (workplaceId) body.workplace_id = workplaceId;
     if (btn) btn.disabled = true;
     try {
         const res = await fetch('/api/templates/' + encodeURIComponent(id) + '/instantiate', {
