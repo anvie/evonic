@@ -54,6 +54,10 @@ def _unavailable_reason(agent: dict) -> str | None:
         if channel.get('type') not in _SUPPORTED_CHANNEL_TYPES:
             return 'this conversation is on a channel that cannot show interactive questions'
     user_id = str(agent.get('user_id') or '')
+    # Temporary: `evonic chat` sessions (cli_<os-user>) cannot render the question
+    # card yet, so a question would block the turn forever.
+    if user_id.startswith('cli_'):
+        return 'the terminal chat cannot show interactive questions yet'
     if user_id.startswith(_NO_HUMAN_USERS) or agent.get('from_agent_id'):
         return 'this turn was not started by a human user'
     if not agent.get('session_id'):
