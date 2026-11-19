@@ -3458,6 +3458,8 @@ function setPluginTabHTML(contentEl, html) {
         s.textContent = old.textContent;
         old.replaceWith(s);
     });
+    // A <style> injected into the body is not seen by the head observer — re-tint it now.
+    if (window.EvTheme) EvTheme.retint();
 }
 
 function refreshPluginTab(name) {

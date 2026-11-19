@@ -260,5 +260,5 @@
         return get();
     }
 
-    global.EvTheme = { PRESETS: PRESETS, DEFAULTS: DEFAULTS, boot: boot, set: set, get: get, mapValue: mapValue, mapRgb: mapRgb };
+    global.EvTheme = { PRESETS: PRESETS, DEFAULTS: DEFAULTS, boot: boot, set: set, get: get, retint: retint, mapValue: mapValue, mapRgb: mapRgb };
 })(window);
