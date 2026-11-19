@@ -21,6 +21,8 @@ import requests
 
 _LOCAL_COMMANDS = {
     "/help": "Show this help",
+    "/approve": "Approve the pending tool call",
+    "/reject": "Reject the pending tool call",
     "/exit": "Leave the chat",
     "/quit": "Leave the chat",
 }
@@ -129,6 +131,9 @@ class Terminal:
         self.user_id = re.sub(r"[^a-zA-Z0-9_\-.@]", "_", f"cli_{getpass.getuser()}")[:128]
         self.session_id = None
         self.stream = None
+        self.turn_active = False
+        self.pending_approval = None
+        self._turn_lock = threading.Lock()
 
     # ---- HTTP helpers -------------------------------------------------
     def _url(self, path):
@@ -197,6 +202,90 @@ class Terminal:
             self.console.rule("[dim]now[/dim]", style="dim")
 
     # ---- turn handling ------------------------------------------------
+    @staticmethod
+    def _tool_line(data):
+        from rich.text import Text
+        ok = not data.get("error")
+        line = Text()
+        line.append("  ✓ " if ok else "  ✗ ", style="green" if ok else "red")
+        line.append(data.get("tool", ""), style="bold")
+        line.append(f"({_truncate(_short_args(data.get('args')), 50)})", style="dim")
+        preview = _truncate(_result_preview(data.get("result")), 70)
+        if preview:
+            line.append(f"  → {preview}", style="dim")
+        return line
+
+    # ---- turns that did not start from this prompt ---------------------
+    def _idle_loop(self):
+        """Render events from turns started elsewhere (web, another agent, ...)
+        while the prompt is waiting. Yields to run_turn while one of ours runs."""
+        buf, last_done = "", None
+        self._idle_printed = None
+        while not self.stream.stop_flag:
+            with self._turn_lock:
+                kind = None
+                if not self.turn_active:
+                    try:
+                        kind, data = self.stream.events.get_nowait()
+                    except queue.Empty:
+                        pass
+            if kind is None:
+                time.sleep(0.1)
+                continue
+            try:
+                buf, last_done = self._render_idle(kind, data, buf, last_done)
+            except Exception as exc:  # never let rendering kill the listener
+                self.console.print(f"[red]render error: {exc}[/red]")
+
+    def _render_idle(self, kind, data, buf, last_done):
+        from rich.text import Text
+        if kind == "message_received":
+            if data.get("role", "user") == "user" and not str(data.get("client_message_id") or "").startswith("cli-"):
+                t = Text()
+                t.append(f"◀ {data.get('sender') or 'incoming'}  ", style="bold magenta")
+                t.append(str(data.get("message") or data.get("content") or ""), style="dim")
+                self.console.print(t)
+        elif kind == "turn_begin":
+            buf = ""
+            self._idle_printed = None
+            self.console.print(Text("  … responding", style="dim italic"))
+        elif kind == "tool_executed":
+            self.console.print(self._tool_line(data))
+        elif kind == "response_chunk":
+            buf += data.get("content", "")
+            if data.get("send_as_message") and buf.strip():
+                self.print_agent(buf.strip())
+                self._idle_printed = buf.strip()
+                buf = ""
+        elif kind == "approval_required" and data.get("agent_id") in ("", self.agent_id):
+            self.pending_approval = data
+            self.console.print(
+                f"[yellow]⚠ approval required: {data.get('tool', 'tool')}"
+                f"({_truncate(_short_args(data.get('args')), 80)}) — type /approve or /reject[/yellow]")
+        elif kind == "fatal":
+            self.console.print(f"[red]{data.get('message', 'Disconnected')}[/red]")
+        elif kind == "done":
+            key = data.get("message_id")
+            text = (data.get("response") or buf or "").strip()
+            if text and text != self._idle_printed and not (key and key == last_done):
+                if data.get("is_error"):
+                    self.console.print(f"[red]✗ {text}[/red]\n")
+                else:
+                    self.print_agent(text)
+            last_done, buf, self._idle_printed = key or last_done, "", None
+        return buf, last_done
+
+    def resolve_pending(self, decision):
+        data, self.pending_approval = self.pending_approval, None
+        if not data:
+            self.console.print("[dim]No approval pending.[/dim]")
+            return
+        try:
+            self._post(self._url("/chat/approve"), {"approval_id": data.get("approval_id"), "decision": decision})
+            self.console.print(f"[dim]{decision}d.[/dim]")
+        except requests.RequestException as exc:
+            self.console.print(f"[red]Could not send decision: {exc}[/red]")
+
     def _drain(self):
         while True:
             try:
@@ -225,6 +314,15 @@ class Terminal:
             self.console.print(f"[red]Could not send decision: {exc}[/red]")
 
     def run_turn(self, message):
+        with self._turn_lock:
+            self.turn_active = True
+            self._drain()
+        try:
+            self._run_turn(message)
+        finally:
+            self.turn_active = False
+
+    def _run_turn(self, message):
         from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
@@ -232,7 +330,6 @@ class Terminal:
         from rich.spinner import Spinner
         from rich.text import Text
 
-        self._drain()
         post_result: dict = {}
 
         def worker():
@@ -254,6 +351,7 @@ class Terminal:
         thinking = ""
         tools = 0
         stop_sent = False
+        printed = None
         final = None
 
         def view():
@@ -284,20 +382,13 @@ class Terminal:
                         buf += data.get("content", "")
                         if data.get("send_as_message") and buf.strip():
                             self.print_agent(buf.strip(), console=live.console)
+                            printed = buf.strip()
                             buf = ""
                     elif kind == "tool_call_started":
                         tools += 1
                         pass
                     elif kind == "tool_executed":
-                        ok = not data.get("error")
-                        line = Text()
-                        line.append("  ✓ " if ok else "  ✗ ", style="green" if ok else "red")
-                        line.append(data.get("tool", ""), style="bold")
-                        line.append(f"({_truncate(_short_args(data.get('args')), 50)})", style="dim")
-                        preview = _truncate(_result_preview(data.get("result")), 70)
-                        if preview:
-                            line.append(f"  → {preview}", style="dim")
-                        live.console.print(line)
+                        live.console.print(self._tool_line(data))
                     elif kind == "approval_required" and data.get("agent_id") in ("", self.agent_id):
                         live.stop()
                         self.ask_approval(data)
@@ -326,6 +417,8 @@ class Terminal:
                         live.console.print("[yellow]stopping… (Ctrl+C again to stop waiting)[/yellow]")
 
         text = (final.get("response") or buf or "").strip()
+        if text == printed:       # already shown as a streamed message
+            text = ""
         elapsed = time.time() - started
         res = post_result.get("data") or {}
         if final.get("is_error"):
@@ -354,8 +447,10 @@ class Terminal:
         self.show_history()
         self.stream = _Stream(self.base, self.headers, self.agent_id, self.session_id, self.cursor)
         self.stream.start()
+        threading.Thread(target=self._idle_loop, daemon=True).start()
 
         from prompt_toolkit import PromptSession
+        from prompt_toolkit.patch_stdout import patch_stdout
         from prompt_toolkit.completion import WordCompleter
         from prompt_toolkit.formatted_text import HTML
         from prompt_toolkit.history import FileHistory
@@ -378,6 +473,12 @@ class Terminal:
             prompt_continuation=lambda width, *_: " " * width,
             bottom_toolbar=HTML(f" <b>{self.name}</b> · {self.model} · session {str(self.session_id)[:8]} "),
         )
+        with patch_stdout(raw=True):
+            self._chat_loop(session, HTML)
+        self.stream.stop_flag = True
+        self.console.print("[dim]Bye.[/dim]")
+
+    def _chat_loop(self, session, HTML):
         while True:
             try:
                 text = session.prompt(HTML("<ansigreen><b>❯ </b></ansigreen>")).strip()
@@ -390,14 +491,15 @@ class Terminal:
             cmd = text.split()[0].lower()
             if cmd in ("/exit", "/quit"):
                 break
+            if cmd in ("/approve", "/reject"):
+                self.resolve_pending("approve" if cmd == "/approve" else "reject")
+                continue
             if cmd == "/help":
                 for name, desc in _LOCAL_COMMANDS.items():
                     self.console.print(f"  [cyan]{name}[/cyan]  {desc}")
                 self.console.print("  [dim]Other /commands are handled by the agent.[/dim]\n")
                 continue
             self.run_turn(text)
-        self.stream.stop_flag = True
-        self.console.print("[dim]Bye.[/dim]")
 
 
 def run_terminal(agent_id):
