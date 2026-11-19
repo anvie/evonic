@@ -1709,3 +1709,7 @@ html[data-theme-preset="gruvbox-dark"] :is(.ag-btn-primary, .ev-btn-primary, .bt
 /* ...but the user chat bubble keeps its (darkened) fill, so it keeps white text */
 html[data-theme-preset="gruvbox-dark"] #chat-messages .rounded-2xl.bg-indigo-500,
 html[data-theme-preset="gruvbox-dark"] #chat-messages .rounded-2xl.bg-indigo-500 :is(.text-white, a) { color: #fff; }
+/* Panel plugin: its filled indigo buttons also turn light gold in Gruvbox Dark, so they get a dark foreground too */
+html[data-theme-preset="gruvbox-dark"] :is(.panel-btn.btn-script, .pnl-btn-pri, .pnl-edit-toggle.is-active) { color: #1e1b4b; }
+html[data-theme-preset="gruvbox-dark"] .panel-btn.btn-script .pnl-dot { background: rgba(30, 27, 75, .7); }
+html[data-theme-preset="gruvbox-dark"] .panel-btn.btn-script .pnl-cmd { background: rgba(30, 27, 75, .15); }
