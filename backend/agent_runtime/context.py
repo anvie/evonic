@@ -1038,10 +1038,11 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
     else:
         assigned_ids.discard('ask_user')
 
-    # Auto-assign monitor wherever bash is available — it is the opt-in way to
-    # be notified about background processes, which only bash can start.
-    if 'bash' in assigned_ids:
-        assigned_ids.add('monitor')
+    # Implicit companions (monitor wherever bash is available) live in one
+    # place so runtime.py and prefetch.py cannot drift from this builder and
+    # leave the authorization guard blocking a tool the model is shown.
+    from backend.agent_runtime.tool_assignment import apply_implicit_tools
+    apply_implicit_tools(assigned_ids)
 
     if assigned_ids:
         seen_fn_names = {t['function']['name'] for t in tools if t.get('function', {}).get('name')}

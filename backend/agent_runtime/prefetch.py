@@ -158,6 +158,12 @@ class TurnPrefetcher:
             if agent.get('audio_enabled') and 'transcribe_audio' not in assigned_tool_ids:
                 assigned_tool_ids.append('transcribe_audio')
 
+            # Implicit companions (monitor wherever bash is available). Must
+            # match build_tools(), otherwise the authorization guard rejects a
+            # tool the model was told to use.
+            from backend.agent_runtime.tool_assignment import apply_implicit_tools
+            apply_implicit_tools(assigned_tool_ids)
+
             # Check whether describe_image is assigned — passed through to
             # build_message_entry so the hint is only injected when available.
             has_describe_image = 'describe_image' in assigned_tool_ids

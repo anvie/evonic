@@ -2605,6 +2605,12 @@ class AgentRuntime:
             if agent.get('audio_enabled') and 'transcribe_audio' not in assigned_tool_ids:
                 assigned_tool_ids.append('transcribe_audio')
 
+            # Implicit companions (monitor wherever bash is available). Must
+            # match build_tools(), otherwise the authorization guard rejects a
+            # tool the model was told to use.
+            from backend.agent_runtime.tool_assignment import apply_implicit_tools
+            apply_implicit_tools(assigned_tool_ids)
+
             # Resolve workspace: workplace config takes priority over agent.workspace.
             # For tunnel workplaces, never fall back to the agent's /workspace path —
             # Evonet runs on the remote device and has its own working directory.

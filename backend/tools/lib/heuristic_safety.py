@@ -157,7 +157,7 @@ BASH_DANGEROUS_PATTERNS: list[dict[str, Any]] = [
     {"pattern": r"reverse\s*shell", "weight": 15, "category": "network_exploit", "description": "Reverse shell pattern"},
     {"pattern": r"\bcurl\s+.*\|\s*(ba)?sh\b", "weight": 12, "category": "remote_code_execution", "description": "Remote code execution via pipe (curl | bash)"},
     {"pattern": r"\bwget\s+.*\|\s*(ba)?sh\b", "weight": 12, "category": "remote_code_execution", "description": "Remote code execution via pipe (wget | sh)"},
-    {"pattern": r"\bsleep\s+(?:infinity\b|\d+(?:\.\d+)?[mhd]\b|(?:[1-9]\d{2,}|1[1-9]|[2-9]\d)(?:\.\d+)?s?\b|10\.\d*[1-9]\d*s?\b)", "weight": 15, "category": "long_sleep", "description": "Blocking `sleep` longer than 10 seconds is not allowed; use the `monitor` tool to wait for a condition instead of sleeping"},
+    {"pattern": r"\bsleep\s+(?:infinity\b|\d+(?:\.\d+)?[mhd]\b|(?:[1-9]\d{2,}|1[1-9]|[2-9]\d)(?:\.\d+)?s?\b|10\.\d*[1-9]\d*s?\b)", "weight": 15, "category": "long_sleep", "description": "Blocking `sleep` longer than 10 seconds is not allowed; call the `monitor` tool to wait for a condition instead, or, when `monitor` is not assigned to this agent, poll with short waits of 9 seconds or less between checks"},
     {"pattern": r"\bchmod\s+777\b", "weight": 5, "category": "permission_escalation", "description": "Permission escalation (chmod 777)"},
     {"pattern": r"\bchown\s+root\b", "weight": 8, "category": "privilege_escalation", "description": "Privilege escalation (chown root)"},
     {"pattern": r"\bsudo\s+", "weight": 6, "category": "privilege_escalation", "description": "Privilege escalation (sudo)"},

@@ -96,6 +96,10 @@ def _update_decim_disposition(event_id, result=None, disposition=None):
 def execute(agent: dict, args: dict) -> dict:
     action = args.get('action', 'run')
     session_id = (agent or {}).get('session_id') or 'default'
+    # The monitor tool is auto-assigned wherever bash is (see
+    # backend/agent_runtime/tool_assignment.py). Read the live assignment so a
+    # hint never points at a tool the authorization guard will reject.
+    monitor_available = 'monitor' in set((agent or {}).get('assigned_tool_ids') or [])
 
     if action == 'destroy':
         sandbox_enabled = (agent or {}).get('sandbox_enabled', 1)
@@ -126,6 +130,18 @@ def execute(agent: dict, args: dict) -> dict:
         lr = check_long_running(script)
 
     if lr:
+        if monitor_available:
+            wait_hint = (
+                "If the outcome matters, call the `monitor` tool on the job_id "
+                "returned by that bash call and you will be told once, when "
+                "your condition is met. Either way do NOT poll in a loop. "
+            )
+        else:
+            wait_hint = (
+                "The `monitor` tool is not available to you: check progress with "
+                "a short wait (sleep 9 or less) plus a capture call. Never a long "
+                "blocking sleep, and never a polling loop without a result. "
+            )
         return {
             'error': (
                 f"BLOCKED: Long-running command detected ({lr['matched_command']}). "
@@ -133,10 +149,8 @@ def execute(agent: dict, args: dict) -> dict:
                 f"REQUIRED: Copy and execute this exact script as your next bash call:\n"
                 f"```\n{lr['run_script']}\n```\n\n"
                 f"It runs unwatched — nothing will notify you when it finishes. "
-                f"If the outcome matters, call the `monitor` tool on the job_id "
-                f"returned by that bash call and you will be told once, when "
-                f"your condition is met. Either way do NOT poll in a loop. "
-                f"To peek at output: {lr['monitor_script']}"
+                + wait_hint
+                + f"To peek at output: {lr['monitor_script']}"
             ),
         }
 
@@ -271,9 +285,13 @@ def execute(agent: dict, args: dict) -> dict:
                 'job_id': job.job_id,
                 'log_file': job.log_file,
                 'kind': job.kind,
-                'hint': ('Running unwatched. Call monitor(action="attach", '
-                         f'target={{"job_id": "{job.job_id}"}}, when={{...}}) '
-                         'if you need to be told when something happens.'),
+                'hint': (('Running unwatched. Call monitor(action="attach", '
+                          f'target={{"job_id": "{job.job_id}"}}, when={{...}}) '
+                          'if you need to be told when something happens.')
+                         if monitor_available else
+                         ('Running unwatched, and the monitor tool is not available '
+                          'to you: check progress with a short wait (sleep 9 or '
+                          'less) plus a capture call, not a long blocking sleep.')),
             }
     except Exception:
         pass  # Never let job tracking break command execution
