@@ -459,11 +459,20 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
 
     from backend.agent_report_to import resolve_report_to_from_context
 
+    from backend.agent_oneshot import is_oneshot_external_id
+
     reply_to_id = str(uuid.uuid4())
-    report_to_id, report_to_channel_id, session_id = resolve_report_to_from_context(
-        agent_context, sender_id,
-    )
-    if (agent_context.get('user_id', '') or '').startswith(_AGENT_MSG_PREFIX) and not report_to_id:
+    # A one-shot session (a question a plugin asks and awaits) ends with its first final answer: a reply that
+    # arrived later would have no turn to land in, and the route resolved below would take it to the sender's
+    # human chat instead. So from such a session the reply is always awaited in this call, and never forwarded.
+    from_oneshot = is_oneshot_external_id(agent_context.get('user_id'))
+    if from_oneshot:
+        report_to_id, report_to_channel_id, session_id = None, None, ''
+    else:
+        report_to_id, report_to_channel_id, session_id = resolve_report_to_from_context(
+            agent_context, sender_id,
+        )
+    if not from_oneshot and (agent_context.get('user_id', '') or '').startswith(_AGENT_MSG_PREFIX) and not report_to_id:
         _logger.warning(
             "send_agent_message: no human session found for sender '%s'. "
             "Reply auto-forward will be skipped.",
@@ -482,11 +491,13 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
     }
     if session_id:
         metadata['session_id'] = session_id
+    if from_oneshot:
+        metadata['skip_auto_forward'] = True
 
     # Register synchronous internal waits before dispatch so an immediate reply
     # cannot beat the waiter into the registry. This option is intentionally not
     # exposed in the public tool schema.
-    wait_for_reply = bool(args.get('wait_for_reply', False))
+    wait_for_reply = from_oneshot or bool(args.get('wait_for_reply', False))
     wait_timeout = _WAIT_TIMEOUT_DEFAULT
     reply_queue = None
     if wait_for_reply:
@@ -579,8 +590,10 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
                 'waited_seconds': wait_timeout,
                 'tip': (
                     f"Wait timed out after {wait_timeout}s. "
-                    f"The reply from {target_agent.get('name', target_id)} will arrive "
-                    f"in your next turn automatically."
+                    + (f"No reply from {target_agent.get('name', target_id)} will reach this session later."
+                       if from_oneshot else
+                       f"The reply from {target_agent.get('name', target_id)} will arrive "
+                       f"in your next turn automatically.")
                 ),
             }
         except Exception as e:

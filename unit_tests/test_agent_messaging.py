@@ -308,6 +308,75 @@ class TestExecSendAgentMessage(unittest.TestCase):
         self.assertEqual(result.get('reply'), 'Hello immediately')
         self.assertFalse(result.get('timed_out', False))
 
+    def test_oneshot_sender_waits_for_reply_and_is_never_forwarded(self):
+        """From a one-shot session the reply is awaited in the call and never routed to a human chat."""
+        from backend.tools.agent_messaging import _on_final_answer
+
+        concurrency_stub = types.ModuleType('backend.agent_runtime.concurrency')
+        concurrency_stub.paused_model_gate = nullcontext
+        sent = []
+
+        def immediate_reply(**kwargs):
+            sent.append(kwargs)
+            with mock.patch(
+                'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+                return_value=kwargs['metadata'],
+            ):
+                _on_final_answer({
+                    'external_user_id': '__agent__agent_a',
+                    'agent_id': 'agent_b',
+                    'session_id': 'delegated-session',
+                    'answer': 'Yes, that one is mine',
+                })
+            return {'success': True}
+
+        target = _make_target_agent()
+        with mock.patch('backend.tools.agent_messaging.db.get_agent', return_value=target), \
+             mock.patch('backend.agent_runtime.notifier.notify_agent', side_effect=immediate_reply), \
+             mock.patch('backend.agent_report_to.resolve_report_to_from_context') as resolve, \
+             mock.patch.dict(sys.modules, {
+                 'backend.agent_runtime.concurrency': concurrency_stub,
+             }):
+            result = self._call({
+                'target_agent_id': 'agent_b',
+                'message': 'Do you look after the web server?',
+            }, agent_context=_make_agent_context(user_id='__agent__oneshot__someplugin_ab12', session_id='oneshot-session'))
+
+        self.assertTrue(result.get('success'))
+        self.assertEqual(result.get('reply'), 'Yes, that one is mine')
+        resolve.assert_not_called()
+        self.assertEqual(len(sent), 1)                 # only the question itself; the reply is not forwarded anywhere
+        meta = sent[0]['metadata']
+        self.assertTrue(meta.get('skip_auto_forward'))
+        self.assertIsNone(meta.get('report_to_id'))
+        self.assertNotIn('session_id', meta)
+
+    def test_oneshot_sender_timeout_says_no_reply_will_come(self):
+        concurrency_stub = types.ModuleType('backend.agent_runtime.concurrency')
+        concurrency_stub.paused_model_gate = nullcontext
+        target = _make_target_agent()
+        with mock.patch('backend.tools.agent_messaging.db.get_agent', return_value=target), \
+             mock.patch('backend.agent_runtime.notifier.notify_agent', return_value={'success': True}), \
+             mock.patch('backend.tools.agent_messaging._WAIT_TIMEOUT_MIN', 0), \
+             mock.patch.dict(sys.modules, {
+                 'backend.agent_runtime.concurrency': concurrency_stub,
+             }):
+            result = self._call({
+                'target_agent_id': 'agent_b',
+                'message': 'Hello',
+                'wait_timeout': 0,
+            }, agent_context=_make_agent_context(user_id='__agent__oneshot__someplugin_cd34'))
+        self.assertTrue(result.get('timed_out'))
+        self.assertIn('No reply', result.get('tip', ''))
+
+    def test_normal_session_stays_async(self):
+        target = _make_target_agent()
+        with mock.patch('backend.tools.agent_messaging.db.get_agent', return_value=target), \
+             mock.patch('backend.agent_runtime.notifier.notify_agent') as mock_notify:
+            result = self._call({'target_agent_id': 'agent_b', 'message': 'Hello'})
+        self.assertIn('Message sent', result.get('message', ''))
+        self.assertNotIn('skip_auto_forward', mock_notify.call_args.kwargs['metadata'])
+
     def test_self_messaging_blocked(self):
         """Agent cannot message itself."""
         result = self._call(
