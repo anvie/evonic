@@ -14,6 +14,7 @@ Guard rails:
 - Rate limit: max 10 messages per (sender, target) pair per 60 seconds
 - Depth limit: max 3 hops in a chain (A→B→C→stop) to prevent infinite loops
 - Global rate limit: max 30 messages per sender per 60 seconds (across all targets)
+- Duplicate guard: identical calls (same target, message, session, vars) within 60 seconds are refused
 - Fan-out limit: max 5 unique targets per 5-second window (per LLM turn)
 """
 
@@ -45,6 +46,12 @@ _GLOBAL_RATE_LIMIT_WINDOW = 60  # seconds
 _FANOUT_MAX_TARGETS = 5
 _FANOUT_WINDOW = 5  # seconds
 
+# Duplicate guard: identical calls (same target, message, session, vars) within this window are refused
+_DUPLICATE_WINDOW = 60  # seconds
+
+# Duplicate state: maps (sender_id, call fingerprint) → timestamp of last accepted send
+_duplicate_buckets: Dict[tuple, float] = {}
+
 # Rate limit state: maps (sender_id, target_id) → list of timestamps
 _rate_limit_buckets: Dict[tuple, list] = defaultdict(list)
 
@@ -75,6 +82,18 @@ def _check_rate_limit(sender_id: str, target_id: str) -> bool:
     if len(_rate_limit_buckets[key]) >= _RATE_LIMIT_MAX:
         return False
     _rate_limit_buckets[key].append(now)
+    return True
+
+
+def _check_duplicate(sender_id: str, fingerprint: str) -> bool:
+    """Return True if the call is new, False if an identical one was sent within the window."""
+    now = time.time()
+    for k in [k for k, t in _duplicate_buckets.items() if now - t >= _DUPLICATE_WINDOW]:
+        _duplicate_buckets.pop(k, None)
+    key = (sender_id, fingerprint)
+    if key in _duplicate_buckets:
+        return False
+    _duplicate_buckets[key] = now
     return True
 
 
@@ -400,6 +419,20 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
                 target_id, e,
             )
             # If we can't read the focus state, err on the side of allowing the message.
+
+    # Duplicate guard — agents sometimes repeat the exact same call; refuse it within the window
+    fingerprint = json.dumps(
+        [target_id, message, args.get('session') or '', sanitized_vars or {}],
+        sort_keys=True, default=str,
+    )
+    if not _check_duplicate(sender_id, fingerprint):
+        _logger.warning("Duplicate send_agent_message from '%s' to '%s' blocked.", sender_id, target_id)
+        return {
+            'error': (
+                f"Duplicate message blocked: an identical message was already sent to '{target_id}' "
+                f"within the last {_DUPLICATE_WINDOW}s. Do not resend it; wait for the reply."
+            )
+        }
 
     # Global rate limit — cap total messages per sender across all targets
     if not _check_global_rate_limit(sender_id):
@@ -1294,6 +1327,9 @@ def _cleanup_buckets() -> None:
     for key in list(_global_rate_limit_buckets.keys()):
         if not _global_rate_limit_buckets[key]:
             _global_rate_limit_buckets.pop(key, None)
+    now = time.time()
+    for key in [k for k, t in _duplicate_buckets.items() if now - t >= _DUPLICATE_WINDOW]:
+        _duplicate_buckets.pop(key, None)
     for key in list(_fanout_buckets.keys()):
         if not _fanout_buckets[key]:
             _fanout_buckets.pop(key, None)
