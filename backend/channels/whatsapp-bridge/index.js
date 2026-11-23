@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { attachmentTransportReady, submitAttachment } = require('./attachment-message');
 const { downloadInboundDocument, extractInboundText } = require('./inbound-document');
+const { downloadInboundMedia } = require('./inbound-media');
 const { extractInboundLocation } = require('./inbound-location');
 const { extractQuotedMessage, unwrapMessage } = require('./quoted-message');
 const { normalizeRecipientJid } = require('./jid');
@@ -221,9 +222,13 @@ async function startBaileys() {
         DisconnectReason,
         fetchLatestBaileysVersion,
         makeCacheableSignalKeyStore,
-        downloadMediaMessage,
+        downloadMediaMessage: baileysDownloadMedia,
         areJidsSameUser,
     } = baileys;
+    // Forwarded media points at the original sender's CDN copy, which may have
+    // expired; reuploadRequest makes Baileys ask the phone to re-upload it.
+    const downloadMediaMessage = (message, type, options, ctx) => baileysDownloadMedia(
+        message, type, options, { ...ctx, reuploadRequest: sock.updateMediaMessage });
     fs.mkdirSync(AUTH_DIR, { recursive: true });
 
     // Tear down any prior socket before opening a new one — a lingering socket
@@ -435,20 +440,21 @@ async function startBaileys() {
 
             // Extract media if present. Baileys performs the decryption before
             // bytes are forwarded to the Python channel.
-            let image = null;
-            if (content?.imageMessage) {
+            const mediaDownloadFailed = [];
+            const downloadMedia = async (kind) => {
                 try {
-                    // downloadMediaMessage unwraps ephemeral/view-once internally
-                    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger });
-                    const mimetype = content.imageMessage.mimetype || 'image/jpeg';
-                    image = {
-                        base64: buffer.toString('base64'),
-                        mimetype,
-                    };
+                    return await downloadInboundMedia({
+                        message: msg, content, kind, downloadMediaMessage, logger,
+                    });
                 } catch (e) {
-                    console.error('[whatsapp-bridge] Failed to download image:', e.message);
+                    mediaDownloadFailed.push(kind);
+                    console.error('[whatsapp-bridge] Failed to download %s: %s', kind, e.message);
+                    return null;
                 }
-            }
+            };
+            const image = await downloadMedia('image');
+            const audio = await downloadMedia('audio');
+            const video = await downloadMedia('video');
 
             let document = null;
             let documentDownloadFailed = false;
@@ -459,6 +465,7 @@ async function startBaileys() {
                     });
                 } catch (e) {
                     documentDownloadFailed = true;
+                    mediaDownloadFailed.push('document');
                     console.error('[whatsapp-bridge] Failed to download document:', e.message);
                 }
             }
@@ -467,11 +474,6 @@ async function startBaileys() {
             // so no media download is required.
             const location = extractInboundLocation(content);
 
-            // Log every inbound message without logging attachment contents.
-            console.log('[whatsapp-bridge] MSG id=%s from=%s jid=%s group=%s text_len=%d image=%s document=%s document_download_failed=%s location=%s',
-                messageId, sender, jid, isGroup, text.length, !!image, !!document,
-                documentDownloadFailed,
-                location ? `${location.latitude},${location.longitude}${location.is_live ? ' (live)' : ''}` : '-');
             if (isGroup) {
                 console.log('[whatsapp-bridge] GROUP MSG keys:', JSON.stringify(Object.keys(msg.message || {})),
                     'unwrapped:', JSON.stringify(Object.keys(content || {})));
@@ -484,6 +486,12 @@ async function startBaileys() {
                 || content?.videoMessage?.contextInfo
                 || content?.documentMessage?.contextInfo
                 || content?.audioMessage?.contextInfo;
+            // Log every inbound message without logging attachment contents.
+            console.log('[whatsapp-bridge] MSG id=%s from=%s jid=%s group=%s text_len=%d image=%s audio=%s video=%s document=%s media_download_failed=%s forwarded=%s location=%s',
+                messageId, sender, jid, isGroup, text.length, !!image, !!audio, !!video, !!document,
+                mediaDownloadFailed.join(',') || '-',
+                contextInfo?.isForwarded ? `true(score=${contextInfo.forwardingScore || 0})` : false,
+                location ? `${location.latitude},${location.longitude}${location.is_live ? ' (live)' : ''}` : '-');
             let quotedDetails = null;
             let quotedIsBot = false;
             let quotedSender = '';
@@ -525,8 +533,9 @@ async function startBaileys() {
             const groupName = isGroup ? await getGroupSubject(jid) : null;
 
             postCallback({
-                from: sender, jid, message_id: messageId, text, image, document, location,
+                from: sender, jid, message_id: messageId, text, image, audio, video, document, location,
                 document_download_failed: documentDownloadFailed,
+                media_download_failed: mediaDownloadFailed,
                 message_timestamp: messageTimestamp,
                 content_type: contentType,
                 wrapper_types: wrapperTypes,

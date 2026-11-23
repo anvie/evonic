@@ -170,6 +170,18 @@ def _is_non_conversational_broadcast(sender: str, jid: str) -> bool:
     return _is_status_broadcast(sender, jid) or jid.endswith('@newsletter')
 
 
+def _media_download_failed_text(payload: Dict[str, Any]) -> str:
+    """Placeholder text for an image/audio/video the bridge could not download.
+
+    Documents have their own placeholder; this keeps a captionless failed
+    download from being dropped as an empty message.
+    """
+    for kind in payload.get('media_download_failed') or []:
+        if kind in ('image', 'audio', 'video'):
+            return f"[{kind.capitalize()} download failed]"
+    return ''
+
+
 def _sanitize_attachment_filename(name: str) -> str:
     """Return a bounded path-safe filename for an inbound WhatsApp document."""
     basename = os.path.basename(str(name or '').replace('\\', '/'))
@@ -1075,6 +1087,9 @@ class WhatsAppChannel(BaseChannel):
         elif payload.get('document_download_failed') and not text:
             text = '[Document download failed]'
 
+        if not text:
+            text = _media_download_failed_text(payload)
+
         if location_data and not text:
             text = _format_location_text(location_data)
 
@@ -1128,7 +1143,7 @@ class WhatsAppChannel(BaseChannel):
 
         # Append the standard marker only after persistence succeeds. This keeps
         # paths and attachment IDs truthful and makes captionless PDFs usable.
-        if attachment_info and document:
+        if attachment_info:
             marker = _format_attachment_marker(attachment_info)
             final_text = f"{final_text}\n{marker}" if final_text else marker
 
