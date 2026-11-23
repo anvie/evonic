@@ -269,8 +269,17 @@ def _find_closest_attachment(agent_id: str, orig_path: str) -> Optional[str]:
     return None
 
 
-def _read_image(agent: dict, path: str) -> tuple[Optional[bytes], Optional[str], Optional[str]]:
-    """Read an image from the host first, then the agent's execution backend."""
+def _read_image(
+    agent: dict,
+    path: str,
+    max_bytes: int = _MAX_IMAGE_BYTES,
+    kind: str = "Image",
+) -> tuple[Optional[bytes], Optional[str], Optional[str]]:
+    """Read a file from the host first, then the agent's execution backend.
+
+    ``max_bytes`` and ``kind`` let describe_video reuse the lookup with a larger
+    limit and its own error wording.
+    """
     from backend.tools._workspace import (
         effective_agent_id,
         is_self_path,
@@ -289,19 +298,19 @@ def _read_image(agent: dict, path: str) -> tuple[Optional[bytes], Optional[str],
     if os.path.isfile(host_path):
         try:
             file_size = os.path.getsize(host_path)
-            if file_size > _MAX_IMAGE_BYTES:
+            if file_size > max_bytes:
                 return None, None, (
-                    f"Error: Image file is {file_size / (1024 * 1024):.1f} MB, "
-                    "which exceeds the 10 MB limit."
+                    f"Error: {kind} file is {file_size / (1024 * 1024):.1f} MB, "
+                    f"which exceeds the {max_bytes // (1024 * 1024)} MB limit."
                 )
             with open(host_path, "rb") as handle:
-                image_data = handle.read(_MAX_IMAGE_BYTES + 1)
+                image_data = handle.read(max_bytes + 1)
         except PermissionError:
             return None, None, f"Error: Permission denied — cannot read: {path}"
         except Exception as exc:
-            return None, None, f"Error: Failed to read image: {exc}"
-        if len(image_data) > _MAX_IMAGE_BYTES:
-            return None, None, "Error: Image file exceeds the 10 MB limit."
+            return None, None, f"Error: Failed to read {kind.lower()}: {exc}"
+        if len(image_data) > max_bytes:
+            return None, None, f"Error: {kind} file exceeds the {max_bytes // (1024 * 1024)} MB limit."
         return image_data, host_path, None
 
     if self_path:
@@ -323,24 +332,109 @@ def _read_image(agent: dict, path: str) -> tuple[Optional[bytes], Optional[str],
         return None, None, f"Error: File not found: {path}{suffix}"
 
     file_size = int(stat.get("size") or 0)
-    if file_size > _MAX_IMAGE_BYTES:
+    if file_size > max_bytes:
         return None, None, (
-            f"Error: Image file is {file_size / (1024 * 1024):.1f} MB, "
-            "which exceeds the 10 MB limit."
+            f"Error: {kind} file is {file_size / (1024 * 1024):.1f} MB, "
+            f"which exceeds the {max_bytes // (1024 * 1024)} MB limit."
         )
 
     try:
         result = backend.cat_file_bytes(target)
     except Exception as exc:
-        return None, None, f"Error: Failed to read image: {exc}"
+        return None, None, f"Error: Failed to read {kind.lower()}: {exc}"
     if "error" in result:
-        return None, None, f"Error: Failed to read image: {result['error']}"
+        return None, None, f"Error: Failed to read {kind.lower()}: {result['error']}"
     image_data = result.get("bytes")
     if not isinstance(image_data, bytes):
-        return None, None, "Error: Failed to read image: execution backend returned invalid data."
-    if len(image_data) > _MAX_IMAGE_BYTES:
-        return None, None, "Error: Image file exceeds the 10 MB limit."
+        return None, None, f"Error: Failed to read {kind.lower()}: execution backend returned invalid data."
+    if len(image_data) > max_bytes:
+        return None, None, f"Error: {kind} file exceeds the {max_bytes // (1024 * 1024)} MB limit."
     return image_data, None, None
+
+
+def _call_vision_models(vision_models: list, messages: list) -> str:
+    """Send ``messages`` to the vision models in order, falling back on transient errors.
+
+    Returns the cleaned response text, or an ``"Error: ..."`` string.
+    """
+    result = None
+    failures = 0
+    last_error = None
+
+    # Errors that are safe to fall back to the next vision-capable model:
+    # network/connection failures, 5xx API errors, rate limits (HTTP 429),
+    # provider errors, timeouts, and auth errors on a single provider — a
+    # later model in the chain (e.g. a local Ollama model) may still succeed.
+    _FALLBACK_ERROR_TYPES = frozenset({
+        "connection_error",
+        "api_error",
+        "provider_error",
+        "rate_limit_error",
+        "timeout_error",
+        "request_timeout",
+        "generation_timeout",
+        "auth_error",
+    })
+
+    for model_index, vision_model in enumerate(vision_models):
+        model_label = _format_vision_model_label(model_index, vision_model)
+        try:
+            client = LLMClient(model_config=vision_model)
+            # Enforce a 2-minute (120s) maximum timeout for vision model calls,
+            # regardless of the model's configured timeout.
+            if client.timeout is None or client.timeout > 120:
+                client.timeout = 120
+            result = client.chat_completion(
+                messages=messages,
+                enable_thinking=False,  # No need for reasoning on vision task
+            )
+        except Exception as e:
+            # Unexpected exception — treat as transient failure, try next
+            failures += 1
+            last_error = f"{model_label}: {e}"
+            continue
+
+        if result.get("success"):
+            break  # Success — use this result
+
+        # Fallback-eligible error — try the next model in the chain.
+        error_type = result.get("error_type", "")
+        error_detail = result.get("error_detail", "")
+        if error_type in _FALLBACK_ERROR_TYPES:
+            failures += 1
+            last_error = f"{model_label}: {error_detail or error_type}"
+            continue  # Try next model
+
+        # Non-recoverable error (e.g. malformed request, unsupported content) —
+        # fail immediately.
+        return (
+            f"Error: Vision model call failed for {model_label} "
+            f"({error_type}): {error_detail}"
+        )
+
+    if result is None or not result.get("success"):
+        return (
+            "Error: All vision-capable models failed "
+            f"({failures} model(s) tried). Last error: {last_error or 'unknown error'}. "
+            "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/"
+        )
+
+    # Extract text content from the nested API response.
+    # result["response"] is the raw API dict: {"choices": [{"message": {"content": "..."}}]}
+    response_data = result.get("response", {})
+    choices = response_data.get("choices", [])
+    if not choices:
+        return "Error: Vision model returned no choices in response."
+
+    message = choices[0].get("message", {})
+    content = message.get("content", "")
+    if not content:
+        return "Error: Vision model returned an empty response."
+
+    # Strip any thinking tags that may have been included
+    from backend.llm_client import strip_thinking_tags
+    cleaned, _ = strip_thinking_tags(content)
+    return cleaned.strip()
 
 
 def execute(agent: dict, args: dict) -> Any:
@@ -452,81 +546,4 @@ def execute(agent: dict, args: dict) -> Any:
     ]
 
     # --- Call vision models with fallback on transient/provider errors ---
-    result = None
-    failures = 0
-    last_error = None
-
-    # Errors that are safe to fall back to the next vision-capable model:
-    # network/connection failures, 5xx API errors, rate limits (HTTP 429),
-    # provider errors, timeouts, and auth errors on a single provider — a
-    # later model in the chain (e.g. a local Ollama model) may still succeed.
-    _FALLBACK_ERROR_TYPES = frozenset({
-        "connection_error",
-        "api_error",
-        "provider_error",
-        "rate_limit_error",
-        "timeout_error",
-        "request_timeout",
-        "generation_timeout",
-        "auth_error",
-    })
-
-    for model_index, vision_model in enumerate(vision_models):
-        model_label = _format_vision_model_label(model_index, vision_model)
-        try:
-            client = LLMClient(model_config=vision_model)
-            # Enforce a 2-minute (120s) maximum timeout for vision model calls,
-            # regardless of the model's configured timeout.
-            if client.timeout is None or client.timeout > 120:
-                client.timeout = 120
-            result = client.chat_completion(
-                messages=messages,
-                enable_thinking=False,  # No need for reasoning on vision task
-            )
-        except Exception as e:
-            # Unexpected exception — treat as transient failure, try next
-            failures += 1
-            last_error = f"{model_label}: {e}"
-            continue
-
-        if result.get("success"):
-            break  # Success — use this result
-
-        # Fallback-eligible error — try the next model in the chain.
-        error_type = result.get("error_type", "")
-        error_detail = result.get("error_detail", "")
-        if error_type in _FALLBACK_ERROR_TYPES:
-            failures += 1
-            last_error = f"{model_label}: {error_detail or error_type}"
-            continue  # Try next model
-
-        # Non-recoverable error (e.g. malformed request, unsupported content) —
-        # fail immediately.
-        return (
-            f"Error: Vision model call failed for {model_label} "
-            f"({error_type}): {error_detail}"
-        )
-
-    if result is None or not result.get("success"):
-        return (
-            "Error: All vision-capable models failed "
-            f"({failures} model(s) tried). Last error: {last_error or 'unknown error'}. "
-            "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/"
-        )
-
-    # Extract text content from the nested API response.
-    # result["response"] is the raw API dict: {"choices": [{"message": {"content": "..."}}]}
-    response_data = result.get("response", {})
-    choices = response_data.get("choices", [])
-    if not choices:
-        return "Error: Vision model returned no choices in response."
-
-    message = choices[0].get("message", {})
-    content = message.get("content", "")
-    if not content:
-        return "Error: Vision model returned an empty response."
-
-    # Strip any thinking tags that may have been included
-    from backend.llm_client import strip_thinking_tags
-    cleaned, _ = strip_thinking_tags(content)
-    return cleaned.strip()
+    return _call_vision_models(vision_models, messages)

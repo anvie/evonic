@@ -1,0 +1,29 @@
+{
+  "id": "describe_video",
+  "name": "Describe Video",
+  "description": "Analyze and describe a video by sampling frames and using a vision-capable LLM.",
+  "function": {
+    "name": "describe_video",
+    "description": "Analyze a video file by sampling frames across its duration (packed into labelled 2x2 grids) and describing them with a vision-capable LLM. Visual track only; audio is not transcribed.",
+    "parameters": {
+      "properties": {
+        "path": {
+          "description": "Absolute or relative path to a video visible in the agent's local filesystem, sandbox, scratchpad, or workplace (.mp4, .mov, .webm, .mkv, .3gp, .avi). Max 100 MB.",
+          "type": "string"
+        },
+        "query": {
+          "description": "Optional specific question about the video. Write your question in English. If omitted, returns a general description of the video.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  "mock_response": "{\"description\": \"This is a sample video description from the mock response.\"}",
+  "mock_response_type": "json",
+  "created_at": "2026-11-23T00:00:00.000000",
+  "updated_at": "2026-11-23T00:00:00.000000"
+}

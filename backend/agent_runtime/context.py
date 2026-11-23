@@ -1020,6 +1020,7 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
     # build_tools includes the tool definition (not just the hint).
     if agent.get('vision_enabled', 1):
         assigned_ids.add('describe_image')
+        assigned_ids.add('describe_video')
 
     # Auto-assign transcribe_audio for audio-enabled agents.
     if agent.get('audio_enabled'):
@@ -1234,6 +1235,7 @@ def command_hint_from_content(content: str) -> str:
 # the actual delivery mode (see backend/agent_runtime/native_images.py) can
 # never disagree about whether a tool call is expected.
 IMAGE_DESCRIBE_HINT = "\nUse the `describe_image` tool to view and analyze this image."
+VIDEO_DESCRIBE_HINT = "\nUse the `describe_video` tool to view and analyze this video."
 
 
 def image_tool_hint(has_describe_image: bool = True,
@@ -1288,6 +1290,8 @@ def build_attachment_note(attachment_info: dict,
 
     if mime_type.startswith('image/'):
         note += image_tool_hint(has_describe_image, native_image)
+    if mime_type.startswith('video/') and has_describe_image:
+        note += VIDEO_DESCRIBE_HINT
     if mime_type.startswith('audio/') and audio_enabled:
         note += "\nUse the `transcribe_audio` tool to listen to this audio."
     return note

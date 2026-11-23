@@ -149,6 +149,8 @@ class TurnPrefetcher:
             # No DB assignment needed — every vision-capable agent can analyze images.
             if agent.get('vision_enabled', 1) and 'describe_image' not in assigned_tool_ids:
                 assigned_tool_ids.append('describe_image')
+            if agent.get('vision_enabled', 1) and 'describe_video' not in assigned_tool_ids:
+                assigned_tool_ids.append('describe_video')
 
             # ask_user is on unless the agent turned it off.
             if agent.get('ask_user_enabled', 1) and 'ask_user' not in assigned_tool_ids:

@@ -162,7 +162,7 @@ ARTIFACT_TOOLS = frozenset({
     "copy_status",
 })
 
-VISION_TOOLS = frozenset({"describe_image"})
+VISION_TOOLS = frozenset({"describe_image", "describe_video"})
 
 #: Columns the factory manages on behalf of the server, never from a spec.
 SERVER_CONTROLLED_KEYS = frozenset({

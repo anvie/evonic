@@ -3207,7 +3207,7 @@ const BUILTIN_TOOLS_ENABLED = {{ 'true' if agent.builtin_tools_enabled else 'fal
 // They are read-only in the Tools tab — cannot be toggled manually.
 const ARTIFACT_TOOL_IDS = ['save_artifact', 'list_artifacts', 'read_attachment', 'cleanup_attachments', 'portal_copy', 'copy_status'];
 const VISION_ENABLED = {{ 'true' if agent.vision_enabled else 'false' }};
-const VISION_TOOL_IDS = ['describe_image'];
+const VISION_TOOL_IDS = ['describe_image', 'describe_video'];
 let currentEditFile = null;
 let agentTools = [];
 let chatLoaded = false;

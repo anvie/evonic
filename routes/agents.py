@@ -126,7 +126,7 @@ ARTIFACT_TOOLS = frozenset({
     'copy_status',
 })
 
-VISION_TOOLS = frozenset({'describe_image'})
+VISION_TOOLS = frozenset({'describe_image', 'describe_video'})
 
 
 def _validate_user_id(user_id: str) -> str:

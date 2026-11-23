@@ -172,6 +172,8 @@ def _append_attachment_context(content: str, attachment_infos, attachment_info,
             note += _ctx.image_tool_hint(has_describe_image, native_image)
         if is_audio and agent.get('audio_enabled'):
             note += "\nUse the `transcribe_audio` tool to listen to this audio."
+        if mt and mt.startswith('video/') and has_describe_image:
+            note += _ctx.VIDEO_DESCRIBE_HINT
         notes.append(note)
     return content.rstrip() + ''.join(notes) if notes else content
 
@@ -2596,6 +2598,8 @@ class AgentRuntime:
             # No DB assignment needed — every vision-capable agent can analyze images.
             if agent.get('vision_enabled', 1) and 'describe_image' not in assigned_tool_ids:
                 assigned_tool_ids.append('describe_image')
+            if agent.get('vision_enabled', 1) and 'describe_video' not in assigned_tool_ids:
+                assigned_tool_ids.append('describe_video')
 
             # ask_user is on unless the agent turned it off.
             if agent.get('ask_user_enabled', 1) and 'ask_user' not in assigned_tool_ids:
