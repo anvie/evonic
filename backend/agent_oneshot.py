@@ -16,6 +16,7 @@ One-shot sessions are never turned into memory: the summarizer's knowledge pipel
 base.
 """
 
+import re
 import time
 import uuid
 from queue import Empty, Queue
@@ -29,6 +30,7 @@ _logger = get_logger(__name__)
 PREFIX = '__agent__'
 MARKER = 'oneshot__'                     # external ids look like __agent__oneshot__<sender>_<random>
 DEFAULT_TIMEOUT = 300
+_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 
 
 def _kind_prefix(sender: str) -> str:
@@ -63,11 +65,13 @@ def _blocked(agent: dict, agent_id: str, acl_sender: Optional[str]) -> Optional[
 
 def ask(agent_id: str, message: str, *, tag: str = 'SYSTEM', sender: str = 'oneshot',
         timeout: int = DEFAULT_TIMEOUT, metadata: Optional[dict] = None, acl_sender: Optional[str] = None,
-        ttl: int = 7200, override_model_id: Optional[str] = None) -> dict:
+        ttl: int = 7200, override_model_id: Optional[str] = None, key: Optional[str] = None) -> dict:
     """Ask ``agent_id`` once. Returns ``{'success', 'reply', 'session_id', 'waited_seconds', 'error', 'timed_out'}``.
 
     ``sender`` names the requester (letters, digits, underscore); every call gets its own session
     ``__agent__oneshot__<sender>_<random>``. The session is left in place for ``purge()`` to remove later.
+    ``key`` (letters, digits, ``_`` and ``-``) replaces the random part: every call with the same sender and key
+    goes into the same session ``__agent__oneshot__<sender>_<key>``, so the agent sees the earlier exchanges there.
     ``acl_sender`` is an agent whose messaging ACL must allow the question (as for agent-to-agent messages);
     agents in focus mode are not interrupted. The session is never remembered and is removed after ``ttl``
     seconds. ``override_model_id`` makes the agent answer with that model in this session; see ``notify_agent``."""
@@ -84,8 +88,10 @@ def ask(agent_id: str, message: str, *, tag: str = 'SYSTEM', sender: str = 'ones
     blocked = _blocked(agent, agent_id, acl_sender)
     if blocked:
         return {'success': False, 'error': blocked, 'reply': None, 'session_id': None}
+    if key is not None and not _KEY_RE.match(str(key)):
+        return {'success': False, 'error': f'Invalid session key {key!r}.', 'reply': None, 'session_id': None}
 
-    sender_key = f'{MARKER}{sender}_{uuid.uuid4().hex[:10]}'
+    sender_key = f'{MARKER}{sender}_{key if key is not None else uuid.uuid4().hex[:10]}'
     reply_to_id = str(uuid.uuid4())
     queue: Queue = Queue()
     with am._WAIT_REGISTRY_LOCK:
