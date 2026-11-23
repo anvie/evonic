@@ -14,6 +14,7 @@ Guard rails:
 - Rate limit: max 10 messages per (sender, target) pair per 60 seconds
 - Depth limit: max 3 hops in a chain (A→B→C→stop) to prevent infinite loops
 - Global rate limit: max 30 messages per sender per 60 seconds (across all targets)
+- Duplicate guard: identical calls (same target, message, session, vars) within 60 seconds are refused
 - Fan-out limit: max 5 unique targets per 5-second window (per LLM turn)
 """
 
@@ -45,6 +46,12 @@ _GLOBAL_RATE_LIMIT_WINDOW = 60  # seconds
 _FANOUT_MAX_TARGETS = 5
 _FANOUT_WINDOW = 5  # seconds
 
+# Duplicate guard: identical calls (same target, message, session, vars) within this window are refused
+_DUPLICATE_WINDOW = 60  # seconds
+
+# Duplicate state: maps (sender_id, call fingerprint) → timestamp of last accepted send
+_duplicate_buckets: Dict[tuple, float] = {}
+
 # Rate limit state: maps (sender_id, target_id) → list of timestamps
 _rate_limit_buckets: Dict[tuple, list] = defaultdict(list)
 
@@ -75,6 +82,18 @@ def _check_rate_limit(sender_id: str, target_id: str) -> bool:
     if len(_rate_limit_buckets[key]) >= _RATE_LIMIT_MAX:
         return False
     _rate_limit_buckets[key].append(now)
+    return True
+
+
+def _check_duplicate(sender_id: str, fingerprint: str) -> bool:
+    """Return True if the call is new, False if an identical one was sent within the window."""
+    now = time.time()
+    for k in [k for k, t in _duplicate_buckets.items() if now - t >= _DUPLICATE_WINDOW]:
+        _duplicate_buckets.pop(k, None)
+    key = (sender_id, fingerprint)
+    if key in _duplicate_buckets:
+        return False
+    _duplicate_buckets[key] = now
     return True
 
 
@@ -401,6 +420,20 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
             )
             # If we can't read the focus state, err on the side of allowing the message.
 
+    # Duplicate guard — agents sometimes repeat the exact same call; refuse it within the window
+    fingerprint = json.dumps(
+        [target_id, message, args.get('session') or '', sanitized_vars or {}],
+        sort_keys=True, default=str,
+    )
+    if not _check_duplicate(sender_id, fingerprint):
+        _logger.warning("Duplicate send_agent_message from '%s' to '%s' blocked.", sender_id, target_id)
+        return {
+            'error': (
+                f"Duplicate message blocked: an identical message was already sent to '{target_id}' "
+                f"within the last {_DUPLICATE_WINDOW}s. Do not resend it; wait for the reply."
+            )
+        }
+
     # Global rate limit — cap total messages per sender across all targets
     if not _check_global_rate_limit(sender_id):
         _logger.warning(
@@ -459,11 +492,20 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
 
     from backend.agent_report_to import resolve_report_to_from_context
 
+    from backend.agent_oneshot import is_oneshot_external_id
+
     reply_to_id = str(uuid.uuid4())
-    report_to_id, report_to_channel_id, session_id = resolve_report_to_from_context(
-        agent_context, sender_id,
-    )
-    if (agent_context.get('user_id', '') or '').startswith(_AGENT_MSG_PREFIX) and not report_to_id:
+    # A one-shot session (a question a plugin asks and awaits) ends with its first final answer: a reply that
+    # arrived later would have no turn to land in, and the route resolved below would take it to the sender's
+    # human chat instead. So from such a session the reply is always awaited in this call, and never forwarded.
+    from_oneshot = is_oneshot_external_id(agent_context.get('user_id'))
+    if from_oneshot:
+        report_to_id, report_to_channel_id, session_id = None, None, ''
+    else:
+        report_to_id, report_to_channel_id, session_id = resolve_report_to_from_context(
+            agent_context, sender_id,
+        )
+    if not from_oneshot and (agent_context.get('user_id', '') or '').startswith(_AGENT_MSG_PREFIX) and not report_to_id:
         _logger.warning(
             "send_agent_message: no human session found for sender '%s'. "
             "Reply auto-forward will be skipped.",
@@ -482,11 +524,13 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
     }
     if session_id:
         metadata['session_id'] = session_id
+    if from_oneshot:
+        metadata['skip_auto_forward'] = True
 
     # Register synchronous internal waits before dispatch so an immediate reply
     # cannot beat the waiter into the registry. This option is intentionally not
     # exposed in the public tool schema.
-    wait_for_reply = bool(args.get('wait_for_reply', False))
+    wait_for_reply = from_oneshot or bool(args.get('wait_for_reply', False))
     wait_timeout = _WAIT_TIMEOUT_DEFAULT
     reply_queue = None
     if wait_for_reply:
@@ -579,8 +623,10 @@ def _exec_send_agent_message(args: dict, agent_context: dict) -> dict:
                 'waited_seconds': wait_timeout,
                 'tip': (
                     f"Wait timed out after {wait_timeout}s. "
-                    f"The reply from {target_agent.get('name', target_id)} will arrive "
-                    f"in your next turn automatically."
+                    + (f"No reply from {target_agent.get('name', target_id)} will reach this session later."
+                       if from_oneshot else
+                       f"The reply from {target_agent.get('name', target_id)} will arrive "
+                       f"in your next turn automatically.")
                 ),
             }
         except Exception as e:
@@ -1281,6 +1327,9 @@ def _cleanup_buckets() -> None:
     for key in list(_global_rate_limit_buckets.keys()):
         if not _global_rate_limit_buckets[key]:
             _global_rate_limit_buckets.pop(key, None)
+    now = time.time()
+    for key in [k for k, t in _duplicate_buckets.items() if now - t >= _DUPLICATE_WINDOW]:
+        _duplicate_buckets.pop(key, None)
     for key in list(_fanout_buckets.keys()):
         if not _fanout_buckets[key]:
             _fanout_buckets.pop(key, None)
