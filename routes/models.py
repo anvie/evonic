@@ -1,10 +1,14 @@
 import json
 import logging
+import math
+import re
+from datetime import datetime
 from typing import Any, Dict, List
 
 import requests
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
+from backend import model_transfer
 from backend.tools.lib.model_routing_contracts import AdapterKey, ContractValidationError, parse_capabilities
 from models.db import db
 from models.mixins.models import LEGACY_MODEL_TYPES, MODEL_TYPES, normalize_model_type
@@ -75,6 +79,202 @@ def api_list_models():
     """List all models."""
     models = db.get_llm_models()
     return jsonify({"models": _sanitize_models(models)})
+
+
+@models_bp.route("/api/models/export", methods=["GET"])
+def api_export_models():
+    """Download model configuration (models and their providers, no credentials) as JSON.
+
+    Every model by default; repeat ?id= to export only those models.
+    """
+    models = db.get_llm_models()
+    wanted = request.args.getlist("id")
+    filename = f"evonic-models-{datetime.now():%Y%m%d}.json"
+    if wanted:
+        chosen = [db.get_model_by_id(model_id) for model_id in wanted]   # also accepts legacy ids
+        chosen_ids = {m["id"] for m in chosen if m}
+        if not chosen_ids:
+            return jsonify({"error": "Model not found"}), 404
+        models = [m for m in models if m["id"] in chosen_ids]
+        if len(models) == 1:
+            filename = f"evonic-model-{re.sub(r'[^A-Za-z0-9._-]+', '-', models[0]['id'])}-{datetime.now():%Y%m%d}.json"
+    payload = model_transfer.build_export(db.get_providers(), models)
+    return Response(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        mimetype="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# (minimum, maximum) for the numeric fields of an imported model
+_IMPORT_INT_FIELDS = {
+    "max_tokens": (1, 10_000_000), "timeout": (1, 86_400), "thinking_budget": (0, 10_000_000),
+    "model_max_concurrent": (1, 1_000), "context_window": (0, 100_000_000),
+}
+_IMPORT_DEFAULTS = {
+    "max_tokens": 32768, "timeout": 60, "thinking_budget": 0, "model_max_concurrent": 3, "context_window": 0,
+}
+_PROVIDER_ID = re.compile(r"[\w.:-]{1,64}")
+
+
+def _clean_import_model(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate one model from an import file as creating it by hand would; raises ValueError."""
+    data: Dict[str, Any] = {}
+    for key in ("name", "provider", "model_name"):
+        value = str(entry.get(key) or "").strip()
+        if not value:
+            raise ValueError(f"{key} is required")
+        data[key] = value
+    model_id = str(entry.get("id") or "").strip()
+    if model_id and not re.fullmatch(r"\S{1,200}", model_id):
+        raise ValueError("id must be 1-200 characters without whitespace")
+    data["id"] = model_id or None
+
+    if entry.get("type") not in MODEL_TYPES + LEGACY_MODEL_TYPES:
+        raise ValueError(f"type must be one of: {', '.join(MODEL_TYPES)}")
+    data["type"] = normalize_model_type(entry["type"])
+
+    for key, (low, high) in _IMPORT_INT_FIELDS.items():
+        value = entry.get(key)
+        if value is None:
+            data[key] = _IMPORT_DEFAULTS[key]
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+            raise ValueError(f"{key} must be a number from {low} to {high}")
+        data[key] = int(value)
+    temperature = entry.get("temperature")
+    if temperature is not None:
+        if (isinstance(temperature, bool) or not isinstance(temperature, (int, float))
+                or not math.isfinite(temperature) or not 0 <= temperature <= 2):
+            raise ValueError("temperature must be a number from 0 to 2")
+    data["temperature"] = temperature
+    for key, default in (("thinking", 0), ("enabled", 1), ("vision_supported", 0)):
+        value = entry.get(key, default)
+        if not isinstance(value, (bool, int)) or value not in (0, 1, True, False):
+            raise ValueError(f"{key} must be true or false")
+        data[key] = int(value)
+
+    data["is_default"] = 0   # an import never chooses the default model, whatever the file says
+    data["base_url"] = entry.get("base_url")
+    data["reasoning_effort"] = entry.get("reasoning_effort")
+    error = _normalize_base_url(data) or _normalize_reasoning_effort(data)
+    if error:
+        raise ValueError(error)
+    try:
+        data["capabilities"] = parse_capabilities(entry.get("capabilities") or {
+            "version": "model-capabilities/v1", "operations": {"chat": "advertised"},
+            "schema_versions": [], "confidence": "unsupported", "data_egress": ["public"],
+        }).to_dict()
+    except ContractValidationError as e:
+        raise ValueError(f"capabilities: {e}") from e
+    return data
+
+
+@models_bp.route("/api/models/import", methods=["POST"])
+def api_import_models():
+    """Import models (and any provider they need) from an export file.
+
+    With dry_run the file is only checked and the outcome reported. Existing
+    providers and models are never modified: a provider that is already here is
+    reused, a model whose id is taken is skipped. Providers that have to be
+    created come without credentials.
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        file_providers, file_models = model_transfer.parse_payload(body.get("data"))
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    dry_run = bool(body.get("dry_run"))
+
+    existing_providers = {p["id"] for p in db.get_providers()}
+    current_models = db.get_llm_models()
+    existing_models = {m["id"] for m in current_models}
+
+    providers_report: Dict[str, List[Any]] = {"create": [], "existing": [], "errors": []}
+    models_report: Dict[str, List[Any]] = {"create": [], "skipped": [], "errors": []}
+
+    # Providers: reuse what is here, otherwise plan a creation without credentials
+    new_providers: Dict[str, Dict[str, Any]] = {}
+    bad_providers: Dict[str, str] = {}
+    for entry in file_providers:
+        pid = str(entry.get("id") or "").strip()
+        if pid in existing_providers:
+            providers_report["existing"].append(pid)
+            continue
+        if pid in new_providers or pid in bad_providers:
+            continue
+        try:
+            if not _PROVIDER_ID.fullmatch(pid):
+                raise ValueError("id must be 1-64 letters, digits, '.', ':', '_' or '-'")
+            new_providers[pid] = db._normalize_provider_data({
+                "id": pid, "name": str(entry.get("name") or pid).strip() or pid,
+                "type": str(entry.get("type") or "remote"), "base_url": entry.get("base_url") or "",
+                "adapter_key": entry.get("adapter_key"), "api_format": entry.get("api_format") or "openai",
+                "enabled": 1 if entry.get("enabled", True) else 0,
+                "auth_type": "api_key", "credential_source": "api_key",
+            })
+        except ValueError as e:
+            bad_providers[pid] = str(e)
+            providers_report["errors"].append({"id": pid, "error": str(e)})
+
+    # Models: validate each one, skip the ones already here
+    planned: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for entry in file_models:
+        label = str(entry.get("id") or entry.get("name") or "?")
+        try:
+            data = _clean_import_model(entry)
+            provider = data["provider"]
+            if provider in bad_providers:
+                raise ValueError(f"provider {provider} is invalid: {bad_providers[provider]}")
+            if provider not in existing_providers and provider not in new_providers:
+                raise ValueError(f"unknown provider: {provider}")
+        except ValueError as e:
+            models_report["errors"].append({"id": label, "error": str(e)})
+            continue
+        if data["id"] and (data["id"] in existing_models or data["id"] in seen_ids):
+            models_report["skipped"].append({"id": data["id"], "name": data["name"], "reason": "already exists"})
+            continue
+        if data["id"]:
+            seen_ids.add(data["id"])
+        planned.append(data)
+
+    if dry_run:
+        providers_report["create"] = [
+            pid for pid in new_providers if any(m["provider"] == pid for m in planned)
+        ]
+        models_report["create"] = [{"id": m["id"], "name": m["name"]} for m in planned]
+    else:
+        # Only a provider that some model needs is created
+        for pid, data in new_providers.items():
+            if not any(m["provider"] == pid for m in planned):
+                continue
+            try:
+                db.create_provider(data)
+                providers_report["create"].append(pid)
+            except Exception as e:
+                bad_providers[pid] = str(e)
+                providers_report["errors"].append({"id": pid, "error": str(e)})
+        for data in planned:
+            label = data["id"] or data["name"]
+            if data["provider"] in bad_providers:
+                models_report["errors"].append({"id": label, "error": f"provider {data['provider']} could not be created"})
+                continue
+            try:
+                new_id = db.create_model({k: v for k, v in data.items() if k != "id" or v})
+            except Exception as e:
+                models_report["errors"].append({"id": label, "error": str(e)})
+                continue
+            models_report["create"].append({"id": new_id, "name": data["name"]})
+
+    return jsonify({
+        "success": True,
+        "dry_run": dry_run,
+        "providers": providers_report,
+        "models": models_report,
+        # created providers carry no credentials; the user adds them in the provider settings
+        "needs_credentials": providers_report["create"],
+    })
 
 
 @models_bp.route("/api/models/<path:model_id>", methods=["GET"])

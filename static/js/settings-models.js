@@ -52,6 +52,93 @@ window.settingsModels = {
         await this.load();
     },
 
+    // Footer tool on the left: "Config from file" when adding a model, "Export" when editing one
+    _showFromFile(adding) {
+        const fromFile = document.getElementById("model-from-file-btn");
+        const exportBtn = document.getElementById("model-export-btn");
+        if (fromFile) fromFile.style.display = adding ? "" : "none";
+        if (exportBtn) exportBtn.style.display = adding ? "none" : "";
+    },
+
+    // The model being edited and its provider as a JSON file; credentials are never part of it
+    exportModel() {
+        const id = document.getElementById("model-id").value;
+        if (id) window.location.href = "/api/models/export?id=" + encodeURIComponent(id);
+    },
+
+    // Pick a file exported by another instance: check it, show what will happen, then import
+    async importFile(input) {
+        const file = input.files && input.files[0];
+        input.value = "";   // so the same file can be picked again
+        if (!file) return;
+        const notify = (message, type) => { if (window.toast) toast.show(message, type); };
+
+        let data;
+        try {
+            data = JSON.parse(await file.text());
+        } catch (error) {
+            notify("That file is not valid JSON", "error");
+            return;
+        }
+        try {
+            const plan = await apiPost("/api/models/import", { data, dry_run: true });
+            if (!plan.success) {
+                notify("Import failed: " + (plan.error || "unknown error"), "error");
+                return;
+            }
+            const count = plan.models.create.length;
+            const ok = await showConfirm({
+                title: "Import models",
+                message: this._importSummary(plan),
+                confirmText: count ? `Import ${count} model${count !== 1 ? "s" : ""}` : "OK",
+                cancelText: count ? "Cancel" : "Close",
+                danger: false,
+            });
+            if (!ok || !count) return;
+
+            const result = await apiPost("/api/models/import", { data });
+            if (!result.success) {
+                notify("Import failed: " + (result.error || "unknown error"), "error");
+                return;
+            }
+            const made = result.models.create.length;
+            const failed = result.models.errors.length;
+            let message = `Imported ${made} model${made !== 1 ? "s" : ""}`;
+            if (result.needs_credentials.length) message += `. Add API keys for: ${result.needs_credentials.join(", ")}`;
+            if (failed) message += `. ${failed} could not be imported`;
+            notify(message, failed ? "error" : "success");
+            closeModal("model-modal");   // the file replaced filling in the form by hand
+            await this.reload();
+        } catch (error) {
+            notify("Import failed: " + error.message, "error");
+        }
+    },
+
+    _importSummary(plan) {
+        const lines = [];
+        const list = (items, label, max) => {
+            const shown = items.slice(0, max).map((x) => "• " + label(x));
+            if (items.length > max) shown.push(`… and ${items.length - max} more`);
+            return shown;
+        };
+        const create = plan.models.create;
+        if (create.length) {
+            lines.push(`Add ${create.length} model${create.length !== 1 ? "s" : ""}:`, ...list(create, (m) => m.name, 8));
+        } else {
+            lines.push("Nothing new to import.");
+        }
+        if (plan.providers.create.length) {
+            lines.push("", `New providers (created without an API key): ${plan.providers.create.join(", ")}`);
+        }
+        if (plan.models.skipped.length) {
+            lines.push("", `${plan.models.skipped.length} already here and left unchanged.`);
+        }
+        if (plan.models.errors.length) {
+            lines.push("", `${plan.models.errors.length} can't be imported:`, ...list(plan.models.errors, (e) => `${e.id}: ${e.error}`, 5));
+        }
+        return lines.join("\n");
+    },
+
     _populateProviderSelect() {
         const sel = document.getElementById("model-provider");
         if (!sel) return;
@@ -650,6 +737,7 @@ window.settingsModels = {
 
     showAddModelModal() {
         document.getElementById("modal-title").textContent = "Add Model";
+        this._showFromFile(true);
         document.getElementById("model-form").reset();
         document.getElementById("model-id").value = "";
         document.getElementById("model-reasoning-effort").value = "";
@@ -664,6 +752,7 @@ window.settingsModels = {
         if (!prov) return;
 
         document.getElementById("modal-title").textContent = "Add Model — " + (prov.name || providerId);
+        this._showFromFile(true);
         document.getElementById("model-form").reset();
         document.getElementById("model-id").value = "";
         document.getElementById("model-reasoning-effort").value = "";
@@ -683,6 +772,7 @@ window.settingsModels = {
         if (!model) return;
 
         document.getElementById("modal-title").textContent = "Edit Model";
+        this._showFromFile(false);
         document.getElementById("model-id").value = model.id;
         this._setRegistryId(model.id);
         document.getElementById("model-name").value = model.name || "";
