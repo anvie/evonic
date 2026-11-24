@@ -20,14 +20,14 @@
                 </div>
                 <div class="flex items-center gap-2 w-full sm:w-auto">
                     <button id="toggle-btn" data-status="{{ status.status }}"
-                            class="flex-1 sm:flex-none px-4 py-2 rounded font-medium text-sm transition-colors {{ 'bg-red-500 hover:bg-red-600 text-white' if status.status == 'running' else 'bg-blue-500 hover:bg-blue-600 text-white' }}"
+                            class="flex-1 sm:flex-none ev-btn {{ 'ev-btn-danger' if status.status == 'running' else 'ev-btn-primary' }}"
                             onclick="toggleEvaluation()">
                         {{ 'Stop Evaluation' if status.status == 'running' else 'Start Evaluation' }}
                     </button>
-                    <button id="clear-btn" class="flex-1 sm:flex-none px-4 py-2 rounded font-medium text-sm bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 transition-colors" onclick="clearState()" style="display: none;">
+                    <button id="clear-btn" class="flex-1 sm:flex-none ev-btn" onclick="clearState()" style="display: none;">
                         Clear
                     </button>
-                    <button id="resume-btn" class="flex-1 sm:flex-none px-4 py-2 rounded font-medium text-sm bg-green-500 hover:bg-green-600 text-white transition-colors" onclick="resumeEvaluation()" style="display: none;">
+                    <button id="resume-btn" class="flex-1 sm:flex-none ev-btn ev-btn-primary" onclick="resumeEvaluation()" style="display: none;">
                         Resume
                     </button>
                 </div>
@@ -142,7 +142,7 @@
 {% include 'partials/training-modal.html' %}
 
 <!-- Shared JS -->
-<script src="{{ url_for('static', filename='js/eval-matrix.js') }}?v=5"></script>
+<script src="{{ url_for('static', filename='js/eval-matrix.js') }}?v=6"></script>
 <script src="{{ url_for('static', filename='js/run-card.js') }}?v=6"></script>
 <script src="{{ url_for('static', filename='js/test-modal.js') }}?v=3"></script>
 <script src="{{ url_for('static', filename='js/training-data.js') }}?v=3"></script>
@@ -233,12 +233,12 @@ function updateToggleButton(running) {
     btn.dataset.status = running ? 'running' : 'idle';
     if (running) {
         btn.textContent = 'Stop Evaluation';
-        btn.className = 'px-4 py-2 rounded font-medium transition-colors bg-red-500 hover:bg-red-600 text-white';
+        btn.className = 'flex-1 sm:flex-none ev-btn ev-btn-danger';
         // Hide resume button while running
         document.getElementById('resume-btn').style.display = 'none';
     } else {
         btn.textContent = 'Start Evaluation';
-        btn.className = 'px-4 py-2 rounded font-medium transition-colors bg-blue-500 hover:bg-blue-600 text-white';
+        btn.className = 'flex-1 sm:flex-none ev-btn ev-btn-primary';
     }
     const selector = document.getElementById('model-selector');
     selector.disabled = running;
@@ -1852,25 +1852,10 @@ html.dark .ev-card { background: var(--bg-card); border-color: rgb(148 163 184 /
 .ev-controls h2 { font-size: 1.125rem; letter-spacing: -.01em; }
 
 /* controls: pill select + pill buttons */
-.ev-page #model-selector { height: 2.5rem; padding: 0 2rem 0 1rem; border-radius: 9999px; font-size: .8125rem; border: 1px solid #e5e7eb; background: rgb(255 255 255 / .85); color: #1f2937; outline: none; transition: border-color .15s, box-shadow .15s; }
+.ev-page #model-selector { height: 2.5rem; padding: 0 2rem 0 1rem; border-radius: .625rem; font-size: .8125rem; border: 1px solid #e5e7eb; background: rgb(255 255 255 / .85); color: #1f2937; outline: none; transition: border-color .15s, box-shadow .15s; }
 html.dark .ev-page #model-selector { border-color: #374151 !important; background: rgb(10 15 28 / .6) !important; color: #e5e7eb !important; }
 .ev-page #model-selector:focus { border-color: #818cf8 !important; box-shadow: 0 0 0 3px rgb(99 102 241 / .16); }
-.ev-page #toggle-btn, .ev-page #clear-btn, .ev-page #resume-btn { height: 2.5rem; padding: 0 1.25rem; border-radius: 9999px; font-size: .8125rem; font-weight: 600; border: 1px solid transparent;
-    transition: background-color .15s, color .15s, border-color .15s, transform .12s; }
-.ev-page #toggle-btn:active, .ev-page #clear-btn:active, .ev-page #resume-btn:active { transform: scale(.97); }
-.ev-page #toggle-btn { background: #4f46e5 !important; color: #fff !important; }
-.ev-page #toggle-btn:hover { background: #4338ca !important; }
-html.dark .ev-page #toggle-btn { background: #6366f1 !important; }
-html.dark .ev-page #toggle-btn:hover { background: #7c7ff5 !important; }
-.ev-page #toggle-btn[data-status="running"] { background: rgb(239 68 68 / .12) !important; color: #dc2626 !important; border-color: rgb(239 68 68 / .4); }
-.ev-page #toggle-btn[data-status="running"]:hover { background: #ef4444 !important; color: #fff !important; border-color: #ef4444; }
-html.dark .ev-page #toggle-btn[data-status="running"] { color: #fca5a5 !important; }
-.ev-page #clear-btn { background: transparent !important; color: #475569 !important; border-color: rgb(148 163 184 / .4); }
-.ev-page #clear-btn:hover { background: rgb(148 163 184 / .14) !important; }
-html.dark .ev-page #clear-btn { color: #cbd5e1 !important; }
-.ev-page #resume-btn { background: rgb(16 185 129 / .12) !important; color: #047857 !important; border-color: rgb(16 185 129 / .4); }
-.ev-page #resume-btn:hover { background: #10b981 !important; color: #fff !important; }
-html.dark .ev-page #resume-btn { color: #6ee7b7 !important; }
+.ev-page #toggle-btn, .ev-page #clear-btn, .ev-page #resume-btn { height: 2.5rem; }
 
 /* progress: solid accent (no gradient) */
 .ev-page #progress-fill { background-image: none !important; background-color: #6366f1 !important; border-radius: 9999px; }

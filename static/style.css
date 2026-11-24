@@ -1583,6 +1583,9 @@ html.dark .ev-btn { color: #cbd5e1; }
 .ev-btn-primary { border-color: transparent; background: #6366f1; color: #fff; }
 .ev-btn-primary:hover { background: #4f46e5; }
 html.dark .ev-btn-primary { color: #fff; }
+.ev-btn-danger { border-color: transparent; background: #dc2626; color: #fff; }
+.ev-btn-danger:hover { background: #b91c1c; }
+html.dark .ev-btn-danger { color: #fff; }
 .ev-btn:disabled { opacity: .55; cursor: not-allowed; }
 .ev-modal input[type="text"], .ev-modal input[type="number"], .ev-modal input[type="password"], .ev-modal textarea { border-radius: .625rem; }
 
@@ -1732,6 +1735,9 @@ html[data-theme-preset="gruvbox-dark"] .panel-btn.btn-script .pnl-cmd { backgrou
 .mx-cell:hover { background: rgb(99 102 241 / .1); }
 /* the colored box carries the percentage; tone comes from data-tone */
 .mx-box { display: flex; flex-direction: column; align-items: center; width: 100%; min-width: 2.25rem; max-width: 4.75rem; padding: .3125rem .5rem; border-radius: 0; text-align: center; font-size: .9375rem; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; background: rgb(148 163 184 / .22); color: var(--text-secondary); }
+/* the level being tested right now */
+.mx-box[data-tone="running"] { background: rgb(99 102 241 / .5); color: var(--text-heading); animation: pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .mx-box[data-tone="running"] { animation: none; } }
 .mx-box[data-tone="red"], .rc-dot[data-tone="red"] { background: #dc2626; color: #fff; }
 .mx-box[data-tone="yellow"], .rc-dot[data-tone="yellow"] { background: #fbbf24; color: #422006; }
 .mx-box[data-tone="green"], .rc-dot[data-tone="green"] { background: #15803d; color: #fff; }

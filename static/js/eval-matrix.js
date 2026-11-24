@@ -46,7 +46,12 @@
             if (!cell) continue;
             const d = levels[level];
             const dur = cell.querySelector('.mx-dur');
-            if (isCounted(d)) {
+            if (d && d.status === 'running') {
+                // being tested right now: a pulsing box until the level finishes
+                const box = cell.querySelector('.mx-box');
+                setBox(box, null, '…');
+                if (box) box.dataset.tone = 'running';
+            } else if (isCounted(d)) {
                 setBox(cell.querySelector('.mx-box'), d.points / d.max_points);
                 points += d.points; max += d.max_points; counted++;
             } else {
