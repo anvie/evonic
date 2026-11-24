@@ -1605,6 +1605,17 @@ nav .nav-dd-menu a.nav-dd-current { color: #667eea; }
   nav#site-nav .nav-dd-menu a.nav-dd-item { display: block; padding: .5rem .75rem; font-size: .875rem; }
 }
 
+html[data-theme-preset="gruvbox-dark"] :is(.ag-btn-primary, .ev-btn-primary, .btn-primary, .scroll-to-bottom-btn, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700),
+html[data-theme-preset="gruvbox-dark"] #chat-composer:not(.is-bash) .chat-send-pill { color: #1e1b4b; }
+html[data-theme-preset="gruvbox-dark"] :is(.ag-btn-primary, .ev-btn-primary, .btn-primary, .bg-indigo-500, .bg-indigo-600, .bg-indigo-700) :is(.text-white, .ev-kbd-btn) { color: #1e1b4b; text-shadow: none; }
+
+html[data-theme-preset="gruvbox-dark"] #chat-messages .rounded-2xl.bg-indigo-500,
+html[data-theme-preset="gruvbox-dark"] #chat-messages .rounded-2xl.bg-indigo-500 :is(.text-white, a) { color: #fff; }
+
+html[data-theme-preset="gruvbox-dark"] :is(.panel-btn.btn-script, .pnl-btn-pri, .pnl-edit-toggle.is-active) { color: #1e1b4b; }
+html[data-theme-preset="gruvbox-dark"] .panel-btn.btn-script .pnl-dot { background: rgba(30, 27, 75, .7); }
+html[data-theme-preset="gruvbox-dark"] .panel-btn.btn-script .pnl-cmd { background: rgba(30, 27, 75, .15); }
+
 
 /* ── static/css/recap-prose.css ────────────────────────────────── */
 
@@ -1825,8 +1836,6 @@ html.dark {
     to { transform: rotate(360deg); }
 }
 
-/* Waiting for the user's answer (ask_user): pink ring, slower spin + glow.
-   Later rule of equal specificity, so it overrides the busy ring. */
 #agent-sidebar .agent-avatar[data-asking="true"]::after {
     opacity: 1;
     border-color: #ec4899 #ec4899 transparent transparent;
