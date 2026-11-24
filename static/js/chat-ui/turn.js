@@ -52,6 +52,7 @@ export function reduceTurn(phase, eventKind, isFinal = false) {
         if (eventKind === 'approval_required') return 'awaiting_approval';
         if (eventKind === 'thinking')          return 'thinking'; // no-op transition
         if (eventKind === 'retry')             return 'thinking';
+        if (eventKind === 'fallback')          return 'thinking';
         if (eventKind === 'turn_split')        return 'pending';
     }
     if (phase === 'tool_running') {
@@ -336,6 +337,11 @@ export class Turn {
 
         if (evtName === 'retry') {
             this._addTimelineEntry({ type: 'retry', message: data.message, retry_count: data.retry_count, max_retries: data.max_retries });
+            return;
+        }
+
+        if (evtName === 'fallback') {
+            this._addTimelineEntry({ type: 'fallback', message: data.message, fallback_model: data.fallback_model, primary_error: data.primary_error, restored_from_state: data.restored_from_state });
             return;
         }
 

@@ -142,7 +142,7 @@ var RealtimeClient = (function () {
             'update_status', 'update_done',
             'turn_begin', 'thinking', 'tool_call_started', 'tool_executed',
             'state:changed', 'state_changed', 'tasks:auto_transition', 'tasks:stale',
-            'response_chunk', 'done', 'retry', 'message_injected',
+            'response_chunk', 'done', 'retry', 'fallback', 'message_injected',
             'message_injection_applied', 'message_received', 'turn_queued',
             'whatsapp_restriction_warning', 'session_clear', 'turn_split',
             'connector_connected', 'connector_disconnected', 'connector_paired',
@@ -258,7 +258,7 @@ var RealtimeClient = (function () {
             evtName === 'state:changed' || evtName === 'state_changed' ||
             evtName === 'tasks:auto_transition' || evtName === 'tasks:stale' ||
             evtName === 'response_chunk' || evtName === 'done' ||
-            evtName === 'retry' || evtName === 'message_injected' ||
+            evtName === 'retry' || evtName === 'fallback' || evtName === 'message_injected' ||
             evtName === 'message_injection_applied' || evtName === 'message_received' ||
             evtName === 'whatsapp_restriction_warning' || evtName === 'session_clear' ||
             evtName === 'turn_split') {

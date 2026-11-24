@@ -882,6 +882,14 @@ def record_internal_event(event_name: str, data: dict) -> list[int]:
             'error_type': data.get('error_type', ''),
             'message': data.get('user_message', ''),
         }))
+    elif event_name == 'llm_fallback':
+        specs.append(('chat', 'fallback', {
+            'fallback_model': data.get('fallback_model', ''),
+            'primary_error': data.get('primary_error', ''),
+            'restored_from_state': data.get('restored_from_state', False),
+            'global_default_fallback': data.get('global_default_fallback', False),
+            'message': data.get('user_message', ''),
+        }))
     elif event_name in {'approval_required', 'approval_resolved'}:
         if event_name == 'approval_required':
             payload = {

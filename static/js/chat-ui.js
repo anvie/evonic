@@ -1603,6 +1603,15 @@ function buildTimelineEntry(ev, isActive) {
         $summary = $('<span class="text-[11px] text-gray-400 truncate max-w-[780px]">').text(ev.message || `Mencoba ulang... (${ev.retry_count}/${ev.max_retries})`);
         $detail = null;
 
+    } else if (ev.type === 'fallback') {
+        borderClass = 'border-amber-400'; icon = uiIcon('retry', 14); label = 'Fallback Model'; labelClass = 'text-amber-600'; spinnerColor = '#f59e0b';
+        const _fbName = ev.fallback_model ? `: ${ev.fallback_model}` : '';
+        $summary = $('<span class="text-[11px] text-amber-600 truncate max-w-[780px]">').text(
+            (ev.restored_from_state ? 'Using fallback model' : 'Switched to fallback model') + _fbName);
+        $detail = ev.primary_error
+            ? $('<pre class="whitespace-pre-wrap dark:text-gray-200 break-words text-[11px] text-gray-700">').text(`Primary model failed: ${ev.primary_error}`)
+            : null;
+
     } else {
         return null;
     }
@@ -2496,7 +2505,7 @@ async function _renderViewerContent($body, url, filename, category) {
 
 const SSE_EVENTS = [
     'turn_begin', 'turn_split', 'thinking', 'thinking_delta', 'thinking_reset', 'tool_call_started', 'tool_executed',
-    'state:changed', 'tasks:auto_transition', 'tasks:stale', 'response_chunk', 'done', 'approval_required', 'approval_resolved', 'retry',
+    'state:changed', 'tasks:auto_transition', 'tasks:stale', 'response_chunk', 'done', 'approval_required', 'approval_resolved', 'retry', 'fallback',
     'message_injected', 'message_injection_applied', 'message_received', 'whatsapp_restriction_warning', 'session_clear',
     'state_changed', 'turn_queued', 'ready', 'heartbeat', 'auth_expired',
 ];
@@ -2837,6 +2846,7 @@ function reduceTurn(phase, eventKind, isFinal = false) {
         if (eventKind === 'approval_required') return 'awaiting_approval';
         if (eventKind === 'thinking')          return 'thinking'; // no-op transition
         if (eventKind === 'retry')             return 'thinking';
+        if (eventKind === 'fallback')          return 'thinking';
         if (eventKind === 'turn_split')        return 'pending';
     }
     if (phase === 'tool_running') {
@@ -3103,6 +3113,11 @@ class Turn {
 
         if (evtName === 'retry') {
             this._addTimelineEntry({ type: 'retry', message: data.message, retry_count: data.retry_count, max_retries: data.max_retries });
+            return;
+        }
+
+        if (evtName === 'fallback') {
+            this._addTimelineEntry({ type: 'fallback', message: data.message, fallback_model: data.fallback_model, primary_error: data.primary_error, restored_from_state: data.restored_from_state });
             return;
         }
 
@@ -3988,6 +4003,7 @@ class ChatUI {
         if (ev.type === 'tool_result') event = 'tool_executed';
         if (ev.type === 'response')    { turn.ingest({ event: 'response_chunk', data: { content: ev.content, is_final: true }, seq: 0 }); return; }
         if (ev.type === 'retry')       event = 'retry';
+        if (ev.type === 'fallback')    event = 'fallback';
         turn.ingest({ event, data: ev, seq: 0 });
     }
 

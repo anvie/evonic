@@ -891,6 +891,15 @@ export function buildTimelineEntry(ev, isActive) {
         $summary = $('<span class="text-[11px] text-gray-400 truncate max-w-[780px]">').text(ev.message || `Mencoba ulang... (${ev.retry_count}/${ev.max_retries})`);
         $detail = null;
 
+    } else if (ev.type === 'fallback') {
+        borderClass = 'border-amber-400'; icon = uiIcon('retry', 14); label = 'Fallback Model'; labelClass = 'text-amber-600'; spinnerColor = '#f59e0b';
+        const _fbName = ev.fallback_model ? `: ${ev.fallback_model}` : '';
+        $summary = $('<span class="text-[11px] text-amber-600 truncate max-w-[780px]">').text(
+            (ev.restored_from_state ? 'Using fallback model' : 'Switched to fallback model') + _fbName);
+        $detail = ev.primary_error
+            ? $('<pre class="whitespace-pre-wrap dark:text-gray-200 break-words text-[11px] text-gray-700">').text(`Primary model failed: ${ev.primary_error}`)
+            : null;
+
     } else {
         return null;
     }

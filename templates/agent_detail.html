@@ -3185,7 +3185,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=80" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=81" defer></script>
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=14" defer></script>
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
@@ -7117,7 +7117,7 @@ async function restoreActiveReasoning() {
         'agent_busy_changed', 'turn_queued', 'turn_begin', 'thinking', 'thinking_delta', 'thinking_reset',
         'tool_call_started', 'tool_executed', 'state:changed', 'state_changed',
         'tasks:auto_transition', 'tasks:stale', 'response_chunk', 'done',
-        'approval_required', 'approval_resolved', 'retry', 'turn_split',
+        'approval_required', 'approval_resolved', 'retry', 'fallback', 'turn_split',
         'message_injected', 'message_injection_applied', 'message_received',
         'whatsapp_restriction_warning', 'session_clear',
     ];

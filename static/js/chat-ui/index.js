@@ -478,6 +478,7 @@ export class ChatUI {
         if (ev.type === 'tool_result') event = 'tool_executed';
         if (ev.type === 'response')    { turn.ingest({ event: 'response_chunk', data: { content: ev.content, is_final: true }, seq: 0 }); return; }
         if (ev.type === 'retry')       event = 'retry';
+        if (ev.type === 'fallback')    event = 'fallback';
         turn.ingest({ event, data: ev, seq: 0 });
     }
 
