@@ -1269,7 +1269,8 @@ def api_get_avatar(agent_id):
     from flask import Response
     import config as _cfg
     svg = generate_avatar_svg(agent.get('name') or agent_id,
-                              variant=_cfg.AVATAR_STYLE, colors=_cfg.AVATAR_COLORS or None)
+                              variant=_cfg.AVATAR_STYLE, colors=_cfg.AVATAR_COLORS or None,
+                              square=request.args.get('shape') == 'square')
     # Short freshness: the default style is configurable (AVATAR_STYLE), so don't pin an old look in caches.
     return Response(svg, mimetype='image/svg+xml',
                     headers={'Cache-Control': 'private, max-age=30, must-revalidate'})

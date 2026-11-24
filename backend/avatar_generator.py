@@ -292,11 +292,15 @@ _RENDERERS = {
 }
 
 
-def generate_avatar_svg(name: str, variant: str = None, colors=None, size: str = "80") -> str:
-    """SVG (circle-masked) for `name`. Unknown variants fall back to the default; colours must be #RRGGBB."""
+def generate_avatar_svg(name: str, variant: str = None, colors=None, size: str = "80", square: bool = False) -> str:
+    """SVG (circle-masked, or square when `square`) for `name`. Unknown variants fall back to the default; colours must be #RRGGBB."""
     normalized = (name or "").strip().lower() or "?"
     render = _RENDERERS.get(variant or DEFAULT_VARIANT) or _RENDERERS[DEFAULT_VARIANT]
     palette = _clean_colors(colors)
     # hash-derived (+ variant): safe to place in id attributes and unique when several are inlined in one page
     ident = "av" + format(_hash_code(normalized), "x") + "-" + (variant if variant in _RENDERERS else DEFAULT_VARIANT)
-    return render(normalized, palette, str(size), ident)
+    svg = render(normalized, palette, str(size), ident)
+    if square:
+        # drop the corner radius of the circular mask so the avatar fills its square frame
+        svg = re.sub(r'(<mask[^>]*>\s*<rect[^>]*?) rx="[^"]*"', r'\1', svg, count=1)
+    return svg
