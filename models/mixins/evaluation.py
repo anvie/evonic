@@ -81,6 +81,33 @@ class EvaluationMixin:
             )
             conn.commit()
 
+    def set_run_overall_score(self, run_id: int, overall_score: float):
+        with self._connect() as conn:
+            conn.execute("UPDATE evaluation_runs SET overall_score = ? WHERE run_id = ?", (overall_score, run_id))
+            conn.commit()
+
+    def refresh_run_points(self, run_id: int) -> Dict[str, Any]:
+        """Recompute a run's point totals and test-set hash from its individual results."""
+        from evaluator.points import calculate_points, run_set_hash
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT test_id, domain, level, status, score, weight, max_points, points, definition_hash "
+                "FROM individual_test_results WHERE run_id = ?",
+                (run_id,)
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+            totals = calculate_points(rows)
+            counted = [r for r in rows if r['status'] != 'skipped']
+            cursor.execute(
+                "UPDATE evaluation_runs SET total_points = ?, max_points = ?, tests_run = ?, test_set_hash = ? WHERE run_id = ?",
+                (totals['total'], totals['max_points'], totals['count'],
+                 run_set_hash(counted) if counted else None, run_id)
+            )
+            conn.commit()
+            return totals
+
     def mark_run_incomplete(self, run_id: int) -> bool:
         """Mark an evaluation run as interrupted/incomplete (preserving all test data for resume)"""
         with self._connect() as conn:
@@ -110,7 +137,7 @@ class EvaluationMixin:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT run_id, started_at, completed_at, model_name, summary, overall_score, total_tokens, total_duration_ms, notes, status, selected_domains FROM evaluation_runs WHERE run_id = ?",
+                "SELECT run_id, started_at, completed_at, model_name, summary, overall_score, total_tokens, total_duration_ms, notes, status, selected_domains, total_points, max_points, tests_run, test_set_hash FROM evaluation_runs WHERE run_id = ?",
                 (run_id,)
             )
             row = cursor.fetchone()

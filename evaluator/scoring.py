@@ -149,10 +149,20 @@ class ScoringEngine:
         if not domain_avgs:
             return "Telah diuji tetapi tidak ada data domain yang cukup."
 
+        pts = (run_stats or {}).get("by_domain") or {}
         sorted_domains = sorted(domain_avgs.items(), key=lambda x: x[1], reverse=True)
         strongest = sorted_domains[0]
         weakest = sorted_domains[-1]
         overall = sum(s * domain_counts[d] for d, s in domain_avgs.items()) / sum(domain_counts.values())
+        if pts:
+            ratio = {d: v['points'] / v['max_points'] for d, v in pts.items() if v['max_points']}
+            sorted_domains = sorted(ratio.items(), key=lambda x: x[1], reverse=True)
+            strongest, weakest = sorted_domains[0], sorted_domains[-1]
+            overall = run_stats["total_points"] / run_stats["max_points"]
+
+        def fmt(domain):
+            v = pts.get(domain)
+            return f"{v['points'] / v['max_points'] * 100:.0f}%" if v and v['max_points'] else None
 
         # Performance label
         if overall >= 0.8:
@@ -167,11 +177,17 @@ class ScoringEngine:
         sentences = []
 
         # Sentence 1: overall + label
-        sentences.append(f"Performa keseluruhan {label} dengan skor {overall*100:.0f}%.")
+        if pts:
+            sentences.append(f"Performa keseluruhan {label} dengan skor {run_stats['total_points']:.1f} poin.")
+        else:
+            sentences.append(f"Performa keseluruhan {label} dengan skor {overall*100:.0f}%.")
 
         # Sentence 2: highlight terkuat & terlemah
         if strongest[1] > weakest[1]:
-            sentences.append(f"Paling kuat di {strongest[0]} ({strongest[1]*100:.0f}%), area yang perlu ditingkatkan: {weakest[0]} ({weakest[1]*100:.0f}%).")
+            if pts:
+                sentences.append(f"Paling kuat di {strongest[0]} ({fmt(strongest[0])}), area yang perlu ditingkatkan: {weakest[0]} ({fmt(weakest[0])}).")
+            else:
+                sentences.append(f"Paling kuat di {strongest[0]} ({strongest[1]*100:.0f}%), area yang perlu ditingkatkan: {weakest[0]} ({weakest[1]*100:.0f}%).")
         else:
             sentences.append(f"Performa konsisten di semua domain.")
 
@@ -191,18 +207,32 @@ class ScoringEngine:
             strongest = sorted_domains[0]
             weakest = sorted_domains[-1]
 
+            pts = (run_stats or {}).get("by_domain") or {}
+            if pts:
+                ratio = {d: v['points'] / v['max_points'] for d, v in pts.items() if v['max_points']}
+                sorted_domains = sorted(ratio.items(), key=lambda x: x[1], reverse=True)
+                strongest, weakest = sorted_domains[0], sorted_domains[-1]
+
+            def score_text(domain, avg):
+                v = pts.get(domain)
+                return f"{v['points'] / v['max_points'] * 100:.0f}%" if v and v['max_points'] else f"{avg*100:.0f}%"
+
             lines = []
             for domain, avg in sorted_domains:
                 total = domain_counts.get(domain, 0)
                 passed = domain_passed.get(domain, 0)
                 failed = total - passed
-                pct = avg * 100
-                lines.append(f"- {domain}: {pct:.0f}% rata-rata ({passed} lulus, {failed} gagal dari {total} tes)")
+                lines.append(f"- {domain}: {score_text(domain, avg)} ({passed} lulus, {failed} gagal dari {total} tes)")
 
             domain_data = "\n".join(lines)
             total_tests = sum(domain_counts.values())
             total_passed = sum(domain_passed.values())
             overall_avg = sum(s * domain_counts[d] for d, s in domain_avgs.items()) / total_tests if total_tests > 0 else 0
+
+            if pts:
+                overall_text = f"skor keseluruhan {run_stats['total_points']:.1f} poin"
+            else:
+                overall_text = f"rata-rata keseluruhan {overall_avg*100:.0f}%"
 
             # Build run stats info
             stats_info = ""
@@ -220,9 +250,9 @@ Run Performance:
 
 {domain_data}
 
-Overall: {total_passed}/{total_tests} tes lulus, rata-rata keseluruhan {overall_avg*100:.0f}%.
-Domain terkuat: {strongest[0]} ({strongest[1]*100:.0f}%)
-Domain terlemah: {weakest[0]} ({weakest[1]*100:.0f}%){stats_info}
+Overall: {total_passed}/{total_tests} tes lulus, {overall_text}.
+Domain terkuat: {strongest[0]} ({score_text(strongest[0], strongest[1])})
+Domain terlemah: {weakest[0]} ({score_text(weakest[0], weakest[1])}){stats_info}
 
 Tulis ringkasan evaluasi dalam 2-3 kalimat bahasa Indonesia yang natural dan informatif. Sertakan:
 - Kalimat 1: Overview performa (overall score, sebutkan domain terkuat dan terlemah)

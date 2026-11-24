@@ -354,6 +354,36 @@ class SchemaMixin:
             except sqlite3.OperationalError:
                 pass
 
+            # Absolute point scoring columns
+            for table, column, decl in (
+                ('individual_test_results', 'max_points', 'REAL'),
+                ('individual_test_results', 'points', 'REAL'),
+                ('individual_test_results', 'weight', 'REAL'),
+                ('individual_test_results', 'evaluator_id', 'TEXT'),
+                ('individual_test_results', 'definition_hash', 'TEXT'),
+                ('evaluation_runs', 'total_points', 'REAL'),
+                ('evaluation_runs', 'max_points', 'REAL'),
+                ('evaluation_runs', 'tests_run', 'INTEGER'),
+                ('evaluation_runs', 'test_set_hash', 'TEXT'),
+            ):
+                try:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                except sqlite3.OperationalError:
+                    pass
+
+            # level_scores used a plain INSERT, so resume left duplicates behind
+            cursor.execute("""
+                DELETE FROM level_scores WHERE id NOT IN (
+                    SELECT MAX(id) FROM level_scores GROUP BY run_id, domain, level
+                )
+            """)
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_level_scores_unique "
+                "ON level_scores(run_id, domain, level)"
+            )
+
+            self._backfill_points(cursor)
+
             # ==================== Agentic Platform Tables ====================
 
             # Agents table
@@ -1582,6 +1612,39 @@ class SchemaMixin:
         ("detection_type", "TEXT"),
         ("detection_command", "TEXT"),
     )
+
+    def _backfill_points(self, cursor):
+        """Give runs from before absolute scoring their points (idempotent).
+
+        Every weight was 1.0 back then, so max_points is the level and the
+        result matches what a fresh run would have stored.
+        """
+        from evaluator.points import run_set_hash
+
+        cursor.execute("""
+            UPDATE individual_test_results
+            SET weight = 1.0,
+                max_points = level,
+                points = COALESCE(score, 0) * level
+            WHERE max_points IS NULL
+        """)
+        cursor.execute("SELECT run_id FROM evaluation_runs WHERE test_set_hash IS NULL")
+        for (run_id,) in cursor.fetchall():
+            cursor.execute(
+                "SELECT test_id, definition_hash, points, max_points FROM individual_test_results "
+                "WHERE run_id = ? AND status != 'skipped'",
+                (run_id,),
+            )
+            rows = [{'test_id': r[0], 'definition_hash': r[1], 'points': r[2], 'max_points': r[3]}
+                    for r in cursor.fetchall()]
+            if not rows:
+                continue
+            cursor.execute(
+                "UPDATE evaluation_runs SET total_points = ?, max_points = ?, tests_run = ?, "
+                "test_set_hash = ? WHERE run_id = ?",
+                (sum(r['points'] or 0 for r in rows), sum(r['max_points'] or 0 for r in rows),
+                 len(rows), run_set_hash(rows), run_id),
+            )
 
     def _migrate_decim_safety_events(self, cursor):
         """Add telemetry columns that are absent from a pre-existing table."""

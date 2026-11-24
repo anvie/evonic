@@ -288,6 +288,10 @@ class TestingMixin:
             cursor.execute("""
                 INSERT INTO level_scores (run_id, domain, level, average_score, total_tests, passed_tests)
                 VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, domain, level) DO UPDATE SET
+                    average_score = excluded.average_score,
+                    total_tests = excluded.total_tests,
+                    passed_tests = excluded.passed_tests
             """, (run_id, domain, level, average_score, total_tests, passed_tests))
             conn.commit()
 
@@ -305,15 +309,20 @@ class TestingMixin:
     def save_individual_test_result(self, run_id: int, test_id: str, domain: str, level: int,
                                     prompt: str, response: str, expected: str, score: float,
                                     status: str, details: str, duration_ms: int, model_name: str,
-                                    system_prompt: str = None, system_prompt_mode: str = None):
+                                    system_prompt: str = None, system_prompt_mode: str = None,
+                                    weight: float = 1.0, evaluator_id: str = None,
+                                    definition_hash: str = None):
         """Save individual test result with optional system_prompt and mode"""
+        from evaluator.points import max_points, earned_points
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO individual_test_results
-                (run_id, test_id, domain, level, prompt, response, expected, score, status, details, duration_ms, model_name, system_prompt, system_prompt_mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (run_id, test_id, domain, level, prompt, response, expected, score, status, details, duration_ms, model_name, system_prompt, system_prompt_mode))
+                (run_id, test_id, domain, level, prompt, response, expected, score, status, details, duration_ms, model_name, system_prompt, system_prompt_mode,
+                 weight, max_points, points, evaluator_id, definition_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (run_id, test_id, domain, level, prompt, response, expected, score, status, details, duration_ms, model_name, system_prompt, system_prompt_mode,
+                  weight, max_points(level, weight), earned_points(score, level, weight), evaluator_id, definition_hash))
             conn.commit()
 
     def get_individual_test_results(self, run_id: int, domain: str = None, level: int = None) -> List[Dict[str, Any]]:

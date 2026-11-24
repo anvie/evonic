@@ -3,7 +3,7 @@ import os
 import shutil
 import sqlite3
 
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, redirect
 
 from models.db import db
 import config
@@ -27,6 +27,15 @@ def _parse_test_result(result: dict) -> dict:
     return test
 
 
+def _set_status(test_set_hash, current_hash):
+    """How a run's test set relates to the latest one: current, different or legacy (None if unknown)"""
+    if not test_set_hash:
+        return None
+    if test_set_hash.startswith('legacy:'):
+        return 'legacy'
+    return 'current' if test_set_hash == current_hash else 'different'
+
+
 @history_bp.route('/history')
 def history():
     """Evaluation history page with pagination"""
@@ -38,6 +47,9 @@ def history():
     total_count = db.get_runs_count()
     incomplete_count = db.get_incomplete_count()
     total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
+    current_hash = db.current_test_set_hash()
+    for run in runs:
+        run['set_status'] = _set_status(run.get('test_set_hash'), current_hash)
 
     return render_template('history.html',
                            runs=runs,
@@ -98,6 +110,54 @@ def api_clear_incomplete():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _compare_payload(run_a: int, run_b: int):
+    from evaluator.points import compare_runs
+    info_a, info_b = db.get_evaluation_run(run_a), db.get_evaluation_run(run_b)
+    if not info_a or not info_b:
+        return None
+    slim = ('run_id', 'model_name', 'started_at', 'total_points', 'max_points', 'tests_run', 'test_set_hash')
+    result = compare_runs(db.get_individual_test_results(run_a), db.get_individual_test_results(run_b))
+    result['runs'] = {'a': {k: info_a.get(k) for k in slim}, 'b': {k: info_b.get(k) for k in slim}}
+    return result
+
+
+@history_bp.route('/api/history/compare')
+def api_history_compare():
+    """Head-to-head points of two runs on the tests they share"""
+    a, b = request.args.get('a', type=int), request.args.get('b', type=int)
+    if not a or not b:
+        return jsonify({'success': False, 'error': 'a and b run ids are required'}), 400
+    payload = _compare_payload(a, b)
+    if payload is None:
+        return jsonify({'success': False, 'error': 'Run not found'}), 404
+    return jsonify({'success': True, **payload})
+
+
+@history_bp.app_template_filter('pts')
+def _pts_filter(value):
+    """Points with at most one decimal and no trailing .0"""
+    if value is None:
+        return '—'
+    return f"{round(float(value), 1):g}"
+
+
+@history_bp.route('/history/compare')
+def history_compare():
+    """Head-to-head page for two runs, on the tests they share"""
+    a, b = request.args.get('a', type=int), request.args.get('b', type=int)
+    if not a or not b:
+        return redirect('/history')
+    payload = _compare_payload(a, b)
+    if payload is None:
+        return "Run not found", 404
+    current = db.current_test_set_hash()
+    for side in ('a', 'b'):
+        run = payload['runs'][side]
+        run['set_status'] = _set_status(run.get('test_set_hash'), current)
+    domains = sorted(set(payload['common']['a']['by_domain']) | set(payload['common']['b']['by_domain']))
+    return render_template('history_compare.html', domains=domains, **payload)
+
+
 @history_bp.route('/history/<int:run_id>')
 def history_detail(run_id):
     """Evaluation detail page - frozen result view"""
@@ -126,6 +186,7 @@ def history_detail(run_id):
             seen.add(d)
             domains.append(d)
 
+    run_info['set_status'] = _set_status(run_info.get('test_set_hash'), db.current_test_set_hash())
     return render_template('history_detail.html',
                            run_info=run_info,
                            test_results=test_results,
@@ -235,10 +296,17 @@ def api_run_matrix(run_id):
                 "model_name": result.get("model_name")
             }
 
+    from evaluator.points import attach_level_points, calculate_points
+    individual = db.get_individual_test_results(run_id)
+    attach_level_points(matrix, individual)
+    totals = calculate_points(individual)
+
     return jsonify({
         "domains": matrix,
         "run_id": run_id,
         "model_name": model_name,
+        "total_points": totals['total'],
+        "max_points": totals['max_points'],
         "status": "completed"
     })
 

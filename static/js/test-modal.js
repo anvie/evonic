@@ -118,7 +118,8 @@ function renderTestDetail(test, domain) {
     if (!test) return '<div class="no-test">No test data</div>';
 
     const details = test.details || {};
-    const scoreDisplay = test.score !== null ? (test.score * 100).toFixed(1) + '%' : 'N/A';
+    const scoreDisplay = test.points !== null && test.points !== undefined
+        ? `${Math.round(test.points * 10) / 10} / ${Math.round(test.max_points * 10) / 10} pts` : 'N/A';
     const scoreClass = test.status === 'passed' ? 'score-passed' : 'score-failed';
 
     let html = `

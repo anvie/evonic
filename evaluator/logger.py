@@ -14,6 +14,8 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from pathlib import Path
 
+from evaluator.points import earned_points, max_points
+
 
 class TestLogger:
     """Handles per-test logging to JSON files"""
@@ -25,6 +27,8 @@ class TestLogger:
         self.test_count = 0
         self.passed_count = 0
         self.total_score = 0.0
+        self.total_points = 0.0
+        self.max_points = 0.0
         
     def start_run(self, run_id: int, model_name: str):
         """Initialize a new run directory"""
@@ -34,6 +38,8 @@ class TestLogger:
         self.test_count = 0
         self.passed_count = 0
         self.total_score = 0.0
+        self.total_points = 0.0
+        self.max_points = 0.0
         
         # Write run metadata
         metadata = {
@@ -60,7 +66,8 @@ class TestLogger:
                  duration_ms: int,
                  tokens: int,
                  model_name: str,
-                 system_prompt: Optional[str] = None) -> str:
+                 system_prompt: Optional[str] = None,
+                 weight: float = 1.0) -> str:
         """
         Log a single test result to JSON file.
         
@@ -71,6 +78,8 @@ class TestLogger:
         
         self.test_count += 1
         self.total_score += score
+        self.total_points += earned_points(score, level, weight)
+        self.max_points += max_points(level, weight)
         if status == 'passed':
             self.passed_count += 1
         
@@ -146,6 +155,8 @@ class TestLogger:
                 "passed_tests": self.passed_count,
                 "failed_tests": self.test_count - self.passed_count,
                 "average_score": round(avg_score, 4),
+                "total_points": round(self.total_points, 4),
+                "max_points": round(self.max_points, 4),
                 "pass_rate": round(self.passed_count / self.test_count, 4) if self.test_count > 0 else 0.0
             }
         }

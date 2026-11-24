@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard cmp">
+    <div class="cmp-top">
+        <a href="/history" class="cmp-back">← History</a>
+    </div>
+
+    <h2 class="cmp-title">Compare runs #{{ runs.a.run_id }} and #{{ runs.b.run_id }}</h2>
+    <p class="cmp-basis">Compared on {{ common.count }} shared test{{ '' if common.count == 1 else 's' }}.
+        {% if common.unverified %}{{ common.unverified }} of them come from a run made before definitions were fingerprinted, so they can't be verified as unchanged.{% endif %}</p>
+
+    <div class="cmp-runs">
+        {% for side, run in (('A', runs.a), ('B', runs.b)) %}
+        <div class="cmp-run">
+            <span class="cmp-label">Run {{ side }}</span>
+            <a href="/history/{{ run.run_id }}" class="cmp-id">#{{ run.run_id }}</a>
+            <span>{{ run.model_name or 'default' }}</span>
+            <span class="cmp-muted">{{ (run.started_at or '')[:19] }}</span>
+            <span class="cmp-muted">Run total {{ run.total_points|pts }} points</span>
+            {% if run.set_status == 'different' %}<span class="cmp-badge" title="Run on a different set of tests than the latest run">Different set</span>
+            {% elif run.set_status == 'legacy' %}<span class="cmp-badge" title="Run from before point scoring; its test definitions can't be verified">Legacy</span>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if common.count %}
+    <div class="cmp-stats">
+        <div class="cmp-card">
+            <span class="cmp-label">Run A, shared tests</span>
+            <span class="cmp-num">{{ common.a.total|pts }}<small> points</small></span>
+        </div>
+        <div class="cmp-card">
+            <span class="cmp-label">Run B, shared tests</span>
+            <span class="cmp-num">{{ common.b.total|pts }}<small> points</small></span>
+        </div>
+        <div class="cmp-card">
+            <span class="cmp-label">Difference (B − A)</span>
+            {% if common.diff > 0 %}<span class="cmp-num cmp-up">+{{ common.diff|pts }} ▲</span>
+            {% elif common.diff < 0 %}<span class="cmp-num cmp-down">−{{ (-common.diff)|pts }} ▼</span>
+            {% else %}<span class="cmp-num">0</span>{% endif %}
+        </div>
+        <div class="cmp-card">
+            <span class="cmp-label">Tests that flipped</span>
+            <span class="cmp-num">{{ flipped|length }}<small> pass / fail</small></span>
+        </div>
+    </div>
+
+    <h3 class="cmp-h">By domain</h3>
+    <div class="cmp-scroll">
+        <table class="cmp-table">
+            <thead>
+                <tr><th>Domain</th><th class="r">Run A (points)</th><th class="r">Run B (points)</th><th class="r">Difference</th></tr>
+            </thead>
+            <tbody>
+                {% for d in domains %}
+                {% set da = common.a.by_domain.get(d) %}
+                {% set db_ = common.b.by_domain.get(d) %}
+                {% set diff = ((db_.points if db_ else 0) - (da.points if da else 0)) %}
+                <tr>
+                    <td>{{ d }}</td>
+                    <td class="r">{% if da %}{{ da.points|pts }}{% else %}—{% endif %}</td>
+                    <td class="r">{% if db_ %}{{ db_.points|pts }}{% else %}—{% endif %}</td>
+                    <td class="r {{ 'cmp-up' if diff > 0 else ('cmp-down' if diff < 0 else '') }}">
+                        {% if diff > 0 %}+{{ diff|pts }} ▲{% elif diff < 0 %}−{{ (-diff)|pts }} ▼{% else %}0{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if flipped %}
+    <h3 class="cmp-h">Tests that flipped</h3>
+    <div class="cmp-scroll">
+        <table class="cmp-table">
+            <thead><tr><th>Test</th><th>Domain</th><th class="r">Level</th><th>Run A</th><th>Run B</th></tr></thead>
+            <tbody>
+                {% for f in flipped %}
+                <tr>
+                    <td class="mono">{{ f.test_id }}</td>
+                    <td>{{ f.domain }}</td>
+                    <td class="r">{{ f.level }}</td>
+                    <td>{{ '✓ passed' if f.a_status == 'passed' else '✗ ' ~ f.a_status }}</td>
+                    <td>{{ '✓ passed' if f.b_status == 'passed' else '✗ ' ~ f.b_status }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="cmp-empty">These two runs have no tests in common, so there are no points to compare. Pick two runs of the same domains.</p>
+    {% endif %}
+
+    {% for title, ids in (('Definition changed between the runs', changed), ('Only in run A', only_a), ('Only in run B', only_b)) %}
+    {% if ids %}
+    <details class="cmp-details">
+        <summary>{{ title }} ({{ ids|length }})</summary>
+        <p class="mono">{{ ids|join(', ') }}</p>
+    </details>
+    {% endif %}
+    {% endfor %}
+</div>
+
+<style>
+.cmp-top { margin-bottom: 0.75rem; }
+.cmp-back { text-decoration: none; color: #667eea; font-size: 0.9rem; font-weight: 500; }
+.cmp-title { margin: 0 0 0.25rem; }
+.cmp-basis { margin: 0 0 1rem; font-size: 0.85rem; color: var(--text-secondary); }
+.cmp-runs { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.cmp-run { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 12px 16px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; font-size: 0.9rem; color: var(--text-primary); }
+.cmp-label { font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+.cmp-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+.cmp-muted { color: var(--text-secondary); font-size: 0.8rem; }
+.cmp-badge { padding: 0.1rem 0.5rem; border: 1px solid var(--border-color); border-radius: 9999px; font-size: 0.7rem; color: var(--text-secondary); }
+.cmp-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px; }
+@media (min-width: 768px) { .cmp-stats { grid-template-columns: repeat(4, 1fr); } }
+.cmp-card { display: flex; flex-direction: column; gap: 4px; padding: 16px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; }
+.cmp-num { font-size: 1.6rem; font-weight: 700; color: var(--text-heading); font-variant-numeric: tabular-nums; }
+.cmp-num small { font-size: 0.75rem; font-weight: 400; color: var(--text-secondary); }
+.cmp-up { color: #059669; }
+.cmp-down { color: #dc2626; }
+.cmp-h { margin: 24px 0 8px; font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+.cmp-scroll { overflow-x: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; }
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.cmp-table th { padding: 8px 12px; text-align: left; font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+.cmp-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+.cmp-table tr:last-child td { border-bottom: 0; }
+.cmp-table .r { text-align: right; font-variant-numeric: tabular-nums; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+.cmp-details { margin-top: 16px; font-size: 0.9rem; color: var(--text-primary); }
+.cmp-details summary { cursor: pointer; color: var(--text-secondary); }
+.cmp-empty { padding: 24px; text-align: center; color: var(--text-secondary); background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; }
+</style>
+{% endblock %}

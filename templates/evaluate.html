@@ -65,52 +65,29 @@
     <div class="flex flex-col lg:flex-row gap-6 mt-6">
         <!-- LEFT: Matrix + Summary -->
         <div class="flex-1 min-w-0">
-            <div class="ev-card ev-matrix">
-            <!-- Matrix Header (desktop only) -->
-            <div class="hidden md:grid md:grid-cols-[40px_160px_repeat(5,1fr)_120px] gap-2 bg-gray-50 dark:bg-gray-700/50 dark:text-gray-300 font-semibold rounded-t-lg text-sm">
-                <div class="flex items-center justify-center p-2"><input type="checkbox" id="select-all" checked onclick="toggleAllDomains(this.checked)" title="Select/Deselect All"></div>
-                <div class="flex items-center p-2">Domain</div>
-                <div class="text-center p-2">Level 1</div>
-                <div class="text-center p-2">Level 2</div>
-                <div class="text-center p-2">Level 3</div>
-                <div class="text-center p-2">Level 4</div>
-                <div class="text-center p-2">Level 5</div>
-                <div class="text-center p-2">Total</div>
+            <div class="ev-card ev-matrix mx">
+            <div class="mx-head">
+                <div class="mx-title"><input type="checkbox" id="select-all" checked onclick="toggleAllDomains(this.checked)" title="Select/Deselect All"><span>Domain</span></div>
+                <div>L1</div><div>L2</div><div>L3</div><div>L4</div><div>L5</div>
+                <div>Total</div>
             </div>
 
             {% for domain in domains %}
-            <!-- Matrix Row: card on mobile, grid row on desktop -->
-            <div class="grid grid-cols-5 gap-1 mb-3 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800
-                        md:grid-cols-[40px_160px_repeat(5,1fr)_120px] md:gap-2 md:mb-0 md:border-x-0 md:border-t-0 md:border-b md:border-gray-200 dark:md:border-gray-700 md:rounded-none md:bg-transparent md:hover:bg-gray-50 dark:md:hover:bg-gray-700/30 transition-colors"
-                 id="row-{{ domain }}">
-                <!-- Checkbox + Domain name (mobile: full-width header row) -->
-                <div class="col-span-5 md:col-span-1 flex items-center gap-2 mb-2 md:mb-0 md:justify-center">
+            {% set domain_label = (domain_names or {}).get(domain, domain.replace('_', ' ')) %}
+            <div class="mx-row" id="row-{{ domain }}">
+                <div class="mx-title">
                     <input type="checkbox" class="domain-checkbox" data-domain="{{ domain }}" checked onclick="updateSelectAllState()">
-                    <span class="font-semibold text-sm dark:text-gray-200 md:hidden">{{ (domain_names or {}).get(domain, domain.replace('_', ' ')) }}</span>
+                    <span class="mx-name" title="{{ domain_label }}">{{ domain_label }}</span>
                 </div>
-                <!-- Domain name (desktop only) -->
-                <div class="hidden md:flex md:items-center font-semibold text-sm dark:text-gray-200 p-2">{{ (domain_names or {}).get(domain, domain.replace('_', ' ')) }}</div>
-
-                <!-- Level cells (5 columns on both mobile and desktop) -->
+                <div class="mx-cells">
                 {% for level in range(1, 6) %}
-                <div class="level-cell flex flex-col items-center justify-center min-h-[50px] md:min-h-[70px] p-1 md:p-2 rounded-md font-medium cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                     id="cell-{{ domain }}-{{ level }}" onclick="showCellDetail('{{ domain }}', {{ level }})">
-                    <span class="text-[0.6rem] font-semibold text-gray-400 dark:text-gray-500 uppercase md:hidden">L{{ level }}</span>
-                    <div class="flex items-center justify-center gap-1 md:gap-2">
-                        <div class="status-dot w-3 h-3 md:w-4 md:h-4 rounded-full shrink-0 status-pending"></div>
-                        <span class="cell-score text-xs md:text-sm text-gray-500 dark:text-gray-400">-</span>
-                    </div>
-                    <div class="text-[0.6rem] md:text-[0.7rem] text-gray-500 dark:text-gray-500 mt-0.5 min-h-[1em]" id="duration-{{ domain }}-{{ level }}"></div>
+                <div class="mx-cell level-cell" id="cell-{{ domain }}-{{ level }}" onclick="showCellDetail('{{ domain }}', {{ level }})">
+                    <span class="mx-box" data-tone="grey"><span class="mx-pct">-</span><span class="mx-dur"></span></span>
                 </div>
                 {% endfor %}
-
-                <!-- Domain total (mobile: full-width footer, desktop: column) -->
-                <div class="col-span-5 md:col-span-1 flex flex-row items-center justify-center gap-3 p-2 bg-gray-50 dark:bg-gray-700/50 rounded-md mt-1
-                            md:flex-col md:gap-0 md:mt-0 md:min-h-[70px] md:rounded-none"
-                     id="total-{{ domain }}">
-                    <div class="text-base md:text-lg font-bold text-gray-800 dark:text-gray-100" id="total-score-{{ domain }}">-</div>
-                    <span class="text-xs text-gray-500 dark:text-gray-400" id="total-passed-{{ domain }}">0/5</span>
-                    <div class="text-[0.7rem] text-gray-400 dark:text-gray-500" id="total-duration-{{ domain }}"></div>
+                </div>
+                <div class="mx-total" id="total-{{ domain }}">
+                    <span class="mx-box" data-tone="grey" id="total-score-{{ domain }}"><span class="mx-pct">-</span><span class="mx-dur"></span></span>
                 </div>
             </div>
             {% endfor %}
@@ -118,84 +95,7 @@
             </div>
 
             {% if status.run_info and status.run_info.summary and status.status == 'completed' %}
-            {% set score = status.run_info.overall_score * 100 %}
-            {% set score_color = 'text-emerald-600' if score >= 80 else ('text-amber-600' if score >= 60 else 'text-red-600') %}
-            {% set score_bg = 'from-emerald-500 to-emerald-600' if score >= 80 else ('from-amber-500 to-amber-600' if score >= 60 else 'from-red-500 to-red-600') %}
-            {% set score_badge = 'bg-emerald-100 text-emerald-700 border-emerald-300' if score >= 80 else ('bg-amber-100 text-amber-700 border-amber-300' if score >= 60 else 'bg-red-100 text-red-700 border-red-300') %}
-            {% set score_label = 'Excellent' if score >= 80 else ('Good' if score >= 60 else 'Needs Improvement') %}
-            <div id="summary-box" class="mt-6 hidden">
-                <!-- Two column layout: Summary (left) + Overall Score (right) -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
-                    <!-- Summary Details Card (Left) -->
-                    <div class="rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm p-5">
-                        <div class="flex items-center gap-2 mb-3">
-                            <svg class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
-                            </svg>
-                            <h4 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Summary</h4>
-                        </div>
-                        <p class="text-gray-700 dark:text-gray-300 leading-relaxed mb-4">"{{ status.run_info.summary }}"</p>
-
-                        {% if status.run_info and (status.run_info.total_tokens or status.run_info.tok_per_sec or status.run_info.total_duration_ms) %}
-                        <!-- Stats Grid inside Summary Card -->
-                        <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
-                            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                {% if status.run_info.total_tokens %}
-                                <div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 p-3 text-center">
-                                    <div class="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium mb-1">Tokens</div>
-                                    <div class="text-lg font-bold text-gray-700 dark:text-gray-200">{{ "{:,}".format(status.run_info.total_tokens) }}</div>
-                                </div>
-                                {% endif %}
-                                {% if status.run_info.tok_per_sec %}
-                                <div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 p-3 text-center">
-                                    <div class="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium mb-1">Speed</div>
-                                    <div class="text-lg font-bold text-gray-700 dark:text-gray-200">{{ status.run_info.tok_per_sec }} <span class="text-xs font-normal text-gray-400 dark:text-gray-500">tok/s</span></div>
-                                </div>
-                                {% endif %}
-                                {% if status.run_info.total_duration_ms %}
-                                <div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 p-3 text-center">
-                                    <div class="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium mb-1">Duration</div>
-                                    <div class="text-lg font-bold text-gray-700 dark:text-gray-200">{{ "%.1f"|format(status.run_info.total_duration_ms / 1000) }}<span class="text-xs font-normal text-gray-400 dark:text-gray-500">s</span></div>
-                                </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                        {% endif %}
-                    </div>
-
-                    <!-- Overall Score Highlight Card (Right) -->
-                    <div class="relative overflow-hidden rounded-2xl bg-gradient-to-br {{ score_bg }} shadow-lg p-6 text-white">
-                        <div class="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4">
-                            <div class="text-center sm:text-left">
-                                <div class="flex items-center justify-center sm:justify-start gap-2 mb-1">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-                                    </svg>
-                                    <h3 class="text-white/90 font-semibold text-sm uppercase tracking-wide">Overall Score</h3>
-                                </div>
-                                <div class="text-6xl sm:text-7xl font-black tracking-tight">{{ "%.1f"|format(score) }}<span class="text-3xl font-bold">%</span></div>
-                                <div class="mt-2 inline-flex items-center px-3 py-1 rounded-full bg-white/20 backdrop-blur-sm text-sm font-medium">
-                                    {{ score_label }}
-                                </div>
-                            </div>
-                            <div class="flex-shrink-0">
-                                <div class="relative w-24 h-24 sm:w-28 sm:h-28">
-                                    <svg class="w-full h-full transform -rotate-90" viewBox="0 0 120 120">
-                                        <circle cx="60" cy="60" r="50" fill="none" stroke="white" stroke-width="8" stroke-opacity="0.25"/>
-                                        <circle cx="60" cy="60" r="50" fill="none" stroke="white" stroke-width="8" stroke-linecap="round"
-                                            stroke-dasharray="{{ 314.16 * score / 100 }} 314.16"
-                                            class="transition-all duration-1000"/>
-                                    </svg>
-                                    <div class="absolute inset-0 flex items-center justify-center">
-                                        <span class="text-2xl font-bold">{{ "%.0f"|format(score) }}</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
+            <div id="summary-box" class="mt-6 hidden"></div>
             {% elif status.run_info and status.status == 'interrupted' %}
             <div id="interrupted-box" class="mt-6 rounded-2xl bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 shadow-sm p-5">
                 <div class="flex items-start gap-3">
@@ -228,7 +128,7 @@
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 text-center">
         <div class="text-6xl mb-4" id="completion-emoji"></div>
         <h2 class="text-2xl font-bold text-gray-800 mb-2 dark:text-gray-100">Evaluation Complete!</h2>
-        <div class="text-7xl font-extrabold my-6" id="completion-score-text" style="color: #059669;"></div>
+        <div class="font-extrabold my-6 tabular-nums" id="completion-score-text" style="color: #059669; font-size: 2.75rem; line-height: 1.1;"></div>
         <div class="text-gray-500 dark:text-gray-400 text-lg mb-2" id="completion-tests-label"></div>
         <div class="text-gray-400 dark:text-gray-500 text-sm mb-6" id="completion-stats-label"></div>
         <button onclick="closeCompletionModal()" class="btn btn-primary px-8 py-2 text-lg">OK</button>
@@ -242,6 +142,8 @@
 {% include 'partials/training-modal.html' %}
 
 <!-- Shared JS -->
+<script src="{{ url_for('static', filename='js/eval-matrix.js') }}?v=5"></script>
+<script src="{{ url_for('static', filename='js/run-card.js') }}?v=6"></script>
 <script src="{{ url_for('static', filename='js/test-modal.js') }}?v=3"></script>
 <script src="{{ url_for('static', filename='js/training-data.js') }}?v=3"></script>
 
@@ -416,36 +318,7 @@ function setCheckboxesEnabled(enabled) {
 
 // Clear matrix cells and totals
 function clearMatrixState() {
-    const domains = DOMAINS;
-    
-    for (const domain of domains) {
-        // Clear individual cells
-        for (let level = 1; level <= 5; level++) {
-            const cell = document.getElementById(`cell-${domain}-${level}`);
-            if (cell) {
-                const statusEl = cell.querySelector('.status-dot');
-                if (statusEl) statusEl.className = 'status-dot w-3 h-3 md:w-4 md:h-4 rounded-full shrink-0 status-pending';
-                
-                const scoreEl = cell.querySelector('.cell-score');
-                if (scoreEl) scoreEl.textContent = '-';
-                
-                const durationEl = document.getElementById(`duration-${domain}-${level}`);
-                if (durationEl) durationEl.textContent = '';
-            }
-        }
-        
-        // Clear domain totals
-        const scoreEl = document.getElementById(`total-score-${domain}`);
-        const passedEl = document.getElementById(`total-passed-${domain}`);
-        const durationEl = document.getElementById(`total-duration-${domain}`);
-        
-        if (scoreEl) {
-            scoreEl.textContent = '-';
-            scoreEl.style.color = '';
-        }
-        if (passedEl) passedEl.textContent = '0/5';
-        if (durationEl) durationEl.textContent = '';
-    }
+    EvMatrix.clear(DOMAINS);
     
     // Clear stored test results
     testResultsData = {};
@@ -718,13 +591,23 @@ function checkIncompleteRuns() {
     });
 }
 
+// Points are shown with at most one decimal and no trailing .0
+function fmtPts(n) {
+    return n === null || n === undefined ? '—' : String(Math.round(n * 10) / 10);
+}
+
+function ptsRatio(points, max) {
+    return max ? points / max : 0;  // only picks a color band, never displayed
+}
+
 function showCompletionModal(data) {
     if (completionModalShown) return;  // Prevent re-showing on subsequent polls
     completionModalShown = true;
 
     const modal = document.getElementById('completion-modal');
-    const score = data.overall_score;
-    const scorePercent = score !== null && score !== undefined ? (score * 100).toFixed(1) : '—';
+    const score = ptsRatio(data.total_points, data.max_points);
+    const scoreText = data.total_points !== null && data.total_points !== undefined
+        ? `${fmtPts(data.total_points)} pts` : '—';
     const activeDomains = Object.keys(data.domains || {});
     const total = activeDomains.reduce((sum, d) => sum + (DOMAIN_TEST_COUNTS[d] || 0), 0);
     let passed = 0;
@@ -734,7 +617,7 @@ function showCompletionModal(data) {
         }
     }
 
-    document.getElementById('completion-score-text').textContent = scorePercent + '%';
+    document.getElementById('completion-score-text').textContent = scoreText;
     document.getElementById('completion-tests-label').textContent = `${passed}/${total} tests passed`;
 
     // Color based on score
@@ -779,87 +662,9 @@ function fetchSummary() {
     fetch(`/api/summary/${runId}`)
     .then(response => response.json())
     .then(data => {
-        if (!data.success || !data.summary) return;
+        if (!data.success) return;
 
-        const score = data.overall_score * 100;
-        const score_color = score >= 80 ? 'text-emerald-600' : (score >= 60 ? 'text-amber-600' : 'text-red-600');
-        const score_bg = score >= 80 ? 'from-emerald-500 to-emerald-600' : (score >= 60 ? 'from-amber-500 to-amber-600' : 'from-red-500 to-red-600');
-        const score_badge = score >= 80 ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : (score >= 60 ? 'bg-amber-100 text-amber-700 border-amber-300' : 'bg-red-100 text-red-700 border-red-300');
-        const score_label = score >= 80 ? 'Excellent' : (score >= 60 ? 'Good' : 'Needs Improvement');
-
-        let statsHtml = '';
-        if (data.total_tokens || data.tok_per_sec || data.total_duration_ms) {
-            statsHtml = '<div class="border-t border-gray-100 dark:border-gray-700 pt-4"><div class="grid grid-cols-2 sm:grid-cols-3 gap-3">';
-            if (data.total_tokens) {
-                statsHtml += `<div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 p-3 text-center">
-                    <div class="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium mb-1">Tokens</div>
-                    <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${data.total_tokens.toLocaleString()}</div>
-                </div>`;
-            }
-            if (data.tok_per_sec) {
-                statsHtml += `<div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 p-3 text-center">
-                    <div class="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium mb-1">Speed</div>
-                    <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${data.tok_per_sec} <span class="text-xs font-normal text-gray-400 dark:text-gray-500">tok/s</span></div>
-                </div>`;
-            }
-            if (data.total_duration_ms) {
-                statsHtml += `<div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 p-3 text-center">
-                    <div class="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium mb-1">Duration</div>
-                    <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${(data.total_duration_ms / 1000).toFixed(1)}<span class="text-xs font-normal text-gray-400 dark:text-gray-500">s</span></div>
-                </div>`;
-            }
-            statsHtml += '</div></div>';
-        }
-
-        const scoreDisplay = score.toFixed(1);
-        const dashArray = (314.16 * data.overall_score).toFixed(1);
-
-        const html = `
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
-                <!-- Summary Details Card (Left) -->
-                <div class="rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm p-5">
-                    <div class="flex items-center gap-2 mb-3">
-                        <svg class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
-                        </svg>
-                        <h4 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Summary</h4>
-                    </div>
-                    <p class="text-gray-700 dark:text-gray-300 leading-relaxed mb-4">"${data.summary}"</p>
-                    ${statsHtml}
-                </div>
-
-                <!-- Overall Score Highlight Card (Right) -->
-                <div class="relative overflow-hidden rounded-2xl bg-gradient-to-br ${score_bg} shadow-lg p-6 text-white">
-                    <div class="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4">
-                        <div class="text-center sm:text-left">
-                            <div class="flex items-center justify-center sm:justify-start gap-2 mb-1">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-                                </svg>
-                                <h3 class="text-white/90 font-semibold text-sm uppercase tracking-wide">Overall Score</h3>
-                            </div>
-                            <div class="text-6xl sm:text-7xl font-black tracking-tight">${scoreDisplay}<span class="text-3xl font-bold">%</span></div>
-                            <div class="mt-2 inline-flex items-center px-3 py-1 rounded-full bg-white/20 backdrop-blur-sm text-sm font-medium">
-                                ${score_label}
-                            </div>
-                        </div>
-                        <div class="flex-shrink-0">
-                            <div class="relative w-24 h-24 sm:w-28 sm:h-28">
-                                <svg class="w-full h-full transform -rotate-90" viewBox="0 0 120 120">
-                                    <circle cx="60" cy="60" r="50" fill="none" stroke="white" stroke-width="8" stroke-opacity="0.25"/>
-                                    <circle cx="60" cy="60" r="50" fill="none" stroke="white" stroke-width="8" stroke-linecap="round"
-                                        stroke-dasharray="${dashArray} 314.16"
-                                        class="transition-all duration-1000"/>
-                                </svg>
-                                <div class="absolute inset-0 flex items-center justify-center">
-                                    <span class="text-2xl font-bold">${Math.round(score)}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+        const html = EvRunCard.render(data);
 
         const summaryBox = document.getElementById('summary-box');
         if (summaryBox) {
@@ -949,70 +754,12 @@ function updateStatus() {
 
 function updateMatrix(matrix) {
     for (const [domain, levels] of Object.entries(matrix)) {
-        let domainTotal = 0;
-        let domainCount = 0;
-        let domainPassed = 0;
-        let domainDuration = 0;
-        
+        // Keep each level's data for the detail modal
+        if (!testResultsData[domain]) testResultsData[domain] = {};
         for (const [level, data] of Object.entries(levels)) {
-            const cell = document.getElementById(`cell-${domain}-${level}`);
-            if (cell) {
-                // Store data for modal access
-                if (!testResultsData[domain]) testResultsData[domain] = {};
-                testResultsData[domain][level] = data;
-                
-                // Update status indicator
-                const statusEl = cell.querySelector('.status-dot');
-                statusEl.className = 'status-dot w-3 h-3 md:w-4 md:h-4 rounded-full shrink-0 status-' + data.status;
-                
-                // Update score
-                const scoreEl = cell.querySelector('.cell-score');
-                if (data.score !== null && data.score !== undefined) {
-                    scoreEl.textContent = (data.score * 100).toFixed(0) + '%';
-                    domainTotal += data.score;
-                    domainCount++;
-                    if (data.status === 'passed') domainPassed++;
-                } else {
-                    scoreEl.textContent = '-';
-                }
-                
-                // Update duration
-                const durationEl = document.getElementById(`duration-${domain}-${level}`);
-                if (durationEl) {
-                    if (data.duration_ms) {
-                        const seconds = (data.duration_ms / 1000).toFixed(1);
-                        durationEl.textContent = seconds + 's';
-                        domainDuration += data.duration_ms;
-                    } else {
-                        durationEl.textContent = '';
-                    }
-                }
-            }
+            testResultsData[domain][level] = data;
         }
-        
-        // Update domain total
-        const scoreEl = document.getElementById(`total-score-${domain}`);
-        const passedEl = document.getElementById(`total-passed-${domain}`);
-        const durationEl = document.getElementById(`total-duration-${domain}`);
-        
-        if (domainCount > 0) {
-            const avgScore = domainTotal / domainCount;
-            
-            if (scoreEl) {
-                scoreEl.textContent = (avgScore * 100).toFixed(0) + '%';
-                scoreEl.style.color = avgScore >= 0.8 ? '#059669' : avgScore >= 0.6 ? '#d97706' : '#dc2626';
-            }
-            
-            if (passedEl) {
-                passedEl.textContent = `${domainPassed}/5`;
-            }
-        }
-        
-        // Show domain duration
-        if (durationEl && domainDuration > 0) {
-            const seconds = (domainDuration / 1000).toFixed(1);
-            durationEl.textContent = seconds + 's';
-        }
+        EvMatrix.paintDomain(domain, levels);
     }
 }
 
@@ -1208,7 +955,7 @@ function renderTestDetailLegacy(test) {
     if (!test) return '<div class="no-test">No test data</div>';
     
     const details = test.details || {};
-    const scoreDisplay = test.score !== null ? (test.score * 100).toFixed(1) + '%' : 'N/A';
+    const scoreDisplay = test.points !== null && test.points !== undefined ? `${fmtPts(test.points)} / ${fmtPts(test.max_points)} pts` : 'N/A';
     const scoreClass = test.status === 'passed' ? 'score-passed' : 'score-failed';
 
 
@@ -1348,8 +1095,8 @@ function showModalWithData(domain, level, data) {
     header.className = 'modal-header ' + headerClass;
     title.innerHTML = `<span style="font-size: 1.2rem;">${statusIcon}</span> ${domain.toUpperCase()} Level ${level} - ${data.status.toUpperCase()}`;
     
-    const scoreDisplay = data.score !== null && data.score !== undefined 
-        ? (data.score * 100).toFixed(1) + '%' 
+    const scoreDisplay = data.points !== null && data.points !== undefined 
+        ? `${fmtPts(data.points)} / ${fmtPts(data.max_points)} pts` 
         : 'N/A';
     
     const scoreClass = data.status === 'passed' ? 'score-passed' : data.status === 'failed' ? 'score-failed' : '';
@@ -1520,11 +1267,11 @@ function formatDetails(details) {
                         ];
                         html += '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem;">';
                         scores.forEach(s => {
-                            const pct = Math.round(s.value * 100);
+                            const pct = Math.round(s.value * 100);  // color band only
                             const color = pct >= 80 ? '#059669' : pct >= 50 ? '#d97706' : '#dc2626';
                             html += `<div style="text-align: center; padding: 0.5rem; background: #f3f4f6; border-radius: 4px;">
                                 <div style="font-size: 0.75rem; color: #666;">${s.name}</div>
-                                <div style="font-weight: bold; color: ${color};">${pct}%</div>
+                                <div style="font-weight: bold; color: ${color};">${s.value.toFixed(2)}</div>
                             </div>`;
                         });
                         html += '</div>';
@@ -1571,11 +1318,11 @@ function formatDetails(details) {
                 };
                 
                 for (const [key, value] of Object.entries(parsed.breakdown)) {
-                    const pct = Math.round(value * 100);
+                    const pct = Math.round(value * 100);  // color band only
                     const color = pct >= 80 ? '#059669' : pct >= 50 ? '#d97706' : '#dc2626';
                     html += `<div style="text-align: center; padding: 0.5rem; background: white; border-radius: 4px;">
                         <div style="font-size: 0.75rem; color: #666;">${labels[key] || key}</div>
-                        <div style="font-weight: bold; color: ${color};">${pct}%</div>
+                        <div style="font-weight: bold; color: ${color};">${Number(value).toFixed(2)}</div>
                     </div>`;
                 }
                 html += '</div></div>';
@@ -2130,31 +1877,9 @@ html.dark .ev-page #resume-btn { color: #6ee7b7 !important; }
 .ev-page #progress-fill + * , .ev-page #progress-fill { transition: width .3s ease; }
 
 /* matrix */
-.ev-matrix { overflow: hidden; }
-.ev-matrix > div:first-child { border-radius: 0 !important; background: rgb(148 163 184 / .08) !important; border-bottom: 1px solid rgb(148 163 184 / .2); font-size: .6875rem; letter-spacing: .06em; text-transform: uppercase; color: #64748b; }
-html.dark .ev-matrix > div:first-child { color: #94a3b8; }
-.ev-matrix > [id^="row-"] { border-radius: 0 !important; border-color: rgb(148 163 184 / .16) !important; background: transparent !important; transition: background-color .15s; }
-.ev-matrix > [id^="row-"]:last-child { border-bottom: 0 !important; }
-.ev-matrix > [id^="row-"]:hover { background: rgb(99 102 241 / .04) !important; }
-.ev-matrix .level-cell { border-radius: .625rem; }
-.ev-matrix .level-cell:hover { background: rgb(99 102 241 / .1) !important; }
-html.dark .ev-matrix .level-cell:hover { background: rgb(129 140 248 / .16) !important; }
-.ev-matrix [id^="total-"]:not([id^="total-score"]):not([id^="total-passed"]):not([id^="total-duration"]) { border-radius: .625rem !important; background: rgb(148 163 184 / .08) !important; }
-@media (min-width: 768px) { .ev-matrix [id^="total-"]:not([id^="total-score"]):not([id^="total-passed"]):not([id^="total-duration"]) { margin: .375rem .5rem .375rem 0; } }
-@media (max-width: 767.98px) { .ev-matrix > [id^="row-"] { padding: .75rem; } }
 
-/* summary cards: same radius family, flat semantic colour for the score card */
-.ev-page #summary-box > div > div { border-radius: 1rem !important; }
-.ev-page #summary-box [class*="from-emerald-500"] { background-image: none !important; background-color: #059669; }
-.ev-page #summary-box [class*="from-amber-500"] { background-image: none !important; background-color: #d97706; }
-.ev-page #summary-box [class*="from-red-500"] { background-image: none !important; background-color: #dc2626; }
-.ev-page #summary-box .bg-white { background: #fff; }
-html.dark .ev-page #summary-box > div > div:first-child { background: var(--bg-card); border-color: rgb(148 163 184 / .16); box-shadow: none; }
 .ev-page #interrupted-box { border-radius: 1rem !important; }
 
-/* summary + score: stacked unless there is room for two columns; the verdict pill never wraps */
-@media (max-width: 1535.98px) { .ev-page #summary-box > .grid { grid-template-columns: 1fr !important; } }
-.ev-page #summary-box .rounded-full { white-space: nowrap; }
 
 /* logs: terminal card in the page's darkest tone */
 .ev-logs { background: #0a0f1c; border: 1px solid rgb(148 163 184 / .16); border-radius: 1rem; box-shadow: 0 1px 2px rgb(0 0 0 / .2); }

@@ -27,9 +27,10 @@ class DashboardMixin:
             session_count = cursor.fetchone()[0]
             cursor.execute("SELECT COUNT(*) FROM evaluation_runs")
             eval_run_count = cursor.fetchone()[0]
-            cursor.execute("SELECT overall_score FROM evaluation_runs WHERE overall_score IS NOT NULL ORDER BY started_at DESC LIMIT 1")
+            cursor.execute("SELECT total_points, max_points FROM evaluation_runs WHERE total_points IS NOT NULL ORDER BY started_at DESC LIMIT 1")
             row = cursor.fetchone()
-            latest_eval_score = round(row[0] * 100, 1) if row else None
+            latest_eval_points = round(row[0], 1) if row else None
+            latest_eval_max_points = round(row[1], 1) if row else None
             return {
                 'agent_count': agent_count,
                 'tool_count': tool_count,
@@ -37,7 +38,8 @@ class DashboardMixin:
                 'active_channel_count': active_channel_count,
                 'session_count': session_count,
                 'eval_run_count': eval_run_count,
-                'latest_eval_score': latest_eval_score,
+                'latest_eval_points': latest_eval_points,
+                'latest_eval_max_points': latest_eval_max_points,
             }
         finally:
             if not _conn:
@@ -82,7 +84,7 @@ class DashboardMixin:
             cursor = conn.cursor()
         try:
             cursor.execute("""
-                SELECT run_id, model_name, overall_score, started_at, completed_at,
+                SELECT run_id, model_name, overall_score, total_points, max_points, started_at, completed_at,
                     (SELECT COUNT(*) FROM individual_test_results WHERE run_id = e.run_id) as test_count,
                     (SELECT COUNT(*) FROM individual_test_results WHERE run_id = e.run_id AND status = 'passed') as passed_count
                 FROM evaluation_runs e
@@ -94,8 +96,45 @@ class DashboardMixin:
             if not _conn:
                 conn.__exit__(None, None, None)
 
-    def get_model_leaderboard(self, limit: int = 5, _conn=None) -> List[Dict[str, Any]]:
-        """Top models by best evaluation score"""
+    def get_latest_test_set_hash(self, cursor) -> Any:
+        """Test set of the most recent completed run (the one the leaderboard defaults to).
+
+        Runs from before point scoring only have a `legacy:` fingerprint, so they count
+        only when no run has a real one yet.
+        """
+        cursor.execute(
+            "SELECT test_set_hash FROM evaluation_runs "
+            "WHERE completed_at IS NOT NULL AND test_set_hash IS NOT NULL "
+            "ORDER BY test_set_hash LIKE 'legacy:%', started_at DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+    def current_test_set_hash(self) -> Any:
+        with self._connect() as conn:
+            return self.get_latest_test_set_hash(conn.cursor())
+
+    def list_test_sets(self) -> List[Dict[str, Any]]:
+        """Distinct test sets that completed runs were made against, newest first"""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT test_set_hash, COUNT(*) as run_count, MAX(started_at) as last_run,
+                       MAX(tests_run) as tests_run, MAX(max_points) as max_points
+                FROM evaluation_runs
+                WHERE completed_at IS NOT NULL AND test_set_hash IS NOT NULL
+                GROUP BY test_set_hash
+                ORDER BY last_run DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_model_leaderboard(self, limit: int = 5, _conn=None, test_set_hash: str = None) -> List[Dict[str, Any]]:
+        """Top models by best absolute points within one test set.
+
+        Defaults to the test set of the latest completed run, so scores from
+        different question sets are never ranked against each other.
+        """
         if _conn:
             conn = _conn
             conn.row_factory = sqlite3.Row
@@ -105,25 +144,32 @@ class DashboardMixin:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
         try:
+            test_set_hash = test_set_hash or self.get_latest_test_set_hash(cursor)
+            if not test_set_hash:
+                return []
             cursor.execute("""
-                SELECT g.model_name, g.best_score, g.run_count, g.last_run,
+                SELECT g.model_name, g.best_points, g.run_count, g.last_run, ? as test_set_hash,
                     (SELECT run_id FROM evaluation_runs
-                     WHERE model_name = g.model_name AND overall_score = g.best_score
-                     AND completed_at IS NOT NULL
-                     ORDER BY started_at DESC LIMIT 1) as best_run_id
+                     WHERE model_name = g.model_name AND total_points = g.best_points
+                     AND test_set_hash = ? AND completed_at IS NOT NULL
+                     ORDER BY started_at DESC LIMIT 1) as best_run_id,
+                    (SELECT max_points FROM evaluation_runs
+                     WHERE model_name = g.model_name AND total_points = g.best_points
+                     AND test_set_hash = ? AND completed_at IS NOT NULL
+                     ORDER BY started_at DESC LIMIT 1) as max_points
                 FROM (
                     SELECT model_name,
-                        MAX(overall_score) as best_score,
+                        MAX(total_points) as best_points,
                         COUNT(*) as run_count,
                         MAX(started_at) as last_run
                     FROM evaluation_runs
-                    WHERE overall_score IS NOT NULL AND model_name IS NOT NULL
-                        AND completed_at IS NOT NULL
+                    WHERE total_points IS NOT NULL AND model_name IS NOT NULL
+                        AND completed_at IS NOT NULL AND test_set_hash = ?
                     GROUP BY model_name
-                    ORDER BY best_score DESC, run_count DESC
+                    ORDER BY best_points DESC, run_count DESC
                     LIMIT ?
                 ) g
-            """, (limit,))
+            """, (test_set_hash, test_set_hash, test_set_hash, test_set_hash, limit))
             return [dict(row) for row in cursor.fetchall()]
         finally:
             if not _conn:

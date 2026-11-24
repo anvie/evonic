@@ -325,6 +325,9 @@ def api_replay_test():
         with usage_context('evaluator', session_id=str(run_id)):
             result = evaluation_engine._run_single_configurable_test(test, domain, level, model_name, run_id)
 
+        # Totals were built from the old result, so rebuild them
+        evaluation_engine.recalculate_run_totals(run_id, [domain], model_name)
+
         # Fetch the saved result to return the full object the modal expects
         results = db.get_individual_test_results(run_id, domain=domain, level=level)
         saved = next((r for r in results if r['test_id'] == test_id), None)
@@ -373,10 +376,28 @@ def api_summary(run_id):
         if total_duration_ms and total_duration_ms > 0:
             tok_per_sec = round((total_tokens / total_duration_ms) * 1000, 1)
 
+        from evaluator.points import calculate_points
+        from evaluator.test_manager import test_manager
+        individual = db.get_individual_test_results(run_id)
+        by_domain = calculate_points(individual)['by_domain']
+        # one slim entry per test for the run card's heatmap: id, domain, level, score, status, error flag
+        tests = [{'id': r['test_id'], 'd': r['domain'], 'l': r['level'], 's': r['score'], 'st': r['status'],
+                  'e': '"llm_error"' in (r.get('details') or '')} for r in individual]
+        domain_names = {d['id']: d.get('name', d['id']) for d in test_manager.list_domains(include_disabled=True)}
+
         return jsonify({
             'success': True,
+            'run_id': run_id,
+            'model_name': run_info.get('model_name'),
+            'completed_at': run_info.get('completed_at') or run_info.get('started_at'),
+            'by_domain': by_domain,
+            'tests': tests,
+            'domain_names': domain_names,
             'summary': run_info.get('summary'),
             'overall_score': run_info.get('overall_score'),
+            'total_points': run_info.get('total_points'),
+            'max_points': run_info.get('max_points'),
+            'tests_run': run_info.get('tests_run'),
             'total_tokens': total_tokens,
             'tok_per_sec': tok_per_sec,
             'total_duration_ms': total_duration_ms,

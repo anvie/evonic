@@ -63,9 +63,17 @@ def build_attention(
             items.append({'level': 'warn', 'title': f"Schedule “{s.get('name') or 'Untitled'}” is overdue",
                           'detail': f"Should have run {late} ago", 'href': '/scheduler'})
 
-    if latest_run and latest_run.get('overall_score') is not None and latest_run['overall_score'] < LOW_EVAL_SCORE:
-        pct = round(latest_run['overall_score'] * 100)
-        items.append({'level': 'danger', 'title': f"Latest evaluation scored {pct}%",
+    max_pts = (latest_run or {}).get('max_points')
+    if latest_run and max_pts and latest_run.get('total_points') is not None:
+        # attainment is only the alert trigger; the message shows points
+        low = latest_run['total_points'] / max_pts < LOW_EVAL_SCORE
+    else:
+        low = bool(latest_run and latest_run.get('overall_score') is not None
+                   and latest_run['overall_score'] < LOW_EVAL_SCORE)
+    if low:
+        scored = (f"only {latest_run['total_points']:g} points" if max_pts and latest_run.get('total_points') is not None
+                  else "low")
+        items.append({'level': 'danger', 'title': f"Latest evaluation scored {scored}",
                       'detail': latest_run.get('model_name') or 'Unknown model',
                       'href': f"/history/{latest_run.get('run_id')}"})
 

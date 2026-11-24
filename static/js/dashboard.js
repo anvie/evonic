@@ -228,7 +228,8 @@ function chartLeaderboard(lb) {
     if (!lb || !lb.length) return chartEmpty('#chart-leaderboard', 'No model scores yet');
     _chartData.lb = lb;
     var dark = isDark();
-    var scores = lb.map(function (m) { return Math.round(m.best_score * 1000) / 10; });
+    var scores = lb.map(function (m) { return Math.round(m.best_points * 10) / 10; });
+    var axisMax = Math.max.apply(null, scores);
     var strong = dark ? '#818cf8' : '#4f46e5', soft = dark ? 'rgba(129,140,248,.4)' : 'rgba(99,102,241,.35)';
     mountChart('#chart-leaderboard', {
         chart: { type: 'bar', height: Math.max(150, lb.length * 40 + 36), animations: { enabled: false },
@@ -236,15 +237,15 @@ function chartLeaderboard(lb) {
                 var m = lb[o.dataPointIndex];
                 window.location.href = m && m.best_run_id ? '/history/' + encodeURIComponent(m.best_run_id) : '/history';
             } } },
-        series: [{ name: 'Best score', data: scores }],
+        series: [{ name: 'Best points', data: scores }],
         colors: [function (o) { return o.dataPointIndex === 0 ? strong : soft; }],
         fill: { type: 'solid', opacity: 1 },
         plotOptions: { bar: { horizontal: true, barHeight: lb.length < 3 ? '28%' : '50%', borderRadius: 4, borderRadiusApplication: 'end', dataLabels: { position: 'top' } } },
         stroke: { show: false },
-        dataLabels: { enabled: true, textAnchor: 'start', offsetX: 6, formatter: function (v, o) { var m = lb[o.dataPointIndex]; return v.toFixed(0) + '%  \u00b7  ' + m.run_count + (m.run_count === 1 ? ' run' : ' runs'); },
+        dataLabels: { enabled: true, textAnchor: 'start', offsetX: 6, formatter: function (v, o) { var m = lb[o.dataPointIndex]; return v.toFixed(1) + ' pts  \u00b7  ' + m.run_count + (m.run_count === 1 ? ' run' : ' runs'); },
             style: { fontSize: '12px', fontWeight: 600, colors: [dark ? '#e2e8f0' : '#334155'] }, background: { enabled: false }, dropShadow: { enabled: false } },
         xaxis: { categories: lb.map(function (m, i) { return (i + 1) + '. ' + truncate(m.model_name, 30); }),
-            min: 0, max: 125, tickAmount: 5, labels: { formatter: function (v) { return v > 100 ? '' : Math.round(v) + '%'; }, style: { fontSize: '11px' } },
+            min: 0, max: axisMax * 1.25, tickAmount: 5, labels: { formatter: function (v) { return v > axisMax ? '' : Math.round(v); }, style: { fontSize: '11px' } },
             axisBorder: { show: false }, axisTicks: { show: false }, tooltip: { enabled: false } },
         yaxis: { labels: { maxWidth: 260, style: { fontSize: '12px' } } },
         grid: { xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } }, padding: { right: 8 } },
@@ -257,7 +258,7 @@ function chartLeaderboard(lb) {
                 var dot = function (c) { return '<span style="flex:none;width:8px;height:8px;border-radius:9999px;background:' + c + ';"></span>'; };
                 return '<div style="min-width:170px;padding:10px 14px;background:#0f172a;border:1px solid rgba(148,163,184,.25);border-radius:10px;box-shadow:0 10px 30px rgba(2,6,23,.45);font-family:inherit;">'
                      + '<div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:4px;">' + escapeHtml(m.model_name) + '</div>'
-                     + '<div style="' + row + '">' + dot(i === 0 ? '#818cf8' : '#a5b4fc') + '<span>Best score</span><b style="margin-left:auto;padding-left:16px;color:#fff;">' + scores[i].toFixed(1) + '%</b></div>'
+                     + '<div style="' + row + '">' + dot(i === 0 ? '#818cf8' : '#a5b4fc') + '<span>Best points</span><b style="margin-left:auto;padding-left:16px;color:#fff;">' + scores[i].toFixed(1) + '</b></div>'
                      + '<div style="' + row + '">' + dot('#64748b') + '<span>Runs</span><b style="margin-left:auto;padding-left:16px;color:#fff;">' + m.run_count + '</b></div>'
                      + '<div style="' + row + '">' + dot('#64748b') + '<span>Rank</span><b style="margin-left:auto;padding-left:16px;color:#fff;">#' + (i + 1) + '</b></div>'
                      + '</div>';

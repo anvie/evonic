@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from evaluator.test_classes import get_test_class
 from evaluator.llm_client import llm_client
 from evaluator.scoring import scoring_engine
+from evaluator.points import definition_hash, attach_level_points, calculate_points
 from evaluator.domain_evaluators import get_evaluator
 from evaluator.test_loader import test_loader
 from evaluator.test_manager import test_manager
@@ -282,6 +283,16 @@ class EvaluationEngine:
                     final_status = "completed"
                 test_logger.finalize_run(status=final_status)
 
+    def recalculate_run_totals(self, run_id: int, domains: list, model_name: str = None):
+        """Rebuild level rows, point totals and overall_score after results changed (replay, resume)."""
+        if model_name:
+            self.model_name = model_name
+        self._recalculate_all_level_scores(run_id, domains)
+        db.refresh_run_points(run_id)
+        rows = [{"domain": r["domain"], "score": r["score"], "status": r["status"]}
+                for r in db.get_test_results(run_id)]
+        db.set_run_overall_score(run_id, scoring_engine.calculate_overall_score(rows))
+
     def _recalculate_all_level_scores(self, run_id: int, domains: list):
         """Recalculate all level scores from individual_test_results.
         
@@ -313,7 +324,7 @@ class EvaluationEngine:
                         level=level,
                         score=r.get('score', 0.0),
                         status=r.get('status', 'failed'),
-                        weight=1.0,
+                        weight=r.get('weight') or 1.0,
                         details=json.loads(r['details']) if r.get('details') else {}
                     )
                     test_results.append(tr)
@@ -1263,7 +1274,10 @@ class EvaluationEngine:
             duration_ms=duration_ms,
             model_name=model_name,
             system_prompt=system_prompt,  # Save the resolved system prompt that was actually used
-            system_prompt_mode=test.get('system_prompt_mode', 'overwrite')  # Save the mode
+            system_prompt_mode=test.get('system_prompt_mode', 'overwrite'),  # Save the mode
+            weight=weight,
+            evaluator_id=test.get('evaluator_id'),
+            definition_hash=definition_hash({**test, 'level': level})
         )
         
         self._log(f'═══════════════════════════════════════════════════════════════')
@@ -1283,7 +1297,8 @@ class EvaluationEngine:
             duration_ms=duration_ms,
             tokens=total_tokens,
             model_name=model_name,
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            weight=weight
         )
         
         return TestResult(
@@ -1313,6 +1328,7 @@ class EvaluationEngine:
         
         # Calculate run stats
         overall_score = scoring_engine.calculate_overall_score(results_dict)
+        totals = db.refresh_run_points(run_id)
         tok_per_sec = 0
         if self.total_duration_ms > 0:
             tok_per_sec = round(self.total_tokens / (self.total_duration_ms / 1000), 1)
@@ -1321,7 +1337,10 @@ class EvaluationEngine:
             "overall_score": overall_score,
             "total_tokens": self.total_tokens,
             "tok_per_sec": tok_per_sec,
-            "total_duration_ms": self.total_duration_ms
+            "total_duration_ms": self.total_duration_ms,
+            "total_points": totals['total'],
+            "max_points": totals['max_points'],
+            "by_domain": totals['by_domain'],
         }
 
         # Generate summary with full stats
@@ -1333,6 +1352,7 @@ class EvaluationEngine:
             total_tokens=self.total_tokens,
             total_duration_ms=self.total_duration_ms
         )
+        db.refresh_run_points(run_id)
     
     def _execute_js_mock(self, js_code: str, args: dict) -> dict:
         """Execute JavaScript mock response via node subprocess"""
@@ -2093,6 +2113,8 @@ class EvaluationEngine:
         # Count completed individual tests for accurate progress
         individual_results = db.get_individual_test_results(run_id)
         completed_tests = len(individual_results)
+        attach_level_points(matrix, individual_results)
+        totals = calculate_points(individual_results)
 
         return {
             "domains": matrix,
@@ -2101,6 +2123,8 @@ class EvaluationEngine:
             "status": status,
             "completed_tests": completed_tests,
             "overall_score": run_info.get("overall_score") if run_info else None,
+            "total_points": totals['total'],
+            "max_points": totals['max_points'],
             "tok_per_sec": round(tok_per_sec, 1) if tok_per_sec else None,
             "total_tokens": self.total_tokens,
             "total_duration_ms": self.total_duration_ms,

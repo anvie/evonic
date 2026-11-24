@@ -7,6 +7,12 @@
         <div style="display: flex; align-items: center; position: relative; min-height: 2.5rem;">
             <a href="/history" style="text-decoration: none; color: #667eea; font-size: 0.9rem; font-weight: 500;">← History</a>
             <div style="position: absolute; left: 50%; transform: translateX(-50%); font-size: 1.5rem; font-weight: 700; font-family: monospace;" class="text-gray-700 dark:text-gray-200">#{{ run_info.run_id }}</div>
+            <form action="/history/compare" method="get" style="margin-left: auto; display: flex; gap: 0.4rem; align-items: center;">
+                <input type="hidden" name="a" value="{{ run_info.run_id }}">
+                <label for="compare-with" class="text-xs text-gray-500 dark:text-gray-400">Compare with run #</label>
+                <input id="compare-with" name="b" type="number" min="1" required class="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm w-20 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+                <button type="submit" class="btn" style="font-size: 0.8rem; padding: 0.35rem 0.8rem;">Compare</button>
+            </form>
         </div>
     </div>
     
@@ -60,16 +66,20 @@
                 </span>
             </div>
             <div class="info-item text-center">
-                <span class="info-label">Overall Score</span>
-                <span class="info-value info-value-stat
-                    {% if run_info.overall_score is not none %}
-                        {% if run_info.overall_score >= 0.8 %}info-stat-high
-                        {% elif run_info.overall_score >= 0.6 %}info-stat-medium
+                <span class="info-label">Total Points</span>
+                {# attainment only picks the color band; it is never printed #}
+                {% set ratio = (run_info.total_points / run_info.max_points) if (run_info.total_points is not none and run_info.max_points) else none %}
+                <span class="info-value info-value-stat tabular-nums
+                    {% if ratio is not none %}
+                        {% if ratio >= 0.8 %}info-stat-high
+                        {% elif ratio >= 0.6 %}info-stat-medium
                         {% else %}info-stat-low
                         {% endif %}
                     {% endif %}">
-                    {% if run_info.overall_score is not none %}{{ "%.1f"|format(run_info.overall_score * 100) }}%{% else %}—{% endif %}
+                    {% if run_info.total_points is not none %}{{ ('%.1f'|format(run_info.total_points)).rstrip('0').rstrip('.') }}{% else %}—{% endif %}
                 </span>
+                {% if run_info.set_status == 'different' %}<span class="text-xs text-gray-500 dark:text-gray-400" title="Run on a different set of tests than the latest run">Different test set</span>
+                {% elif run_info.set_status == 'legacy' %}<span class="text-xs text-gray-500 dark:text-gray-400" title="Run from before point scoring; its test definitions can't be verified">Legacy test set</span>{% endif %}
             </div>
             {% if run_info.total_tokens and run_info.total_tokens > 0 %}
             <div class="info-item text-center">
@@ -98,44 +108,30 @@
 
         <!-- Test Matrix Tab -->
         <div id="tab-matrix" class="detail-tab-panel">
-            <!-- Matrix Header (desktop only) -->
-            <div class="hidden md:grid md:grid-cols-[160px_repeat(5,1fr)_120px] gap-2 p-4 bg-gray-50 dark:bg-gray-800 font-semibold rounded-t-lg text-sm">
-                <div class="flex items-center">Domain</div>
-                <div class="text-center">Level 1</div>
-                <div class="text-center">Level 2</div>
-                <div class="text-center">Level 3</div>
-                <div class="text-center">Level 4</div>
-                <div class="text-center">Level 5</div>
-                <div class="text-center">Total</div>
+            <div class="mx">
+            <div class="mx-head">
+                <div class="mx-title"><span>Domain</span></div>
+                <div>L1</div><div>L2</div><div>L3</div><div>L4</div><div>L5</div>
+                <div>Total</div>
             </div>
 
             {% for domain in domains %}
-            <div class="grid grid-cols-5 gap-1 p-3 mb-3 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800
-                        md:grid-cols-[160px_repeat(5,1fr)_120px] md:gap-2 md:p-0 md:mb-0 md:border-x-0 md:border-t-0 md:border-b md:border-gray-200 dark:md:border-gray-700 md:rounded-none md:bg-transparent md:hover:bg-gray-50 dark:md:hover:bg-gray-700 transition-colors"
-                 id="row-{{ domain }}">
-                <div class="col-span-5 flex items-center gap-2 mb-2 md:col-span-1 md:mb-0">
-                    <span class="font-semibold text-sm">{{ (domain_names or {}).get(domain, domain.replace('_', ' ')) }}</span>
-                </div>
+            {% set domain_label = (domain_names or {}).get(domain, domain.replace('_', ' ')) %}
+            <div class="mx-row" id="row-{{ domain }}">
+                <div class="mx-title"><span class="mx-name" title="{{ domain_label }}">{{ domain_label }}</span></div>
+                <div class="mx-cells">
                 {% for level in range(1, 6) %}
-                <div class="level-cell flex flex-col items-center justify-center min-h-[36px] md:min-h-[44px] p-1 rounded-md font-medium cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                     id="cell-{{ domain }}-{{ level }}" onclick="showCellDetail('{{ domain }}', {{ level }})">
-                    <span class="text-[0.6rem] font-semibold text-gray-400 dark:text-gray-500 uppercase md:hidden">L{{ level }}</span>
-                    <div class="flex items-center justify-center gap-1 md:gap-2">
-                        <div class="status-dot w-3 h-3 md:w-4 md:h-4 rounded-full shrink-0 status-pending"></div>
-                        <span class="cell-score text-xs md:text-sm text-gray-500 dark:text-gray-400">-</span>
-                    </div>
-                    <div class="text-[0.6rem] md:text-[0.7rem] text-gray-500 dark:text-gray-400 mt-0.5 min-h-[1em]" id="duration-{{ domain }}-{{ level }}"></div>
+                <div class="mx-cell level-cell" id="cell-{{ domain }}-{{ level }}" onclick="showCellDetail('{{ domain }}', {{ level }})">
+                    <span class="mx-box" data-tone="grey"><span class="mx-pct">-</span><span class="mx-dur"></span></span>
                 </div>
                 {% endfor %}
-                <div class="col-span-5 flex flex-row items-center justify-center gap-3 p-1 bg-gray-50 dark:bg-gray-800 rounded-md mt-1
-                            md:col-span-1 md:flex-col md:gap-0 md:mt-0 md:min-h-[44px]"
-                     id="total-{{ domain }}">
-                    <div class="text-base md:text-lg font-bold text-gray-800 dark:text-gray-200" id="total-score-{{ domain }}">-</div>
-                    <span class="text-xs text-gray-500 dark:text-gray-400" id="total-passed-{{ domain }}">0/5</span>
-                    <div class="text-[0.7rem] text-gray-400 dark:text-gray-500" id="total-duration-{{ domain }}"></div>
+                </div>
+                <div class="mx-total" id="total-{{ domain }}">
+                    <span class="mx-box" data-tone="grey" id="total-score-{{ domain }}"><span class="mx-pct">-</span><span class="mx-dur"></span></span>
                 </div>
             </div>
             {% endfor %}
+            </div>
         </div>
 
         <!-- Notes Tab -->
@@ -200,6 +196,7 @@
 {% include 'partials/training-modal.html' %}
 
 <!-- Shared JS -->
+<script src="{{ url_for('static', filename='js/eval-matrix.js') }}?v=5"></script>
 <script src="{{ url_for('static', filename='js/test-modal.js') }}?v=3"></script>
 <script src="{{ url_for('static', filename='js/training-data.js') }}?v=3"></script>
 
@@ -430,73 +427,23 @@ function toggleNotesView(view) {
     }
 }
 
+// Points are shown with at most one decimal and no trailing .0
+function fmtPts(n) {
+    return n === null || n === undefined ? '—' : String(Math.round(n * 10) / 10);
+}
+
+function ptsRatio(points, max) {
+    return max ? points / max : 0;  // only picks a color band, never displayed
+}
+
 function updateMatrix(matrix) {
     for (const [domain, levels] of Object.entries(matrix)) {
-        let domainTotal = 0;
-        let domainCount = 0;
-        let domainPassed = 0;
-        let domainDuration = 0;
-        
+        // Keep each level's data for the detail modal
+        if (!testResultsData[domain]) testResultsData[domain] = {};
         for (const [level, data] of Object.entries(levels)) {
-            const cell = document.getElementById(`cell-${domain}-${level}`);
-            if (cell) {
-                // Store data for modal access
-                if (!testResultsData[domain]) testResultsData[domain] = {};
-                testResultsData[domain][level] = data;
-                
-                // Update status indicator
-                const statusEl = cell.querySelector('.status-dot');
-                const dotStatus = (data.status === 'failed' && data.details?.llm_error) ? 'technical-error' : data.status;
-                statusEl.className = 'status-dot w-3 h-3 md:w-4 md:h-4 rounded-full shrink-0 status-' + dotStatus;
-                
-                // Update score
-                const scoreEl = cell.querySelector('.cell-score');
-                if (data.score !== null && data.score !== undefined) {
-                    scoreEl.textContent = (data.score * 100).toFixed(0) + '%';
-                    domainTotal += data.score;
-                    domainCount++;
-                    if (data.status === 'passed') domainPassed++;
-                } else {
-                    scoreEl.textContent = '-';
-                }
-                
-                // Update duration
-                const durationEl = document.getElementById(`duration-${domain}-${level}`);
-                if (durationEl) {
-                    if (data.duration_ms) {
-                        const seconds = (data.duration_ms / 1000).toFixed(1);
-                        durationEl.textContent = seconds + 's';
-                        domainDuration += data.duration_ms;
-                    } else {
-                        durationEl.textContent = '';
-                    }
-                }
-            }
+            testResultsData[domain][level] = data;
         }
-        
-        // Update domain total
-        const scoreEl = document.getElementById(`total-score-${domain}`);
-        const passedEl = document.getElementById(`total-passed-${domain}`);
-        const durationEl = document.getElementById(`total-duration-${domain}`);
-        
-        if (domainCount > 0) {
-            const avgScore = domainTotal / domainCount;
-            
-            if (scoreEl) {
-                scoreEl.textContent = (avgScore * 100).toFixed(0) + '%';
-                scoreEl.style.color = avgScore >= 0.8 ? '#059669' : avgScore >= 0.6 ? '#d97706' : '#dc2626';
-            }
-            
-            if (passedEl) {
-                passedEl.textContent = `${domainPassed}/5`;
-            }
-        }
-        
-        // Show domain duration
-        if (durationEl && domainDuration > 0) {
-            const seconds = (domainDuration / 1000).toFixed(1);
-            durationEl.textContent = seconds + 's';
-        }
+        EvMatrix.paintDomain(domain, levels);
     }
 }
 
@@ -537,7 +484,7 @@ function generateLogs(matrix) {
             logsHtml += `<div class="log-entry" style="color: #666;">[SCORING] Evaluating response...</div>`;
             
             const resultColor = data.status === 'passed' ? '#10b981' : '#ef4444';
-            logsHtml += `<div class="log-entry" style="color: ${resultColor}; font-weight: bold;">[RESULT] ${statusIcon} Status: ${data.status.toUpperCase()}, Score: ${data.score !== null ? (data.score * 100).toFixed(0) + '%' : 'N/A'}</div>`;
+            logsHtml += `<div class="log-entry" style="color: ${resultColor}; font-weight: bold;">[RESULT] ${statusIcon} Status: ${data.status.toUpperCase()}, Score: ${data.points !== null && data.points !== undefined ? fmtPts(data.points) + ' / ' + fmtPts(data.max_points) + ' pts' : 'N/A'}</div>`;
             
             if (data.details) {
                 const detailsStr = typeof data.details === 'object' ? data.details.details || JSON.stringify(data.details) : String(data.details);
@@ -606,8 +553,8 @@ function formatDetails(details) {
     header.className = 'modal-header ' + headerClass;
     title.innerHTML = `<span style="font-size: 1.2rem;">${statusIcon}</span> ${domain.toUpperCase()} Level ${level} - ${data.status.toUpperCase()}`;
     
-    const scoreDisplay = data.score !== null && data.score !== undefined 
-        ? (data.score * 100).toFixed(1) + '%' 
+    const scoreDisplay = data.points !== null && data.points !== undefined 
+        ? `${fmtPts(data.points)} / ${fmtPts(data.max_points)} pts` 
         : 'N/A';
     
     const scoreClass = data.status === 'passed' ? 'score-passed' : data.status === 'failed' ? 'score-failed' : '';
