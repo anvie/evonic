@@ -1,7 +1,7 @@
 """Absolute point scoring: a run's total depends only on its own tests."""
 import threading
 
-from evaluator.points import calculate_points, definition_hash, max_points, run_set_hash
+from evaluator.points import calculate_points, definition_hash, max_points, run_score, run_set_hash
 from models.db import db
 
 
@@ -15,6 +15,21 @@ def test_max_points_is_level_times_weight():
     assert max_points(5) == 5
     assert max_points(3, 2.0) == 6
     assert max_points(3, 0) == 3  # a non-positive weight falls back to 1
+
+
+def test_run_score_is_bounded_increasing_and_depends_only_on_the_runs_own_points():
+    assert run_score(0) == run_score(None) == run_score(-5) == 0
+    assert (run_score(50), run_score(100), run_score(367.4), run_score(600)) == (28.3, 48.7, 91.4, 98.2)
+    samples = [0, 1, 10, 100, 367.4, 1000, 10_000, 1_000_000]
+    scores = [run_score(p) for p in samples]
+    assert scores == sorted(scores) and max(scores) <= 99.9
+    # two digits at most, however large the test set grows
+    assert all(run_score(p) < 100 for p in range(0, 200_000, 137))
+    # adding tests to the set never changes the score of a run already done
+    old = [_row('a', 1, 1.0), _row('b', 2, 0.5)]
+    before = run_score(calculate_points(old)['total'])
+    calculate_points(old + [_row('new', 5, 1.0)])
+    assert run_score(calculate_points(old)['total']) == before
 
 
 def test_calculate_points_sums_score_times_points():
@@ -160,6 +175,7 @@ def test_leaderboard_ranks_points_within_one_test_set():
     board = db.get_model_leaderboard()
     assert [m['model_name'] for m in board] == ['model-x', 'model-y']
     assert board[0]['best_points'] == 4 and board[0]['max_points'] == 4
+    assert board[0]['best_score'] == run_score(4.0) > board[1]['best_score']
     old_hash = next(t['test_set_hash'] for t in db.list_test_sets() if t['tests_run'] == 1)
     assert [m['model_name'] for m in db.get_model_leaderboard(test_set_hash=old_hash)] == ['old-model']
 
@@ -180,14 +196,14 @@ def test_compare_page_and_history_pages_render_points_without_percent():
         page = client.get(f'/history/compare?a={a}&b={b}')
         html = page.get_data(as_text=True)
         assert page.status_code == 200
-        assert 'Compared on 1 shared test.' in html and '−1' in html and 'Only in run B (1)' in html
+        assert 'Compared on 1 shared test.' in html and '−0.6' in html and 'Only in run B (1)' in html
         assert client.get('/history/compare').status_code == 302
         assert client.get(f'/history/compare?a={a}&b=999999').status_code == 404
 
         listing = client.get('/history').get_data(as_text=True)
         import re
         badge = re.search(r'class="score-badge[^>]*>\s*([^<]+?)\s*<', listing).group(1)
-        assert badge == '2'  # one absolute number: no max, no percent
+        assert badge == '1.3'  # the score of 2 points: one number, no max, no percent
         db.update_test_result(b, 'math', 2, score=0.5, status='failed')  # a level row makes the domain appear
         detail = client.get(f'/history/{b}').get_data(as_text=True)
         assert 'Total Points' in detail and 'Overall Score' not in detail
@@ -224,7 +240,8 @@ def test_summary_api_carries_what_the_run_card_shows():
             sess['authenticated'] = True
         body = client.get(f'/api/summary/{run_id}').get_json()
     assert body['success'] and body['run_id'] == run_id and body['model_name'] == 'card-model'
-    assert body['total_points'] == 2 and body['summary'] == 'A short summary.'
+    assert body['total_points'] == 2 and body['score'] == run_score(2.0) == 1.3
+    assert body['summary'] == 'A short summary.'
     assert body['by_domain']['math'] == {'points': 2.0, 'max_points': 3.0, 'passed': 1, 'count': 2}
     assert body['completed_at']
     # heatmap input: one slim entry per test, ordered by domain then level

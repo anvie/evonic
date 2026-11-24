@@ -109,7 +109,7 @@ Stack: server-rendered Jinja templates, compiled Tailwind (`static/css/tailwind.
   - red: below 25%
   - yellow: 25% to 75%
   - green: above 75%
-- **The overall score of a run** is one absolute number, `Σ (test score × level × weight)`, with at most one decimal and no maximum next to it (`14.5`, label "points"). It is not a percentage, and adding tests to the test set never changes it for a run already done. The same single number is used on the score card, the completion modal, the history list and run detail, the compare page, the leaderboard and the dashboard alert.
+- **The overall score of a run** is one number, never a percentage and never with a maximum next to it (`91.4`, label "points"). It is the run's point total, `Σ (test score × level × weight)`, folded into at most 99.9 by `run_score` in `evaluator/points.py`: `100 × (1 − e^(−points / 150))`. So it always fits two digits however large the test set grows, it depends only on that run's own results (adding tests never changes an old run's score), and more points never give a lower score. The same score is used on the run card, the completion modal, the history list and run detail, the compare page, the leaderboard and the dashboard alert. The raw point total stays in the database and the API as `total_points`.
 - **A single test** may still show `points / max_points` in its detail view.
 - **Diffs** (compare page) have an explicit sign and a text marker: `+2.5 ▲` in green, `−1.0 ▼` in red, `0` in grey. Never color alone.
 - **Rank** is shown with the number, and the top three get a chip as on LMArena and Hugging Face.

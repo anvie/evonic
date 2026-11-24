@@ -66,7 +66,7 @@
                         {% elif ratio >= 0.6 %}score-medium
                         {% else %}score-low
                         {% endif %}" style="font-variant-numeric: tabular-nums;">
-                        {{ ('%.1f'|format(run.total_points)).rstrip('0').rstrip('.') }}
+                        {{ run.total_points|score }}
                     </span>
                     {% if run.set_status == 'different' %}<span class="set-badge" title="Run on a different set of tests than the latest run">Different set</span>
                     {% elif run.set_status == 'legacy' %}<span class="set-badge" title="Run from before point scoring; its test definitions can't be verified">Legacy</span>{% endif %}

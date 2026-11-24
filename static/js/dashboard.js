@@ -228,8 +228,8 @@ function chartLeaderboard(lb) {
     if (!lb || !lb.length) return chartEmpty('#chart-leaderboard', 'No model scores yet');
     _chartData.lb = lb;
     var dark = isDark();
-    var scores = lb.map(function (m) { return Math.round(m.best_points * 10) / 10; });
-    var axisMax = Math.max.apply(null, scores);
+    var scores = lb.map(function (m) { return Math.round(m.best_score * 10) / 10; });
+    var axisMax = 100;   // scores stay below 100
     var strong = dark ? '#818cf8' : '#4f46e5', soft = dark ? 'rgba(129,140,248,.4)' : 'rgba(99,102,241,.35)';
     mountChart('#chart-leaderboard', {
         chart: { type: 'bar', height: Math.max(150, lb.length * 40 + 36), animations: { enabled: false },

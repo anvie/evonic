@@ -1,6 +1,7 @@
 from typing import Dict, Any, Optional
 import json
 from evaluator.test_classes import get_test_class
+from evaluator.points import run_score
 
 class ScoringEngine:
     def __init__(self):
@@ -178,7 +179,7 @@ class ScoringEngine:
 
         # Sentence 1: overall + label
         if pts:
-            sentences.append(f"Performa keseluruhan {label} dengan skor {run_stats['total_points']:.1f} poin.")
+            sentences.append(f"Performa keseluruhan {label} dengan skor {run_score(run_stats['total_points']):g} poin.")
         else:
             sentences.append(f"Performa keseluruhan {label} dengan skor {overall*100:.0f}%.")
 
@@ -230,7 +231,7 @@ class ScoringEngine:
             overall_avg = sum(s * domain_counts[d] for d, s in domain_avgs.items()) / total_tests if total_tests > 0 else 0
 
             if pts:
-                overall_text = f"skor keseluruhan {run_stats['total_points']:.1f} poin"
+                overall_text = f"skor keseluruhan {run_score(run_stats['total_points']):g} poin"
             else:
                 overall_text = f"rata-rata keseluruhan {overall_avg*100:.0f}%"
 

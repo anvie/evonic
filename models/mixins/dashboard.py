@@ -170,7 +170,11 @@ class DashboardMixin:
                     LIMIT ?
                 ) g
             """, (test_set_hash, test_set_hash, test_set_hash, test_set_hash, limit))
-            return [dict(row) for row in cursor.fetchall()]
+            from evaluator.points import run_score
+            rows = [dict(row) for row in cursor.fetchall()]
+            for row in rows:
+                row['best_score'] = run_score(row['best_points'])
+            return rows
         finally:
             if not _conn:
                 conn.__exit__(None, None, None)

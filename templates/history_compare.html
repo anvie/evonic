@@ -17,7 +17,7 @@
             <a href="/history/{{ run.run_id }}" class="cmp-id">#{{ run.run_id }}</a>
             <span>{{ run.model_name or 'default' }}</span>
             <span class="cmp-muted">{{ (run.started_at or '')[:19] }}</span>
-            <span class="cmp-muted">Run total {{ run.total_points|pts }} points</span>
+            <span class="cmp-muted">Run score {{ run.total_points|score }}</span>
             {% if run.set_status == 'different' %}<span class="cmp-badge" title="Run on a different set of tests than the latest run">Different set</span>
             {% elif run.set_status == 'legacy' %}<span class="cmp-badge" title="Run from before point scoring; its test definitions can't be verified">Legacy</span>{% endif %}
         </div>
@@ -27,17 +27,17 @@
     {% if common.count %}
     <div class="cmp-stats">
         <div class="cmp-card">
-            <span class="cmp-label">Run A, shared tests</span>
-            <span class="cmp-num">{{ common.a.total|pts }}<small> points</small></span>
+            <span class="cmp-label">Run A score, shared tests</span>
+            <span class="cmp-num">{{ common.score_a|pts }}</span>
         </div>
         <div class="cmp-card">
-            <span class="cmp-label">Run B, shared tests</span>
-            <span class="cmp-num">{{ common.b.total|pts }}<small> points</small></span>
+            <span class="cmp-label">Run B score, shared tests</span>
+            <span class="cmp-num">{{ common.score_b|pts }}</span>
         </div>
         <div class="cmp-card">
             <span class="cmp-label">Difference (B − A)</span>
-            {% if common.diff > 0 %}<span class="cmp-num cmp-up">+{{ common.diff|pts }} ▲</span>
-            {% elif common.diff < 0 %}<span class="cmp-num cmp-down">−{{ (-common.diff)|pts }} ▼</span>
+            {% if common.score_diff > 0 %}<span class="cmp-num cmp-up">+{{ common.score_diff|pts }} ▲</span>
+            {% elif common.score_diff < 0 %}<span class="cmp-num cmp-down">−{{ (-common.score_diff)|pts }} ▼</span>
             {% else %}<span class="cmp-num">0</span>{% endif %}
         </div>
         <div class="cmp-card">
@@ -50,19 +50,21 @@
     <div class="cmp-scroll">
         <table class="cmp-table">
             <thead>
-                <tr><th>Domain</th><th class="r">Run A (points)</th><th class="r">Run B (points)</th><th class="r">Difference</th></tr>
+                <tr><th>Domain</th><th class="r">Run A</th><th class="r">Run B</th><th class="r">Difference</th></tr>
             </thead>
             <tbody>
                 {% for d in domains %}
                 {% set da = common.a.by_domain.get(d) %}
                 {% set db_ = common.b.by_domain.get(d) %}
-                {% set diff = ((db_.points if db_ else 0) - (da.points if da else 0)) %}
+                {% set pa = (da.points / da.max_points * 100) if (da and da.max_points) else none %}
+                {% set pb = (db_.points / db_.max_points * 100) if (db_ and db_.max_points) else none %}
+                {% set diff = (pb - pa)|round|int if (pa is not none and pb is not none) else none %}
                 <tr>
                     <td>{{ d }}</td>
-                    <td class="r">{% if da %}{{ da.points|pts }}{% else %}—{% endif %}</td>
-                    <td class="r">{% if db_ %}{{ db_.points|pts }}{% else %}—{% endif %}</td>
-                    <td class="r {{ 'cmp-up' if diff > 0 else ('cmp-down' if diff < 0 else '') }}">
-                        {% if diff > 0 %}+{{ diff|pts }} ▲{% elif diff < 0 %}−{{ (-diff)|pts }} ▼{% else %}0{% endif %}
+                    <td class="r">{% if pa is not none %}{{ pa|round|int }}%{% else %}—{% endif %}</td>
+                    <td class="r">{% if pb is not none %}{{ pb|round|int }}%{% else %}—{% endif %}</td>
+                    <td class="r {{ 'cmp-up' if diff and diff > 0 else ('cmp-down' if diff and diff < 0 else '') }}">
+                        {% if diff is none %}—{% elif diff > 0 %}+{{ diff }} ▲{% elif diff < 0 %}−{{ -diff }} ▼{% else %}0{% endif %}
                     </td>
                 </tr>
                 {% endfor %}

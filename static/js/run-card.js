@@ -72,7 +72,7 @@
             '<div class="rc-top"><div class="rc-who"><span class="rc-model" title="' + esc(data.model_name) + '">' + esc(data.model_name || 'default') +
             '</span><span class="rc-meta">' + [data.run_id ? 'Run #' + esc(data.run_id) : '', date].filter(Boolean).join(' · ') + '</span></div>' +
             '<span class="rc-verdict">' + verdict.label + '</span></div>' +
-            '<div class="rc-hero"><div><span class="rc-label">Total points</span><span class="rc-points">' + fmtPts(total) + '</span></div>' +
+            '<div class="rc-hero"><div><span class="rc-label">Total points</span><span class="rc-points">' + fmtPts(data.score || 0) + '</span></div>' +
             '<div class="rc-ring"><svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="42" class="rc-ring-bg"/>' +
             '<circle cx="50" cy="50" r="42" class="rc-ring-fg" stroke-dasharray="' + dash + ' 263.9"/></svg>' +
             '<span class="rc-ring-text"><b>' + passed + '/' + tests + '</b><small>passed</small></span></div></div>' +

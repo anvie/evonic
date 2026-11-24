@@ -52,7 +52,7 @@ def test_very_low_latest_evaluation_is_a_danger_and_sorted_first():
     run = {"run_id": 6, "model_name": "m", "overall_score": 0.05, "total_points": 3.0, "max_points": 60.0}
     items = build_attention(agents, [], run, isdir=lambda p: False)
     assert [i["level"] for i in items] == ["danger", "warn"]
-    assert items[0]["title"] == "Latest evaluation scored only 3 points" and items[0]["href"] == "/history/6"
+    assert items[0]["title"] == "Latest evaluation scored only 2" and items[0]["href"] == "/history/6"
     # a run from before points existed still raises the alert, without a number
     legacy = build_attention([], [], {"run_id": 7, "overall_score": 0.05})
     assert legacy[0]["title"] == "Latest evaluation scored low"

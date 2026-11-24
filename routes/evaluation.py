@@ -4,6 +4,7 @@ import queue
 from flask import Blueprint, render_template, jsonify, request, abort
 
 from evaluator.engine import evaluation_engine
+from evaluator.points import run_score
 from models.db import db
 import config
 
@@ -396,6 +397,7 @@ def api_summary(run_id):
             'summary': run_info.get('summary'),
             'overall_score': run_info.get('overall_score'),
             'total_points': run_info.get('total_points'),
+            'score': run_score(run_info.get('total_points')),
             'max_points': run_info.get('max_points'),
             'tests_run': run_info.get('tests_run'),
             'total_tokens': total_tokens,

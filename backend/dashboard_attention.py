@@ -8,6 +8,8 @@ import os
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from evaluator.points import run_score
+
 # A schedule that is enabled and more than this many seconds past its next run time is considered stuck.
 STALE_SCHEDULE_SECONDS = 15 * 60
 LOW_EVAL_SCORE = 0.20
@@ -71,7 +73,7 @@ def build_attention(
         low = bool(latest_run and latest_run.get('overall_score') is not None
                    and latest_run['overall_score'] < LOW_EVAL_SCORE)
     if low:
-        scored = (f"only {latest_run['total_points']:g} points" if max_pts and latest_run.get('total_points') is not None
+        scored = (f"only {run_score(latest_run['total_points']):g}" if max_pts and latest_run.get('total_points') is not None
                   else "low")
         items.append({'level': 'danger', 'title': f"Latest evaluation scored {scored}",
                       'detail': latest_run.get('model_name') or 'Unknown model',

@@ -76,7 +76,7 @@
                         {% else %}info-stat-low
                         {% endif %}
                     {% endif %}">
-                    {% if run_info.total_points is not none %}{{ ('%.1f'|format(run_info.total_points)).rstrip('0').rstrip('.') }}{% else %}—{% endif %}
+                    {{ run_info.total_points|score }}
                 </span>
                 {% if run_info.set_status == 'different' %}<span class="text-xs text-gray-500 dark:text-gray-400" title="Run on a different set of tests than the latest run">Different test set</span>
                 {% elif run_info.set_status == 'legacy' %}<span class="text-xs text-gray-500 dark:text-gray-400" title="Run from before point scoring; its test definitions can't be verified">Legacy test set</span>{% endif %}

@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from evaluator.test_classes import get_test_class
 from evaluator.llm_client import llm_client
 from evaluator.scoring import scoring_engine
-from evaluator.points import definition_hash, attach_level_points, calculate_points
+from evaluator.points import definition_hash, attach_level_points, calculate_points, run_score
 from evaluator.domain_evaluators import get_evaluator
 from evaluator.test_loader import test_loader
 from evaluator.test_manager import test_manager
@@ -2124,6 +2124,7 @@ class EvaluationEngine:
             "completed_tests": completed_tests,
             "overall_score": run_info.get("overall_score") if run_info else None,
             "total_points": totals['total'],
+            "score": run_score(totals['total']),
             "max_points": totals['max_points'],
             "tok_per_sec": round(tok_per_sec, 1) if tok_per_sec else None,
             "total_tokens": self.total_tokens,

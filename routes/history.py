@@ -5,6 +5,7 @@ import sqlite3
 
 from flask import Blueprint, render_template, jsonify, request, redirect
 
+from evaluator.points import run_score
 from models.db import db
 import config
 
@@ -117,6 +118,10 @@ def _compare_payload(run_a: int, run_b: int):
         return None
     slim = ('run_id', 'model_name', 'started_at', 'total_points', 'max_points', 'tests_run', 'test_set_hash')
     result = compare_runs(db.get_individual_test_results(run_a), db.get_individual_test_results(run_b))
+    # what each run would score on only the tests they share
+    common = result['common']
+    common['score_a'], common['score_b'] = run_score(common['a']['total']), run_score(common['b']['total'])
+    common['score_diff'] = round(common['score_b'] - common['score_a'], 1)
     result['runs'] = {'a': {k: info_a.get(k) for k in slim}, 'b': {k: info_b.get(k) for k in slim}}
     return result
 
@@ -139,6 +144,14 @@ def _pts_filter(value):
     if value is None:
         return '—'
     return f"{round(float(value), 1):g}"
+
+
+@history_bp.app_template_filter('score')
+def _score_filter(points):
+    """The score shown for a run's point total (0-99.9, always two digits at most)"""
+    if points is None:
+        return '—'
+    return f"{run_score(points):g}"
 
 
 @history_bp.route('/history/compare')
@@ -306,6 +319,7 @@ def api_run_matrix(run_id):
         "run_id": run_id,
         "model_name": model_name,
         "total_points": totals['total'],
+        "score": run_score(totals['total']),
         "max_points": totals['max_points'],
         "status": "completed"
     })

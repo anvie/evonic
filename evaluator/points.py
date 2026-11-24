@@ -6,7 +6,25 @@ test set never changes the total of a run that has already been done.
 """
 import hashlib
 import json
+import math
 from typing import Any, Dict, Iterable, List, Optional
+
+# The number shown for a run folds its point total into 0-99.9, so it always fits two digits
+# however large the test set grows. It depends only on the run's own points: adding tests
+# later never changes an old run's score. 150 puts a strong run on the current test set in the 90s.
+SCORE_SCALE = 150.0
+
+
+def run_score(points: Optional[float]) -> float:
+    """Score shown for a run: 100 * (1 - e^(-points / 150)), at most 99.9.
+
+    Rises quickly at first and flattens: 50 points -> 28.3, 100 -> 48.7, 200 -> 73.6,
+    367 -> 91.4, 600 -> 98.2. Equal points always give an equal score, and more points
+    never give a lower one, so rankings are the same as by raw points.
+    """
+    if not points or points <= 0:
+        return 0.0
+    return min(99.9, round(100.0 * (1.0 - math.exp(-points / SCORE_SCALE)), 1))
 
 
 def max_points(level: int, weight: Optional[float] = 1.0) -> float:
