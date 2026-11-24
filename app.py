@@ -937,11 +937,13 @@ if __name__ == '__main__':
             "FORCE_INSECURE_COOKIES=1: session and CSRF cookies are sent without "
             "the Secure flag. Do not expose this instance to untrusted networks."
         )
-    if not config.ADMIN_PASSWORD_HASH:
-        _log.warning(
-            "ADMIN_PASSWORD_HASH is empty — web login will fail until a password is "
-            "set (run `evonic pass`, then restart)."
-        )
+    if not config.ADMIN_PASSWORD_HASH and db.has_super_agent():
+        from backend.setup import ensure_admin_password, initial_admin_password_path
+        if ensure_admin_password():
+            _log.warning(
+                "No admin password was set, so one was generated. Read it from %s "
+                "and change it with `evonic pass`.", initial_admin_password_path()
+            )
 
     app.run(
         host=config.HOST,

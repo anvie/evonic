@@ -2,6 +2,7 @@
 Authentication Blueprint — admin login with Cloudflare Turnstile captcha.
 """
 
+import os
 import secrets
 import time
 import threading
@@ -105,6 +106,24 @@ def _is_safe_redirect_url(target):
     return target.startswith('/')
 
 
+def _refresh_admin_password_hash() -> None:
+    """Pick up an ADMIN_PASSWORD_HASH changed in .env (e.g. by `evonic pass`).
+
+    The hash is read once at import time, so without this a running server
+    would need a restart before a new password worked.
+    """
+    if os.path.exists(os.path.join(os.path.expanduser('~'), '.envcrypt.yaml')):
+        return  # .env is encrypted; nothing to read
+    from backend.dotenv_loader import read_dotenv_value
+    from backend.setup import apply_admin_password_hash
+    try:
+        current = read_dotenv_value('ADMIN_PASSWORD_HASH')
+    except OSError:
+        return
+    if current is not None and current != config.ADMIN_PASSWORD_HASH:
+        apply_admin_password_hash(current)
+
+
 def _login_context(error=None, notice=None) -> dict:
     """Return the context shared by every ``/login`` render branch.
 
@@ -114,7 +133,9 @@ def _login_context(error=None, notice=None) -> dict:
     through here so none of them can forget the flags.
     """
     from models.db import db
+    from backend.setup import initial_admin_password_path
 
+    _refresh_admin_password_hash()
     try:
         setup_required = not db.has_super_agent()
     except Exception:
@@ -125,6 +146,8 @@ def _login_context(error=None, notice=None) -> dict:
         'notice': notice,
         'password_configured': bool(config.ADMIN_PASSWORD_HASH),
         'setup_required': setup_required,
+        'initial_password_pending': os.path.exists(initial_admin_password_path()),
+        'initial_password_path': initial_admin_password_path(),
     }
 
 
@@ -145,6 +168,7 @@ def login_page():
 
 @auth_bp.route('/login', methods=['POST'])
 def login_submit():
+    _refresh_admin_password_hash()
     ip = request.remote_addr or '0.0.0.0'
 
     email = 'admin'  # admin-only login, no user-specific email

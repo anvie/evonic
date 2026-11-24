@@ -14,7 +14,7 @@ import re
 import os
 from typing import Optional
 
-__all__ = ["load_dotenv"]
+__all__ = ["load_dotenv", "read_dotenv_value"]
 
 # Project root = parent of this package, so the .env lookup does not depend on
 # the process working directory. The launcher script never chdirs, so a server
@@ -48,6 +48,36 @@ def load_dotenv(dotenv_path: Optional[str] = None, *, override: bool = False) ->
             _parse_and_set(line, override=override)
 
     return True
+
+
+def read_dotenv_value(key: str, dotenv_path: Optional[str] = None) -> Optional[str]:
+    """Return the value of *key* in the .env file, or ``None`` when absent.
+
+    Unlike ``load_dotenv`` this never touches ``os.environ``, so a running
+    process can notice a value that changed on disk after it started.
+    """
+    path = dotenv_path or DEFAULT_DOTENV_PATH
+    if not os.path.isfile(path):
+        return None
+    found = None
+    with open(path, encoding="utf-8", errors="surrogateescape") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            if not line or line.startswith("#"):
+                continue
+            eq_pos = line.find("=")
+            if eq_pos == -1 or line[:eq_pos].rstrip() != key:
+                continue
+            raw = line[eq_pos + 1:].lstrip()
+            if not raw:
+                found = ""
+            elif raw[0] in "\"'":
+                found = _parse_quoted_value(raw)
+            else:
+                found = _parse_unquoted_value(raw)
+    return found
 
 
 def _parse_and_set(line: str, *, override: bool) -> None:

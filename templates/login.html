@@ -151,14 +151,19 @@
             <div class="lg-guide">
                 <p class="lg-guide-title">Quick start</p>
                 <ol class="lg-guide-list">
-                    <li>Open a terminal in the Evonic directory and run <code>./evonic pass</code>.</li>
+                    <li>Open a terminal in the Evonic directory and run <code>evonic pass</code> (use <code>./evonic pass</code> if it is not on your PATH).</li>
                     <li>Choose a password of at least 6 characters when prompted.</li>
-                    <li>Restart Evonic with <code>./evonic restart</code> — the password is read at start-up.</li>
                     <li>Reload this page and sign in.</li>
                 </ol>
                 {% if setup_required %}
-                <p class="lg-guide-note">Still installing? Run <code>./evonic setup</code> or open the <a href="/setup">setup wizard</a> to create the super agent and set the password.</p>
+                <p class="lg-guide-note">Still installing? Run <code>evonic setup</code> or open the <a href="/setup">setup wizard</a> to create the super agent and set the password.</p>
                 {% endif %}
+            </div>
+            {% endif %}
+            {% if initial_password_pending and password_configured %}
+            <div class="lg-guide">
+                <p class="lg-guide-title">First sign-in?</p>
+                <p class="lg-guide-note">Your generated password was shown by <code>evonic setup</code> / <code>evonic start</code> and is saved in <code>{{ initial_password_path }}</code>. Change it with <code>evonic pass</code>.</p>
             </div>
             {% endif %}
 

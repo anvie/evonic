@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-_No changes yet._
+### Improvements
+
+- A fresh install always ends with an admin password the user can find. `evonic setup` now asks for the dashboard password and re-prompts on a bad one instead of skipping it; leaving it empty (or `--non-interactive`) generates a random password, prints it, and saves it to `data/initial_admin_password` (0600). `evonic start` and `app.py` do the same for an installed instance that has no password. `evonic pass` now takes effect on a running server without a restart, and the login page guide and a first-sign-in note say where to look.
 
 ## [1.7.0] - 2026-11-17
 

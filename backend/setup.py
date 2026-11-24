@@ -592,6 +592,7 @@ def run_setup(
             env_path = os.path.join(config.BASE_DIR, ".env")
             _update_env_var(env_path, "ADMIN_PASSWORD_HASH", pw_hash)
             apply_admin_password_hash(pw_hash)
+            clear_initial_admin_password()
 
         # Memory-engine awareness: surface whether evomem is ready or FTS5 is used.
         try:
@@ -640,6 +641,44 @@ def apply_admin_password_hash(pw_hash: str) -> None:
     """
     os.environ["ADMIN_PASSWORD_HASH"] = pw_hash
     config.ADMIN_PASSWORD_HASH = pw_hash
+
+
+def initial_admin_password_path() -> str:
+    """File holding a generated admin password until the user picks their own."""
+    return os.path.join(config.BASE_DIR, "data", "initial_admin_password")
+
+
+def ensure_admin_password():
+    """Guarantee the instance has an admin password.
+
+    Returns ``None`` when one is already configured. Otherwise generates a
+    random password, stores its hash in ``.env`` (applied to this process
+    too), saves the plaintext to ``data/initial_admin_password`` (0600) and
+    returns it so the caller can show it to the operator.
+    """
+    if config.ADMIN_PASSWORD_HASH:
+        return None
+    from werkzeug.security import generate_password_hash
+
+    password = secrets.token_urlsafe(12)
+    pw_hash = generate_password_hash(password, method="pbkdf2:sha256")
+    _update_env_var(os.path.join(config.BASE_DIR, ".env"), "ADMIN_PASSWORD_HASH", pw_hash)
+    apply_admin_password_hash(pw_hash)
+
+    path = initial_admin_password_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(password + "\n")
+    return password
+
+
+def clear_initial_admin_password() -> None:
+    """Drop the generated-password file once the user has chosen their own."""
+    try:
+        os.unlink(initial_admin_password_path())
+    except FileNotFoundError:
+        pass
 
 
 def _update_env_var(env_path, key, value):

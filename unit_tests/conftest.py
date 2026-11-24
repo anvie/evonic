@@ -25,6 +25,19 @@ os.environ['EVONIC_TESTING'] = '1'
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 @pytest.fixture(autouse=True)
+def isolate_dotenv(request, monkeypatch, tmp_path):
+    """Keep the login hash refresh from reading the developer's real .env."""
+    from backend import dotenv_loader
+    if request.module.__name__.endswith('test_dotenv_and_password_apply'):
+        return  # asserts the real default path
+    monkeypatch.setattr(dotenv_loader, 'DEFAULT_DOTENV_PATH', str(tmp_path / 'no.env'))
+    monkeypatch.setattr(
+        'backend.setup.initial_admin_password_path',
+        lambda: str(tmp_path / 'initial_admin_password'),
+    )
+
+
+@pytest.fixture(autouse=True)
 def use_test_database(monkeypatch, tmp_path):
     """
     Automatically use a temporary test database for all tests.

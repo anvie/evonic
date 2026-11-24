@@ -164,6 +164,29 @@ def _acquire_pid_lock():
         sys.exit(1)
 
 
+def _ensure_admin_password():
+    from backend.setup import ensure_admin_password
+    return ensure_admin_password()
+
+
+def _announce_generated_password(password):
+    """Show a generated admin password prominently; no-op when none was made."""
+    if not password:
+        return
+    from backend.setup import initial_admin_password_path
+    lines = [
+        "Admin dashboard login",
+        f"  Password: {password}",
+        f"  Saved in: {initial_admin_password_path()}",
+        "Change it any time with: evonic pass",
+    ]
+    width = max(len(l) for l in lines) + 4
+    print("\n  +" + "-" * width + "+")
+    for l in lines:
+        print("  |  " + l.ljust(width - 2) + "|")
+    print("  +" + "-" * width + "+\n")
+
+
 def start_server(port=None, host=None, debug=None, daemon=False):
     """Start the Flask server. Runs in foreground by default; use daemon=True to background."""
     # Check if setup is complete
@@ -176,6 +199,12 @@ def start_server(port=None, host=None, debug=None, daemon=False):
     # For foreground mode the lock is held for the entire server lifetime.
     # For daemon mode the child process (app.py) will acquire its own lock.
     pid_lock_fd = _acquire_pid_lock()
+
+    # Never start an installed instance without a way to sign in. A fresh one
+    # without a super agent is left to the web wizard, which asks for a password.
+    from models.db import db as _db
+    if _db.has_super_agent():
+        _announce_generated_password(_ensure_admin_password())
 
     # Import config to get defaults
     try:
@@ -2380,25 +2409,30 @@ def setup_command(non_interactive=False):
                 print(f"  Invalid timezone: {tz} \u2014 must be a valid IANA name (e.g. Asia/Jakarta, Europe/London)")
 
     # --- Admin password ---
+    # Always ends with a password the user knows: typed here, or generated and
+    # shown after setup when the field is left empty.
     password = ""
     if non_interactive:
-        print("  [non-interactive] Skipping admin password — you can set it later with 'evonic pass'")
+        print("  [non-interactive] No admin password given — one will be generated")
     else:
-        try:
-            set_pw = input("  Set admin dashboard password? [y/N]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\n  Setup aborted.")
-            return
-        if set_pw in ("y", "yes"):
-            pw1 = getpass.getpass("  New password: ")
-            if not pw1 or len(pw1) < 6:
-                print("  Password must be at least 6 characters — skipping password setup.")
-            else:
+        print("  Admin dashboard password (min 6 characters, leave empty to auto-generate)")
+        while True:
+            try:
+                pw1 = getpass.getpass("  Password: ")
+                if not pw1:
+                    break
+                if len(pw1) < 6:
+                    print("  Password must be at least 6 characters — try again.")
+                    continue
                 pw2 = getpass.getpass("  Confirm password: ")
-                if pw1 != pw2:
-                    print("  Passwords do not match — skipping password setup.")
-                else:
-                    password = pw1
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Setup aborted.")
+                return
+            if pw1 != pw2:
+                print("  Passwords do not match — try again.")
+                continue
+            password = pw1
+            break
 
     # --- Confirm ---
     print()
@@ -2408,8 +2442,7 @@ def setup_command(non_interactive=False):
     print(f"    Agent Name  : {agent_name}")
     print(f"    Language    : {language}")
     print(f"    Timezone    : {timezone_name}")
-    if password:
-        print(f"    Admin Pass  : (set)")
+    print(f"    Admin Pass  : {'(set)' if password else '(auto-generated)'}")
     print()
 
     if not non_interactive:
@@ -2463,6 +2496,8 @@ def setup_command(non_interactive=False):
                 _warn(ev["msg"])
                 _info("Run 'evonic evomem install' to retry.")
 
+    _announce_generated_password(_ensure_admin_password())
+
     print(f"\n  Setup complete! Super agent '{result['agent_id']}' created.")
     print(f"  Run 'evonic start -d' to start the platform.")
     print()
@@ -2498,6 +2533,7 @@ def pass_setup():
             sys.exit(1)
         new_hash = generate_password_hash(pw1, method="pbkdf2:sha256")
         _update_env_var(env_path, "ADMIN_PASSWORD_HASH", new_hash)
+        _clear_generated_password()
         print("Password set successfully.")
         _warn_password_needs_restart()
     else:
@@ -2536,22 +2572,25 @@ def pass_setup():
 
         new_hash = generate_password_hash(pw1, method="pbkdf2:sha256")
         _update_env_var(env_path, "ADMIN_PASSWORD_HASH", new_hash)
+        _clear_generated_password()
         print("Password changed successfully.")
         _warn_password_needs_restart()
 
 
-def _warn_password_needs_restart():
-    """Tell the operator how to make the new password effective.
+def _clear_generated_password():
+    from backend.setup import clear_initial_admin_password
+    clear_initial_admin_password()
 
-    The server reads ADMIN_PASSWORD_HASH once at start-up, so a running instance
-    keeps authenticating against the old hash until it is restarted.
+
+def _warn_password_needs_restart():
+    """Tell the operator when the new password becomes effective.
+
+    A running server re-reads ADMIN_PASSWORD_HASH from .env at sign-in, so no
+    restart is needed.
     """
     pid = _get_pid()
     if pid is not None and _is_running(pid):
-        print(
-            f"\nThe server is running (PID {pid}) and still uses the previous "
-            "password.\nRestart it to apply the change: evonic restart"
-        )
+        print(f"\nThe server is running (PID {pid}); the new password applies at the next sign-in.")
     else:
         print("\nThe next server start will use the new password.")
 

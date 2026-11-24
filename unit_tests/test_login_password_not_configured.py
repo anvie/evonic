@@ -36,8 +36,8 @@ def test_login_page_explains_the_missing_password(no_password):
     assert 'Password not configured' in body
     assert 'no admin password yet' in body
     assert 'Quick start' in body
-    assert './evonic pass' in body
-    assert './evonic restart' in body
+    assert 'evonic pass' in body
+    assert 'restart' not in body.lower().split('quick start')[1].split('</ol>')[0]
 
 
 def test_form_is_disabled_while_no_password_exists(no_password):
@@ -56,7 +56,7 @@ def test_fresh_install_points_at_the_setup_wizard(no_password, monkeypatch):
     body = no_password.get('/login').get_data(as_text=True)
 
     assert 'href="/setup"' in body
-    assert './evonic setup' in body
+    assert 'evonic setup' in body
 
 
 def test_installed_instance_does_not_point_at_the_setup_wizard(no_password):
@@ -89,3 +89,19 @@ def test_configured_instance_keeps_the_plain_form(monkeypatch):
     assert 'disabled' not in _tag(body, 'lg-password')
     assert 'disabled' not in _tag(body, 'lg-submit')
     assert 'Sign In' in body
+
+
+def test_generated_password_note_shown_while_file_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        config, 'ADMIN_PASSWORD_HASH',
+        generate_password_hash('x-generated-pass', method='pbkdf2:sha256'),
+    )
+    monkeypatch.setattr(config, 'TURNSTILE_SECRET_KEY', '')
+    client = app.test_client()
+
+    assert 'First sign-in?' not in client.get('/login').get_data(as_text=True)
+
+    (tmp_path / 'initial_admin_password').write_text('x-generated-pass\n')
+    body = client.get('/login').get_data(as_text=True)
+    assert 'First sign-in?' in body
+    assert 'initial_admin_password' in body
