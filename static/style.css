@@ -1716,31 +1716,40 @@ html[data-theme-preset="gruvbox-dark"] .panel-btn.btn-script .pnl-cmd { backgrou
 
 
 /* Evaluation matrix: compact rows on desktop, two-line cards on mobile (/evaluate and /history/<id>) */
-.mx { overflow: hidden; --mx-cols: minmax(8.5rem, 12rem) repeat(5, minmax(0, 1fr)) 7rem; }
+.mx { container-type: inline-size; overflow: hidden; --mx-cols: minmax(10rem, 14rem) repeat(5, minmax(0, 1fr)) 6rem; }
 .mx-head, .mx-row { display: grid; grid-template-columns: var(--mx-cols); align-items: center; column-gap: .25rem; padding: 0 .75rem; }
-.mx-head { padding-top: .375rem; padding-bottom: .375rem; font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-secondary); background: rgb(148 163 184 / .08); border-bottom: 1px solid rgb(148 163 184 / .2); }
+.mx-head { padding-top: .5rem; padding-bottom: .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-secondary); background: rgb(148 163 184 / .08); border-bottom: 1px solid rgb(148 163 184 / .2); }
 .mx-head > * { text-align: center; }
 .mx-head > .mx-title { text-align: left; }
-.mx-row { min-height: 2.5rem; padding-top: .25rem; padding-bottom: .25rem; border-bottom: 1px solid rgb(148 163 184 / .16); transition: background-color .15s; }
+.mx-row { min-height: 3.5rem; padding-top: .375rem; padding-bottom: .375rem; border-bottom: 1px solid rgb(148 163 184 / .16); transition: background-color .15s; }
 .mx-row:last-child { border-bottom: 0; }
 .mx-row:hover { background: rgb(99 102 241 / .04); }
 .mx-title { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .mx-cells { display: contents; }
-.mx-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8125rem; font-weight: 600; color: var(--text-heading); }
+.mx-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9375rem; font-weight: 600; color: var(--text-heading); }
 .mx-cell, .mx-total { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .125rem; }
 .mx-cell { padding: .125rem .25rem; border-radius: .5rem; cursor: pointer; transition: background-color .15s; }
 .mx-cell:hover { background: rgb(99 102 241 / .1); }
 /* the colored box carries the percentage; tone comes from data-tone */
-.mx-box { display: flex; flex-direction: column; align-items: center; min-width: 2.75rem; padding: .125rem .375rem; border-radius: 0; text-align: center; font-size: .6875rem; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; background: rgb(148 163 184 / .22); color: var(--text-secondary); }
+.mx-box { display: flex; flex-direction: column; align-items: center; width: 100%; min-width: 2.25rem; max-width: 4.75rem; padding: .3125rem .5rem; border-radius: 0; text-align: center; font-size: .9375rem; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; background: rgb(148 163 184 / .22); color: var(--text-secondary); }
 .mx-box[data-tone="red"], .rc-dot[data-tone="red"] { background: #dc2626; color: #fff; }
 .mx-box[data-tone="yellow"], .rc-dot[data-tone="yellow"] { background: #fbbf24; color: #422006; }
 .mx-box[data-tone="green"], .rc-dot[data-tone="green"] { background: #15803d; color: #fff; }
 /* time inside the box: smaller and a step softer than the percentage on the same background */
-.mx-dur { font-size: .5625rem; font-weight: 600; line-height: 1.1; white-space: nowrap; color: var(--text-muted); }
+.mx-dur { font-size: .6875rem; font-weight: 600; line-height: 1.15; white-space: nowrap; color: var(--text-muted); }
 .mx-dur:empty { display: none; }
 .mx-box[data-tone="red"] .mx-dur { color: rgb(255 255 255 / .72); }
 .mx-box[data-tone="yellow"] .mx-dur { color: #713f12; }
 .mx-box[data-tone="green"] .mx-dur { color: rgb(255 255 255 / .72); }
+
+/* a narrow card (log column beside it on mid-size screens): scale the matrix down so boxes never touch */
+@container (max-width: 640px) {
+    .mx-head, .mx-row { grid-template-columns: minmax(6.5rem, 9.5rem) repeat(5, minmax(0, 1fr)) 4.75rem; }
+    .mx-row { min-height: 3rem; }
+    .mx-name { font-size: .875rem; }
+    .mx-box { max-width: 3.75rem; padding: .25rem .125rem; font-size: .8125rem; }
+    .mx-dur { font-size: .625rem; }
+}
 
 @media (max-width: 767.98px) {
     /* one header row for the whole table: select-all, then the six column labels */
@@ -1748,10 +1757,12 @@ html[data-theme-preset="gruvbox-dark"] .panel-btn.btn-script .pnl-cmd { backgrou
     .mx-head { row-gap: .25rem; font-size: .625rem; }
     .mx-head > .mx-title { grid-column: 1 / -1; }
     /* each row: the domain name, then L1 to L5 and Total as six equal columns */
-    .mx-row { row-gap: .375rem; padding-top: .5rem; padding-bottom: .375rem; }
+    .mx-row { min-height: 0; row-gap: .375rem; padding-top: .5rem; padding-bottom: .375rem; }
+    .mx-name { font-size: .8125rem; }
     .mx-title { grid-column: 1 / -1; }
     .mx-cell { padding: .125rem; }
-    .mx-box { min-width: 2.25rem; padding-left: .125rem; padding-right: .125rem; }
+    .mx-box { width: auto; max-width: none; min-width: 2.25rem; padding: .125rem; font-size: .6875rem; }
+    .mx-dur { font-size: .5625rem; }
 }
 
 /* Run card: one self-contained, shareable card for a finished run (/evaluate) */
