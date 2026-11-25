@@ -38,6 +38,18 @@ MAX_TIMEOUT_MS = 120_000
 _SECRET_PATTERN = re.compile(r"(?i)(?:api[_-]?key|authorization|password|secret|token)\s*[:=]\s*(?:bearer\s+)?[^\s,]+")
 
 
+
+def _fallback_ids(profile: Mapping[str, Any]) -> list:
+    """The profile's fallback chain in order; older rows carry only ``fallback_model_id``."""
+    ids = profile.get("fallback_model_ids")
+    if not isinstance(ids, (list, tuple)):
+        ids = [profile.get("fallback_model_id")]
+    out = []
+    for model_id in ids:
+        if isinstance(model_id, str) and model_id and model_id != profile.get("primary_model_id") and model_id not in out:
+            out.append(model_id)
+    return out
+
 class DecisionRuntimeErrorCode(str, Enum):
     PROFILE_NOT_FOUND = "profile_not_found"
     PROFILE_DISABLED = "profile_disabled"
@@ -223,8 +235,10 @@ class DecisionRuntime:
                 result = self._failure(invocation, DecisionErrorCode.CANCELLED, "Decision was cancelled.", started)
                 self._activity(request, result)
                 return result
-            model_ids = [profile["primary_model_id"]] + ([profile["fallback_model_id"]] if profile.get("fallback_model_id") else [])
-            max_attempts = min(MAX_ATTEMPTS, int(profile["retry_limit"]) + 1)
+            model_ids = [profile["primary_model_id"]] + _fallback_ids(profile)
+            # retry_limit counts every try after the first; a longer fallback
+            # chain may raise the cap so each of its models gets one try.
+            max_attempts = min(max(MAX_ATTEMPTS, len(model_ids)), int(profile["retry_limit"]) + 1)
             last: DecisionResult | None = None
             for attempt in range(max_attempts):
                 model_id = model_ids[min(attempt, len(model_ids) - 1)]

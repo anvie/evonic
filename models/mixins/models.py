@@ -374,7 +374,9 @@ class ModelsMixin:
                     references["agents"].extend(f"{column}:{row[0]}" for row in cursor.fetchall())
                 except sqlite3.OperationalError:
                     continue
-            cursor.execute("SELECT profile_key FROM decision_profiles WHERE primary_model_id = ? OR fallback_model_id = ?", (model_id, model_id))
+            cursor.execute("SELECT profile_key FROM decision_profiles WHERE primary_model_id = ? OR fallback_model_id = ? "
+                           "OR instr(COALESCE(fallback_model_ids_json, ''), ?) > 0",
+                           (model_id, model_id, json.dumps(model_id)))
             references["profiles"] = [row[0] for row in cursor.fetchall()]
             cursor.execute("SELECT key FROM app_settings WHERE value = ? AND key LIKE '%model%id%'", (model_id,))
             references["settings"] = [row[0] for row in cursor.fetchall()]

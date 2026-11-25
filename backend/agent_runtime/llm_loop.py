@@ -474,6 +474,38 @@ def pop_safety_provenance(tool_result) -> dict:
     return {}
 
 
+def _session_override_fallbacks(session_data, override_model) -> List[Dict[str, Any]]:
+    """Enabled models of the session's ``model_override_fallback_ids``, in order.
+
+    Ids that no longer resolve, models that are disabled or whose provider is
+    switched off, and the override model itself are skipped.
+    """
+    ids = (session_data or {}).get('model_override_fallback_ids') if isinstance(session_data, dict) else None
+    if not isinstance(ids, list):
+        return []
+    models: List[Dict[str, Any]] = []
+    seen = {(override_model or {}).get('id')}
+    for model_id in ids:
+        model_id = str(model_id or '').strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        try:
+            model = db.get_model_by_id(model_id)
+        except Exception:
+            model = None
+        if not model or not model.get('enabled', True):
+            continue
+        try:
+            provider = db.get_provider(model['provider']) if model.get('provider') else None
+        except Exception:
+            provider = None
+        if provider and not provider.get('enabled', True):
+            continue
+        models.append(model)
+    return models
+
+
 def run_tool_loop(agent: Dict[str, Any],
                   agent_context: dict,
                   messages: List[dict],
@@ -1777,7 +1809,12 @@ def run_tool_loop(agent: Dict[str, Any],
             from backend.agent_runtime import explorer as _explorer
             # An agent's (or explorer's) own fallbacks are the only ones tried.
             # Agents on the global default model walk the global chain in order.
-            _fallback_candidates = _explorer.fallback_models(agent)
+            _fallback_candidates = []
+            if _session_model_override:
+                # A one-off session on another model walks the fallbacks it was given with that model.
+                _fallback_candidates = _session_override_fallbacks(_session_data, _session_model_override)
+            if not _fallback_candidates:
+                _fallback_candidates = _explorer.fallback_models(agent)
             if not _fallback_candidates:
                 _agent_fallback = db.get_agent_fallback_model(agent_id)
                 _fallback_candidates = [_agent_fallback] if _agent_fallback else []

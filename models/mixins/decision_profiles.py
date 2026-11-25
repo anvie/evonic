@@ -21,6 +21,7 @@ _MAX_DESCRIPTION_LENGTH = 4000
 _MAX_TIMEOUT_MS = 300_000
 _MAX_RETRY_LIMIT = 10
 _MAX_SAMPLE_INPUT_BYTES = 8 * 1024
+MAX_FALLBACK_MODELS = 5
 
 
 class DecisionProfileValidationError(ValueError):
@@ -42,6 +43,8 @@ def _public(row: Mapping[str, Any]) -> Dict[str, Any]:
     profile["enabled"] = bool(profile["enabled"])
     profile["minimum_confidence"] = float(profile["minimum_confidence"])
     profile["schema"] = json.loads(profile.pop("schema_json"))
+    profile["fallback_model_ids"] = _stored_fallback_ids(profile.pop("fallback_model_ids_json", None),
+                                                         profile.get("fallback_model_id"))
     raw_sample = profile.pop("sample_input_json", None)
     try:
         sample = json.loads(raw_sample) if raw_sample else None
@@ -49,6 +52,44 @@ def _public(row: Mapping[str, Any]) -> Dict[str, Any]:
         sample = None
     profile["sample_input"] = sample if isinstance(sample, dict) else None
     return profile
+
+
+def _stored_fallback_ids(raw: Any, legacy: Any) -> List[str]:
+    """The stored fallback chain; a row written before the chain existed reads its single fallback."""
+    try:
+        ids = json.loads(raw) if raw else None
+    except ValueError:
+        ids = None
+    if not isinstance(ids, list):
+        ids = [legacy] if isinstance(legacy, str) and legacy.strip() else []
+    return [i for i in ids if isinstance(i, str) and i.strip()]
+
+
+def _requested_fallback_ids(data: Mapping[str, Any], existing: Optional[Mapping[str, Any]]) -> tuple:
+    """The fallback chain a write asks for, and whether it came as the full list.
+
+    ``fallback_model_ids`` replaces the chain. A payload with only
+    ``fallback_model_id`` (older callers, the single-fallback editor) replaces
+    the first entry and keeps the rest; clearing it clears the chain.
+    """
+    current = list((existing or {}).get("fallback_model_ids") or [])
+    if not current and (existing or {}).get("fallback_model_id"):
+        current = [existing["fallback_model_id"]]
+    if "fallback_model_ids" in data:
+        ids = data.get("fallback_model_ids")
+        if ids is None:
+            return [], True
+        if not isinstance(ids, (list, tuple)):
+            _fail("invalid_list", "fallback_model_ids", "must be a list of model ids")
+        return list(ids), True
+    if "fallback_model_id" in data:
+        first = data.get("fallback_model_id")
+        if first is None or (isinstance(first, str) and not first.strip()):
+            return [], False
+        if current and current[0] == first:
+            return current, False
+        return [first] + [i for i in current[1:] if i != first], False
+    return current, False
 
 
 def _sample_input(value: Any) -> Optional[Dict[str, Any]]:
@@ -171,15 +212,24 @@ class DecisionProfilesMixin:
             _fail("unsupported_schema_version", "schema_version", f"must be {SCHEMA_VERSION}")
         merged["policy_version"] = _text(merged.get("policy_version"), "policy_version", required=True, maximum=80)
         requires_model = bool(merged["enabled"]) and merged["mode"] != "off"
+        requested_fallbacks, as_list = _requested_fallback_ids(data, existing)
+        if len(requested_fallbacks) > MAX_FALLBACK_MODELS:
+            _fail("too_many_fallback_models", "fallback_model_ids",
+                  f"must name at most {MAX_FALLBACK_MODELS} models")
         if requires_model:
             merged["primary_model_id"] = self._validate_model_reference(
                 merged.get("primary_model_id"), "primary_model_id", required=True,
             )
-            merged["fallback_model_id"] = self._validate_model_reference(
-                merged.get("fallback_model_id"), "fallback_model_id", required=False,
-            )
-            if merged["fallback_model_id"] == merged["primary_model_id"]:
-                _fail("duplicate_fallback_model", "fallback_model_id", "must differ from primary_model_id")
+            fallback_ids: List[str] = []
+            for index, model_id in enumerate(requested_fallbacks):
+                path = (f"fallback_model_ids[{index}]" if as_list or index
+                        else "fallback_model_id")
+                model_id = self._validate_model_reference(model_id, path, required=True)
+                if model_id == merged["primary_model_id"]:
+                    _fail("duplicate_fallback_model", path, "must differ from primary_model_id")
+                if model_id in fallback_ids:
+                    _fail("duplicate_fallback_model", path, "is already in the fallback models")
+                fallback_ids.append(model_id)
         else:
             # Inactive built-ins are seeded before any compatible model exists.
             # Preserve an existing configured model so an administrator can
@@ -187,13 +237,14 @@ class DecisionProfilesMixin:
             # to select it again. Empty references remain valid for first-run
             # bootstrap rows and stale references remain inert while disabled.
             primary_model_id = merged.get("primary_model_id")
-            fallback_model_id = merged.get("fallback_model_id")
             merged["primary_model_id"] = primary_model_id.strip() if isinstance(primary_model_id, str) else ""
-            merged["fallback_model_id"] = (
-                fallback_model_id.strip()
-                if isinstance(fallback_model_id, str) and fallback_model_id.strip()
-                else None
-            )
+            fallback_ids = []
+            for model_id in requested_fallbacks:
+                model_id = model_id.strip() if isinstance(model_id, str) else ""
+                if model_id and model_id not in fallback_ids:
+                    fallback_ids.append(model_id)
+        merged["fallback_model_ids"] = fallback_ids
+        merged["fallback_model_id"] = fallback_ids[0] if fallback_ids else None
         merged["timeout_ms"] = _integer(merged.get("timeout_ms"), "timeout_ms", 1, _MAX_TIMEOUT_MS)
         merged["retry_limit"] = _integer(merged.get("retry_limit", 0), "retry_limit", 0, _MAX_RETRY_LIMIT)
         merged["minimum_confidence"] = _confidence(merged.get("minimum_confidence", 0.0))
@@ -206,13 +257,14 @@ class DecisionProfilesMixin:
             with self._connect() as conn:
                 conn.execute("""INSERT INTO decision_profiles (
                     profile_key, display_name, description, enabled, mode, schema_version,
-                    policy_version, schema_json, primary_model_id, fallback_model_id, timeout_ms,
-                    retry_limit, minimum_confidence, sample_input_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                    policy_version, schema_json, primary_model_id, fallback_model_id, fallback_model_ids_json,
+                    timeout_ms, retry_limit, minimum_confidence, sample_input_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                     profile["profile_key"], profile["display_name"], profile["description"],
                     int(profile["enabled"]), profile["mode"], profile["schema_version"],
                     profile["policy_version"], json.dumps(profile["schema"], sort_keys=True, separators=(",", ":")),
-                    profile["primary_model_id"], profile["fallback_model_id"], profile["timeout_ms"],
+                    profile["primary_model_id"], profile["fallback_model_id"],
+                    json.dumps(profile["fallback_model_ids"]), profile["timeout_ms"],
                     profile["retry_limit"], profile["minimum_confidence"],
                     json.dumps(profile["sample_input"], ensure_ascii=False) if profile["sample_input"] else None,
                 ))
@@ -231,13 +283,14 @@ class DecisionProfilesMixin:
             cursor = conn.execute("""UPDATE decision_profiles SET
                 display_name = ?, description = ?, enabled = ?, mode = ?, schema_version = ?,
                 policy_version = ?, schema_json = ?, primary_model_id = ?, fallback_model_id = ?,
-                timeout_ms = ?, retry_limit = ?, minimum_confidence = ?, sample_input_json = ?, revision = revision + 1,
+                fallback_model_ids_json = ?, timeout_ms = ?, retry_limit = ?, minimum_confidence = ?, sample_input_json = ?, revision = revision + 1,
                 updated_at = CURRENT_TIMESTAMP
                 WHERE profile_key = ? AND revision = ?""", (
                 profile["display_name"], profile["description"], int(profile["enabled"]), profile["mode"],
                 profile["schema_version"], profile["policy_version"],
                 json.dumps(profile["schema"], sort_keys=True, separators=(",", ":")),
-                profile["primary_model_id"], profile["fallback_model_id"], profile["timeout_ms"],
+                profile["primary_model_id"], profile["fallback_model_id"],
+                json.dumps(profile["fallback_model_ids"]), profile["timeout_ms"],
                 profile["retry_limit"], profile["minimum_confidence"],
                 json.dumps(profile["sample_input"], ensure_ascii=False) if profile["sample_input"] else None,
                 profile_key, revision,

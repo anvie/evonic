@@ -223,3 +223,39 @@ def test_non_retryable_failure_does_not_egress_to_fallback():
     result = _runtime(db, [TerminalFailure()]).invoke(_request())
     assert result.error.code is DecisionErrorCode.PROVIDER_RESPONSE_INVALID
     assert result.attempts == 1
+
+
+def _chain_runtime(profile, models, outcomes):
+    """A runtime whose adapters answer per model: True succeeds, False fails (retryable). Returns (runtime, calls)."""
+    calls = []
+    def factory(model):
+        class Adapter:
+            key = "chain"
+            def decide(self, invocation):
+                calls.append(model["id"])
+                if outcomes.get(model["id"]):
+                    return _result(invocation)
+                return _result(invocation, error=DecisionError(DecisionErrorCode.PROVIDER_UNAVAILABLE, "down", True))
+        return Adapter()
+    db = FakeDB(profile=profile, models={m: _model(m) for m in models})
+    return DecisionRuntime(db, adapter_factory=factory), calls
+
+
+def test_a_fallback_chain_is_walked_in_order_within_the_retry_limit():
+    models = ["primary", "f1", "f2", "f3"]
+    profile = _profile(fallback_model_id="f1", fallback_model_ids=["f1", "f2", "f3"], retry_limit=3)
+    runtime, calls = _chain_runtime(profile, models, {"f3": True})
+    result = runtime.invoke(_request())
+    assert result.error is None and result.attempts == 4 and calls == models
+
+
+def test_the_retry_limit_still_bounds_the_chain():
+    profile = _profile(fallback_model_id="f1", fallback_model_ids=["f1", "f2"], retry_limit=0)
+    runtime, calls = _chain_runtime(profile, ["primary", "f1", "f2"], {})
+    assert runtime.invoke(_request()).error is not None and calls == ["primary"]
+
+
+def test_a_profile_without_a_list_reads_its_single_fallback():
+    runtime, calls = _chain_runtime(_profile(retry_limit=2), ["primary", "fallback"], {})
+    runtime.invoke(_request())
+    assert calls == ["primary", "fallback", "fallback"]

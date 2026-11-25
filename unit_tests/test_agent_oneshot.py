@@ -317,3 +317,24 @@ def test_ask_passes_the_override_on_to_the_new_session():
         assert agent_oneshot.ask('assistant', 'q', override_model_id='m-fast', timeout=5)['success']
         assert agent_oneshot.ask('assistant', 'q', timeout=5)['success']
     assert seen[0]['override_model_id'] == 'm-fast' and seen[1]['override_model_id'] is None
+
+
+def test_the_override_carries_its_fallbacks_cleaned():
+    written = _notify_with_override({'id': 'm-fast', 'enabled': 1}, ephemeral=True, override_model_id='m-fast',
+                                    override_fallback_model_ids=['m-b', '', 'm-fast', 'm-b', ' m-c ', 'm-d', 'm-e', 'm-f', 'm-g'])
+    assert written[0][1]['model_override_fallback_ids'] == ['m-b', 'm-c', 'm-d', 'm-e', 'm-f']
+
+
+def test_fallbacks_are_never_stored_without_an_applied_override():
+    model = {'id': 'm-fast', 'enabled': 1}
+    assert _notify_with_override(model, session_id='web-1', trigger_llm=False, ephemeral=True,
+                                 override_model_id='m-fast', override_fallback_model_ids=['m-b']) == []
+    assert _notify_with_override(None, ephemeral=True, override_model_id='m-gone', override_fallback_model_ids=['m-b']) == []
+
+
+def test_ask_passes_the_override_fallbacks_on():
+    notify, seen = _answer_later('{"a": 1}')
+    with patch.object(agent_oneshot, 'db', FakeDb()), patch('backend.agent_runtime.notifier.notify_agent', notify):
+        assert agent_oneshot.ask('assistant', 'q', override_model_id='m-fast',
+                                 override_fallback_model_ids=['m-b'], timeout=5)['success']
+    assert seen[0]['override_fallback_model_ids'] == ['m-b']

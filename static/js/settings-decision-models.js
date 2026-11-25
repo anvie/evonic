@@ -113,6 +113,7 @@ window.decisionModels = {
         document.getElementById("decision-profile-key").disabled = false;
         document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(null, false);
         document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(null, true);
+        this.showMoreFallbacks([]);
         document.getElementById("decision-profile-schema").value = JSON.stringify({version: "decision-schema/v1", fields: [{key: "approved", kind: "boolean"}]}, null, 2);
         this.clearError();
         openModal("decision-profile-modal");
@@ -129,12 +130,22 @@ window.decisionModels = {
         document.getElementById("decision-profile-enabled").checked = profile.enabled;
         document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(profile.primary_model_id, false);
         document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(profile.fallback_model_id, true);
+        this.showMoreFallbacks(profile.fallback_model_ids || []);
         document.getElementById("decision-profile-timeout").value = profile.timeout_ms;
         document.getElementById("decision-profile-retries").value = profile.retry_limit;
         document.getElementById("decision-profile-confidence").value = profile.minimum_confidence;
         document.getElementById("decision-profile-schema").value = JSON.stringify(profile.schema, null, 2);
         this.clearError();
         openModal("decision-profile-modal");
+    },
+
+    // The editor sets the first fallback; the rest of a longer chain (set through the API) is kept on save.
+    showMoreFallbacks(ids) {
+        const el = document.getElementById("decision-profile-fallback-more");
+        const rest = ids.slice(1);
+        const names = rest.map((id) => { const model = this.models.find((item) => item.id === id); return model ? this.modelLabel(model) : id; });
+        el.textContent = rest.length ? "Then " + names.join(", then ") + " (kept when you save)." : "";
+        el.classList.toggle("hidden", !rest.length);
     },
 
     payload() {

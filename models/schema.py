@@ -21,6 +21,14 @@ def _migrate_db_to_subdir(target_path: str):
         shutil.move(root_db, target_path)
 
 
+def _has_fallback_chain(cursor) -> bool:
+    """True when decision_profiles has the fallback chain column (older databases may not yet)."""
+    try:
+        return "fallback_model_ids_json" in {row[1] for row in cursor.execute("PRAGMA table_info(decision_profiles)")}
+    except Exception:
+        return False
+
+
 class SchemaMixin:
     """Database schema initialization and migrations. Requires self._connect() from the host class."""
 
@@ -1494,8 +1502,12 @@ class SchemaMixin:
                            "ON decision_profiles(enabled, profile_key)")
             # Optional example input_context, shown prefilled when the profile is opened in the Playground.
             cursor.execute("PRAGMA table_info(decision_profiles)")
-            if "sample_input_json" not in {row[1] for row in cursor.fetchall()}:
+            _profile_columns = {row[1] for row in cursor.fetchall()}
+            if "sample_input_json" not in _profile_columns:
                 cursor.execute("ALTER TABLE decision_profiles ADD COLUMN sample_input_json TEXT")
+            # Ordered fallback chain (JSON list); fallback_model_id mirrors its first entry.
+            if "fallback_model_ids_json" not in _profile_columns:
+                cursor.execute("ALTER TABLE decision_profiles ADD COLUMN fallback_model_ids_json TEXT")
 
             # Built-in agent profiles must be visible from a fresh installation,
             # even before an administrator has configured a Decision Models-capable
@@ -1929,10 +1941,12 @@ class SchemaMixin:
     @staticmethod
     def _model_is_referenced(cursor, model_id):
         """True when a Decision Profile, setting, or agent still points at the model."""
+        chain = _has_fallback_chain(cursor)
         if cursor.execute(
             "SELECT 1 FROM decision_profiles "
-            "WHERE primary_model_id = ? OR fallback_model_id = ? LIMIT 1",
-            (model_id, model_id),
+            "WHERE primary_model_id = ? OR fallback_model_id = ?"
+            + (" OR instr(COALESCE(fallback_model_ids_json, ''), ?) > 0" if chain else "") + " LIMIT 1",
+            (model_id, model_id) + ((json.dumps(model_id),) if chain else ()),
         ).fetchone():
             return True
         if cursor.execute(
@@ -2076,9 +2090,11 @@ class SchemaMixin:
             converted += 1
             if not (is_decision and used_for_chat):
                 continue
+            chain = _has_fallback_chain(cursor)
             referenced = cursor.execute(
-                "SELECT 1 FROM decision_profiles WHERE primary_model_id = ? OR fallback_model_id = ? LIMIT 1",
-                (model["id"], model["id"])).fetchone()
+                "SELECT 1 FROM decision_profiles WHERE primary_model_id = ? OR fallback_model_id = ?"
+                + (" OR instr(COALESCE(fallback_model_ids_json, ''), ?) > 0" if chain else "") + " LIMIT 1",
+                (model["id"], model["id"]) + ((json.dumps(model["id"]),) if chain else ())).fetchone()
             if not referenced:
                 continue
             copy_id = f"{model['id']}-decision"
@@ -2094,6 +2110,11 @@ class SchemaMixin:
                  json.dumps(capabilities_for_type("decision", 0, model["capabilities"]), sort_keys=True)))
             for column in ("primary_model_id", "fallback_model_id"):
                 cursor.execute(f"UPDATE decision_profiles SET {column} = ? WHERE {column} = ?", (copy_id, model["id"]))
+            if chain:
+                cursor.execute(
+                    "UPDATE decision_profiles SET fallback_model_ids_json = replace(fallback_model_ids_json, ?, ?) "
+                    "WHERE instr(COALESCE(fallback_model_ids_json, ''), ?) > 0",
+                    (json.dumps(model["id"]), json.dumps(copy_id), json.dumps(model["id"])))
             split += 1
         return {"models_typed": converted, "decision_copies": split}
 

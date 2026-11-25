@@ -34,6 +34,7 @@ def notify_agent(agent_id: str, tag: str, message: str,
                  ephemeral: bool = False,
                  ephemeral_ttl: int = 7200,
                  override_model_id: str = None,
+                 override_fallback_model_ids: list = None,
                  lend_tools: list = None,
                  lend_tools_from: str = None) -> dict:
     """Send a system notification to an agent.
@@ -79,6 +80,9 @@ def notify_agent(agent_id: str, tag: str, message: str,
                      (``ephemeral=True`` and no ``session_id``): anywhere else it is ignored with a warning, so a
                      person's own conversation can never be switched to another model. An unknown or disabled
                      model is ignored too, and the agent keeps its own.
+        override_fallback_model_ids: Models (llm_models ids) tried in order when ``override_model_id`` fails in
+                     this session, stored as the session's ``model_override_fallback_ids``. Only stored together
+                     with an override that was applied; the agent's own fallbacks are tried only when none is left.
         lend_tools: Plugin tool ids (``plugin:<owner>:<fn>``) the sending plugin lends to the agent for this
                      message. They are advertised and authorized while that message is answered and, when the
                      resolved session is an agent-to-agent one, remembered for the session as well, so the rest of
@@ -223,7 +227,8 @@ def notify_agent(agent_id: str, tag: str, message: str,
 
     if override_model_id:
         _apply_session_model_override(target_session_id, _db_agent_id, override_model_id,
-                                      allowed=bool(ephemeral and not session_id))
+                                      allowed=bool(ephemeral and not session_id),
+                                      fallback_model_ids=override_fallback_model_ids)
 
     # Tools a plugin lends with this message: carried in the metadata (the turn answering it sees them) and,
     # for an agent-to-agent session, remembered so the rest of that conversation keeps them too.
@@ -335,8 +340,21 @@ def notify_agent(agent_id: str, tag: str, message: str,
     }
 
 
-def _apply_session_model_override(session_id: str, agent_id: str, model_id: str, allowed: bool = False) -> bool:
-    """Store ``model_id`` as the session's model override (read by the LLM loop). True when it was stored."""
+def _clean_fallback_ids(ids, model_id: str) -> list:
+    """Fallback ids as stored: strings, no blanks or repeats, never the override itself, capped."""
+    from backend.default_model_chain import MAX_DEFAULT_FALLBACKS
+    out = []
+    for fid in ids or []:
+        fid = str(fid or '').strip()
+        if fid and fid != model_id and fid not in out:
+            out.append(fid)
+    return out[:MAX_DEFAULT_FALLBACKS]
+
+
+def _apply_session_model_override(session_id: str, agent_id: str, model_id: str, allowed: bool = False,
+                                  fallback_model_ids: list = None) -> bool:
+    """Store ``model_id`` as the session's model override (read by the LLM loop), with the models tried in order
+    when it fails (``model_override_fallback_ids``). True when it was stored."""
     if not allowed:
         _logger.warning("notify_agent: override_model_id ignored for session '%s': only a new ephemeral session "
                         "takes one.", session_id)
@@ -355,6 +373,11 @@ def _apply_session_model_override(session_id: str, agent_id: str, model_id: str,
         if not isinstance(state, dict):
             state = {}
         state['model_override_id'] = model_id
+        fallbacks = _clean_fallback_ids(fallback_model_ids, model_id)
+        if fallbacks:
+            state['model_override_fallback_ids'] = fallbacks
+        else:
+            state.pop('model_override_fallback_ids', None)
         db.upsert_session_state(session_id, json.dumps(state), agent_id=agent_id)
         return True
     except Exception:

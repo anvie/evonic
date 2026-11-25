@@ -249,3 +249,44 @@ def test_existing_database_gains_the_sample_column():
         cols = {row[1] for row in conn.execute("PRAGMA table_info(decision_profiles)")}
     assert "sample_input_json" in cols
     db._init_tables()                      # idempotent
+
+
+def test_a_fallback_chain_round_trips_and_mirrors_its_first_entry():
+    for mid in ("test/profile-primary", "test/fb-1", "test/fb-2", "test/fb-3"):
+        _model(mid)
+    created = db.create_decision_profile(_payload("application.chain",
+                                                  fallback_model_ids=["test/fb-1", "test/fb-2"]))
+    assert created["fallback_model_ids"] == ["test/fb-1", "test/fb-2"]
+    assert created["fallback_model_id"] == "test/fb-1"
+    # A write with only fallback_model_id (the single-fallback editor) replaces the first and keeps the rest.
+    data = {k: v for k, v in created.items() if k != "fallback_model_ids"}
+    data["fallback_model_id"] = "test/fb-3"
+    updated = db.update_decision_profile("application.chain", data, created["revision"])
+    assert updated["fallback_model_ids"] == ["test/fb-3", "test/fb-2"]
+    # Clearing it clears the chain.
+    data = {k: v for k, v in updated.items() if k != "fallback_model_ids"}
+    data["fallback_model_id"] = None
+    cleared = db.update_decision_profile("application.chain", data, updated["revision"])
+    assert cleared["fallback_model_ids"] == [] and cleared["fallback_model_id"] is None
+
+
+def test_a_fallback_chain_is_validated():
+    from models.mixins.decision_profiles import DecisionProfileValidationError
+    for mid in ("test/profile-primary", "test/fb-1"):
+        _model(mid)
+    for ids, code in ((["test/fb-1", "test/fb-1"], "duplicate_fallback_model"),
+                      (["test/profile-primary"], "duplicate_fallback_model"),
+                      (["test/missing"], "unknown_model"),
+                      (["test/fb-1"] * 6, "too_many_fallback_models")):
+        with pytest.raises(DecisionProfileValidationError) as err:
+            db.validate_decision_profile(_payload("application.bad", fallback_model_ids=ids))
+        assert err.value.code == code
+
+
+def test_a_model_deep_in_a_fallback_chain_is_still_referenced():
+    for mid in ("test/profile-primary", "test/fb-1", "test/fb-2"):
+        _model(mid)
+    db.create_decision_profile(_payload("application.refs", fallback_model_ids=["test/fb-1", "test/fb-2"]))
+    assert "application.refs" in db.get_model_references("test/fb-2")["profiles"]
+    with db._connect() as conn:
+        assert db._model_is_referenced(conn.cursor(), "test/fb-2")
