@@ -22,6 +22,10 @@ import shutil
 
 log = logging.getLogger(__name__)
 
+# Set once a restart is requested, so shutdown leaves detached background jobs
+# running instead of killing them (a plain stop still does).
+restarting = threading.Event()
+
 
 def restart_in_place(delay: float = 1.5) -> None:
     """Stop channels and the scheduler, free inherited FDs, and re-exec the server.
@@ -109,6 +113,8 @@ def _systemd_command(action: str) -> None:
 def restart_service(delay: float = 1.5) -> None:
     """Restart using the configured service manager or the in-place fallback."""
     import config
+
+    restarting.set()
 
     if config.SERVICE_SYSTEM == "systemd":
         if not config.SYSTEMD_SERVICE_NAME:

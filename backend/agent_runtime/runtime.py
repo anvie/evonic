@@ -810,20 +810,22 @@ class AgentRuntime:
         #  being registered once but workers being tracked per-instance)
         # We don't hold a class-level workers list here — instances call
         # _join_workers() themselves. The executor is shared, so we shut it down.
-        _logger.info("Stopping detached background jobs...")
-        try:
-            from backend.agent_runtime.background_jobs import background_jobs
-            from backend.tools.lib.exec_backend import registry
-            for job in list(background_jobs._jobs.values()):
-                if job.status != "running":
-                    continue
-                backend = registry.get_backend(job.session_id, {})
-                background_jobs.stop_for_session(
-                    job.session_id,
-                    lambda script, backend=backend: backend.run_bash(script, 15, {}),
-                )
-        except Exception:
-            _logger.exception("Failed to stop detached background jobs")
+        from backend.restart import restarting
+        if restarting.is_set():
+            _logger.info("Restarting — leaving detached background jobs running")
+        else:
+            _logger.info("Stopping detached background jobs...")
+            try:
+                from backend.agent_runtime.background_jobs import background_jobs
+                from backend.tools.lib.exec_backend import registry
+                for job in background_jobs.all_running():
+                    backend = registry.get_backend(job.session_id, {})
+                    background_jobs.stop_for_session(
+                        job.session_id,
+                        lambda script, backend=backend: backend.run_bash(script, 15, {}),
+                    )
+            except Exception:
+                _logger.exception("Failed to stop detached background jobs")
 
         # Messaging channels own child processes (the WhatsApp bridge). Without this they outlive the app, keep the
         # WhatsApp session connected but unmanaged, and block the next start ("auth directory is already owned").

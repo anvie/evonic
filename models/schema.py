@@ -1464,6 +1464,26 @@ class SchemaMixin:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_flags_expiry ON session_flags(expires_at)")
 
+            # Detached background jobs, kept across restarts (see mixins/background_jobs.py).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS background_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    session_name TEXT,
+                    log_file TEXT,
+                    pid_file TEXT,
+                    command TEXT,
+                    kind TEXT,
+                    pgrep_pattern TEXT,
+                    backend_ctx TEXT,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    exit_code INTEGER,
+                    started_at REAL,
+                    finished_at REAL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_background_jobs_session ON background_jobs(session_id)")
+
             # ==================== System Alerts Table ====================
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS system_alerts (

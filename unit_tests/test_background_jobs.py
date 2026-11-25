@@ -11,9 +11,15 @@ from backend.agent_runtime.background_jobs import (
 
 @pytest.fixture(autouse=True)
 def clean_registry():
-    background_jobs._jobs.clear()
+    _reset_registry()
     yield
+    _reset_registry()
+
+
+def _reset_registry():
     background_jobs._jobs.clear()
+    background_jobs._counter = 0
+    background_jobs._loaded = False
 
 
 @pytest.fixture(autouse=True)
@@ -244,3 +250,72 @@ def test_monitor_lookup_failure_does_not_break_the_block(monkeypatch):
 
     monkeypatch.setattr(monitors, 'monitored_job_ids', boom)
     assert '## Background Processes' in build_context_block('sess-bg', 'agent-1')
+
+
+# ---------------------------------------------------------------------------
+# Persistence — jobs survive a restart (registry rebuilt from the DB)
+# ---------------------------------------------------------------------------
+
+def _restart():
+    """Simulate a process restart: drop in-memory state, keep the DB."""
+    _reset_registry()
+
+
+def test_registered_job_is_reloaded_after_restart():
+    j = background_jobs.register(
+        session_id='sess-bg', session_name='tmux-keep', log_file='/tmp/k.log',
+        pid_file='/tmp/k.pid', command='sleep 300', kind='tmux',
+        backend_ctx={'workspace': '/w'})
+    _restart()
+    got = background_jobs.get(j.job_id)
+    assert got is not None
+    assert (got.session_id, got.session_name, got.log_file, got.command, got.kind) == \
+        ('sess-bg', 'tmux-keep', '/tmp/k.log', 'sleep 300', 'tmux')
+    assert got.backend_ctx == {'workspace': '/w'}
+    assert got.status == 'running'
+    assert [x.job_id for x in background_jobs.running_for_session('sess-bg')] == [j.job_id]
+
+
+def test_finished_status_is_persisted():
+    j = _job()
+    background_jobs.mark_finished(j.job_id, 'done', 0)
+    _restart()
+    got = background_jobs.get(j.job_id)
+    assert (got.status, got.exit_code) == ('done', 0)
+    assert got.finished_at is not None
+    assert background_jobs.running_for_session('sess-bg') == []
+
+
+def test_pruned_jobs_are_deleted_from_db():
+    from models.db import db
+    first = _job()
+    background_jobs.mark_finished(first.job_id, 'done', 0)
+    for _ in range(bgmod._MAX_FINISHED_PER_SESSION):
+        j = _job()
+        background_jobs.mark_finished(j.job_id, 'done', 0)
+    assert background_jobs.get(first.job_id) is None
+    assert first.job_id not in {r['job_id'] for r in db.list_background_jobs()}
+
+
+def test_job_ids_do_not_restart_from_one_after_restart():
+    ids = [_job().job_id for _ in range(3)]
+    _restart()
+    new = _job()
+    assert new.job_id not in ids
+    assert bgmod._job_number(new.job_id) == 4
+
+
+def test_counter_skips_ids_referenced_by_monitors(monkeypatch):
+    from models.db import db
+    monkeypatch.setattr(db, 'get_schedules', lambda **kw: [{'action_config': {'job_id': 'job9'}}])
+    assert _job().job_id == 'job10'
+
+
+def test_db_failure_does_not_break_registration(monkeypatch):
+    from models.db import db
+
+    def boom(*a, **kw):
+        raise RuntimeError('db down')
+    monkeypatch.setattr(db, 'upsert_background_job', boom)
+    j = _job()
+    assert background_jobs.get(j.job_id) is j

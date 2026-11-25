@@ -15,10 +15,11 @@ panel, ``tail`` via bash), and the agent attaches a monitor to the returned
 ``job_id`` when — and only when — the outcome actually matters. See
 :mod:`backend.agent_runtime.monitors`.
 
-The registry here is in-memory and transient: it holds job identity + status for
-the Session State UI and to resolve ``job_id`` when a monitor is attached.
-Monitors keep everything they need in their own persisted schedule, so losing
-this registry on restart only blanks the UI list.
+The registry is held in memory and written through to the ``background_jobs``
+table, then reloaded on first use after a restart. That keeps the Session State
+UI list and ``job_id`` resolution (for attaching a monitor) intact while the
+detached process itself carries on. Monitors keep everything they need in their
+own persisted schedule.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ import threading
 import time
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
@@ -53,19 +54,56 @@ class BackgroundJob:
     finished_at: Optional[float] = None
 
 
+def _job_number(job_id: str) -> int:
+    m = re.fullmatch(r"job(\d+)", job_id or "")
+    return int(m.group(1)) if m else 0
+
+
 class BackgroundJobRegistry:
-    """Thread-safe in-memory registry of background jobs (running + recent)."""
+    """Thread-safe registry of background jobs (running + recent), persisted to the DB."""
 
     def __init__(self):
         self._jobs: Dict[str, BackgroundJob] = {}
-        self._guard = threading.Lock()
+        self._guard = threading.RLock()
         self._counter = 0
+        self._loaded = False
+
+    def _ensure_loaded(self) -> None:
+        """Reload persisted jobs once, and resume the id counter past every id in use.
+
+        Lazy so importing this module never touches the DB. The counter also skips ids
+        referenced by live monitor schedules: a monitor outlives its job row if the row
+        was pruned, and a reused id would make it report on the wrong job. Caller holds the lock.
+        """
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            from models.db import db
+            for row in db.list_background_jobs():
+                job = BackgroundJob(**row)
+                self._jobs.setdefault(job.job_id, job)
+                self._counter = max(self._counter, _job_number(job.job_id))
+            for sched in db.get_schedules(owner_type="monitor"):
+                ref = (sched.get("action_config") or {}).get("job_id")
+                self._counter = max(self._counter, _job_number(ref))
+        except Exception:
+            _logger.exception("[bgjob] failed to reload persisted jobs")
+
+    @staticmethod
+    def _persist(job: BackgroundJob) -> None:
+        try:
+            from models.db import db
+            db.upsert_background_job(asdict(job))
+        except Exception:
+            _logger.exception("[bgjob] failed to persist %s", job.job_id)
 
     def register(self, session_id: str, session_name: str, log_file: str,
                  pid_file: str, command: str, kind: str = "wrapper",
                  pgrep_pattern: str = "",
                  backend_ctx: Optional[dict] = None) -> BackgroundJob:
         with self._guard:
+            self._ensure_loaded()
             dedup_key = session_name or pgrep_pattern or command
             for j in self._jobs.values():
                 if j.session_id == session_id and j.status == "running" and \
@@ -85,6 +123,7 @@ class BackgroundJobRegistry:
                 backend_ctx=backend_ctx,
             )
             self._jobs[job.job_id] = job
+            self._persist(job)
             self._prune_finished(session_id)
             _logger.info("[bgjob] registered %s kind=%s session=%s sess=%s cmd=%r",
                          job.job_id, kind, session_id, session_name, command)
@@ -98,32 +137,49 @@ class BackgroundJobRegistry:
             key=lambda j: j.finished_at or 0,
         )
         excess = len(finished) - _MAX_FINISHED_PER_SESSION
-        for j in finished[:max(0, excess)]:
-            self._jobs.pop(j.job_id, None)
+        pruned = [j.job_id for j in finished[:max(0, excess)]]
+        for job_id in pruned:
+            self._jobs.pop(job_id, None)
+        if pruned:
+            try:
+                from models.db import db
+                db.delete_background_jobs(pruned)
+            except Exception:
+                _logger.exception("[bgjob] failed to delete pruned jobs")
 
     def mark_finished(self, job_id: str, status: str,
                       exit_code: Optional[int]) -> None:
         """Record completion for UI display. No-op if the job is gone (restart)."""
         with self._guard:
+            self._ensure_loaded()
             j = self._jobs.get(job_id)
             if not j or j.status != "running":
                 return
             j.status = status
             j.exit_code = exit_code
             j.finished_at = time.time()
+            self._persist(j)
             self._prune_finished(j.session_id)
 
     def get(self, job_id: str) -> Optional[BackgroundJob]:
         with self._guard:
+            self._ensure_loaded()
             return self._jobs.get(job_id)
+
+    def all_running(self) -> List[BackgroundJob]:
+        with self._guard:
+            self._ensure_loaded()
+            return [j for j in self._jobs.values() if j.status == "running"]
 
     def running_for_session(self, session_id: str) -> List[BackgroundJob]:
         with self._guard:
+            self._ensure_loaded()
             return [j for j in self._jobs.values()
                     if j.session_id == session_id and j.status == "running"]
 
     def list_for_session(self, session_id: str) -> List[BackgroundJob]:
         with self._guard:
+            self._ensure_loaded()
             return [j for j in self._jobs.values() if j.session_id == session_id]
 
     def stop_for_session(self, session_id: str, runner) -> List[str]:
