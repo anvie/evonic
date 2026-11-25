@@ -14,8 +14,53 @@ _logger = logging.getLogger(__name__)
 
 # ── Error humanization ──────────────────────────────────────────────────────
 
-def _humanize_llm_error(raw: str) -> str:
-    """Wrap raw LLM API errors into human-friendly messages."""
+# A reasoning model that burns its whole output budget on chain-of-thought is
+# reported by the client as ``error_type="generation_timeout"`` with a detail like
+# "Generation hit max_tokens limit (4096) without producing final answer.
+# Reasoning length: 14460 chars."  That detail contains the literal substring
+# ``max_tokens``, so the generic context-length heuristic used to swallow it and
+# answer "conversation too long" -- telling the caller (and the parent agent) the
+# wrong problem.  Keep the two causes separate.
+_CONTEXT_LENGTH_MESSAGE = (
+    "Conversation is too long for this model. Try starting a new session (/new)."
+)
+_REASONING_EXHAUSTED_MESSAGE = (
+    "The model ran out of output tokens while still reasoning and never produced "
+    "a final answer (it hit its max_tokens limit). This is an output-budget "
+    "problem, not a context-length problem. Retry the request; if it keeps "
+    "happening, raise max_tokens or lower the thinking budget for this model."
+)
+
+# Structural mapping first: a structured ``error_type`` from the client wins over
+# any substring guess.  Unknown/other types fall through to the heuristics below.
+_STRUCTURAL_ERROR_MESSAGES = {
+    "generation_timeout": _REASONING_EXHAUSTED_MESSAGE,
+    "context_length_error": _CONTEXT_LENGTH_MESSAGE,
+}
+
+# Unambiguous markers of the client's reasoning-exhaustion detail, used only when
+# no structured ``error_type`` is supplied (older callers, replayed logs, tests).
+_REASONING_EXHAUSTION_MARKERS = (
+    "without producing final answer",
+    "hit max_tokens limit",
+    "max_tokens limit",
+)
+
+
+def _is_reasoning_exhaustion(text: str) -> bool:
+    """True if ``text`` describes output-budget exhaustion, not a long prompt."""
+    return any(marker in text for marker in _REASONING_EXHAUSTION_MARKERS)
+
+
+def _humanize_llm_error(raw: str, error_type: str = None) -> str:
+    """Wrap raw LLM API errors into human-friendly messages.
+
+    ``error_type`` is the structured error type reported by the client.  When
+    provided it is honoured before any substring matching, so a
+    ``generation_timeout`` (reasoning/output-budget exhaustion) can never be
+    reported as a context-length problem.  Optional to stay backward compatible
+    with existing positional callers.
+    """
     # Try to parse nested JSON error payload from the raw string
     parsed = None
     try:
@@ -33,6 +78,15 @@ def _humanize_llm_error(raw: str) -> str:
 
     text = raw.lower()
 
+    # Structural causes first: never guess from substrings when the client told
+    # us what happened.  This is what keeps reasoning exhaustion (a detail that
+    # literally contains "max_tokens") out of the context-length branch.
+    structural = _STRUCTURAL_ERROR_MESSAGES.get(str(error_type or "").strip().lower())
+    if structural:
+        return structural
+    if _is_reasoning_exhaustion(text):
+        return _REASONING_EXHAUSTED_MESSAGE
+
     if 'image input is not supported' in text or 'image' in text and 'not supported' in text:
         return "The model doesn't support image input. Try sending a text-only message, or switch to a model that supports vision."
     if 'rate limit' in text or re.search(r'\b429\b', text):
@@ -45,9 +99,13 @@ def _humanize_llm_error(raw: str) -> str:
             "The conversation history was temporarily out of sync (a tool call was "
             "missing its result). It has been repaired automatically — please try again."
         )
-    if ('context length' in text or 'max_tokens' in text
-            or 'context size' in text or 'exceed_context' in text or 'exceeds the available context' in text):
-        return "Conversation is too long for this model. Try starting a new session (/new)."
+    # Genuine context-length failures.  The bare ``max_tokens`` substring that
+    # used to live here is what misrouted reasoning-exhaustion details; only
+    # unambiguous context wording counts now.
+    if ('context length' in text or 'context size' in text
+            or 'exceed_context' in text or 'exceeds the available context' in text
+            or 'context window' in text or 'maximum context' in text):
+        return _CONTEXT_LENGTH_MESSAGE
 
     _5xx_match = re.search(r'\b(5\d\d)\b', text)
     if _5xx_match or 'server_error' in text or 'temporarily unavailable' in text or 'server error' in text:

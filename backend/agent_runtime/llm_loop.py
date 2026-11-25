@@ -2096,7 +2096,10 @@ def run_tool_loop(agent: Dict[str, Any],
                         "Troubleshooting: https://evonic.dev/troubleshooting/agent-vision/"
                     )
                 else:
-                    error_msg = _humanize_llm_error(error_detail)
+                    # Structured error_type wins over substring guessing: a
+                    # generation_timeout is reasoning/output-budget exhaustion,
+                    # never a context-length problem.
+                    error_msg = _humanize_llm_error(error_detail, error_type=error_type)
                 _err_dur = round(time.time() - _loop_start_time, 1)
                 db.add_chat_message(session_id, 'assistant', error_msg, agent_id=db_agent_id,
                                     metadata={"error": True, "timeline": timeline, "thinking_duration": _err_dur})
