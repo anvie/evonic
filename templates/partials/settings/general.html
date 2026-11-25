@@ -92,7 +92,7 @@
         </div>
         {{ model_chain('decision-model-chain', 'Default decision models',
                        'Used by every decision profile that has no model of its own. The main model is tried first; if it fails, the fallbacks are tried from top to bottom. Only decision models can be picked.',
-                       fallbacks=4, main_label='Main',
+                       fallbacks=4, main_label='Main', kind='decision',
                        search='decision profile default models fallback chain structured classifier') }}
         <div class="setting-row" data-search="task classifier trivial complex planning skip classify">
             <div class="setting-row-text">

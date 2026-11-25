@@ -11,6 +11,7 @@
  *       mainLabel: "Main",                     // name of the first slot
  *       eligible: (model) => model.enabled,    // pickable models
  *       ineligibleLabel: "No vision",          // hint for enabled-but-rejected models
+ *       kind: "llm",                           // model type listed: "llm" or "decision"
  *       requireMain: true,                     // false: saving nothing is allowed
  *       mainEmptyText: "Not set",              // table text for an empty main slot
  *       inherit: {                             // optional "use the global chain" mode:
@@ -73,6 +74,9 @@
             this.mainEmptyText = opts.mainEmptyText || "Not set";
             this.requireMain = opts.requireMain !== false;
             this.eligible = opts.eligible || ((model) => !!model.enabled);
+            // Which model type this chain manages. Chains edit exactly one kind;
+            // a decision chain must list decision models, not chat LLMs.
+            this.kind = opts.kind || data.kind || "llm";
             // Hint for an enabled model that eligible() still rejects.
             this.ineligibleLabel = opts.ineligibleLabel || "Not supported";
             this.onSave = opts.onSave || (async (value) => value);
@@ -105,7 +109,9 @@
         /* ---------- public API ---------- */
 
         setModels(models) {
-            this.models = (Array.isArray(models) ? models : []).filter((m) => m.type !== "decision");
+            const kind = this.kind;
+            this.models = (Array.isArray(models) ? models : [])
+                .filter((m) => (m.type === "decision" ? "decision" : "llm") === kind);
             this.renderTable();
             if (this.isOpen()) this.renderPicker();
         }
@@ -368,7 +374,8 @@
             });
 
             if (!this.models.length) {
-                this.list.innerHTML = '<p class="mc-list-empty">No models configured — add one in the Models section.</p>';
+                const what = this.kind === "decision" ? "decision models" : "models";
+                this.list.innerHTML = `<p class="mc-list-empty">No ${what} configured — add one in the Models section.</p>`;
                 return;
             }
             if (!groups.size) {
