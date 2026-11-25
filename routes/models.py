@@ -81,6 +81,21 @@ def api_list_models():
     return jsonify({"models": _sanitize_models(models)})
 
 
+@models_bp.route("/api/models/choices", methods=["GET"])
+def api_model_choices():
+    """The enabled chat models with what the model picker (ev-model-picker.js) shows of them: name, provider, model id,
+    context window, output limit, thinking, vision and temperature. Never a key or an address."""
+    from routes.agents import _model_detail
+    providers = {p["id"]: p.get("name", p["id"]) for p in db.get_providers()}
+    models = []
+    for m in db.get_enabled_llm_models():
+        d = _model_detail(m)
+        d["provider_name"] = providers.get(d["provider"], d["provider"])
+        d["is_default"] = bool(m.get("is_default"))
+        models.append(d)
+    return jsonify({"models": models})
+
+
 @models_bp.route("/api/models/export", methods=["GET"])
 def api_export_models():
     """Download model configuration (models and their providers, no credentials) as JSON.

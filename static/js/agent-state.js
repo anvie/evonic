@@ -669,21 +669,9 @@ function _buildCmpSvg(cmp) {
 }
 
 // ---- Per-session model switcher -------------------------------------------
-// Opens a centered dialog listing the enabled models with their details.
+// Opens the shared "Switch model" dialog (ev-model-picker.js) listing the enabled models with their details.
 // The choice is stored on the SESSION only; the agent's primary and fallback
 // model (Agent settings → Model & Environment) are never touched.
-var _modelDlgData = null;
-var _modelDlgSelected = null;
-var _modelDlgQuery = '';
-
-function _closeModelDialog() {
-    var el = document.getElementById('model-switch-modal');
-    if (el) el.remove();
-    document.removeEventListener('keydown', _modelDlgEsc);
-}
-
-function _modelDlgEsc(e) { if (e.key === 'Escape') _closeModelDialog(); }
-
 function _openModelDialog() {
     if (!_stateAgentId) return;
     if (!_stateSessionId) {
@@ -692,210 +680,41 @@ function _openModelDialog() {
     }
     fetch('/api/agents/' + encodeURIComponent(_stateAgentId) + '/chat/models?session_id=' + encodeURIComponent(_stateSessionId))
         .then(function (r) { return r.json(); })
-        .then(function (data) {
-            _modelDlgData = data;
-            _modelDlgSelected = data.override_id || data.primary_id || (data.models[0] || {}).id;
-            _modelDlgQuery = '';
-            _renderModelDialog();
+        .then(function (d) {
+            evModelPicker.open({
+                title: 'Switch model',
+                subtitle: 'Applies to this session only. The agent\'s primary and fallback models stay unchanged.',
+                models: d.models,
+                current: d.override_id || d.primary_id,
+                tags: function (m) {
+                    var t = [];
+                    if (m.id === d.primary_id) t.push({ text: 'primary', tone: 'green' });
+                    if (m.id === d.fallback_id) t.push({ text: 'fallback', tone: 'amber' });
+                    if (m.id === d.override_id) t.push({ text: 'this session', tone: 'indigo' });
+                    return t;
+                },
+                applyLabel: 'Use for this session',
+                onApply: _setSessionModel,
+                clearLabel: 'Use agent default',
+                clearEnabled: !!d.override_id,
+                onClear: function () { return _setSessionModel(null); }
+            });
         })
         .catch(function (e) { console.error('[AgentState] model list error:', e); });
 }
 
-function _modelDlgDetail(m) {
-    var rows = [
-        ['Provider', m.provider_name || m.provider],
-        ['Model ID', m.model_name],
-        ['Context window', m.context_window ? Number(m.context_window).toLocaleString() + ' tokens' : '—'],
-        ['Max output', m.max_tokens ? Number(m.max_tokens).toLocaleString() + ' tokens' : '—'],
-        ['Thinking', m.thinking ? ('On' + (m.thinking_budget ? ' (budget ' + Number(m.thinking_budget).toLocaleString() + ')' : '')) : 'Off'],
-        ['Vision', m.vision_supported ? 'Yes' : 'No'],
-        ['Temperature', m.temperature === null || m.temperature === undefined ? 'default' : m.temperature]
-    ];
-    return rows.map(function (r) {
-        return '<div class="flex justify-between gap-4 py-1.5 border-b border-gray-100 dark:border-gray-700 text-sm">' +
-            '<span class="text-gray-500 dark:text-gray-400">' + esc(r[0]) + '</span>' +
-            '<span class="text-gray-800 dark:text-gray-100 font-medium text-right break-all">' + esc(String(r[1])) + '</span></div>';
-    }).join('');
-}
-
-function _renderModelDialog() {
-    var d = _modelDlgData;
-    var old = document.getElementById('model-switch-modal');
-    // Re-rendering replaces the DOM; remember the list scroll so a click doesn't jump to the top.
-    var oldList = old && old.querySelector('[data-list]');
-    var listScroll = oldList ? oldList.scrollTop : 0;
-    if (old) old.remove();
-
-    var overlay = document.createElement('div');
-    overlay.id = 'model-switch-modal';
-    overlay.setAttribute('style', 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,0.55);');
-    overlay.addEventListener('click', function (e) { if (e.target === overlay) _closeModelDialog(); });
-
-    var sel = null;
-    d.models.forEach(function (m) { if (m.id === _modelDlgSelected) sel = m; });
-    var current = d.override_id || d.primary_id;
-
-    var options = _modelDlgListHtml();
-
-    var panel = document.createElement('div');
-    panel.className = 'bg-white dark:bg-gray-800 shadow-xl rounded-xl';
-    panel.setAttribute('style', 'width:100%;max-width:720px;max-height:min(560px,calc(100vh - 32px));display:flex;flex-direction:column;overflow:hidden;');
-    panel.innerHTML =
-        '<div class="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-700">' +
-        '  <div><h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">Switch model</h3>' +
-        '  <p class="text-xs text-gray-500 dark:text-gray-400">Applies to this session only. The agent\'s primary and fallback models stay unchanged.</p></div>' +
-        '  <button type="button" data-close class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-300 cursor-pointer" title="Close">×</button>' +
-        '</div>' +
-        '<div style="display:flex;flex:1;min-height:0;flex-wrap:wrap;overflow-y:auto;">' +
-        '  <div style="flex:1 1 260px;display:flex;flex-direction:column;min-height:0;">' +
-        '    <div style="padding:10px 10px 0;">' + evSearchBox('data-search aria-label="Search models"', _modelDlgQuery, 'Search models…') + '</div>' +
-        '    <div data-list style="max-height:330px;overflow-y:auto;padding:10px;">' + options + '</div>' +
-        '  </div>' +
-        '  <div style="flex:1 1 260px;padding:14px 18px;" class="sm:border-l border-gray-100 dark:border-gray-700">' +
-        (sel ? '<div class="flex items-center gap-3 mb-2 text-gray-800 dark:text-gray-100">' + aiLogoHtml(sel, 36) + '<div class="min-w-0"><div class="text-sm font-semibold truncate">' + esc(sel.name) + '</div><div class="text-xs text-gray-500 dark:text-gray-400 truncate">' + esc(sel.provider_name || sel.provider) + '</div></div></div>' + _modelDlgDetail(sel) : '<p class="text-sm text-gray-400">No models available.</p>') +
-        '  </div>' +
-        '</div>' +
-        '<div class="flex items-center justify-between gap-2 px-5 py-3 border-t border-gray-100 dark:border-gray-700">' +
-        '  <button type="button" data-clear class="text-xs underline cursor-pointer text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"' + (d.override_id ? '' : ' disabled style="opacity:.4;cursor:default"') + '>Use agent default</button>' +
-        '  <div class="flex gap-2">' +
-        '    <button type="button" data-close class="px-3 py-1.5 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 cursor-pointer">Cancel</button>' +
-        '    <button type="button" data-apply class="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"' + (sel && sel.id !== current ? '' : ' disabled style="opacity:.5;cursor:default"') + '>Use for this session</button>' +
-        '  </div>' +
-        '</div>';
-
-    panel.querySelectorAll('[data-close]').forEach(function (b) { b.addEventListener('click', _closeModelDialog); });
-    _modelDlgBindList(panel);
-    var search = panel.querySelector('[data-search]');
-    search.addEventListener('input', function () {
-        _modelDlgQuery = search.value;
-        var list = panel.querySelector('[data-list]');
-        list.innerHTML = _modelDlgListHtml();
-        _modelDlgBindList(panel);
-    });
-    var applyBtn = panel.querySelector('[data-apply]');
-    if (applyBtn) applyBtn.addEventListener('click', function () { if (!applyBtn.disabled) _setSessionModel(_modelDlgSelected); });
-    var clearBtn = panel.querySelector('[data-clear]');
-    if (clearBtn) clearBtn.addEventListener('click', function () { if (!clearBtn.disabled) _setSessionModel(null); });
-
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
-    document.addEventListener('keydown', _modelDlgEsc);
-    var newList = panel.querySelector('[data-list]');
-    if (newList) newList.scrollTop = listScroll;
-    _focusModelSearch(overlay, search);
-}
-
-// Focus the model search input every time the dialog becomes visible so the
-// user can start typing immediately. Focus is attempted synchronously (instant
-// feedback) and retried on the next frame, because some browsers (notably
-// Safari/iOS) only honour focus() once the node has been laid out.
-function _focusModelSearch(overlay, search) {
-    if (!overlay || !search) return;
-    function apply() {
-        // The dialog was closed or re-rendered meanwhile — don't touch the DOM.
-        if (!overlay.isConnected || overlay !== document.getElementById('model-switch-modal')) return;
-        var active = document.activeElement;
-        // Never steal focus from something the user already focused inside the
-        // dialog (a model row, the apply button, ...).
-        if (active && active !== document.body && active !== search && overlay.contains(active)) return;
-        try { search.focus({ preventScroll: true }); } catch (e) { search.focus(); }
-        if (document.activeElement !== search) return;
-        // Caret at the end so an existing query keeps behaving like normal typing.
-        try {
-            var end = search.value.length;
-            search.setSelectionRange(end, end);
-        } catch (e) { /* selection range unsupported for this input type */ }
-    }
-    apply();
-    if (document.activeElement !== search) {
-        if (window.requestAnimationFrame) window.requestAnimationFrame(apply);
-        else setTimeout(apply, 0);
-    }
-}
-
-function _modelDlgBindList(panel) {
-    panel.querySelectorAll('[data-model-id]').forEach(function (b) {
-        b.addEventListener('click', function () { _modelDlgSelected = b.getAttribute('data-model-id'); _renderModelDialog(); });
-    });
-}
-
-// Models grouped by provider, filtered by the search box (name, model id, provider).
-function _modelDlgListHtml() {
-    var d = _modelDlgData;
-    var q = (_modelDlgQuery || '').trim().toLowerCase();
-    var groups = {}, order = [];
-    d.models.forEach(function (m) {
-        var prov = m.provider_name || m.provider || 'Other';
-        if (q && (prov + ' ' + m.name + ' ' + m.model_name).toLowerCase().indexOf(q) === -1) return;
-        if (!groups[prov]) { groups[prov] = []; order.push(prov); }
-        groups[prov].push(m);
-    });
-    if (!order.length) return '<p class="text-sm text-gray-400 px-2 py-3">No models match.</p>';
-    order.sort(function (a, b) { return a.localeCompare(b); });
-    return order.map(function (prov) {
-        var items = groups[prov].map(function (m) {
-            var tags = '';
-            if (m.id === d.primary_id) tags += ' <span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">primary</span>';
-            if (m.id === d.fallback_id) tags += ' <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">fallback</span>';
-            if (m.id === d.override_id) tags += ' <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">this session</span>';
-            var active = m.id === _modelDlgSelected;
-            return '<button type="button" data-model-id="' + esc(m.id) + '" class="w-full text-left px-3 py-2 rounded-lg text-sm cursor-pointer flex items-center gap-3 ' +
-                (active ? 'bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-200' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200') + '">' +
-                aiLogoHtml(m, 26) +
-                '<span class="min-w-0 flex-1"><span class="block font-medium truncate">' + esc(m.name) + tags + '</span>' +
-                '<span class="block text-xs opacity-70 truncate">' + esc(m.model_name) + '</span></span></button>';
-        }).join('');
-        return '<div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 px-3 pt-2 pb-1">' + aiLogoHtml({ provider: groups[prov][0].provider, provider_name: prov }, 14) + '<span>' + esc(prov) + '</span>' +
-            ' <span class="font-normal">· ' + groups[prov].length + '</span></div>' + items;
-    }).join('');
-}
-
 function _setSessionModel(modelId) {
-    fetch('/api/agents/' + encodeURIComponent(_stateAgentId) + '/chat/model', {
+    return fetch('/api/agents/' + encodeURIComponent(_stateAgentId) + '/chat/model', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: _stateSessionId, model_id: modelId })
     })
         .then(function (r) { return r.json(); })
         .then(function (data) {
-            if (data.success) {
-                _closeModelDialog();
-                document.dispatchEvent(new CustomEvent('evonic:agent-state-changed'));
-            } else {
+            if (!data.success) {
                 alert(data.error || 'Failed to switch model');
+                return false;
             }
-        })
-        .catch(function (e) { console.error('[AgentState] set model error:', e); });
+            document.dispatchEvent(new CustomEvent('evonic:agent-state-changed'));
+        });
 }
-
-/* Shared search box (model switcher, workplace picker): icon, clear button, focus ring. */
-(function () {
-    if (document.getElementById('ev-sbox-style')) return;
-    var st = document.createElement('style');
-    st.id = 'ev-sbox-style';
-    st.textContent =
-        '.ev-sbox{position:relative;display:flex;align-items:center}' +
-        '.ev-sbox>svg{position:absolute;left:.8rem;width:1rem;height:1rem;color:#94a3b8;pointer-events:none;transition:color .15s}' +
-        '.ev-sbox input[type=search]{width:100%;height:2.5rem;padding:0 2.25rem 0 2.45rem;font-size:.875rem;border-radius:.75rem;border:1px solid rgb(148 163 184 / .35);background:rgb(148 163 184 / .1);color:#1f2937;outline:none;-webkit-appearance:none;appearance:none;transition:border-color .15s,box-shadow .15s,background-color .15s}' +
-        'html.dark .ev-sbox input[type=search]{color:#e5e7eb;background:rgb(15 23 42 / .55);border-color:rgb(148 163 184 / .25)}' +
-        '.ev-sbox input[type=search]::placeholder{color:#94a3b8}' +
-        '.ev-sbox input[type=search]::-webkit-search-cancel-button,.ev-sbox input[type=search]::-webkit-search-decoration{-webkit-appearance:none;display:none}' +
-        '.ev-sbox input[type=search]:hover{border-color:rgb(148 163 184 / .6)}' +
-        '.ev-sbox input[type=search]:focus{border-color:#6366f1;background:transparent;box-shadow:0 0 0 3px rgb(99 102 241 / .22)}' +
-        '.ev-sbox:focus-within>svg{color:#6366f1}' +
-        '.ev-sbox-x{position:absolute;right:.45rem;width:1.5rem;height:1.5rem;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:9999px;background:transparent;color:#94a3b8;cursor:pointer}' +
-        '.ev-sbox-x:hover{background:rgb(148 163 184 / .22);color:#475569}' +
-        'html.dark .ev-sbox-x:hover{color:#e2e8f0}' +
-        '.ev-sbox-x svg{width:.8rem;height:.8rem}' +
-        '.ev-sbox input:placeholder-shown~.ev-sbox-x{display:none}';
-    document.head.appendChild(st);
-})();
-
-function evSearchBox(attrs, value, placeholder) {
-    return '<div class="ev-sbox">' +
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>' +
-        '<input type="search" ' + attrs + ' placeholder="' + placeholder + '" value="' + esc(value || '') + '" autocomplete="off" spellcheck="false">' +
-        '<button type="button" class="ev-sbox-x" tabindex="-1" aria-label="Clear search" onclick="var i=this.previousElementSibling;i.value=\'\';i.dispatchEvent(new Event(\'input\',{bubbles:true}));i.focus()">' +
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>';
-}
-
