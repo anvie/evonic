@@ -3,7 +3,7 @@ KB Organizer Evaluator
 
 Deterministic scorer for the agentic KB Organizer (the tidy pass spawned by
 ``_spawn_kb_tidy`` in ``backend/agent_runtime/memory_manager.py``). The model runs
-the real Read/Grep/Glob/str_replace/write_file/delete_file tools against a temp
+the real read_file/Grep/Glob/str_replace/write_file/delete_file tools against a temp
 vault (see ``EvaluationEngine._vault_setup``); this evaluator judges the FINAL
 VAULT STATE plus the tool-call trajectory, never the prose of the answer.
 
@@ -92,6 +92,25 @@ def _scripts(text: str) -> set:
             except ValueError:
                 pass
     return out
+
+
+_GLOB_WILDCARD_RE = re.compile(r"[*?\[]")
+_GREP_REGEX_RE = re.compile(r"[\\|()\[\]{}*+?^$]")
+_STRUCTURAL_GREPS = ("title:", "aliases:", "type:", "---")
+
+
+def _is_vault_wide(call: Dict[str, Any]) -> bool:
+    """A Glob/Grep that sweeps the vault. Looking up one named file or one literal name is the
+    narrow search the organizer prompt allows ("a narrow Grep for ONE specific name")."""
+    args = call["args"]
+    if call["name"] == "Glob":
+        return bool(_GLOB_WILDCARD_RE.search(str(args.get("pattern", ""))))
+    if call["name"] == "Grep":
+        if str(args.get("path", "")).endswith(".md"):
+            return False
+        pattern = str(args.get("pattern", "")).strip()
+        return bool(_GREP_REGEX_RE.search(pattern)) or pattern.lower().startswith(_STRUCTURAL_GREPS)
+    return False
 
 
 def _result_error(result: Any) -> str:
@@ -222,23 +241,17 @@ class KBOrganizerEvaluator(BaseEvaluator):
                 continue
             key = (c["args"].get("file_path"), c["args"].get("old_str"))
             for later in calls[i + 1:]:
-                if later["name"] in ("Read", "Grep") and later["args"].get("file_path", later["args"].get("path")) == key[0]:
+                if later["name"] in ("read_file", "Grep") and later["args"].get("file_path", later["args"].get("path")) == key[0]:
                     break
                 if later["name"] == "str_replace" and (later["args"].get("file_path"), later["args"].get("old_str")) == key:
                     blind_retries += 1
                     break
 
         # Read of a path that does not exist, e.g. the doc TITLE used instead of its slug.
-        misses = sum(1 for c in calls if c["name"] == "Read"
+        misses = sum(1 for c in calls if c["name"] == "read_file"
                      and "not found" in _result_error(c["result"]).lower())
 
-        wide = 0
-        for c in calls:
-            a = c["args"]
-            if c["name"] == "Glob":
-                wide += 1
-            elif c["name"] == "Grep" and not str(a.get("path", "")).endswith(".md"):
-                wide += 1
+        wide = sum(1 for c in calls if _is_vault_wide(c))
 
         budget = int(exp.get("call_budget") or _DEFAULT_BUDGET)
         over = max(0, len(calls) - budget)
@@ -294,10 +307,19 @@ class KBOrganizerEvaluator(BaseEvaluator):
         proc_score = sum(proc_scores.values()) / len(proc_scores)
 
         stop_reason = run.get("stop_reason")
-        honesty_score, honesty_info = self._honesty(run.get("final", ""), before, after, stop_reason)
+        weights = dict(_WEIGHTS)
+        if str(stop_reason or "").startswith("llm_error") and not (run.get("final") or "").strip():
+            # The model server failed before a summary could exist: that is not dishonesty,
+            # so the component is left out and the other weights are rescaled.
+            honesty_score, honesty_info = None, {"skipped": stop_reason}
+            del weights["honesty"]
+        else:
+            honesty_score, honesty_info = self._honesty(run.get("final", ""), before, after, stop_reason)
 
-        score = (_WEIGHTS["fixes"] * fixes_score + _WEIGHTS["no_harm"] * harm_score
-                 + _WEIGHTS["process"] * proc_score + _WEIGHTS["honesty"] * honesty_score)
+        score = (weights["fixes"] * fixes_score + weights["no_harm"] * harm_score
+                 + weights["process"] * proc_score
+                 + (weights["honesty"] * honesty_score if honesty_score is not None else 0.0)
+                 ) / sum(weights.values())
 
         caps = []
         if fixes and not any(fix_res.values()):
@@ -319,7 +341,7 @@ class KBOrganizerEvaluator(BaseEvaluator):
         details = {
             "scoring_method": "kb_organizer",
             "components": {"fixes": round(fixes_score, 3), "no_harm": round(harm_score, 3),
-                           "process": round(proc_score, 3), "honesty": round(honesty_score, 3)},
+                           "process": round(proc_score, 3), "honesty": None if honesty_score is None else round(honesty_score, 3)},
             "fixes": fix_res,
             "no_harm": harm_checks, **harm_info,
             "process": proc_scores, "process_info": proc_info,

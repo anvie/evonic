@@ -9,7 +9,7 @@ settings.
 
 Separation of concerns: the `explorer` skill is the DELEGATOR's tool (it provides
 ``Explore``), while the explorer sub-agent that does the actual work is granted the
-`direxplorer` skill's read-only worker tools (Grep/Read/Glob). DirExplorer is
+`direxplorer` skill's read-only worker tools (Grep/read_file/Glob). DirExplorer is
 therefore a required dependency — ``Explore`` errors clearly if it is disabled.
 
 All explorer-specific behavior lives here. The core hot paths (context.py,
@@ -30,7 +30,7 @@ WORKER_SKILL_ID = 'direxplorer'
 # DirExplorer's read-only tools. Always granted to explorers, non-removable.
 MANDATORY_TOOL_IDS: List[str] = [
     'skill:direxplorer:Grep',
-    'skill:direxplorer:Read',
+    'read_file',
     'skill:direxplorer:Glob',
 ]
 
@@ -233,7 +233,7 @@ def build_config(
         'system_prompt': skill_cfg.get('system_prompt', '') or '',
         '_explorer_tool_ids': explorer_tool_ids,
         **_model_fields(parent_agent, skill_cfg),
-        'workspace': path,          # boundary root for Grep/Read/Glob
+        'workspace': path,          # boundary root for Grep/read_file/Glob
         'agent_messaging_enabled': True,
         'builtin_tools_enabled': True,
         'enabled': True,

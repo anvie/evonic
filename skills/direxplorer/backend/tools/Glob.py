@@ -77,9 +77,13 @@ print(out)'''
         files = results or []
         count = len(files)
         truncated = False
-    return {
+    result = {
         'files': files,
         'count': count,
         'base': os.path.abspath(base_path),
         'truncated': truncated,
     }
+    if truncated:
+        result['note'] = (f'Showing {len(files)} of {count} files. '
+                          'Use a narrower pattern or path to see the rest.')
+    return result

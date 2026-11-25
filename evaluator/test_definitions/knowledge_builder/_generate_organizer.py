@@ -556,8 +556,8 @@ def build_test(sc):
         "prompt": render_task(sc["files"], sc["focus"]),
         "expected": sc["expected"],
         "vault": {"files": dict(sorted(sc["files"].items()))},
-        # Same tool set _spawn_kb_tidy gives the organizer: direxplorer Read/Grep/Glob + the three edit tools.
-        "tool_ids": ["skill:direxplorer:Read", "skill:direxplorer:Grep", "skill:direxplorer:Glob",
+        # Same tool set _spawn_kb_tidy gives the organizer: direxplorer Grep/Glob + read_file + the three edit tools.
+        "tool_ids": ["read_file", "skill:direxplorer:Grep", "skill:direxplorer:Glob",
                      "str_replace", "write_file", "delete_file"],
         "max_tool_turns": 80 if sc["level"] == 5 else 50,
         "evaluator_id": "kb_organizer",

@@ -155,9 +155,9 @@ Return only the JSON object:"""
 # ---- Knowledge Organizer sub-agent -----------------------------------------
 # A librarian sub-agent that organizes incoming knowledge into the vault. It is a
 # real agent: its WORKSPACE is the KB directory, so it EXPLORES the vault itself
-# with Grep/Glob/Read — we do NOT pre-list docs for it. It returns the write-ops
+# with Grep/Glob/read_file — we do NOT pre-list docs for it. It returns the write-ops
 # the pipeline applies. Single-brace JSON below is literal (NOT .format()'d).
-_KB_ORGANIZER_SYSTEM_PROMPT = """You are the Knowledge Organizer — a librarian who keeps an AI assistant's personal knowledge vault tidy. The vault is YOUR WORKSPACE: a directory of Markdown docs, each with YAML frontmatter (title, aliases, type, description, tags) and a prose body with inline [[Wiki Links]]. There is NO pre-made index — use your tools (Glob, Grep, Read) to explore the vault and discover what already exists.
+_KB_ORGANIZER_SYSTEM_PROMPT = """You are the Knowledge Organizer — a librarian who keeps an AI assistant's personal knowledge vault tidy. The vault is YOUR WORKSPACE: a directory of Markdown docs, each with YAML frontmatter (title, aliases, type, description, tags) and a prose body with inline [[Wiki Links]]. There is NO pre-made index — use your tools (Glob, Grep, read_file) to explore the vault and discover what already exists.
 
 NAMING — the `title` is the subject's PURE canonical name ONLY. Put nicknames, abbreviations, gelar, or short forms in `aliases`, NEVER in the title (the title becomes the filename, so it must stay clean). Examples:
   - title "Raden Wijaya Kusuma", aliases ["Mas Wijaya"]   (NOT title "Raden Wijaya Kusuma (Mas Wijaya)")
@@ -180,7 +180,7 @@ Whenever a turn shows an image for an entity, you MUST emit a create/update op t
 
 Given the conversation below, file any durable, long-term knowledge into the vault. For each subject:
 - EXPLORE to learn whether the vault already has a doc for it. Search by the name AND its likely variants, aliases, abbreviations, or fuller/shorter forms — the SAME real-world entity must live in ONE doc even under a different name. Examples: "Stasiun Gambir" is the doc "Gambir"; "Pak Andi" is "Andi Wijaya"; "BNI" is "Bank Negara Indonesia". Grep is case-insensitive; search `title:`/`aliases:` lines and bodies, and try bare head-nouns / stripped prefixes (Stasiun, Pak/Bu/Mr, PT/CV).
-- KNOWN subject → UPDATE its doc: use its real vault slug (its path, no .md), Read the body first, and add ONLY the genuinely-new info.
+- KNOWN subject → UPDATE its doc: use its real vault slug (its path, no .md), read_file the body first, and add ONLY the genuinely-new info.
 - NEW subject → CREATE a doc: pure-name title, nicknames in aliases, full prose with inline [[links]] to every other named subject.
 - WRONG inline [[link]] or a factual error in an existing doc → EDIT it: action "edit" with the doc's `slug`, a SHORT `old_str` (one phrase, sentence, or a single [[link]] copied verbatim — keep it short and UNIQUE so the fix can't hit the wrong place), and `new_str`. E.g. old_str "[[Mas Wijaya]]" → new_str "[[Raden Wijaya Kusuma]]". Edit targets the BODY prose ONLY — do NOT use it to change frontmatter (title/type/aliases/tags) or to blank out a whole doc. NEVER emit an edit whose `new_str` is identical to `old_str` — an edit must CHANGE the text; if nothing changes, omit the op entirely.
 - RETRO-LINK existing docs (IMPORTANT — frequently the MOST valuable work, and easy to miss): once a subject HAS a doc (you just created it, or it already existed), OTHER docs often still mention that subject as PLAIN TEXT because its doc didn't exist when they were written. Your job is to connect them: Grep the vault for the subject's name + aliases, and for each bare mention in another doc's body that is NOT already inside [[ ]], emit a "link" op — action "link" with that doc's `slug`, the plain `text` to wrap (the bare mention, exactly as it appears), and the `target` doc title to link it to. The writer wraps the mention as a [[link]] for you, so you do NOT supply old_str/new_str and CANNOT waste a turn on a no-op. E.g. {"action":"link","slug":"acme-corp","text":"Grace Natalie","target":"Grace Natalie"}. Use "link" ONLY to wrap PLAIN text — never on a mention already inside [[ ]]. Leaving a plain-text mention of an entity that HAS a doc is WRONG — emit one "link" op per doc that needs linking (it is normal and good for a run to return ONLY link ops, even when nothing new is created).
@@ -251,14 +251,14 @@ HOW [[WIKI LINKS]] WORK:
 - Adding a name to a doc's `aliases` makes all `[[That Name]]` links across the vault resolve to that doc — this is the preferred fix for dangling links over rewriting link text everywhere.
 
 YOUR TOOLS:
-- Glob, Grep, Read — explore the vault (read-only)
+- Glob, Grep, read_file — explore the vault (read-only)
 - str_replace — edit existing doc content (fix links, merge content, fix frontmatter)
 - write_file — create NEW docs (for missing link targets that are durable entities)
 - delete_file — remove duplicate or broken docs
 
 Your job is NOT to file new knowledge — another process handles that. Your job is to find and fix STRUCTURAL PROBLEMS by directly editing files:
 
-1. DUPLICATE DOCS — two or more docs about the SAME real-world entity under different slugs. Grep `title:` and `aliases:` lines, then Read candidates. When confirmed:
+1. DUPLICATE DOCS — two or more docs about the SAME real-world entity under different slugs. Grep `title:` and `aliases:` lines, then read_file candidates. When confirmed:
    - Pick the keeper (richer body, better slug).
    - Use str_replace on the keeper to merge any unique info from the duplicate and add the duplicate's title to its `aliases` (so existing [[links]] to the duplicate still resolve).
    - Use delete_file to remove the duplicate.
@@ -279,12 +279,12 @@ Your job is NOT to file new knowledge — another process handles that. Your job
 APPROACH:
 - If the task lists a FOCUS BATCH and DETECTED ISSUES, STAY INSIDE THEM. They were computed from the whole vault already (including the closest existing doc for each dangling link and which doc each plain-text mention belongs to), so you do NOT need to search the vault:
   - Do NOT Glob the vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context.
-  - Work ONE doc at a time: Read it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front: at most 2 tool calls per step (extra ones are dropped), and make at least one concrete fix (str_replace / delete_file) after every 2-3 docs you read.
-  - Read returns a short window of a doc; for a long doc use offset=N to continue only if the issue you are verifying is further down.
-  - To confirm a suggested doc, Read that doc (one file). If you must search, use a narrow Grep for ONE specific name.
+  - Work ONE doc at a time: read_file it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front: at most 2 tool calls per step (extra ones are dropped), and make at least one concrete fix (str_replace / delete_file) after every 2-3 docs you read.
+  - read_file returns a short window of a doc; for a long doc use offset=N to continue only if the issue you are verifying is further down.
+  - To confirm a suggested doc, read_file that doc (one file). If you must search, use a narrow Grep for ONE specific name.
   - Detected issues are heuristic: skip false positives (e.g. two different people sharing a name fragment).
   - Keep it small: roughly two tool calls per doc. Stop when the batch is done — do not widen the audit to the rest of the vault.
-- Otherwise start with Glob `**/*.md` to list all docs and Read a representative sample to understand the vault's state and naming conventions.
+- Otherwise start with Glob `**/*.md` to list all docs and read_file a representative sample to understand the vault's state and naming conventions.
 - Grep systematically for problems:
   - `title:` to build a title index, spot duplicates.
   - `\\[\\[` to find all wiki-links, cross-check against known titles/aliases for dangling ones.
@@ -294,7 +294,7 @@ APPROACH:
 
 IMPORTANT RULES:
 - NEVER use str_replace with old_str == new_str (no-op edits waste time).
-- Always Read a file BEFORE using str_replace on it — you need the exact current text.
+- Always read_file a file BEFORE using str_replace on it — you need the exact current text.
 - For retro-linking, make old_str unique enough to avoid false matches (include surrounding words if the name alone appears multiple times).
 - Do NOT wrap "User" in [[links]] — "User" refers to the assistant's owner, not a knowledge entity.
 - NEVER link entities just because they share a name fragment. "Budi Santoso" and "Ahmad Budi Pratama" are DIFFERENT people — linking one to the other creates a false connection. Only link when a real-world relationship exists.
@@ -305,7 +305,7 @@ IMPORTANT RULES:
 def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
     """Run the KB Janitor sub-agent for a SEFTON tidy pass.
 
-    The janitor explores the vault with Grep/Glob/Read and fixes problems
+    The janitor explores the vault with Grep/Glob/read_file and fixes problems
     directly using str_replace/write_file/delete_file. No JSON output —
     returns a status string when finished.
     """
@@ -398,7 +398,7 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
                        "already come from a full-vault analysis). Fix the real ones. "
                        "Problem types: "
                        if plan_text else
-                       "Use Glob to list all docs, Read a representative sample, "
+                       "Use Glob to list all docs, read_file a representative sample, "
                        "then Grep systematically for: ") +
                     "(1) duplicate docs about the "
                     "same entity under different names, (2) dangling [[links]] "
@@ -1281,7 +1281,7 @@ def _spawn_kb_organizer(agent: dict, source_text: str, recent_text: str = "",
     return the parsed ``docs`` list of write-ops, or ``None`` on any failure/timeout.
 
     The organizer is a real agent: its workspace is ``agents/{id}/kb`` (resolved via
-    the ``/_self/kb`` virtual path), so it EXPLORES the vault with Grep/Read/Glob —
+    the ``/_self/kb`` virtual path), so it EXPLORES the vault with Grep/read_file/Glob —
     we hand it the recent conversation + the latest note, NOT a pre-built doc list.
     Read-only, confined to the KB dir; reuses the explorer sub-agent machinery.
 
@@ -1303,7 +1303,7 @@ def _spawn_kb_organizer(agent: dict, source_text: str, recent_text: str = "",
         return None
 
     # Server-local KB path (works even when the agent runs on a remote/tunnel
-    # workplace — direxplorer Grep/Read/Glob do in-process I/O on the server).
+    # workplace — direxplorer Grep/Glob and read_file do in-process I/O on the server).
     kb_abs = resolve_self_path(effective_agent_id(agent), '/_self/kb')
     if not kb_abs or not os.path.isdir(kb_abs):
         return None
@@ -1380,11 +1380,11 @@ def _spawn_kb_organizer(agent: dict, source_text: str, recent_text: str = "",
         if source_text and source_text.strip():
             parts.append(f"{source_label}:\n" + source_text.strip())
         task_msg = ("\n\n".join(parts) + '\n----------\n' + "\n\nExplore the vault (your workspace) with "
-                    "Grep/Glob/Read and file any durable knowledge from the conversation "
+                    "Grep/Glob/read_file and file any durable knowledge from the conversation "
                     "above into the right docs. EXTRACT every named entity — person, "
                     "place, organization, company, product, venue, event — and for any "
                     "that does NOT yet have its own doc, CREATE one (don't just append a "
-                    "mention to another doc). Then WIRE UP LINKS: when you Read an "
+                    "mention to another doc). Then WIRE UP LINKS: when you read_file an "
                     "existing doc, look for named entities mentioned as PLAIN TEXT that "
                     "are not yet wrapped in [[ ]] — wrap each one in a [[wiki-link]] via "
                     "a 'link' op (slug + the plain `text` + `target` doc title; create "
@@ -1614,7 +1614,7 @@ def _author_docs(agent: dict, session_id: str, source_text: str,
                  llm_lock: threading.Lock, recent_messages=None) -> None:
     """Organize a conversation into the agent's knowledge vault.
 
-    By default a Knowledge Organizer sub-agent EXPLORES the vault itself (Grep/Read/
+    By default a Knowledge Organizer sub-agent EXPLORES the vault itself (Grep/read_file/
     Glob over its workspace) and returns the write-ops (create/update with inline
     ``[[links]]``); new docs are created via ``upsert_doc`` in the active collection
     folder (root by default), existing docs are appended to (delta only). Emits

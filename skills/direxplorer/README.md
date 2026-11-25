@@ -1,18 +1,17 @@
 # DirExplorer — Codebase Exploration Tools
 
-DirExplorer provides three read-only tools for exploring a codebase: **Read**, **Grep**, and **Glob**. These tools are designed for agents that need to inspect project files, search for patterns, and discover file structures without write access.
+DirExplorer provides two read-only tools for exploring a codebase: **Grep** and **Glob**. Files are read with the core `read_file` tool. These tools are designed for agents that need to inspect project files, search for patterns, and discover file structures without write access.
 
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| **Read** | Read a text file with 1-based line numbers and pagination |
 | **Grep** | Regex search across files using ripgrep |
 | **Glob** | Find files matching a glob pattern (supports `**`) |
 
 ## Workspace Restriction
 
-When an agent is assigned a **workspace** directory, all three tools enforce a strict boundary: the agent cannot access any file or directory outside its workspace. This is a security hardening that blocks three attack vectors:
+When an agent is assigned a **workspace** directory, both tools enforce a strict boundary (`read_file` applies the same workspace confinement): the agent cannot access any file or directory outside its workspace. This is a security hardening that blocks three attack vectors:
 
 | Attack Vector | Example | Blocked By |
 |---------------|---------|------------|
@@ -32,7 +31,7 @@ This is called after path resolution and auto-correction but before any file I/O
 
 ### Behavior by Agent Type
 
-- **Agent with workspace**: All Read, Grep, and Glob operations are restricted to the workspace directory. Any attempt to escape results in an access-denied error.
+- **Agent with workspace**: All Grep, Glob, and `read_file` operations are restricted to the workspace directory. Any attempt to escape results in an access-denied error.
 - **Agent without workspace**: No restriction — tools can access any path the process has permission to read.
 
 ## Requirements

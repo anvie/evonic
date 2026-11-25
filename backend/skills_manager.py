@@ -26,7 +26,7 @@ CONFIG_PATH = os.path.join(SKILLS_DIR, 'config.json')
 
 # Core skills that power the Explore agent. They cannot be uninstalled or
 # disabled: explorer provides the Explore() tool, direxplorer provides the
-# read-only Grep/Read/Glob worker tools the explorer sub-agent depends on.
+# read-only Grep/Glob worker tools the explorer sub-agent depends on.
 CORE_SKILL_IDS = {"explorer", "direxplorer"}
 
 

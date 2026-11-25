@@ -719,7 +719,7 @@ def run_tool_loop(agent: Dict[str, Any],
                         'set_mode', 'save_plan', 'update_tasks',
                         'state', 'use_skill', 'unload_skill'}
 
-    # Eager skill tools (e.g. explorer's Explore, direxplorer's Grep/Glob/Read)
+    # Eager skill tools (e.g. explorer's Explore, direxplorer's Grep/Glob)
     # are advertised upfront by build_tools() — never prune them mid-turn, or the
     # model loses them for the rest of the turn the moment they go uncalled past
     # the prune threshold. Mirrors the existing loaded-lazy-skill protection.

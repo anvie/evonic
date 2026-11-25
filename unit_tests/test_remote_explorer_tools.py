@@ -19,7 +19,7 @@ def _load_tools():
     pkg.__path__ = [str(TOOLS)]
     sys.modules[package] = pkg
     loaded = {}
-    for name in ('_utils', 'Read', 'Glob', 'Grep'):
+    for name in ('_utils', 'Glob', 'Grep'):
         spec = importlib.util.spec_from_file_location(f'{package}.{name}', TOOLS / f'{name}.py')
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
@@ -61,10 +61,8 @@ def remote(tmp_path):
         yield workspace, agent
 
 
-def test_remote_read_glob_and_grep(remote):
+def test_remote_glob_and_grep(remote):
     workspace, agent = remote
-    read = TOOLS_MODULES['Read'].execute(agent, {'file_path': 'src/app.py'})
-    assert '1: alpha' in read['content']
     glob = TOOLS_MODULES['Glob'].execute(agent, {'path': '.', 'pattern': '**/*.py'})
     assert glob['files'] == ['src/app.py']
     grep = TOOLS_MODULES['Grep'].execute(agent, {'path': '.', 'pattern': 'alpha'})
@@ -74,46 +72,20 @@ def test_remote_read_glob_and_grep(remote):
     assert grep['matches'][0]['file'] == 'src/app.py'
 
 
-def test_remote_read_accepts_path_alias(remote):
-    _, agent = remote
-    result = TOOLS_MODULES['Read'].execute(agent, {'path': 'src/app.py'})
-    assert '1: alpha' in result['content']
-
-
-def test_remote_read_prefers_file_path_over_path(remote):
-    _, agent = remote
-    result = TOOLS_MODULES['Read'].execute(agent, {
-        'file_path': 'src/app.py', 'path': '../outside.txt'
-    })
-    assert '1: alpha' in result['content']
-
-
-def test_remote_read_requires_path_argument(remote):
-    _, agent = remote
-    assert TOOLS_MODULES['Read'].execute(agent, {}) == {'error': 'file_path is required'}
-
-
 def test_remote_boundary_rejects_traversal(remote):
     _, agent = remote
-    result = TOOLS_MODULES['Read'].execute(agent, {'file_path': '../outside.txt'})
+    result = TOOLS_MODULES['Glob'].execute(agent, {'path': '..', 'pattern': '*'})
     assert result == {'error': 'Access denied: path escapes workspace'}
 
 
 def test_remote_boundary_rejects_symlink_escape(remote, tmp_path):
     workspace, agent = remote
-    outside = tmp_path / 'outside.txt'
-    outside.write_text('secret')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'secret.txt').write_text('secret')
     (workspace / 'escape').symlink_to(outside)
-    result = TOOLS_MODULES['Read'].execute(agent, {'file_path': 'escape'})
+    result = TOOLS_MODULES['Glob'].execute(agent, {'path': 'escape', 'pattern': '*'})
     assert result == {'error': 'Access denied: path escapes workspace'}
-
-
-def test_local_backend_behavior(remote):
-    workspace, agent = remote
-    agent.pop('workplace_id')
-    result = TOOLS_MODULES['Read'].execute(agent, {'file_path': 'src/app.py', 'offset': 2})
-    assert result['shown_start'] == 2
-    assert '2: beta alpha' in result['content']
 
 
 def test_remote_glob_caps_at_max_files(remote):

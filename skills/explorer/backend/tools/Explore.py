@@ -186,7 +186,7 @@ print(json.dumps(info))
     if not explorer.worker_skill_enabled():
         return {'error': (
             f"The '{explorer.WORKER_SKILL_ID}' (DirExplorer) skill must be enabled — "
-            f"explorer sub-agents use its Grep/Read/Glob tools to do the work."
+            f"explorer sub-agents use its Grep/read_file/Glob tools to do the work."
         )}
 
     parent_agent = db.get_agent(parent_id)

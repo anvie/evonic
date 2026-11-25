@@ -11,6 +11,9 @@ from backend.tools._workspace import resolve_workspace_path
 
 _MAX_FILE_SIZE = 400 * 1024  # 400 KB
 _CHUNK_CHARS = 8000  # max content chars per page (leaves room for header/footer within 8KB LLM limit)
+# The KB organizer/janitor often runs on a small-context model and reads several docs per
+# turn, so each read returns a smaller window for it.
+_KB_CHUNK_CHARS = 3000
 
 
 def _is_binary(file_path: str) -> bool:
@@ -23,7 +26,12 @@ def _is_binary(file_path: str) -> bool:
         return False
 
 
-def read_file(file_path: str, offset: int = 1) -> str:
+def _footer(remaining: int, shown_end: int, chunk_chars: int) -> str:
+    cap_note = f" Output capped at {chunk_chars} chars for the KB organizer." if chunk_chars != _CHUNK_CHARS else ""
+    return f"\n[...{remaining} lines remaining.{cap_note} Call read_file with offset={shown_end + 1} to continue.]"
+
+
+def read_file(file_path: str, offset: int = 1, chunk_chars: int = _CHUNK_CHARS) -> str:
     """
     Reads a text file with optional pagination.
 
@@ -35,6 +43,7 @@ def read_file(file_path: str, offset: int = 1) -> str:
     Args:
         file_path (str): Path to the file.
         offset (int): 1-based line number to start reading from (default: 1).
+        chunk_chars (int): Max content characters per page.
 
     Returns:
         str: Header + formatted lines with line numbers, or a detailed error message.
@@ -75,13 +84,13 @@ def read_file(file_path: str, offset: int = 1) -> str:
         # Clamp offset to valid range
         start_idx = max(0, min(offset - 1, total_lines - 1))
 
-        # Accumulate lines up to _CHUNK_CHARS
+        # Accumulate lines up to chunk_chars
         output_lines = []
         chars = 0
         end_idx = start_idx
         for i in range(start_idx, total_lines):
             line_str = f"{i + 1}: {lines[i].rstrip()}"
-            if chars + len(line_str) + 1 > _CHUNK_CHARS and output_lines:
+            if chars + len(line_str) + 1 > chunk_chars and output_lines:
                 break
             output_lines.append(line_str)
             chars += len(line_str) + 1
@@ -95,7 +104,7 @@ def read_file(file_path: str, offset: int = 1) -> str:
 
         if shown_end < total_lines:
             remaining = total_lines - shown_end
-            footer = f"\n[...{remaining} lines remaining. Call read_file with offset={shown_end + 1} to continue.]"
+            footer = _footer(remaining, shown_end, chunk_chars)
             return f"{header}\n\n{content}{footer}"
 
         return f"{header}\n\n{content}"
@@ -117,6 +126,7 @@ def execute(agent, args: dict) -> dict:
 
     if not file_path:
         return "Error: file_path is required."
+    chunk_chars = _KB_CHUNK_CHARS if (agent or {}).get('is_kb_organizer') else _CHUNK_CHARS
 
     # Heuristic safety check: block access to .ssh directory
     if not (agent or {}).get('_skip_safety') and (agent is None or agent.get("safety_checker_enabled", 1)):
@@ -192,7 +202,7 @@ def execute(agent, args: dict) -> dict:
             if suggestion:
                 return f"Error: File not found: {file_path}. Did you mean: {suggestion}"
             return f"Error: File not found: {file_path}."
-        return read_file(local_path, offset=offset)
+        return read_file(local_path, offset=offset, chunk_chars=chunk_chars)
 
     # Hint when path starts with _self/ but missing leading slash
     if agent_id and file_path and (file_path.startswith('_self/') or file_path == '_self'):
@@ -236,7 +246,7 @@ def execute(agent, args: dict) -> dict:
         end_idx = start_idx
         for i in range(start_idx, total_lines):
             line_str = f"{i + 1}: {lines[i]}"
-            if chars + len(line_str) + 1 > _CHUNK_CHARS and output_lines:
+            if chars + len(line_str) + 1 > chunk_chars and output_lines:
                 break
             output_lines.append(line_str)
             chars += len(line_str) + 1
@@ -247,7 +257,7 @@ def execute(agent, args: dict) -> dict:
         content_block = "\n".join(output_lines)
         if shown_end < total_lines:
             remaining = total_lines - shown_end
-            footer = f"\n[...{remaining} lines remaining. Call read_file with offset={shown_end + 1} to continue.]"
+            footer = _footer(remaining, shown_end, chunk_chars)
             return f"{header}\n\n{content_block}{footer}"
         return f"{header}\n\n{content_block}"
 
@@ -308,13 +318,13 @@ def execute(agent, args: dict) -> dict:
         # Clamp offset to valid range
         start_idx = max(0, min(offset - 1, total_lines - 1))
 
-        # Accumulate lines up to _CHUNK_CHARS
+        # Accumulate lines up to chunk_chars
         output_lines = []
         chars = 0
         end_idx = start_idx
         for i in range(start_idx, total_lines):
             line_str = f"{i + 1}: {lines[i]}"
-            if chars + len(line_str) + 1 > _CHUNK_CHARS and output_lines:
+            if chars + len(line_str) + 1 > chunk_chars and output_lines:
                 break
             output_lines.append(line_str)
             chars += len(line_str) + 1
@@ -328,14 +338,18 @@ def execute(agent, args: dict) -> dict:
 
         if shown_end < total_lines:
             remaining = total_lines - shown_end
-            footer = f"\n[...{remaining} lines remaining. Call read_file with offset={shown_end + 1} to continue.]"
+            footer = _footer(remaining, shown_end, chunk_chars)
             return f"{header}\n\n{content_block}{footer}"
 
         return f"{header}\n\n{content_block}"
 
     # No sandbox — direct host filesystem access (original behavior)
     file_path = resolve_workspace_path(agent, file_path, _WORKSPACE_ROOT)
-    return read_file(file_path, offset=offset)
+    # The organizer is shown docs by slug (no extension): accept the bare slug too.
+    if (agent or {}).get('is_kb_organizer') and not os.path.exists(file_path) \
+            and os.path.isfile(file_path + '.md'):
+        file_path += '.md'
+    return read_file(file_path, offset=offset, chunk_chars=chunk_chars)
 
 
 def test_execute():

@@ -10,6 +10,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+_SMART_QUOTES = '\u2018\u2019\u201c\u201d'
+
 from backend.tools._workspace import resolve_workspace_path
 try:
     from backend.tools.lib.safety_pipeline import should_skip_safety
@@ -219,9 +221,12 @@ def execute(agent, args: dict) -> dict:
     if not old_str:
         return {'error': "'old_str' must not be empty"}
 
-    # Normalise smart quotes in replacement content before applying
+    # Normalise smart quotes in replacement content before applying, except the
+    # ones old_str itself carries: those are copied from the file, and straightening
+    # them would silently reword the surrounding text.
     from backend.normalizer import normalize_code_quotes
-    new_str = normalize_code_quotes(new_str)
+    kept = {ch for ch in _SMART_QUOTES if ch in old_str}
+    new_str = ''.join(ch if ch in kept else normalize_code_quotes(ch) for ch in new_str)
 
     # /_self/ path: always route to the agent's local directory on the evonic server.
     # Sub-agents inherit their parent's directory — use effective agent ID.

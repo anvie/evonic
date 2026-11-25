@@ -933,7 +933,7 @@ def build_tools(agent: Dict[str, Any], channel_id: Optional[str] = None) -> List
 
     # Explorer sub-agents (the Explore tool's explorers AND the KB organizer) are
     # isolated workers: they get ONLY their configured tools — the direxplorer
-    # read-only set (Grep/Read/Glob) plus any EXTRAS the user added in the explorer
+    # read-only set (Grep/read_file/Glob) plus any EXTRAS the user added in the explorer
     # skill settings. They must NOT receive built-ins (remember/recall/...),
     # universal, messaging, or parent tools. Resolve FIRST and return; their tools
     # may come from a LAZY skill, hence resolving directly via _explorer.tool_defs.

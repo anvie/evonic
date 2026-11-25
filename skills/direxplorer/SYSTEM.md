@@ -30,14 +30,14 @@ Examples:
 2. If no results, try different patterns (e.g., "subagent", "idle", "TTL" separately)
 3. Use Glob to understand directory structure and find files by pattern
 4. Read directory listings to navigate subdirectories
-5. Batch parallel calls: Grep + Glob + Read simultaneously
-6. After identifying targets, Read the relevant file sections to confirm
+5. Batch parallel calls: Grep + Glob + read_file simultaneously
+6. After identifying targets, read_file the relevant file sections to confirm
 
 ## Example: Finding configuration constants
 
 Query: "Find idle timeout values"
 Step 1: Grep pattern="idle|timeout|TTL" path="/srv/evonic/backend" include="*.py"
-Step 2: Read the matching files to confirm exact line numbers
+Step 2: read_file the matching files to confirm exact line numbers
 Step 3: Output final answer
 
 ## Required Output

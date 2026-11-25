@@ -20,7 +20,9 @@
             "description": "Optional glob pattern to filter files. Example: '*.py' or '*.{js,ts}'."
           }
         },
-        "required": ["pattern"]
+        "required": [
+          "pattern"
+        ]
       }
     }
   },
@@ -41,31 +43,9 @@
             "description": "Directory to search within. Relative paths are resolved against the workspace root. Defaults to workspace root."
           }
         },
-        "required": ["pattern"]
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "Read",
-      "description": "Read a text file and return its content with 1-based line numbers. Use this to inspect file contents after locating files with Grep or Glob. Supports pagination via the `offset` parameter for large files.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "file_path": {
-            "type": "string",
-            "description": "Path to the file to read. Relative paths are resolved against the workspace root."
-          },
-          "path": {
-            "type": "string",
-            "description": "Alias for file_path. Relative paths are resolved against the workspace root."
-          },
-          "offset": {
-            "type": "integer",
-            "description": "1-based line number to start reading from (default: 1). Use for paginating through large files."
-          }
-        }
+        "required": [
+          "pattern"
+        ]
       }
     }
   }

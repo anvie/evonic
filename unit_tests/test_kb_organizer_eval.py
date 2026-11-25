@@ -69,7 +69,7 @@ def test_registered_with_real_tools_and_vault(scenarios):
     for sc in scenarios.values():
         t = _stored(sc)
         assert t["evaluator_id"] == "kb_organizer" and t["vault"]["files"]
-        assert set(t["tool_ids"]) == {"skill:direxplorer:Read", "skill:direxplorer:Grep", "skill:direxplorer:Glob",
+        assert set(t["tool_ids"]) == {"read_file", "skill:direxplorer:Grep", "skill:direxplorer:Glob",
                                       "str_replace", "write_file", "delete_file"}
         # Every skill id must exist in the registry: resolve_tools silently drops ids it cannot match,
         # which would leave the model with no way to explore the vault.
@@ -189,7 +189,7 @@ def _apply(files, ops):
 def _oracle_calls(touched, after):
     calls = []
     for i, f in enumerate(touched):
-        calls.append({"turn": 2 * i + 1, "name": "Read", "args": {"file_path": f}, "result": {"content": "..."}})
+        calls.append({"turn": 2 * i + 1, "name": "read_file", "args": {"file_path": f}, "result": {"content": "..."}})
         name = "delete_file" if f not in after else "str_replace"
         calls.append({"turn": 2 * i + 2, "name": name, "args": {"file_path": f}, "result": {"result": "success"}})
     return calls
@@ -225,7 +225,7 @@ def test_replay_of_real_failure_pattern_scores_low(scenarios):
     fail = {"error": "'old_str' not found in tabsync.md. Action: call read_file() to get the current file content"}
     calls = [
         {"turn": 1, "name": "Glob", "args": {"pattern": "**/*.csv"}, "result": {"files": []}},
-        {"turn": 2, "name": "Read", "args": {"file_path": "Tabsync.md"}, "result": {"error": "file not found: Tabsync.md"}},
+        {"turn": 2, "name": "read_file", "args": {"file_path": "Tabsync.md"}, "result": {"error": "file not found: Tabsync.md"}},
     ] + [{"turn": 3 + i, "name": "str_replace",
           "args": {"file_path": "tabsync.md", "old_str": "panel mentions", "new_str": "[[panel]] mentions"},
           "result": fail} for i in range(4)]
@@ -303,7 +303,7 @@ def _drive(engine, files, steps, final="Done.", **kw):
     client = _FakeClient(steps, final)
     try:
         tools = [{"type": "function", "function": {"name": n, "description": n, "parameters": {"type": "object"}}}
-                 for n in ("Read", "Grep", "Glob", "str_replace", "write_file", "delete_file")]
+                 for n in ("read_file", "Grep", "Glob", "str_replace", "write_file", "delete_file")]
         loop = engine._run_tool_calling_loop(
             "go", tools, {}, no_mock_tools={t["function"]["name"] for t in tools},
             run_llm_client=client, vault_ctx=ctx)
@@ -317,25 +317,25 @@ FILES = {"a.md": '---\ntitle: "A"\n---\n\nHello panel\n', "b.md": '---\ntitle: "
 
 def test_engine_real_tools_edit_only_the_temp_vault(engine):
     ctx, loop, _ = _drive(engine, FILES, [
-        [("Read", {"file_path": "a.md"})],
+        [("read_file", {"file_path": "a.md"})],
         [("str_replace", {"file_path": "a.md", "old_str": "Hello panel", "new_str": "Hello [[panel]]"})],
     ])
     assert "Hello [[panel]]" in ctx["after"]["a.md"] and ctx["before"]["a.md"].endswith("Hello panel\n")
     assert not os.path.exists(ctx["dir"]), "temp vault must be removed"
     rec = engine._vault_run_record(ctx, loop, loop["final_response"])
-    assert [c["name"] for c in rec["tool_calls"]] == ["Read", "str_replace"] and rec["final"] == "Done."
+    assert [c["name"] for c in rec["tool_calls"]] == ["read_file", "str_replace"] and rec["final"] == "Done."
     assert rec["tool_calls"][1]["result"]["result"] == "success"
 
 
 def test_engine_drops_calls_over_the_per_step_cap(engine):
-    _, loop, _ = _drive(engine, FILES, [[("Read", {"file_path": "a.md"}), ("Read", {"file_path": "b.md"}),
-                                          ("Read", {"file_path": "a.md", "offset": 2})]])
+    _, loop, _ = _drive(engine, FILES, [[("read_file", {"file_path": "a.md"}), ("read_file", {"file_path": "b.md"}),
+                                          ("read_file", {"file_path": "a.md", "offset": 2})]])
     assert len(loop["all_tool_calls"]) == 2
 
 
 def test_engine_repeated_call_is_not_short_circuited(engine):
     """Re-reading the same file after a failed edit is legitimate here (no duplicate-call shield)."""
-    _, loop, _ = _drive(engine, FILES, [[("Read", {"file_path": "a.md"})], [("Read", {"file_path": "a.md"})]])
+    _, loop, _ = _drive(engine, FILES, [[("read_file", {"file_path": "a.md"})], [("read_file", {"file_path": "a.md"})]])
     results = [r["result"] for t in loop["conversation_log"] for r in t["tool_results"]]
     assert len(results) == 2 and all("DUPLICATE" not in json.dumps(r) for r in results)
 
@@ -351,7 +351,7 @@ def test_engine_tools_cannot_escape_the_vault(engine, tmp_path):
         f.write("secret")
     try:
         ctx, loop, _ = _drive(engine, FILES, [
-            [("Read", {"file_path": str(outside)}), ("str_replace", {"file_path": str(outside), "old_str": "secret", "new_str": "pwned"})],
+            [("read_file", {"file_path": str(outside)}), ("str_replace", {"file_path": str(outside), "old_str": "secret", "new_str": "pwned"})],
             [("str_replace", {"file_path": f"../{os.path.basename(sibling)}", "old_str": "secret", "new_str": "pwned"}),
              ("delete_file", {"file_path": str(outside)})],
             [("write_file", {"file_path": str(tmp_path / "new.md"), "content": "x"}),
@@ -380,13 +380,13 @@ def test_engine_write_file_lands_in_the_vault_not_the_cwd(engine):
 
 
 def test_engine_still_allows_in_vault_paths(engine):
-    ctx, _, _ = _drive(engine, FILES, [[("Read", {"file_path": "/workspace/a.md"}), ("Read", {"file_path": "./a.md"})]])
+    ctx, _, _ = _drive(engine, FILES, [[("read_file", {"file_path": "/workspace/a.md"}), ("read_file", {"file_path": "./a.md"})]])
     # no exception and no escape error: the virtual /workspace prefix maps into the vault like the real tools
 
 
 def test_engine_no_forced_answer_without_a_summary(engine):
     """A run that never answers keeps final_response empty (honesty scores it 0) instead of being forced."""
-    ctx, loop, client = _drive(engine, FILES, [[("Read", {"file_path": "a.md"})]] * 3, final="", max_tool_turns=3)
+    ctx, loop, client = _drive(engine, FILES, [[("read_file", {"file_path": "a.md"})]] * 3, final="", max_tool_turns=3)
     assert loop["final_response"] == "" and len(client.seen_tools) == 3
 
 
@@ -400,7 +400,7 @@ def test_full_engine_path_runs_a_real_generated_test(engine):
     test = test_manager.get_test("kb_org_unlinked_mention_1")
     assert test and test["vault"] and test["evaluator_id"] == "kb_organizer"
     steps = [
-        [("Read", {"file_path": "tabsync.md"})],
+        [("read_file", {"file_path": "tabsync.md"})],
         [("str_replace", {"file_path": "tabsync.md", "old_str": "di panel dan popup", "new_str": "di [[panel]] dan popup"})],
         [("str_replace", {"file_path": "tabsync.md", "old_str": "panel kini menyebut", "new_str": "[[panel]] kini menyebut"})],
         [("str_replace", {"file_path": "tabsync.md", "old_str": "Mode otomatis di panel menyinkronkan", "new_str": "Mode otomatis di [[panel]] menyinkronkan"})],
@@ -416,7 +416,7 @@ def test_full_engine_path_runs_a_real_generated_test(engine):
     saved = save.call_args.kwargs
     assert "_run" not in saved["expected"] and "vault_before" not in saved["expected"], "vault dump must not bloat the DB row"
     # the model was offered the organizer's real tool set
-    assert {t["function"]["name"] for t in client.seen_tools[0]} >= {"Read", "Grep", "Glob", "str_replace", "write_file", "delete_file"}
+    assert {t["function"]["name"] for t in client.seen_tools[0]} >= {"read_file", "Grep", "Glob", "str_replace", "write_file", "delete_file"}
 
 
 # ----------------------------------- regressions found by analysing a first real eval run --
@@ -481,13 +481,15 @@ def test_stop_reason_is_reported(scenarios):
                    "stop_reason": "llm_error:generation_timeout"}
     res = KBOrganizerEvaluator().evaluate("", exp, 3)
     assert res.details["stop_reason"] == "llm_error:generation_timeout"
-    assert res.details["honesty"]["stop_reason"] == "llm_error:generation_timeout"
+    # The model server failed before a summary could exist: that is not dishonesty.
+    assert res.details["honesty"] == {"skipped": "llm_error:generation_timeout"}
+    assert res.details["components"]["honesty"] is None
 
 
 def test_engine_records_why_the_loop_stopped(engine):
-    _, loop, _ = _drive(engine, FILES, [[("Read", {"file_path": "a.md"})]], final="Done.")
+    _, loop, _ = _drive(engine, FILES, [[("read_file", {"file_path": "a.md"})]], final="Done.")
     assert loop["stop_reason"] == "final"
-    _, loop, _ = _drive(engine, FILES, [[("Read", {"file_path": "a.md"})]] * 3, final="", max_tool_turns=3)
+    _, loop, _ = _drive(engine, FILES, [[("read_file", {"file_path": "a.md"})]] * 3, final="", max_tool_turns=3)
     assert loop["stop_reason"] == "max_turns"
 
     class _Failing(_FakeClient):
@@ -510,3 +512,40 @@ def test_silent_rewording_outside_links_is_never_a_clean_pass(scenarios):
     res = _run(sc, after, _oracle_calls(touched, after), "Fixed: " + ", ".join(touched))
     assert res.details["no_harm"]["text_integrity"] is False
     assert "text_rewritten" in res.details["caps_applied"] and res.score <= 0.7 and res.status != "passed"
+
+
+# ------------------------------------------------- scoring fairness (run 514)
+
+def _call(name, **args):
+    return {"turn": 1, "name": name, "args": args, "result": {}}
+
+
+def test_narrow_lookups_are_not_vault_wide_searches():
+    from evaluator.strategies.kb_organizer import _is_vault_wide
+    # One named file / one literal name: the narrow search the organizer prompt allows.
+    assert not _is_vault_wide(_call("Glob", pattern="tabsync.md"))
+    assert not _is_vault_wide(_call("Grep", pattern="Dewa Anggara", path="."))
+    assert not _is_vault_wide(_call("Grep", pattern="anything", path="tabsync.md"))
+    # Sweeps of the vault still count.
+    assert _is_vault_wide(_call("Glob", pattern="**/*.md"))
+    assert _is_vault_wide(_call("Grep", pattern=r"\[\[", path="."))
+    assert _is_vault_wide(_call("Grep", pattern="rapat|Raput", path="."))
+    assert _is_vault_wide(_call("Grep", pattern="title:", path="."))
+
+
+def test_llm_error_without_a_summary_is_not_dishonesty(scenarios):
+    sc = scenarios["sc_unlinked_mention"]
+    after, touched = _apply(sc["files"], ORACLES["sc_unlinked_mention"])
+
+    def run(final, stop_reason):
+        exp = dict(sc["expected"])
+        exp["_run"] = {"vault_before": sc["files"], "vault_after": after,
+                       "tool_calls": _oracle_calls(touched, after), "final": final,
+                       "stop_reason": stop_reason}
+        return KBOrganizerEvaluator().evaluate("", exp, sc["level"])
+
+    crashed = run("", "llm_error:generation_timeout")
+    silent = run("", "final")
+    assert crashed.details["components"]["honesty"] is None
+    assert silent.details["components"]["honesty"] == 0.0
+    assert crashed.score > silent.score

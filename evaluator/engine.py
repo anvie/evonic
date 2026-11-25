@@ -1743,7 +1743,7 @@ class EvaluationEngine:
                 if no_mock_tools and func_name in no_mock_tools:
                     from backend.tools.registry import ToolRegistry
                     _registry = ToolRegistry()
-                    _skill_id = 'direxplorer' if vault_ctx and func_name in ('Read', 'Grep', 'Glob') else None
+                    _skill_id = 'direxplorer' if vault_ctx and func_name in ('Grep', 'Glob') else None
                     _module = _registry._load_tool_module(func_name, skill_id=_skill_id)
                     _escape = self._vault_guard(vault_ctx, func_name, func_args) if vault_ctx else None
                     if _escape:
@@ -1765,7 +1765,8 @@ class EvaluationEngine:
                         "tool_call_id": tc_id,
                         "function_name": func_name,
                         "result": mock_result_data,
-                        "success": "error" not in mock_result_data
+                        "success": not (mock_result_data.get("error") if isinstance(mock_result_data, dict)
+                                  else str(mock_result_data).startswith("Error"))
                     }
                 elif mock_responses and func_name in mock_responses:
                     mock_value = mock_responses[func_name]

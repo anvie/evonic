@@ -1,5 +1,5 @@
 """
-Shared utilities for FastContext tools — Grep, Glob, Read.
+Shared utilities for FastContext tools — Grep, Glob.
 
 Provides _auto_correct_path for hallucinated-path fallback resolution.
 """
@@ -37,11 +37,18 @@ def _run_python_json(backend, code: str, timeout: int = 30):
         ) from exc
 
 
-def _path_info(backend, path: str) -> dict:
+def _path_infos(backend, *paths: str) -> list:
+    """Stat several paths in ONE backend call (each call spawns an interpreter)."""
     code = f'''import json, os
-p = {path!r}
-print(json.dumps({{"path": os.path.realpath(p), "exists": os.path.exists(p), "is_dir": os.path.isdir(p), "is_file": os.path.isfile(p), "size": os.path.getsize(p) if os.path.isfile(p) else 0}}))'''
+out = []
+for p in {list(paths)!r}:
+    out.append({{"path": os.path.realpath(p), "exists": os.path.exists(p), "is_dir": os.path.isdir(p), "is_file": os.path.isfile(p), "size": os.path.getsize(p) if os.path.isfile(p) else 0}})
+print(json.dumps(out))'''
     return _run_python_json(backend, code)
+
+
+def _path_info(backend, path: str) -> dict:
+    return _path_infos(backend, path)[0]
 
 
 def _auto_correct_path(backend, requested_path: str, workspace: str, path_is_dir: bool = False) -> str:
@@ -101,8 +108,7 @@ def _prepare_path(agent: dict, path: str, *, want_dir: bool | None = None) -> tu
     workspace_lexical = posixpath.normpath(workspace)
     if workspace and lexical != workspace_lexical and not lexical.startswith(workspace_lexical + '/'):
         raise PermissionError("Access denied: path escapes workspace")
-    info = _path_info(backend, lexical)
-    workspace_info = _path_info(backend, workspace_lexical)
+    info, workspace_info = _path_infos(backend, lexical, workspace_lexical)
     canonical, canonical_ws = info['path'], workspace_info['path']
     if canonical != canonical_ws and not canonical.startswith(canonical_ws.rstrip('/') + '/'):
         raise PermissionError("Access denied: path escapes workspace")

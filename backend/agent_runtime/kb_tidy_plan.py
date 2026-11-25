@@ -297,7 +297,7 @@ def render_plan(docs: Dict[str, Doc], batch: List[str], neighbors: List[str],
     if issues:
         lines.append("DETECTED ISSUES (computed from the WHOLE vault already, so you "
                      "do NOT need to search it; heuristic, so each may be a FALSE "
-                     "POSITIVE — Read the doc to verify before fixing; do NOT link "
+                     "POSITIVE — read_file the doc to verify before fixing; do NOT link "
                      "entities that merely share a name fragment):")
         lines.extend(f"- {i}" for i in issues)
     else:

@@ -19,6 +19,19 @@ _MAX_OUTPUT_CHARS = 50_000
 # (~12k tokens) can overflow it, so it gets much tighter caps.
 _KB_MAX_MATCHES = 40
 _KB_MAX_OUTPUT_CHARS = 6_000
+# A doc line can be a whole paragraph; one such line would eat the organizer's cap, so each
+# matched line is trimmed to a window around the match.
+_KB_MAX_LINE_CHARS = 200
+
+
+def _clip_line(text: str, needle: str, limit: int) -> str:
+    """Trim *text* to ~*limit* chars, keeping the first occurrence of *needle* in view."""
+    if len(text) <= limit:
+        return text
+    at = max(0, text.find(needle)) if needle else 0
+    start = max(0, min(at - limit // 4, len(text) - limit))
+    end = start + limit
+    return ('…' if start else '') + text[start:end] + ('…' if end < len(text) else '')
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -85,6 +98,10 @@ def execute(agent: dict, args: dict) -> dict:
                 file_abs = match_data.get('path', {}).get('text', '')
                 line_num = match_data.get('line_number', 0)
                 line_text = match_data.get('lines', {}).get('text', '').rstrip('\n')
+                if agent.get('is_kb_organizer'):
+                    submatches = match_data.get('submatches') or [{}]
+                    line_text = _clip_line(line_text, submatches[0].get('match', {}).get('text', ''),
+                                           _KB_MAX_LINE_CHARS)
 
                 if total_matches >= max_matches:
                     truncated = True

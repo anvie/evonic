@@ -3,7 +3,7 @@
 Covers the pure helpers (doc listing, slug resolution, JSON parsing) and the
 ``_author_docs`` integration with the organizer sub-agent mocked: the
 create-collision guard (never mint a duplicate), update-by-slug for name variants,
-skip-on-failure, and the server-local /_self/kb config used so Grep/Read/Glob hit
+skip-on-failure, and the server-local /_self/kb config used so Grep/read_file/Glob hit
 the server KB even on a remote workplace.
 """
 

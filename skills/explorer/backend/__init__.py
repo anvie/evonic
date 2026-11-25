@@ -1,4 +1,4 @@
-"""FastContext skill backend — Grep, Glob, Read tools."""
+"""FastContext skill backend — Grep, Glob tools."""
 import os
 import glob as _glob
 
