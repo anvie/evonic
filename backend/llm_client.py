@@ -546,6 +546,10 @@ class LLMClient:
                          fallback unless this client uses the global default.
         """
         self.provider = None
+        # Resolved provider kind ("local" vs "remote"); used to decide whether an
+        # OpenAI-compatible endpoint is self-hosted (llama.cpp/vLLM) and can be
+        # told to skip chain-of-thought via chat_template_kwargs.
+        self.provider_type = None
         self.service_tier = model_config.get("service_tier") if model_config else None
         # Opt-in escape hatch for OpenAI-compatible servers that expose chat
         # template switches (llama.cpp/vLLM: {"enable_thinking": false}).
@@ -564,6 +568,7 @@ class LLMClient:
             except Exception:
                 pass
             self.provider = model_config.get("provider")
+            self.provider_type = model_config.get("provider_type")
             self.base_url = model_config.get("base_url")
             self.api_key = model_config.get("api_key")
             self.model = model_config.get("model_name")
@@ -585,6 +590,7 @@ class LLMClient:
                     self._model_api_key_override = bool(dm.get("api_key"))
                     dm = db.resolve_model_config(dm)
                     self.provider = dm.get("provider")
+                    self.provider_type = dm.get("provider_type")
                     self.base_url = dm.get("base_url")
                     self.api_key = dm.get("api_key")
                     self.model = dm.get("model_name")
@@ -643,6 +649,43 @@ class LLMClient:
         self.max_retries: Optional[int] = None
         self._settings_cache = {}
         self._settings_cache_time = 0
+
+    # OpenAI-compatible servers that forward chat_template_kwargs to the chat
+    # template and therefore accept llama.cpp/vLLM's ``enable_thinking`` switch.
+    _CHAT_TEMPLATE_PROVIDERS = frozenset(
+        {"llama.cpp", "llama-cpp", "llamacpp", "vllm"})
+
+    def supports_thinking_toggle(self) -> bool:
+        """Whether this provider can be told to skip chain-of-thought on the wire.
+
+        llama.cpp and vLLM pass ``chat_template_kwargs`` into the chat template,
+        so ``{"enable_thinking": False}`` actually changes what the model
+        generates. Anthropic, Ollama and the Responses API speak their own
+        protocols and never see that key, so "thinking off" is unrepresentable
+        there and an identical retry is guaranteed to fail the same way.
+
+        Callers that must decide between retrying and falling back (see
+        ``generation_timeout`` handling in the agent loop) use this instead of
+        guessing from the model name.
+        """
+        adapter_key = getattr(self, "adapter_key", None) or {
+            "codex": "codex.responses.v1",
+            "ollama": "ollama.chat.v1",
+            "anthropic": "anthropic.messages.v1",
+        }.get(getattr(self, "api_format", "openai"), "openai.chat_completions.v1")
+        if adapter_key != "openai.chat_completions.v1":
+            return False
+        # An explicit static config is the operator declaring that the endpoint
+        # supports the switch (e.g. a custom server behind the "custom" provider).
+        if getattr(self, "chat_template_kwargs", None):
+            return True
+        provider = (getattr(self, "provider", "") or "").strip().lower()
+        if provider in self._CHAT_TEMPLATE_PROVIDERS:
+            return True
+        if getattr(self, "provider_type", None) == "local":
+            return True
+        base_url = (getattr(self, "base_url", "") or "").lower()
+        return any(host in base_url for host in ("localhost", "127.0.0.1", "[::1]"))
 
     def _get_cached_setting(self, cache_key: str, db_func, *args) -> Any:
         """Return a cached setting value with a 30-second TTL.
@@ -1265,13 +1308,25 @@ class LLMClient:
                 if tool_choice:
                     payload["tool_choice"] = {
                         "type": "function", "function": {"name": tool_choice}}
-            # Opt-in only (model_config["chat_template_kwargs"]). Self-hosted
-            # OpenAI-compatible servers (llama.cpp/vLLM) use it to switch the
-            # chat template, e.g. {"enable_thinking": false} to stop a thinking
-            # model from spending the whole budget on chain-of-thought.
+            # Self-hosted OpenAI-compatible servers (llama.cpp/vLLM) switch the
+            # chat template via chat_template_kwargs, e.g.
+            # {"enable_thinking": false} to stop a thinking model from spending
+            # the whole output budget on chain-of-thought.
+            #
+            # The static model_config value is the opt-in baseline. A call-time
+            # ``enable_thinking=False`` must win for that key: previously only
+            # the static config reached the wire, so a generation_timeout retry
+            # asking for "thinking off" replayed the identical request and
+            # exhausted the same budget again (Kanban #928).
             # Anthropic and Ollama have their own protocols and never see it.
-            if getattr(self, "chat_template_kwargs", None):
-                payload["chat_template_kwargs"] = dict(self.chat_template_kwargs)
+            _chat_template_kwargs = (
+                dict(self.chat_template_kwargs)
+                if getattr(self, "chat_template_kwargs", None) else None)
+            if not enable_thinking and self.supports_thinking_toggle():
+                _chat_template_kwargs = dict(_chat_template_kwargs or {})
+                _chat_template_kwargs["enable_thinking"] = False
+            if _chat_template_kwargs:
+                payload["chat_template_kwargs"] = _chat_template_kwargs
             # Opt-in only (model_config["reasoning_effort"]). OpenAI-compatible
             # providers such as DeepSeek accept "low"/"medium"/"high"/"max";
             # an unset value omits the key so the provider default applies.

@@ -74,6 +74,90 @@ def test_chat_template_kwargs_are_absent_unless_opted_in():
     assert "chat_template_kwargs" not in post.call_args.kwargs["json"]
 
 
+def test_call_time_thinking_off_reaches_the_llama_cpp_payload():
+    # No static model_config entry: the call-time enable_thinking=False must
+    # still reach the wire, otherwise "thinking off" is a lie (Kanban #928).
+    client = _client()
+    with patch("backend.llm_client.requests.post", return_value=_response(_openai_body())) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion(
+            [{"role": "user", "content": "ping"}], max_tokens=32, enable_thinking=False)
+
+    assert result["success"] is True, result
+    assert post.call_args.kwargs["json"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_thinking_off_preserves_static_chat_template_keys():
+    client = _client(chat_template_kwargs={"custom_flag": True, "enable_thinking": True})
+    with patch("backend.llm_client.requests.post", return_value=_response(_openai_body())) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion(
+            [{"role": "user", "content": "ping"}], max_tokens=32, enable_thinking=False)
+
+    assert result["success"] is True, result
+    assert post.call_args.kwargs["json"]["chat_template_kwargs"] == {
+        "custom_flag": True, "enable_thinking": False}
+
+
+def test_thinking_on_keeps_omitting_chat_template_kwargs():
+    client = _client()
+    with patch("backend.llm_client.requests.post", return_value=_response(_openai_body())) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion(
+            [{"role": "user", "content": "ping"}], max_tokens=32, enable_thinking=True)
+
+    assert result["success"] is True, result
+    assert "chat_template_kwargs" not in post.call_args.kwargs["json"]
+
+
+def test_thinking_off_never_reaches_the_anthropic_protocol():
+    client = _client(api_format="anthropic",
+                     base_url="http://anthropic.example/v1",
+                     _model_api_key_override=True)
+    body = {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "pong"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 5, "output_tokens": 1},
+    }
+    with patch("backend.llm_client.requests.post", return_value=_response(body)) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion(
+            [{"role": "user", "content": "ping"}], max_tokens=32, enable_thinking=False)
+
+    assert result["success"] is True, result
+    assert post.call_args.args[0].endswith("/v1/messages")
+    assert "chat_template_kwargs" not in post.call_args.kwargs["json"]
+
+
+def test_thinking_off_never_reaches_the_ollama_protocol():
+    client = _client(api_format="ollama", adapter_key="ollama.chat.v1",
+                     base_url="http://ollama.example:11434/api")
+    body = {"message": {"role": "assistant", "content": "pong"},
+            "done": True, "prompt_eval_count": 3, "eval_count": 1}
+    with patch("backend.llm_client.requests.post", return_value=_response(body)) as post, \
+         patch("backend.llm_client.log_api_call"):
+        result = client.chat_completion(
+            [{"role": "user", "content": "ping"}], max_tokens=32, enable_thinking=False)
+
+    assert result["success"] is True, result
+    assert post.call_args.args[0].endswith("/api/chat")
+    assert "chat_template_kwargs" not in post.call_args.kwargs["json"]
+
+
+def test_supports_thinking_toggle_is_only_true_for_self_hosted_openai_servers():
+    assert _client().supports_thinking_toggle() is True   # llama.cpp
+    assert _client(provider="llamacpp").supports_thinking_toggle() is True
+    assert _client(provider="vllm").supports_thinking_toggle() is True
+    assert _client(provider="openai", provider_type="remote",
+                   base_url="https://api.openai.com/v1").supports_thinking_toggle() is False
+    assert _client(api_format="anthropic",
+                   base_url="http://anthropic.example/v1").supports_thinking_toggle() is False
+    assert _client(api_format="ollama", adapter_key="ollama.chat.v1",
+                   base_url="http://ollama.example:11434/api").supports_thinking_toggle() is False
+
+
 def test_chat_template_kwargs_never_reach_the_ollama_protocol():
     client = _client(api_format="ollama", adapter_key="ollama.chat.v1",
                      base_url="http://ollama.example:11434/v1",

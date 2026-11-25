@@ -966,9 +966,10 @@ class TestGenerationTimeoutRetry(unittest.TestCase):
              'model_name': 'm', 'timeout': 900, 'thinking': 1, 'thinking_budget': 0,
              'max_tokens': 64000, 'context_window': 256000, 'enabled': True}
 
-    def _run(self):
+    def _run(self, can_toggle_thinking=True):
         llm = MagicMock()
         llm.chat_completion.side_effect = [_gen_timeout(), _ok('answered')]
+        llm.supports_thinking_toggle.return_value = can_toggle_thinking
         mock_db = MagicMock()
         mock_db.get_setting.side_effect = lambda key, default=None: default or '0'
         mock_db.add_chat_message.return_value = None
@@ -997,15 +998,39 @@ class TestGenerationTimeoutRetry(unittest.TestCase):
                 llm_log_path=None)
         budgets = [c[0][1]['output_reserve'] for c in mock_es.emit.call_args_list
                    if c[0][0] == 'llm_request_budget']
-        return llm, budgets
+        return llm, budgets, mock_es
 
-    def test_retry_halves_output_budget_disables_thinking_and_says_act_now(self):
-        llm, budgets = self._run()
+    def test_retry_keeps_output_budget_disables_thinking_and_says_act_now(self):
+        # Halving the budget made the retry strictly worse: the model re-ran the
+        # same chain-of-thought into a smaller window (Kanban #928). The retry
+        # must keep the budget that already failed and only turn thinking off.
+        llm, budgets, _ = self._run()
         first, second = llm.chat_completion.call_args_list
         self.assertTrue(first.kwargs['enable_thinking'])
         self.assertIsNone(first.kwargs['max_tokens'])
         self.assertFalse(second.kwargs['enable_thinking'])
-        self.assertEqual(second.kwargs['max_tokens'], 32000)
+        self.assertEqual(second.kwargs['max_tokens'], 64000)
         self.assertIn('entire output budget', second.kwargs['messages'][-1]['content'])
-        # the planner's output reserve matches what is sent (no 2x doubling of 64k)
-        self.assertEqual(budgets[:2], [64000, 32000])
+        # the planner's output reserve matches what is sent, before and after
+        self.assertEqual(budgets[:2], [64000, 64000])
+
+    def test_unrepresentable_thinking_off_skips_retry_and_falls_back(self):
+        # A provider with no chat-template support cannot express "thinking off";
+        # replaying the identical request would only burn another full budget, so
+        # the loop must go straight to the fallback chain (Kanban #928).
+        llm, _, mock_es = self._run(can_toggle_thinking=False)
+        # No second primary generation: every provider call keeps thinking on,
+        # because the switch could not have changed anything.
+        self.assertTrue(llm.chat_completion.call_args_list[0].kwargs['enable_thinking'])
+        self.assertFalse(any(c.kwargs.get('enable_thinking') is False
+                             for c in llm.chat_completion.call_args_list))
+        retry_events = [c[0][1] for c in mock_es.emit.call_args_list
+                        if c[0][0] == 'llm_retry'
+                        and c[0][1].get('error_type') == 'generation_timeout']
+        self.assertEqual(retry_events, [])
+        # The primary model's single request used the un-shrunk budget.
+        primary_budgets = [c[0][1].get('output_reserve')
+                           for c in mock_es.emit.call_args_list
+                           if c[0][0] == 'llm_request_budget'
+                           and c[0][1].get('path') != 'fallback']
+        self.assertEqual(primary_budgets, [64000])

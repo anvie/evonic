@@ -705,9 +705,15 @@ def run_tool_loop(agent: Dict[str, Any],
     # Thinking budget cap state (Phase 2: small model efficiency)
     _thinking_token_count: int = 0       # running tally of thinking tokens this turn
     _thinking_budget_aborted: bool = False  # set True after first budget abort — prevents re-triggering
-    # After a generation_timeout (reasoning ate the whole output budget) the retry gets
-    # a reduced max_tokens for ONE call; None = use the model's normal budget.
+    # After a generation_timeout (reasoning ate the whole output budget) the retry
+    # reuses the same output budget for ONE call; None = use the model's normal
+    # budget. It must never be shrunk: a smaller cap only shortens the window in
+    # which the model could still answer (Kanban #928).
     _retry_output_cap: Optional[int] = None
+    # Output budget actually planned/sent for the current iteration, captured so
+    # the generation_timeout retry can reuse it instead of recomputing a value
+    # that may have been halved by an earlier latch.
+    _planned_max_tokens: Optional[int] = None
     # Quality monitor — tracks and caps auto-correction messages (Phase 2)
     _quality_monitor = QualityMonitor()
     # Set of available tool function names for hallucinated-tool detection
@@ -1404,13 +1410,15 @@ def run_tool_loop(agent: Dict[str, Any],
         from backend.agent_runtime.request_budget import plan_request
         _required_choice = _required_tool if _required_tool_pending else None
         _cfg_primary = agent_model_config or {}
+        # The value really sent to the provider (post thinking-doubling / retry
+        # budget), shared by the planner and the generation_timeout retry.
+        _planned_max_tokens = _retry_output_cap or effective_output_tokens(
+            _cfg_primary.get('max_tokens'), bool(_cfg_primary.get('thinking')),
+            _enable_thinking_this_call, _cfg_primary.get('thinking_budget'))
         _budget_plan = plan_request(
             _request.messages, _request.tools, tool_choice=_required_choice,
             context_window=_cfg_primary.get('context_window'),
-            # the value really sent to the provider (post thinking-doubling / retry cap)
-            max_tokens=_retry_output_cap or effective_output_tokens(
-                _cfg_primary.get('max_tokens'), bool(_cfg_primary.get('thinking')),
-                _enable_thinking_this_call, _cfg_primary.get('thinking_budget')),
+            max_tokens=_planned_max_tokens,
             thinking_budget=((agent_model_config or {}).get('thinking_budget')
                              if _enable_thinking_this_call else 0),
             safety_margin=REQUEST_BUDGET_SAFETY_MARGIN,
@@ -1598,55 +1606,73 @@ def run_tool_loop(agent: Dict[str, Any],
 
             # Auto-retry on timeout: LLM was likely still reasoning
             if error_type in ('request_timeout', 'generation_timeout') and timeout_retries < max_timeout_retries:
-                timeout_retries += 1
-                _logger.warning("%s detected — auto-retry %d/%d with continue prompt", error_type, timeout_retries, max_timeout_retries)
-
-                # For generation_timeout, preserve partial reasoning in timeline
-                partial = result.get('response', {})
-                if isinstance(partial, dict):
-                    choices = partial.get('choices', [{}])
-                    if choices:
-                        partial_msg = choices[0].get('message', {})
-                        partial_reasoning = partial_msg.get('reasoning_content') or partial_msg.get('reasoning') or ''
-                        partial_content = partial_msg.get('content', '')
-                        if partial_reasoning:
-                            timeline.append({"type": "thinking", "content": partial_reasoning})
-                        if partial_content:
-                            _partial_msg: Dict[str, Any] = {"role": "assistant", "content": partial_content}
-                            if partial_reasoning:
-                                _partial_msg["reasoning_content"] = partial_reasoning
-                            messages.append(_partial_msg)
-
-                messages.append({"role": "assistant", "content": ""})
+                # A generation_timeout means chain-of-thought ate the whole output
+                # budget. Another full generation is only worth it when the
+                # provider will actually receive "thinking off"; otherwise the
+                # identical request just burns the same budget again. Decide this
+                # before mutating any state, and skip straight to the fallback
+                # chain when the switch is unrepresentable (Kanban #928).
+                _gt_can_disable_thinking = True
                 if error_type == 'generation_timeout':
-                    # The model spent its whole output budget reasoning and never
-                    # answered. Replaying the identical request would do it again
-                    # (and cost the same minutes): retry with half the output
-                    # budget, thinking off, and an explicit "act now" instruction.
-                    _cfg_gt = agent_model_config or {}
-                    _gt_budget = effective_output_tokens(
-                        _cfg_gt.get('max_tokens'), bool(_cfg_gt.get('thinking')),
-                        _enable_thinking_this_call, _cfg_gt.get('thinking_budget'))
-                    if _gt_budget:
-                        _retry_output_cap = max(1024, _gt_budget // 2)
-                    _thinking_budget_aborted = True   # enable_thinking=False from now on
+                    try:
+                        _gt_can_disable_thinking = bool(llm.supports_thinking_toggle())
+                    except Exception:
+                        _gt_can_disable_thinking = False
+                if not _gt_can_disable_thinking:
                     _logger.warning(
-                        "generation_timeout retry: output budget %s -> %s, thinking disabled",
-                        _gt_budget, _retry_output_cap)
-                    messages.append({"role": "user", "content": (
-                        "[SYSTEM] Your previous response used its entire output budget on "
-                        "reasoning and produced no answer. Stop analysing: give your answer, "
-                        "or call the tool you need, right now, briefly.")})
+                        "generation_timeout on %s (%s) — provider cannot express "
+                        "thinking-off on the wire (no chat-template support); "
+                        "skipping the duplicate retry and going straight to fallback",
+                        getattr(llm, 'provider', '') or '?',
+                        getattr(llm, 'model', '') or '?')
                 else:
-                    messages.append({"role": "user", "content": "[SYSTEM] Your previous response timed out. Please continue where you left off and provide your answer."})
+                    timeout_retries += 1
+                    _logger.warning("%s detected — auto-retry %d/%d with continue prompt", error_type, timeout_retries, max_timeout_retries)
 
-                event_stream.emit('llm_retry', {
-                    'agent_id': agent_id, 'session_id': session_id,
-                    'external_user_id': external_user_id, 'channel_id': channel_id,
-                    'retry_count': timeout_retries, 'max_retries': max_timeout_retries,
-                    'error_type': error_type,
-                })
-                continue
+                    # For generation_timeout, preserve partial reasoning in timeline
+                    partial = result.get('response', {})
+                    if isinstance(partial, dict):
+                        choices = partial.get('choices', [{}])
+                        if choices:
+                            partial_msg = choices[0].get('message', {})
+                            partial_reasoning = partial_msg.get('reasoning_content') or partial_msg.get('reasoning') or ''
+                            partial_content = partial_msg.get('content', '')
+                            if partial_reasoning:
+                                timeline.append({"type": "thinking", "content": partial_reasoning})
+                            if partial_content:
+                                _partial_msg: Dict[str, Any] = {"role": "assistant", "content": partial_content}
+                                if partial_reasoning:
+                                    _partial_msg["reasoning_content"] = partial_reasoning
+                                messages.append(_partial_msg)
+
+                    messages.append({"role": "assistant", "content": ""})
+                    if error_type == 'generation_timeout':
+                        # The model spent its whole output budget reasoning and never
+                        # answered. Keep the SAME output budget: the model still needs
+                        # room to answer, and disabling thinking is what shortens the
+                        # chain-of-thought. Shrinking the cap only shortened the retry
+                        # (4096 -> 2048 in the incident) without changing the CoT
+                        # (Kanban #928).
+                        if _planned_max_tokens:
+                            _retry_output_cap = _planned_max_tokens
+                        _thinking_budget_aborted = True   # enable_thinking=False from now on
+                        _logger.warning(
+                            "generation_timeout retry: keeping output budget %s, thinking disabled on the wire",
+                            _planned_max_tokens)
+                        messages.append({"role": "user", "content": (
+                            "[SYSTEM] Your previous response used its entire output budget on "
+                            "reasoning and produced no answer. Stop analysing: give your answer, "
+                            "or call the tool you need, right now, briefly.")})
+                    else:
+                        messages.append({"role": "user", "content": "[SYSTEM] Your previous response timed out. Please continue where you left off and provide your answer."})
+
+                    event_stream.emit('llm_retry', {
+                        'agent_id': agent_id, 'session_id': session_id,
+                        'external_user_id': external_user_id, 'channel_id': channel_id,
+                        'retry_count': timeout_retries, 'max_retries': max_timeout_retries,
+                        'error_type': error_type,
+                    })
+                    continue
 
             # llm_error / unknown_error get zero retries inside the LLM client
             # (non-transient classification).  But providers occasionally return
