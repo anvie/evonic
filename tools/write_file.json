@@ -32,7 +32,7 @@
       ]
     }
   },
-  "mock_response": "file_path = args.get('file_path', '')\ncontent = args.get('content', '')\nexists = False\nif not file_path:\n    result = {'error': \"Missing required argument: 'file_path'\"}\nelif exists:\n    result = {'error': f'File already exists: {file_path}. The write_file tool is for creating NEW files only \u2014 use str_replace instead.', 'isError': True, 'edit_recipe': {'tool': 'str_replace', 'file_path': file_path}}\nelse:\n    result = {'result': 'success', 'bytes_written': len(content.encode('utf-8')), 'created': not exists}",
+  "mock_response": "file_path = args.get('file_path', '')\ncontent = args.get('content', '')\nkey = file_path\nif key.startswith('/workspace/'):\n    key = key[len('/workspace/'):]\nif key.startswith('./'):\n    key = key[2:]\nexists = key in workspace\nif not file_path:\n    result = {'error': \"Missing required argument: 'file_path'\"}\nelif exists:\n    result = {'error': f'File already exists: {file_path}. The write_file tool is for creating NEW files only \u2014 use str_replace instead.', 'isError': True, 'edit_recipe': {'tool': 'str_replace', 'file_path': file_path}}\nelse:\n    workspace[key] = content\n    result = {'result': 'success', 'bytes_written': len(content.encode('utf-8')), 'created': not exists}",
   "mock_response_type": "python",
   "created_at": "2026-04-12T00:00:00.000000",
   "updated_at": "2026-04-12T00:00:00.000000"
