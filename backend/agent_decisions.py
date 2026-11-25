@@ -26,6 +26,7 @@ MAX_TEXT_CHARS = 2_000
 TASK_COMPLEXITY = "agent.task_complexity"
 PATH_BOUNDARY = "agent.path_boundary"
 GOAL_COMPLETION = "agent.goal_completion"
+SKILL_WORTHINESS = "agent.skill_worthiness"
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,18 @@ BUILTIN_DECISION_SPECS = {
          "task_status": ["done: Add validation", "done: Add tests"],
          "nudges_used": 0, "max_nudges": 5},
     ),
+    SKILL_WORTHINESS: BuiltinDecisionSpec(
+        SKILL_WORTHINESS,
+        ({"key": "action", "kind": FieldKind.CHOICE.value,
+          "description": "Whether the finished turn is worth keeping as a reusable learned skill: "
+                         "create a new one, update an existing one, or skip.",
+          "choices": ["skip", "create", "update"]},),
+        ("user_request", "tool_sequence", "final_response", "existing_skills"),
+        {"user_request": "Turn the monthly report markdown into a PDF.",
+         "tool_sequence": ["bash:error", "bash:error", "write_file:ok", "bash:ok"],
+         "final_response": "The PDF is at reports/monthly.pdf.",
+         "existing_skills": ["csv-cleanup: Normalise exported CSV files."]},
+    ),
 }
 
 
@@ -99,6 +112,14 @@ def goal_completion_input(goal: Any, candidate_response: Any, tasks: Any,
     return {"goal": _compact(goal, 800), "candidate_response": _compact(candidate_response),
             "task_status": status, "nudges_used": max(0, int(nudges_used or 0)),
             "max_nudges": max(0, int(max_nudges or 0))}
+
+
+def skill_worthiness_input(user_request: Any, tool_sequence: Any, final_response: Any,
+                           existing_skills: Any) -> dict[str, Any]:
+    return {"user_request": _compact(user_request, 800),
+            "tool_sequence": [_compact(step, 60) for step in list(tool_sequence or [])[:40]],
+            "final_response": _compact(final_response, 800),
+            "existing_skills": [_compact(skill, 260) for skill in list(existing_skills or [])[:30]]}
 
 
 class BuiltinDecisionRunner:

@@ -667,6 +667,70 @@ def api_set_agent_skills(agent_id):
     })
 
 
+# ==================== Agent Learned Skills API ====================
+
+@agents_bp.route('/api/agents/<agent_id>/learned-skills', methods=['GET'])
+def api_get_agent_learned_skills(agent_id):
+    from backend import learned_skills
+    return jsonify({'skills': learned_skills.list_skills({'id': agent_id}, include_invalid=True)})
+
+
+@agents_bp.route('/api/agents/<agent_id>/learned-skills/<skill_id>', methods=['GET'])
+def api_get_agent_learned_skill(agent_id, skill_id):
+    from backend import learned_skills
+    skill = learned_skills.get_skill({'id': agent_id}, skill_id)
+    if not skill:
+        return jsonify({'error': learned_skills.validate({'id': agent_id}, skill_id)}), 404
+    return jsonify({'skill': skill})
+
+
+@agents_bp.route('/api/agents/<agent_id>/learned-skills/<skill_id>', methods=['DELETE'])
+def api_delete_agent_learned_skill(agent_id, skill_id):
+    from backend import learned_skills
+    if not learned_skills.delete_skill({'id': agent_id}, skill_id):
+        return jsonify({'error': f"Learned skill '{skill_id}' not found."}), 404
+    return jsonify({'success': True})
+
+
+@agents_bp.route('/api/agents/<agent_id>/learned-skills/<skill_id>/export', methods=['GET'])
+def api_export_agent_learned_skill(agent_id, skill_id):
+    import io
+    import tempfile
+    from flask import send_file
+    from backend import learned_skills
+    with tempfile.NamedTemporaryFile(suffix='.zip') as tmp:
+        if not learned_skills.export_zip({'id': agent_id}, skill_id, tmp.name):
+            return jsonify({'error': f"Learned skill '{skill_id}' not found."}), 404
+        buf = io.BytesIO(tmp.read())
+    return send_file(buf, mimetype='application/zip', as_attachment=True,
+                     download_name=f'{skill_id}.zip')
+
+
+@agents_bp.route('/api/agents/<agent_id>/learned-skills/import', methods=['POST'])
+def api_import_agent_learned_skill(agent_id):
+    import tempfile
+    from backend import learned_skills
+    from backend.zip_validator import MAX_UPLOAD_BYTES
+    if not db.get_agent(agent_id):
+        return jsonify({'error': 'Agent not found'}), 404
+    file = request.files.get('file')
+    if not file or not file.filename or not file.filename.endswith('.zip'):
+        return jsonify({'error': 'File must be a .zip'}), 400
+    if request.content_length and request.content_length > MAX_UPLOAD_BYTES:
+        return jsonify({'error': f'Upload too large. Maximum is {MAX_UPLOAD_BYTES // 1024 // 1024} MB.'}), 413
+    with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        force = request.form.get('force', '').lower() in ('true', '1', 'yes')
+        result = learned_skills.import_zip({'id': agent_id}, tmp_path, force=force)
+    finally:
+        os.unlink(tmp_path)
+    if 'error' in result:
+        return jsonify(result), 409 if result.get('exists') else 400
+    return jsonify(result)
+
+
 # ==================== Agent Variables API ====================
 
 @agents_bp.route('/api/agents/<agent_id>/variables', methods=['GET'])

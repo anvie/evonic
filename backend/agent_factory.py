@@ -217,6 +217,7 @@ DEFAULTS: Dict[str, Any] = {
     "tool_compression_enabled": 1,
     "message_wrapper_enabled": 1,
     "ask_user_enabled": 1,
+    "learned_skills_enabled": 0,
     # Models
     "fallback_model_id": None,
     "model_id": None,
@@ -250,6 +251,7 @@ BOOLEAN_FIELDS = frozenset({
     "message_wrapper_enabled", "audio_enabled", "video_enabled",
     "bash_exec_enabled", "inter_agent_clear_context", "builtin_tools_enabled",
     "enable_cmp", "always_execute", "ask_user_enabled",
+    "learned_skills_enabled",
 })
 
 INTEGER_FIELDS = frozenset({"summarize_threshold", "summarize_tail", "attachment_max_size_mb"})

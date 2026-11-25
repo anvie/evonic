@@ -34,6 +34,7 @@ from models.chat import is_human_facing_external_user_id
 from backend.tools import tool_registry
 from backend.tools.registry import BUILTIN_TOOL_IDS
 from backend.skills_manager import SkillsManager, skills_manager
+from backend import learned_skills
 from backend.agent_runtime import simulation_spec as sim_spec
 from backend.agent_runtime.evomem_client import (
     get_evomem_db_mtime,
@@ -114,6 +115,13 @@ def _get_skills_mtime_hash() -> str:
         entries.append(f"{name}:{max_mtime}")
 
     return hashlib.sha256(','.join(entries).encode()).hexdigest()
+
+
+def _learned_skills_hash(agent: Dict[str, Any]) -> str:
+    """Cache key part for the agent's learned skills; empty when the feature is off."""
+    if not learned_skills.is_enabled(agent):
+        return ''
+    return learned_skills.mtime_hash(agent)
 
 
 def _build_portal_info(agent_id: str) -> list:
@@ -441,6 +449,27 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
             for brief in skill_briefs:
                 parts.append(f"\n{brief}")
 
+    # Learned skills: written by this agent for itself, loaded the same way.
+    if _builtin_tools_on and learned_skills.is_enabled(agent):
+        _learned = learned_skills.list_skills(agent)[:learned_skills.MAX_LISTED]
+        parts.append("\n## Learned Skills")
+        parts.append(
+            "Skills you wrote for yourself from earlier work. Load one with "
+            "`use_skill` before redoing a task it covers."
+        )
+        for skill in _learned:
+            brief = (skill['brief'].strip() or skill['description'].strip())
+            brief = brief[:learned_skills.MAX_BRIEF_CHARS]
+            parts.append(f"- `{skill['id']}`" + (f": {brief}" if brief else ""))
+        if not _learned:
+            parts.append("(none yet)")
+        if _has_file_tools:
+            parts.append(
+                "They live in `/_self/skills/<id>/`. When a learned skill turns out "
+                "wrong or outdated, fix its files there right away so the next run "
+                "does not repeat the problem."
+            )
+
     # Skill cleanup rule: remind agents to unload unused lazy-loaded skills.
     # Injected only when the agent actually has use_skill/unload_skill.
     if _builtin_tools_on:
@@ -556,6 +585,10 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
     if _get_skills_mtime_hash() != cache_entry.get('skills_hash', ''):
         return False
 
+    # Check the agent's own learned skills (and the toggle that enables them)
+    if _learned_skills_hash(agent) != cache_entry.get('learned_skills_hash', ''):
+        return False
+
     # Check tools hash (assigned tool IDs)
     assigned_ids = frozenset(sim_spec.tools(agent, eid))
     if str(sorted(assigned_ids)) != cache_entry['tools_hash']:
@@ -649,6 +682,7 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
             'kb_mtime': _get_mtime(kb_dir),
             'evomem_mtime': get_evomem_db_mtime(eid),
             'skills_hash': skills_hash,
+            'learned_skills_hash': _learned_skills_hash(agent),
             'tools_hash': str(sorted(assigned_ids)),
             'ctx_mtime': _get_mtime(__file__),
             'sandbox_enabled': agent.get('sandbox_enabled', 0),

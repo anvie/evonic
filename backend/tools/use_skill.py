@@ -10,12 +10,44 @@ Usage: use_skill({id: "hello_world"})
 
 import os
 import json
+from backend import learned_skills
 from backend.skills_manager import skills_manager
 
 
 def _enabled_skill_ids() -> list:
     """Return list of enabled skill IDs."""
     return [s['id'] for s in skills_manager.list_skills() if skills_manager.is_skill_enabled(s['id'])]
+
+
+def _load_learned(agent: dict, skill_id: str):
+    """Load one of the agent's own learned skills, or None when it has no such skill.
+
+    A learned skill that exists but is broken returns an error naming the fault,
+    so the agent can repair its own files.
+    """
+    if not learned_skills.exists(agent, skill_id):
+        return None
+    error = learned_skills.validate(agent, skill_id)
+    if error:
+        return {
+            "status": "error",
+            "id": skill_id,
+            "message": f"Learned skill '{skill_id}' is broken: {error} "
+                       f"Fix it under /_self/skills/{skill_id}/."
+        }
+    skill = learned_skills.get_skill(agent, skill_id)
+    result = {
+        "status": "success",
+        "id": skill_id,
+        "message": f"Loaded learned skill '{skill_id}'."
+    }
+    if skill['system_md']:
+        result["system_md"] = skill['system_md']
+        result["message"] += " Its instructions are now in your context — use them to guide your actions."
+    if skill['tool_defs']:
+        result['inject_tools'] = skill['tool_defs']
+        result['message'] += f" Tool definitions have been injected ({len(skill['tool_defs'])} tool(s) now available)."
+    return result
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -41,6 +73,10 @@ def execute(agent: dict, args: dict) -> dict:
 
     # Check if the skill exists
     skill = skills_manager.get_skill(skill_id)
+    if not skill and learned_skills.is_enabled(agent):
+        learned = _load_learned(agent, skill_id)
+        if learned:
+            return learned
     if not skill:
         available = _enabled_skill_ids()
         return {

@@ -1913,6 +1913,17 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                         </label>
                     </div>
                             </div>
+                            <div class="adv-item adv-toggle" data-adv-item>
+<div>
+                        <label class="flex items-center gap-3 cursor-pointer select-none">
+                            {{ toggle_widget(id='agent-learned-skills-enabled', checked=agent.learned_skills_enabled) }}
+                            <div>
+                                <span class="text-gray-600 dark:text-gray-300 text-sm font-medium">Learned Skills (experimental)</span>
+                                <p class="text-xs text-gray-400 mt-0.5">Let the agent write skills for itself after solving a multi-step task, and reuse them later with <code>use_skill</code>. Learned skills are private to this agent and listed in the Learned Skills tab. Default OFF.</p>
+                            </div>
+                        </label>
+                    </div>
+                            </div>
                         </div>
                     </section>
                     <section class="adv-sec" data-adv-group>
@@ -2318,6 +2329,18 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
             </div>
             <div id="skills-empty" class="hidden text-center py-8 text-gray-400 text-sm">No skills found.</div>
             <p id="skills-count" class="text-xs text-gray-400 mt-2"></p>
+        </div>
+        <!-- Learned Skills -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6 mt-4">
+            <div class="flex items-center gap-2 mb-1">
+                <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 flex-1">Learned Skills</h3>
+                <label class="text-xs text-indigo-600 hover:underline cursor-pointer">Import .zip
+                    <input type="file" accept=".zip" class="hidden" onchange="importLearnedSkill(this)">
+                </label>
+            </div>
+            <p class="text-xs text-gray-400 mb-4">Skills this agent wrote for itself. They are private to this agent and loaded with <code class="bg-gray-100 px-1 rounded">use_skill</code>. Export one as a zip to import it into another agent. Turn the feature on under Settings.</p>
+            <div id="learned-skills-list" class="space-y-2"></div>
+            <div id="learned-skills-empty" class="hidden text-center py-8 text-gray-400 text-sm">No learned skills yet.</div>
         </div>
     </div>
 
@@ -4211,6 +4234,7 @@ const AgentAutoSave = {
         { id: 'agent-safety-checker', key: 'safety_checker_enabled', type: 'bool' },
         { id: 'agent-bash-exec', key: 'bash_exec_enabled', type: 'bool' },
         { id: 'agent-ask-user-enabled', key: 'ask_user_enabled', type: 'bool' },
+        { id: 'agent-learned-skills-enabled', key: 'learned_skills_enabled', type: 'bool' },
         { id: 'agent-message-wrapper', key: 'message_wrapper_enabled', type: 'bool' },
         { id: 'agent-run-as-user', key: 'run_as_user', type: 'strnull' },
         { id: 'agent-memory-engine', key: 'memory_engine', type: 'selnull' },
@@ -5736,7 +5760,63 @@ async function saveToolsQuiet() {
 let allSkillsDefs = [];
 let allowedSkillIds = [];
 
+async function loadLearnedSkills() {
+    const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills`);
+    const skills = (await res.json()).skills || [];
+    const list = document.getElementById('learned-skills-list');
+    document.getElementById('learned-skills-empty').classList.toggle('hidden', skills.length > 0);
+    list.innerHTML = skills.map(s => `
+        <details class="border border-gray-200 dark:border-gray-600 rounded-lg" ontoggle="loadLearnedSkillBody(this, '${escapeHtml(s.id)}')">
+            <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none">
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-gray-800 dark:text-gray-100">${escapeHtml(s.name)} <code class="text-xs text-gray-400">${escapeHtml(s.id)}</code></div>
+                    <div class="text-xs ${s.error ? 'text-red-500' : 'text-gray-400'}">${escapeHtml(s.error || s.description || s.brief || '')}</div>
+                </div>
+                <span class="text-xs text-gray-400">${s.tools.length ? escapeHtml(s.tools.join(', ')) : 'instructions only'}</span>
+                <span class="text-xs text-gray-400">${new Date(s.updated_at * 1000).toLocaleString()}</span>
+                <a class="text-xs text-indigo-600 hover:underline" href="/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(s.id)}/export" onclick="event.stopPropagation()">Export</a>
+                <button type="button" class="text-xs text-red-500 hover:underline" onclick="event.preventDefault(); deleteLearnedSkill('${escapeHtml(s.id)}')">Delete</button>
+            </summary>
+            <pre class="learned-skill-body px-4 pb-4 text-xs whitespace-pre-wrap text-gray-600 dark:text-gray-300"></pre>
+        </details>`).join('');
+}
+
+async function loadLearnedSkillBody(el, skillId) {
+    const body = el.querySelector('.learned-skill-body');
+    if (!el.open || body.dataset.loaded) return;
+    const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(skillId)}`);
+    const data = await res.json();
+    body.textContent = data.skill ? (data.skill.system_md || '(no SYSTEM.md, tools only)') : (data.error || '');
+    body.dataset.loaded = '1';
+}
+
+async function importLearnedSkill(input) {
+    if (!input.files.length) return;
+    const form = new FormData();
+    form.append('file', input.files[0]);
+    input.value = '';
+    let res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/import`, { method: 'POST', body: form });
+    let data = await res.json();
+    if (res.status === 409 && confirm(`${data.error} Replace it?`)) {
+        form.append('force', '1');
+        res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/import`, { method: 'POST', body: form });
+        data = await res.json();
+    }
+    if (data.error) { showToast(data.error, 'error'); return; }
+    showToast(`Imported learned skill "${data.id}"`, 'success');
+    loadLearnedSkills();
+}
+
+async function deleteLearnedSkill(skillId) {
+    if (!confirm(`Delete learned skill "${skillId}"?`)) return;
+    const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(skillId)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) { showToast(data.error, 'error'); return; }
+    loadLearnedSkills();
+}
+
 async function loadSkills() {
+    loadLearnedSkills();
     const epoch = window._agentEpoch;
     const [skillsRes, agentSkillsRes] = await Promise.all([
         fetch('/api/skills'),

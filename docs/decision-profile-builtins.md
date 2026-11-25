@@ -9,6 +9,7 @@ Evonic can optionally route three bounded agent judgments through the generic De
 | `agent.task_complexity` | `complexity`: `trivial` or `complex` | `task_text` (2,000 characters) | Existing heuristics and task-classifier call; defaults to `complex`. |
 | `agent.path_boundary` | `belongs_to_current`: boolean | `user_text`, `active_goal`, `active_title` | Existing CMP detector. A positive profile result may only keep work on the active path; it never creates or switches a path. |
 | `agent.goal_completion` | `decision`: `complete`, `continue`, or `blocked` | Goal, candidate response, at most 12 compact task-status strings, and nudge counts | Existing goal evaluator; it remains fail-open (`complete`) if evaluation fails. |
+| `agent.skill_worthiness` | `action`: `skip`, `create`, or `update` | User request, at most 40 `tool:ok/error` steps, final response, and at most 30 learned-skill briefs | The tool-count heuristic alone; the skill learner then decides for itself whether to write a skill. |
 
 The `BuiltinDecisionRunner` allowlists these fields, normalizes whitespace, bounds text, and supplies a 3-second deadline. It sends neither conversation history nor raw tool output. Do not add secrets, credentials, attachment contents, or arbitrary metadata to these inputs.
 
@@ -17,6 +18,12 @@ The `BuiltinDecisionRunner` allowlists these fields, normalizes whitespace, boun
 Create a profile in the Decision Profiles administration UI using the stable key, the schema shown above, policy version `1`, and a Decision Models-compatible model. Set a conservative timeout (the built-in deadline caps execution at three seconds) and a confidence threshold appropriate for the operation.
 
 Use `shadow` mode to validate a profile without changing agent behaviour. Only `enabled: true` plus `mode: enforce` allows a valid result to alter a consumer. `off` and disabled profiles make no provider request.
+
+## Default decision models
+
+A profile may leave its primary model empty. It then runs on the default decision models, an ordered chain of up to five models set at the top of Settings > Decision Profiles (`GET`/`PUT /api/admin/decision-default-models`). Each model in the chain gets one try, in order, within the profile's timeout. An active profile with no model is only valid while the chain is non-empty; without it the profile fails closed to its consumer's fallback.
+
+`agent.skill_worthiness` is seeded enabled, in `enforce` mode, with no model of its own, so it starts working as soon as the default decision models are set.
 
 ## Playground presets
 

@@ -1263,6 +1263,12 @@ class SchemaMixin:
                 cursor.execute("DELETE FROM app_settings WHERE key = 'plugin_enabled:ask_user'")
             except sqlite3.OperationalError:
                 pass
+            # Migration: add learned_skills_enabled column (1 = the agent may write
+            # and use its own learned skills; see backend/learned_skills.py)
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN learned_skills_enabled BOOLEAN DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # Migration: move assignments of renamed tools to their new id
             # TODO(cleanup): obsolete together with LEGACY_TOOL_IDS entries; remove when it is empty.
             for old_id, new_id in LEGACY_TOOL_IDS.items():
@@ -1542,6 +1548,28 @@ class SchemaMixin:
                     fallback_model_id, timeout_ms, retry_limit, minimum_confidence
                 ) VALUES (?, ?, ?, 0, 'off', 'decision-schema/v1', '1', ?, '', NULL, 3000, 0, 0.0)""",
                 builtin_agent_profiles,
+            )
+            # The learned-skill gate is active from the start: it names no model
+            # and runs on the default decision models (Settings > Decision
+            # Profiles). Until those are set it has no effect and the skill
+            # learner falls back to its own heuristic.
+            cursor.execute(
+                """INSERT OR IGNORE INTO decision_profiles (
+                    profile_key, display_name, description, enabled, mode,
+                    schema_version, policy_version, schema_json, primary_model_id,
+                    fallback_model_id, timeout_ms, retry_limit, minimum_confidence
+                ) VALUES (?, ?, ?, 1, 'enforce', 'decision-schema/v1', '1', ?, '', NULL, 15000, 0, 0.0)""",
+                (
+                    "agent.skill_worthiness",
+                    "Learned Skill Gate",
+                    "Decides whether a finished turn is worth keeping as a learned skill for the agent.",
+                    json.dumps({"version": "decision-schema/v1", "fields": [{
+                        "key": "action", "kind": "choice",
+                        "description": "Whether the finished turn is worth keeping as a reusable learned skill: "
+                                       "create a new one, update an existing one, or skip.",
+                        "choices": ["skip", "create", "update"],
+                    }]}, sort_keys=True, separators=(",", ":")),
+                ),
             )
 
             # Decision Activity holds diagnostic metadata and, unless switched off, the

@@ -2,6 +2,7 @@
 window.decisionModels = {
     profiles: [],
     models: [],
+    defaultModelIds: [],
 
     async init() {
         await this.load();
@@ -16,13 +17,16 @@ window.decisionModels = {
     async load() {
         const status = document.getElementById("decision-profiles-status");
         try {
-            const [profilesData, models] = await Promise.all([
+            const [profilesData, models, defaults] = await Promise.all([
                 apiGet("/api/admin/decision-profiles"),
                 ModelsCache.get(),
+                apiGet("/api/admin/decision-default-models"),
             ]);
             this.profiles = profilesData.profiles || [];
             this.models = models || [];
+            this.defaultModelIds = defaults.model_ids || [];
             this.render();
+            this.renderDefaultModels();
             this.populateActivityOptions();
         } catch (error) {
             status.textContent = "Could not load Decision Profiles. Refresh and try again.";
@@ -92,7 +96,7 @@ window.decisionModels = {
         </article>`;
     },
 
-    isBuiltin(key) { return ["safety.command", "agent.task_complexity", "agent.path_boundary", "agent.goal_completion"].includes(key); },
+    isBuiltin(key) { return ["safety.command", "agent.task_complexity", "agent.path_boundary", "agent.goal_completion", "agent.skill_worthiness"].includes(key); },
     escape(value) { const el = document.createElement("div"); el.textContent = value == null ? "" : String(value); return el.innerHTML; },
 
     // Label with the model name only; ids and upstream names stay out of pickers.
@@ -100,10 +104,31 @@ window.decisionModels = {
         return String(model.name || model.model_name || model.id || "");
     },
 
-    modelOptions(selected, includeEmpty) {
+    modelOptions(selected, emptyLabel) {
         const compatible = this.compatibleModels();
         const options = compatible.map((model) => `<option value="${this.escape(model.id)}" ${model.id === selected ? "selected" : ""}>${this.escape(this.modelLabel(model))}</option>`);
-        return (includeEmpty ? '<option value="">No fallback</option>' : '<option value="" disabled selected>Select a compatible model</option>') + options.join("");
+        return `<option value="">${this.escape(emptyLabel)}</option>` + options.join("");
+    },
+
+    // The default chain: five ordered slots; empty slots are skipped on save.
+    renderDefaultModels() {
+        const list = document.getElementById("decision-default-models-list");
+        if (!list) return;
+        list.innerHTML = [0, 1, 2, 3, 4].map((index) => `<select class="decision-default-model w-full border rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100" aria-label="Default decision model ${index + 1}">${this.modelOptions(this.defaultModelIds[index], index ? "No fallback " + index : "No default model")}</select>`).join("");
+    },
+
+    async saveDefaultModels() {
+        const ids = Array.from(document.querySelectorAll(".decision-default-model")).map((el) => el.value).filter(Boolean);
+        try {
+            const response = await apiPut("/api/admin/decision-default-models", {model_ids: ids});
+            if (!response.success) {
+                if (window.toast) toast.show((response.error && response.error.message ? response.error.path + ": " + response.error.message : "Could not save default models."), "error");
+                return;
+            }
+            this.defaultModelIds = response.model_ids;
+            this.renderDefaultModels();
+            if (window.toast) toast.show("Default decision models saved", "success");
+        } catch (error) { if (window.toast) toast.show("Could not save default models.", "error"); }
     },
 
     openCreate() {
@@ -111,8 +136,8 @@ window.decisionModels = {
         document.getElementById("decision-profile-modal-title").textContent = "New Decision Profile";
         document.getElementById("decision-profile-revision").value = "";
         document.getElementById("decision-profile-key").disabled = false;
-        document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(null, false);
-        document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(null, true);
+        document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(null, "Use default decision models");
+        document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(null, "No fallback");
         this.showMoreFallbacks([]);
         document.getElementById("decision-profile-schema").value = JSON.stringify({version: "decision-schema/v1", fields: [{key: "approved", kind: "boolean"}]}, null, 2);
         this.clearError();
@@ -128,8 +153,8 @@ window.decisionModels = {
         Object.entries(fields).forEach(([id, field]) => document.getElementById(id).value = profile[field] || "");
         document.getElementById("decision-profile-key").disabled = true;
         document.getElementById("decision-profile-enabled").checked = profile.enabled;
-        document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(profile.primary_model_id, false);
-        document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(profile.fallback_model_id, true);
+        document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(profile.primary_model_id, "Use default decision models");
+        document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(profile.fallback_model_id, "No fallback");
         this.showMoreFallbacks(profile.fallback_model_ids || []);
         document.getElementById("decision-profile-timeout").value = profile.timeout_ms;
         document.getElementById("decision-profile-retries").value = profile.retry_limit;

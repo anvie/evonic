@@ -22,6 +22,9 @@ _MAX_TIMEOUT_MS = 300_000
 _MAX_RETRY_LIMIT = 10
 _MAX_SAMPLE_INPUT_BYTES = 8 * 1024
 MAX_FALLBACK_MODELS = 5
+# Global default chain: tried in order by every profile that names no model of its own.
+MAX_DEFAULT_MODELS = 5
+DEFAULT_MODELS_SETTING = "decision_default_model_ids"
 
 
 class DecisionProfileValidationError(ValueError):
@@ -151,6 +154,31 @@ class DecisionProfilesMixin:
             row = conn.execute("SELECT * FROM decision_profiles WHERE profile_key = ?", (profile_key,)).fetchone()
             return _public(row) if row else None
 
+    def get_default_decision_model_ids(self) -> List[str]:
+        """The global default decision models, in the order they are tried."""
+        try:
+            ids = json.loads(self.get_setting(DEFAULT_MODELS_SETTING, "") or "[]")
+        except ValueError:
+            ids = []
+        if not isinstance(ids, list):
+            return []
+        return [i for i in ids if isinstance(i, str) and i.strip()][:MAX_DEFAULT_MODELS]
+
+    def set_default_decision_model_ids(self, ids: Any) -> List[str]:
+        """Replace the global default chain with up to MAX_DEFAULT_MODELS decision models."""
+        if not isinstance(ids, (list, tuple)):
+            _fail("invalid_list", "model_ids", "must be a list of model ids")
+        if len(ids) > MAX_DEFAULT_MODELS:
+            _fail("too_many_default_models", "model_ids", f"must name at most {MAX_DEFAULT_MODELS} models")
+        chain: List[str] = []
+        for index, model_id in enumerate(ids):
+            model_id = self._validate_model_reference(model_id, f"model_ids[{index}]", required=True)
+            if model_id in chain:
+                _fail("duplicate_default_model", f"model_ids[{index}]", "is already in the default models")
+            chain.append(model_id)
+        self.set_setting(DEFAULT_MODELS_SETTING, json.dumps(chain))
+        return chain
+
     def _validate_model_reference(self, model_id: Any, path: str, *, required: bool) -> Optional[str]:
         if model_id is None and not required:
             return None
@@ -216,7 +244,13 @@ class DecisionProfilesMixin:
         if len(requested_fallbacks) > MAX_FALLBACK_MODELS:
             _fail("too_many_fallback_models", "fallback_model_ids",
                   f"must name at most {MAX_FALLBACK_MODELS} models")
-        if requires_model:
+        primary = merged.get("primary_model_id")
+        if requires_model and not (isinstance(primary, str) and primary.strip()) \
+                and self.get_default_decision_model_ids():
+            # No model of its own: the profile runs on the global default chain.
+            merged["primary_model_id"] = ""
+            fallback_ids = []
+        elif requires_model:
             merged["primary_model_id"] = self._validate_model_reference(
                 merged.get("primary_model_id"), "primary_model_id", required=True,
             )

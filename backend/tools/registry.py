@@ -246,6 +246,23 @@ class ToolRegistry:
                     }
             skill_id = fn_to_skill.get(function_name)
             plugin_id = fn_to_plugin.get(function_name)
+            # Learned-skill tools are scripts run through bash/runpy, never an
+            # in-process module. A global skill with the same id always wins.
+            if skill_id:
+                from backend import learned_skills
+                if learned_skills.is_learned(ctx, skill_id):
+                    if ms and ms.is_blocked('bash') is True:
+                        return {
+                            "error": (
+                                f"'{function_name}' is blocked in '{ms.mode}' mode. "
+                                "Present your plan to the user first, then call set_mode(mode='execute') "
+                                "after they approve."
+                            ),
+                            "blocked_by": "agent_state",
+                            "current_mode": ms.mode,
+                        }
+                    ctx['_skip_safety'] = agent_context.get('_skip_safety', False)
+                    return learned_skills.run_tool(ctx, skill_id, function_name, arguments)
             module = self._load_tool_module(function_name, skill_id=skill_id,
                                             plugin_id=plugin_id)
             if module is None:

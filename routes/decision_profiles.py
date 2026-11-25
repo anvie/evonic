@@ -109,6 +109,24 @@ def delete_decision_profile(profile_key: str):
     return jsonify({"success": True})
 
 
+@decision_profiles_bp.route("/api/admin/decision-default-models", methods=["GET"])
+def get_decision_default_models():
+    """The global default chain used by profiles that name no model of their own."""
+    return jsonify({"model_ids": db.get_default_decision_model_ids()})
+
+
+@decision_profiles_bp.route("/api/admin/decision-default-models", methods=["PUT"])
+def update_decision_default_models():
+    data = _payload()
+    if data is None:
+        return jsonify({"success": False, "error": {"code": "invalid_payload", "path": "$", "message": "must be a JSON object"}}), 400
+    try:
+        model_ids = db.set_default_decision_model_ids(data.get("model_ids"))
+    except DecisionProfileValidationError as exc:
+        return _error(exc)
+    return jsonify({"success": True, "model_ids": model_ids})
+
+
 @decision_profiles_bp.route("/api/admin/decision-activity", methods=["GET"])
 def list_decision_activity():
     """List bounded activity metadata using authorized, cursor-based pagination."""

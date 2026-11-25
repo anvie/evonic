@@ -249,6 +249,22 @@ def test_a_fallback_chain_is_walked_in_order_within_the_retry_limit():
     assert result.error is None and result.attempts == 4 and calls == models
 
 
+def test_a_profile_without_a_model_walks_the_default_chain():
+    models = ["d1", "d2", "d3"]
+    profile = _profile(primary_model_id="", fallback_model_id=None, retry_limit=0)
+    runtime, calls = _chain_runtime(profile, models, {"d3": True})
+    runtime.db.get_default_decision_model_ids = lambda: models
+    result = runtime.invoke(_request())
+    assert result.error is None and result.attempts == 3 and calls == models
+
+
+def test_a_profile_without_a_model_fails_safely_when_no_defaults_are_set():
+    runtime, calls = _chain_runtime(_profile(primary_model_id="", fallback_model_id=None), [], {})
+    with pytest.raises(DecisionRuntimeError) as failure:
+        runtime.invoke(_request())
+    assert failure.value.code is DecisionRuntimeErrorCode.PROFILE_INVALID and calls == []
+
+
 def test_the_retry_limit_still_bounds_the_chain():
     profile = _profile(fallback_model_id="f1", fallback_model_ids=["f1", "f2"], retry_limit=0)
     runtime, calls = _chain_runtime(profile, ["primary", "f1", "f2"], {})

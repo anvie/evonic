@@ -92,6 +92,7 @@ FULL_SPEC_VALUES = {
     "enable_cmp": 1,
     "always_execute": 1,
     "ask_user_enabled": 0,
+    "learned_skills_enabled": 1,
 }
 
 
