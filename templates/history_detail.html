@@ -182,6 +182,14 @@
 
         <!-- Evaluation Logs Tab -->
         <div id="tab-logs" class="detail-tab-panel" style="display: none;">
+            {% if not readonly %}
+            <div class="flex justify-end px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+                <a href="/api/run/{{ run_info.run_id }}/log" download
+                   class="px-2.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 no-underline">
+                    Download log (JSON)
+                </a>
+            </div>
+            {% endif %}
             <div class="log-container" style="margin-top: 0; box-shadow: none; border-radius: 0 0 8px 8px;">
                 <div id="log-box" class="log-content"></div>
             </div>

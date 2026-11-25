@@ -3,7 +3,7 @@ import os
 import shutil
 import sqlite3
 
-from flask import Blueprint, render_template, jsonify, request, redirect
+from flask import Blueprint, render_template, jsonify, request, redirect, Response
 
 from evaluator.points import run_score
 from models.db import db
@@ -221,6 +221,26 @@ def api_run_details(run_id):
         'test_results': test_results,
         'stats': stats
     })
+
+
+@history_bp.route('/api/run/<int:run_id>/log')
+def api_run_log_download(run_id):
+    """Download the full evaluation log of a run (untruncated) as a JSON file."""
+    run_info = db.get_evaluation_run(run_id)
+    if not run_info:
+        return jsonify({'error': 'Run not found'}), 404
+
+    payload = {
+        'run_info': run_info,
+        'stats': db.get_run_stats(run_id),
+        'test_results': [_parse_test_result(r) for r in db.get_test_results(run_id)],
+        'individual_test_results': [
+            _parse_test_result(r) for r in db.get_individual_test_results(run_id)],
+    }
+    return Response(
+        json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+        mimetype='application/json',
+        headers={'Content-Disposition': f'attachment; filename="evaluation-run-{run_id}-log.json"'})
 
 
 @history_bp.route('/api/run/<int:run_id>/notes', methods=['PATCH'])

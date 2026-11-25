@@ -372,3 +372,47 @@ class TestHistoryDetailModelEditUI:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestRunLogDownload:
+    """Test /api/run/<id>/log endpoint"""
+
+    def test_downloads_full_run_log_as_json_attachment(self):
+        from app import app
+
+        run_id = db.create_evaluation_run("test-model-log-download")
+
+        with app.test_client() as client:
+            _auth(client)
+            response = client.get(f'/api/run/{run_id}/log')
+            assert response.status_code == 200
+            assert f'evaluation-run-{run_id}-log.json' in response.headers['Content-Disposition']
+
+            data = json.loads(response.get_data(as_text=True))
+            assert data['run_info']['model_name'] == "test-model-log-download"
+            assert isinstance(data['test_results'], list)
+            assert isinstance(data['individual_test_results'], list)
+
+    def test_unknown_run_is_404(self):
+        from app import app
+
+        with app.test_client() as client:
+            _auth(client)
+            assert client.get('/api/run/99999999/log').status_code == 404
+
+    def test_requires_authentication(self):
+        from app import app
+
+        run_id = db.create_evaluation_run("test-model-log-auth")
+        with app.test_client() as client:
+            assert client.get(f'/api/run/{run_id}/log').status_code in (401, 302)
+
+    def test_detail_page_shows_download_button_only_when_authenticated(self):
+        from app import app
+
+        run_id = db.create_evaluation_run("test-model-log-button")
+        with app.test_client() as client:
+            _auth(client)
+            page = client.get(f'/history/{run_id}')
+            assert page.status_code == 200
+            assert f'/api/run/{run_id}/log'.encode() in page.data
