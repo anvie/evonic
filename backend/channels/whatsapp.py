@@ -247,7 +247,7 @@ def _human_size(size_bytes: int) -> str:
 def _format_attachment_marker(attachment_info: Dict[str, Any]) -> str:
     """Build the standard agent-readable attachment marker."""
     return (
-        f"[Attached: {attachment_info['original_filename']} "
+        f"[Attached: {attachment_info.get('original_filename') or attachment_info['filename']} "
         f"({attachment_info['mime_type']}, {_human_size(attachment_info['size_bytes'])}) "
         f"id={attachment_info['attachment_id']} path={attachment_info['file_path']}]"
     )
@@ -1144,8 +1144,13 @@ class WhatsAppChannel(BaseChannel):
         # Append the standard marker only after persistence succeeds. This keeps
         # paths and attachment IDs truthful and makes captionless PDFs usable.
         if attachment_info:
-            marker = _format_attachment_marker(attachment_info)
-            final_text = f"{final_text}\n{marker}" if final_text else marker
+            try:
+                marker = _format_attachment_marker(attachment_info)
+            except Exception:
+                # A malformed attachment record must never swallow the message itself.
+                _logger.exception("WhatsApp attachment marker failed (session %s)", session_id)
+            else:
+                final_text = f"{final_text}\n{marker}" if final_text else marker
 
         if not db.is_session_bot_enabled(session_id, agent_id=agent_id):
             _logger.info("WhatsApp message stored only — bot disabled for session %s (sender=%s)",
@@ -1252,6 +1257,7 @@ class WhatsAppChannel(BaseChannel):
             return {
                 'attachment_id': attachment_id,
                 'filename': filename,
+                'original_filename': filename,
                 'mime_type': mime_type,
                 'size_bytes': len(image_bytes),
                 'is_image': True,
@@ -1312,6 +1318,7 @@ class WhatsAppChannel(BaseChannel):
             return {
                 'attachment_id': attachment_id,
                 'filename': filename,
+                'original_filename': filename,
                 'mime_type': mime_type,
                 'size_bytes': len(audio_bytes),
                 'file_path': file_path,
