@@ -41,6 +41,27 @@ def _load_global_config() -> Dict[str, Any]:
         return {}
 
 
+def _parse_model_list(value) -> List[str]:
+    """Coerce a stored/submitted model list (list or JSON text) to unique ids."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        parsed = json.loads(text)
+    else:
+        parsed = value
+    if parsed is None:
+        return []
+    if not isinstance(parsed, list):
+        raise ValueError('expected a list of model ids')
+    out: List[str] = []
+    for item in parsed:
+        item = str(item or '').strip()
+        if item and item not in out:
+            out.append(item)
+    return out
+
+
 class SkillsManager:
     def __init__(self):
         os.makedirs(SKILLS_DIR, exist_ok=True)
@@ -461,8 +482,23 @@ class SkillsManager:
                         config[v['name']] = float(stored) if '.' in stored else int(stored)
                     except ValueError:
                         pass
+                elif var_type == 'model_list':
+                    try:
+                        config[v['name']] = _parse_model_list(stored)
+                    except (ValueError, TypeError):
+                        config[v['name']] = []
                 else:
                     config[v['name']] = stored
+        # A model chain saved before its fallback list existed reads its single
+        # legacy fallback as a one-entry chain.
+        for v in variables:
+            if v.get('type') != 'model_chain':
+                continue
+            list_var, legacy_var = v.get('fallbacks_var'), v.get('legacy_fallback_var')
+            if (list_var and legacy_var and not config.get(list_var)
+                    and db.get_setting(f'skill_config:{skill_id}:{list_var}') is None
+                    and config.get(legacy_var)):
+                config[list_var] = [config[legacy_var]]
         return config
 
     def set_skill_config(self, skill_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -497,16 +533,40 @@ class SkillsManager:
                         if not isinstance(parsed, dict):
                             raise ValueError('expected a JSON object')
                     clean[name] = text
+                elif var_type == 'model_list':
+                    ids = _parse_model_list(val)
+                    limit = int(var_def.get('max_items') or 0)
+                    if limit and len(ids) > limit:
+                        raise ValueError(f'at most {limit} models')
+                    clean[name] = ids
                 else:
                     clean[name] = str(val)
             except (ValueError, TypeError):
                 return {'error': f'Invalid value for {var_def.get("label", name)}: expected {var_type}'}
 
+        # Model chains: a global (empty) main model carries no own fallbacks,
+        # fallbacks never repeat the main model, and the legacy single-fallback
+        # variable mirrors the first entry for older readers.
+        for var_def in variables:
+            if var_def.get('type') != 'model_chain' or var_def['name'] not in clean:
+                continue
+            list_var = var_def.get('fallbacks_var')
+            legacy_var = var_def.get('legacy_fallback_var')
+            if not list_var or list_var not in var_map:
+                continue
+            main_id = clean[var_def['name']]
+            ids = clean.get(list_var, [])
+            ids = [] if not main_id else [i for i in ids if i != main_id]
+            cap = int(var_def.get('fallbacks') or 0)
+            clean[list_var] = ids[:cap] if cap else ids
+            if legacy_var and legacy_var in var_map:
+                clean[legacy_var] = clean[list_var][0] if clean[list_var] else ''
+
         # Save to DB
         from models.db import db
         for name, val in clean.items():
             key = f'skill_config:{skill_id}:{name}'
-            db.set_setting(key, str(val))
+            db.set_setting(key, json.dumps(val) if isinstance(val, list) else str(val))
         return {'success': True, 'config': self.get_skill_config(skill_id)}
 
     def find_tool_backend_path(self, tool_name: str, skill_id: str = None) -> Optional[str]:

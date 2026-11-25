@@ -192,12 +192,14 @@ def _enhance_completion(messages):
     if result.get('success'):
         return result
 
-    fallback_id = db.get_setting('default_model_fallback_id', '')
-    fallback_model = db.get_model_by_id(fallback_id) if fallback_id else None
-    if not fallback_model or not fallback_model.get('enabled', True):
-        return result
-
-    return LLMClient(model_config=fallback_model).chat_completion(**completion_kwargs)
+    from backend.default_model_chain import get_fallback_models
+    for fallback_model in get_fallback_models(db):
+        fallback_result = LLMClient(
+            model_config=fallback_model, _allow_fallback=False,
+        ).chat_completion(**completion_kwargs)
+        if fallback_result.get('success'):
+            return fallback_result
+    return result
 
 
 def _extract_reply(result):

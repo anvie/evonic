@@ -342,16 +342,6 @@ html.dark {
 .setting-subgroup-body .setting-row:hover {
     background: var(--bg-hover);
 }
-.vision-models-group .setting-row-control {
-    width: min(100%, 420px);
-    min-width: 0;
-    max-width: 100%;
-}
-.vision-models-group .setting-select {
-    width: 100%;
-    min-width: 0;
-    max-width: none;
-}
 
 /* ---------- Setting rows ---------- */
 .setting-row {
@@ -1027,7 +1017,6 @@ html.dark mark, html.dark .search-mark { background: rgb(250 204 21 / .28); box-
 #section-general .setting-subgroup-head h4 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.01em; text-transform: none; color: var(--text-heading); }
 #section-general .setting-subgroup-head p { font-size: .875rem; }
 #section-general .setting-subgroup-body { border: 1px solid var(--st-line); border-radius: .75rem; background: transparent; overflow: hidden; }
-#section-general .vision-models-group .setting-row-control { width: 100%; max-width: 40rem; }
 
 @media (max-width: 767px) {
     #section-general > .setting-group > .setting-group-head h3 { font-size: 1.4rem; }
@@ -1387,7 +1376,6 @@ html.dark .mcd-pingres.ok { color: #4fd49a; }
 #group-models-routing .setting-subgroup-body { border: 0; border-radius: 0; background: transparent; }
 #group-models-routing .setting-subgroup-body .setting-row { padding: 1.125rem 1.25rem; }
 #group-models-routing .setting-subgroup-body .setting-row:last-child { border-bottom: 0; }
-#group-models-routing .vision-models-group .setting-row-control { width: min(100%, 36rem); max-width: 100%; }
 @media (max-width: 767px) {
     #group-models-routing .setting-subgroup-head, #group-models-routing .setting-subgroup-body .setting-row { padding-inline: .75rem; }
 }

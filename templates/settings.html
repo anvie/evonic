@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block main_class %}w-full{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=24">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=26">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/model-chain.css') }}?v=12">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/decision-playground.css') }}?v=3">
 
 <div class="settings-console">
@@ -56,7 +57,8 @@
 
 <script src="{{ url_for('static', filename='js/toast.js') }}?v=2"></script>
 <script src="{{ url_for('static', filename='js/settings-core.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/settings-general.js') }}?v=4"></script>
+<script src="{{ url_for('static', filename='js/model-chain.js') }}?v=9"></script>
+<script src="{{ url_for('static', filename='js/settings-general.js') }}?v=8"></script>
 <script src="{{ url_for('static', filename='js/settings-tools.js') }}?v=2"></script>
 <script src="{{ url_for('static', filename='js/ai-logos.js') }}?v=1"></script>
 <script src="{{ url_for('static', filename='js/settings-models.js') }}?v=16"></script>

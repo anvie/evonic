@@ -69,15 +69,43 @@ def primary_model(agent: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return db.get_model_by_id(mid)
 
 
-def fallback_model(agent: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Configured fallback model for an explorer, or None."""
+def fallback_model_ids(agent: Optional[Dict[str, Any]]) -> List[str]:
+    """Ordered fallback model ids configured for an explorer (may be empty).
+
+    Reads the ``fallback_model_ids`` chain, or the legacy single
+    ``fallback_model_id`` for configs built before the chain existed.
+    """
     if not is_explorer(agent):
-        return None
-    fid = (agent or {}).get('fallback_model_id')
-    if not fid:
-        return None
+        return []
+    agent = agent or {}
+    ids = agent.get('fallback_model_ids')
+    if not ids:
+        ids = [agent.get('fallback_model_id')]
+    out: List[str] = []
+    for fid in ids or []:
+        if fid and fid not in out:
+            out.append(fid)
+    return out
+
+
+def fallback_models(agent: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Enabled fallback model rows for an explorer, in order (may be empty)."""
+    ids = fallback_model_ids(agent)
+    if not ids:
+        return []
     from models.db import db
-    return db.get_model_by_id(fid)
+    out: List[Dict[str, Any]] = []
+    for fid in ids:
+        model = db.get_model_by_id(fid)
+        if model and model.get('enabled', True):
+            out.append(model)
+    return out
+
+
+def fallback_model(agent: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """First configured fallback model for an explorer, or None."""
+    models = fallback_models(agent)
+    return models[0] if models else None
 
 
 def _candidate_defs() -> List[Dict[str, Any]]:
@@ -156,6 +184,35 @@ def tool_defs(agent: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _model_fields(parent_agent: Dict[str, Any], skill_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Model, fallback chain and legacy first fallback for an explorer config.
+
+    With inherit_parent_model the explorer copies the calling agent's model and
+    fallback. Otherwise it uses its own model and fallback chain; with no model
+    of its own (the global default) it carries no fallbacks either, so the
+    runtime walks the global default fallback chain from System Settings.
+    """
+    if skill_cfg.get('inherit_parent_model'):
+        model_id = parent_agent.get('model_id') or None
+        fb = parent_agent.get('fallback_model_id')
+        ids = [fb] if fb else []
+    else:
+        model_id = skill_cfg.get('model_id') or None
+        ids = skill_cfg.get('fallback_model_ids') or []
+        if isinstance(ids, str):
+            ids = [ids]
+        if not ids and skill_cfg.get('fallback_model_id'):
+            ids = [skill_cfg.get('fallback_model_id')]
+        if not model_id:
+            ids = []
+    ids = [i for i in dict.fromkeys(ids) if i and i != model_id]
+    return {
+        'model_id': model_id,
+        'fallback_model_ids': ids,
+        'fallback_model_id': ids[0] if ids else None,
+    }
+
+
 def build_config(
     parent_agent: Dict[str, Any],
     explorer_id: str,
@@ -175,8 +232,7 @@ def build_config(
         '_db_agent_id': explorer_id,  # own id → no parent model/tools/KB
         'system_prompt': skill_cfg.get('system_prompt', '') or '',
         '_explorer_tool_ids': explorer_tool_ids,
-        'model_id': (parent_agent.get('model_id') if skill_cfg.get('inherit_parent_model') else skill_cfg.get('model_id')) or None,
-        'fallback_model_id': (parent_agent.get('fallback_model_id') if skill_cfg.get('inherit_parent_model') else skill_cfg.get('fallback_model_id')) or None,
+        **_model_fields(parent_agent, skill_cfg),
         'workspace': path,          # boundary root for Grep/Read/Glob
         'agent_messaging_enabled': True,
         'builtin_tools_enabled': True,

@@ -63,11 +63,6 @@ def test_settings_general_uses_shared_helper_for_all_routing_selects():
     assert "ui.populateModelSelect(el, list, {" in source
     assert 'selectedValue: selectedId || ""' in source
     for select_id in [
-        "default-model-select",
-        "default-model-fallback-select",
-        "vision-model-select",
-        "vision-fallback-model-select",
-        "vision-fallback-model-2-select",
         "kb-organizer-model-select",
         "task-classifier-model-select",
         "cmp-model-select",
@@ -78,7 +73,13 @@ def test_settings_general_uses_shared_helper_for_all_routing_selects():
     assert "No models configured" in source
     # Special ungrouped labels stay as explicit empty labels.
     assert "Auto-detect (first vision-capable model)" in source
-    assert "None / disabled" in source
+    assert 'getElementById("vision-model-chain")' in source
+    # The default model chain is the shared ModelChain component, which reuses
+    # a searchable picker modal instead of per-row selects.
+    assert "new ModelChain(root, {" in source
+    chain_js = read_repo_file("static/js/model-chain.js")
+    assert "data-mc-search" in chain_js
+    assert "_renderList" in chain_js and "_renderSelected" in chain_js
 
 
 def test_evaluate_page_uses_shared_helper_with_model_name_values():

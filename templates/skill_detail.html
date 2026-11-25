@@ -2,6 +2,8 @@
 {% from 'partials/toggle.html' import toggle_widget %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pkg-detail.css') }}?v=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/model-chain.css') }}?v=12">
+<script src="{{ url_for('static', filename='js/model-chain.js') }}?v=9"></script>
 <div class="px-3 py-4 md:p-6">
     <a href="/skills" class="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 mb-3 transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
@@ -197,7 +199,7 @@ async function loadSkill() {
     const sub = [skillData.author ? 'by ' + esc(skillData.author) : '', `<span class="font-mono">${esc(skillData.id || SKILL_ID)}</span>`].filter(Boolean);
     meta.push(`<div class="pd-sub">${sub.map(x => `<span>${x}</span>`).join('')}</div>`);
     document.getElementById('skill-meta').innerHTML = meta.join('');
-    document.getElementById('skill-stats').innerHTML = [['Tools', (skillData.tools || []).length], ['Settings', (skillData.variables || []).length]]
+    document.getElementById('skill-stats').innerHTML = [['Tools', (skillData.tools || []).length], ['Settings', (skillData.variables || []).filter(v => !v.hidden).length]]
         .map(([label, n]) => `<span class="pd-stat"><b>${n}</b>${label}</span>`).join('');
 
     renderSettings(skillData.variables || [], skillData.config || {});
@@ -253,6 +255,12 @@ function valueFor(variable) {
 }
 
 function renderSettingField(v) {
+    // Hidden variables are written by another field (e.g. a model chain's
+    // fallback list) and are saved from settingsState, not rendered.
+    if (v.hidden) return '';
+    if (v.type === 'model_chain') {
+        return `<div class="mb-5" data-model-chain="${esc(v.name)}"></div>`;
+    }
     const val = valueFor(v);
     if (v.type === 'boolean') {
         return `
@@ -379,9 +387,83 @@ function renderSettings(variables, config) {
     populateDynamicSelects();
 }
 
+// ---- Model chain fields (type "model_chain") ----
+// Rendered with the shared ModelChain component: main model + ordered
+// fallbacks. An empty main model means "global default": the skill then
+// follows the default model and fallback chain from System Settings.
+let _chainData = null;
+
+function loadChainData() {
+    if (!_chainData) {
+        const get = url => fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null);
+        _chainData = Promise.all([get('/api/models'), get('/api/settings/general'), get('/api/settings/default-model')])
+            .then(([models, general, def]) => ({
+                models: (models && models.models) || [],
+                inherited: {
+                    mainId: (def && def.model && def.model.id) || '',
+                    fallbackIds: (general && Array.isArray(general.default_model_fallback_ids))
+                        ? general.default_model_fallback_ids
+                        : (general && general.default_model_fallback_id ? [general.default_model_fallback_id] : []),
+                },
+            }));
+    }
+    return _chainData;
+}
+
+function mountModelChains() {
+    document.querySelectorAll('[data-model-chain]').forEach(el => {
+        const v = settingsVariables.find(x => x.name === el.dataset.modelChain);
+        if (!v || el._chain) return;
+        const listVar = v.fallbacks_var;
+        const legacyVar = v.legacy_fallback_var;
+        const current = () => {
+            let ids = listVar ? settingsState[listVar] : [];
+            if (typeof ids === 'string') { try { ids = JSON.parse(ids); } catch (e) { ids = []; } }
+            if ((!ids || !ids.length) && legacyVar && settingsState[legacyVar]) ids = [settingsState[legacyVar]];
+            return { mainId: settingsState[v.name] || '', fallbackIds: ids || [] };
+        };
+        const chain = new ModelChain(el, {
+            title: v.label || v.name,
+            description: v.description || '',
+            fallbacks: v.fallbacks || 5,
+            mainLabel: v.main_label || 'Main',
+            selectClass: inputClass(),
+            inherit: {
+                label: v.inherit_label || 'Global default model',
+                note: 'Uses the default model and fallbacks from System Settings.',
+                href: '/system#general-models-routing',
+            },
+            onSave: async ({ mainId, fallbackIds }) => {
+                const body = { [v.name]: mainId };
+                if (listVar) body[listVar] = fallbackIds;
+                if (legacyVar) body[legacyVar] = fallbackIds[0] || '';
+                const res = await fetch(`/api/skills/${SKILL_ID}/config`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.error) throw new Error(data.error || 'Failed to save');
+                const cfg = data.config || {};
+                [v.name, listVar, legacyVar].filter(Boolean).forEach(k => {
+                    if (k in cfg) settingsState[k] = cfg[k];
+                });
+                return current();
+            },
+        });
+        el._chain = chain;
+        chain.setValue(current());
+        loadChainData().then(({ models, inherited }) => {
+            chain.setModels(models);
+            chain.setInherited(inherited);
+        });
+    });
+}
+
 // Populate <select data-options-source="models"> from /api/models, preserving
 // each select's saved value (stored in data-current).
 async function populateDynamicSelects() {
+    mountModelChains();
     const sels = document.querySelectorAll('select[data-options-source="models"]');
     if (!sels.length) return;
     let models = [];

@@ -5,10 +5,11 @@ Agents use this tool to analyze images rather than having images auto-fed to the
 main LLM. The vision model is selected via a configurable priority chain:
   1. agent-level `vision_model_id` column
   2. system config `vision_model_id` (app_settings)
-  3. system fallback `vision_fallback_model_id` (app_settings)
-  4. system fallback `vision_fallback_model_2_id` (app_settings)
-  5. agent's current model (if vision_supported)
-  6. all enabled models with `vision_supported = 1` in `llm_models`
+  3. system fallback chain `vision_fallback_model_ids` (app_settings, up to
+     five models; older installs read `vision_fallback_model_id` and
+     `vision_fallback_model_2_id`)
+  4. agent's current model (if vision_supported)
+  5. all enabled models with `vision_supported = 1` in `llm_models`
 
 On connection errors, rate limits (HTTP 429), provider errors, timeouts,
 and auth errors, the tool automatically falls back to the next
@@ -171,10 +172,9 @@ def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
     Priority:
       1. Agent-level vision_model_id (from agent_context)
       2. System config vision_model_id (app_settings)
-      3. System fallback vision_fallback_model_id (app_settings)
-      4. System fallback vision_fallback_model_2_id (app_settings)
-      5. Agent's current model (if vision_supported)
-      6. All enabled models with vision_supported = 1
+      3. System fallback chain vision_fallback_model_ids (app_settings)
+      4. Agent's current model (if vision_supported)
+      5. All enabled models with vision_supported = 1
 
     Returns:
         (models_list, error_string).  Exactly one will be non-None/empty.
@@ -206,9 +206,9 @@ def _resolve_vision_models(agent: dict) -> tuple[list, Optional[str]]:
         if model and model.get("enabled") and model.get("vision_supported"):
             _add_model(model)
 
-    # Priority 3-4: explicitly configured fallback chain.
-    for setting_key in ("vision_fallback_model_id", "vision_fallback_model_2_id"):
-        fallback_vision_id = db.get_setting(setting_key)
+    # Priority 3: explicitly configured fallback chain (up to five models).
+    from backend.default_model_chain import VISION_CHAIN
+    for fallback_vision_id in VISION_CHAIN.get_ids(db):
         if fallback_vision_id and fallback_vision_id not in seen_ids:
             model = db.get_model_by_id(fallback_vision_id)
             if model and model.get("enabled") and model.get("vision_supported"):

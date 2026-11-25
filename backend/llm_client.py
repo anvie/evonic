@@ -629,11 +629,11 @@ class LLMClient:
         # Fallback model support: retried once when the primary call fails.
         # An explicit model_config means the caller chose this model, so no
         # fallback is added implicitly; a client built with the global default
-        # (model_config=None) resolves `default_model_fallback_id` instead.
+        # (model_config=None) resolves the global fallback chain instead.
         self._explicit_model_config = model_config
         self._fallback_config = fallback_model_config
         self._allow_fallback = _allow_fallback
-        self._fallback_client: Optional["LLMClient"] = None
+        self._fallback_clients: List["LLMClient"] = []
         # Cache for global LLM settings (avoids repeated DB reads in hot path).
         # TTL-based, simple dict — intentionally lock-free (worst case: 1 extra DB read).
         # Optional per-call retry override. When set (not None), it takes
@@ -953,60 +953,70 @@ class LLMClient:
                 or result.get("error_type") == "stopped"):
             return result
 
-        fallback = self._get_fallback_client()
-        if fallback is None:
-            return result
-
-        fallback_result = fallback._chat_completion_once(
-            messages=messages,
-            tools=tools,
-            temperature=temperature,
-            enable_thinking=enable_thinking,
-            max_tokens=max_tokens,
-            log_file=log_file,
-            tool_choice=tool_choice,
-            stream_callback=stream_callback,
-        )
-        if not fallback_result.get("success"):
-            return result
-
-        fallback_result["fallback_used"] = True
-        fallback_result["primary_model"] = self.model
-        fallback_result["primary_error_type"] = result.get("error_type")
-        return fallback_result
+        for fallback in self._get_fallback_clients():
+            fallback_result = fallback._chat_completion_once(
+                messages=messages,
+                tools=tools,
+                temperature=temperature,
+                enable_thinking=enable_thinking,
+                max_tokens=max_tokens,
+                log_file=log_file,
+                tool_choice=tool_choice,
+                stream_callback=stream_callback,
+            )
+            if fallback_result.get("error_type") == "stopped":
+                return fallback_result
+            if not fallback_result.get("success"):
+                continue
+            fallback_result["fallback_used"] = True
+            fallback_result["fallback_model"] = fallback.model
+            fallback_result["primary_model"] = self.model
+            fallback_result["primary_error_type"] = result.get("error_type")
+            return fallback_result
+        return result
 
     def _get_fallback_client(self) -> Optional["LLMClient"]:
-        """Return a client for the fallback model, or None when none applies.
+        """Return the first fallback client, or None when none applies."""
+        clients = self._get_fallback_clients()
+        return clients[0] if clients else None
 
-        An explicitly configured fallback wins.  A client created without an
-        explicit model config (the global default model) resolves the
-        ``default_model_fallback_id`` setting instead, so shared callers get
-        the same failover agents have.  A model identical to the primary is
-        skipped to avoid retrying the same endpoint.  Positive resolutions are
-        cached; the None case is recomputed so a later setting change applies.
+    def _get_fallback_clients(self) -> List["LLMClient"]:
+        """Return the fallback clients to try in order (possibly empty).
+
+        An explicitly configured fallback wins and is the only one tried.  A
+        client created without an explicit model config (the global default
+        model) resolves the global fallback chain (``default_model_fallback_ids``)
+        instead, so shared callers get the same failover agents have.  Models
+        identical to the primary, or repeated in the chain, are skipped to avoid
+        retrying the same endpoint.  Positive resolutions are cached; the empty
+        case is recomputed so a later setting change applies.
         """
-        if self._fallback_client is not None:
-            return self._fallback_client
+        if self._fallback_clients:
+            return self._fallback_clients
         try:
-            config = self._fallback_config
-            if config is None and self._explicit_model_config is None:
+            if self._fallback_config is not None:
+                configs = [self._fallback_config]
+            elif self._explicit_model_config is None:
                 from models.db import db
-                fallback_id = db.get_setting("default_model_fallback_id", "")
-                config = db.get_model_by_id(fallback_id) if fallback_id else None
-            if not config or not config.get("enabled", True):
-                return None
-            same_target = (
-                config.get("model_name") == self.model
-                and (config.get("base_url") or "") == (self.base_url or "")
-            )
-            if same_target:
-                return None
-            self._fallback_client = LLMClient(
-                model_config=config, _allow_fallback=False)
+                from backend.default_model_chain import get_fallback_models
+                configs = get_fallback_models(db)
+            else:
+                configs = []
+            seen = {(self.model, self.base_url or "")}
+            clients: List["LLMClient"] = []
+            for config in configs:
+                if not config or not config.get("enabled", True):
+                    continue
+                target = (config.get("model_name"), config.get("base_url") or "")
+                if target in seen:
+                    continue
+                seen.add(target)
+                clients.append(LLMClient(model_config=config, _allow_fallback=False))
+            self._fallback_clients = clients
         except Exception as exc:
             print(f"[llm_client] could not build fallback client: {exc}")
-            return None
-        return self._fallback_client
+            return []
+        return self._fallback_clients
 
     def _is_opencode_provider(self) -> bool:
         """Return True for OpenCode Go/Zen endpoints.
