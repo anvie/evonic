@@ -273,8 +273,8 @@ Your job is NOT to file new knowledge — another process handles that. Your job
 5. WRONG TITLES — a `title` that includes parenthetical nicknames (e.g. `"Abdurrahman Wahid (Gus Dur)"`). Use str_replace to fix the title in frontmatter to the pure canonical name and move the nickname to `aliases`.
 
 APPROACH:
-- Start with Glob `**/*.md` to list all docs.
-- Read a representative sample to understand the vault's state and naming conventions.
+- If the task lists a FOCUS BATCH and DETECTED ISSUES, work on those FIRST: Read each focus doc, verify every detected issue (they come from a heuristic and may be false positives) and fix the real ones. Only afterwards spend leftover effort on the rest of the vault.
+- Otherwise start with Glob `**/*.md` to list all docs and Read a representative sample to understand the vault's state and naming conventions.
 - Grep systematically for problems:
   - `title:` to build a title index, spot duplicates.
   - `\\[\\[` to find all wiki-links, cross-check against known titles/aliases for dangling ones.
@@ -361,11 +361,32 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
             answer_box['answer'] = data.get('answer', '')
             done.set()
 
+    # Decide in code which docs deserve attention this run (new/changed/stale
+    # first, plus linked neighbours) and pre-compute heuristic findings.
+    plan_text, plan_slugs, ledger = "", [], {}
+    try:
+        from backend.agent_runtime import kb_tidy_plan
+        vault = kb_tidy_plan.scan_vault(kb_abs)
+        ledger = _load_kb_tidy_ledger(agent_id)
+        batch, neighbors, reasons = kb_tidy_plan.plan_batch(vault, ledger)
+        if batch:
+            plan_slugs = batch + neighbors
+            plan_text = kb_tidy_plan.render_plan(
+                vault, batch, neighbors, reasons,
+                kb_tidy_plan.find_issues(vault, plan_slugs))
+    except Exception:
+        logger.warning("[MemoryManager] kb-janitor[%s]: planning failed; running "
+                       "unfocused", agent_id, exc_info=True)
+
     event_stream.on('final_answer', _on_done)
     try:
-        task_msg = ("Audit the vault (your workspace) for structural problems. "
-                    "Use Glob to list all docs, Read a representative sample, "
-                    "then Grep systematically for: (1) duplicate docs about the "
+        task_msg = ((plan_text + "\n\n" if plan_text else "") +
+                    "Audit the vault (your workspace) for structural problems. "
+                    + ("Start with the FOCUS BATCH and DETECTED ISSUES above, then "
+                       "Grep the whole vault to cross-check them. "
+                       if plan_text else
+                       "Use Glob to list all docs, Read a representative sample, ") +
+                    "Grep systematically for: (1) duplicate docs about the "
                     "same entity under different names, (2) dangling [[links]] "
                     "whose target doesn't exist but may exist under another name, "
                     "(3) plain-text mentions of entities that HAVE docs but aren't "
@@ -387,6 +408,17 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
             logger.warning("[MemoryManager] kb-janitor[%s]: timed out after %ds",
                            agent_id, timeout)
             return f"KB Janitor timed out after {timeout}s."
+        if plan_slugs:
+            # Completed (not timed out): mark the batch audited at the post-edit
+            # mtime so the janitor's own edits don't re-queue it as "changed".
+            try:
+                after = kb_tidy_plan.scan_vault(kb_abs)
+                ledger = {s: e for s, e in ledger.items() if s in after}
+                ledger.update(kb_tidy_plan.audit_entries(after, plan_slugs, time.time()))
+                _save_kb_tidy_ledger(agent_id, ledger)
+            except Exception:
+                logger.debug("[MemoryManager] kb-janitor[%s]: ledger update failed",
+                             agent_id, exc_info=True)
         return answer_box.get('answer', '') or "KB Janitor finished (no summary)."
     finally:
         event_stream.off('final_answer', _on_done)
@@ -1067,6 +1099,22 @@ def _save_kb_last_organized(agent_id: str, ts: float) -> None:
         db.set_setting(f"kb_last_organized:{agent_id}", str(ts))
     except Exception:
         logger.debug("[MemoryManager] could not save kb last-organized ts for %s", agent_id)
+
+
+def _load_kb_tidy_ledger(agent_id: str) -> dict:
+    """Per-doc audit ledger ``{slug: {"m": mtime_at_audit, "t": audited_at}}``."""
+    try:
+        data = json.loads(db.get_setting(f"kb_tidy_ledger:{agent_id}") or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 — best-effort
+        return {}
+
+
+def _save_kb_tidy_ledger(agent_id: str, ledger: dict) -> None:
+    try:
+        db.set_setting(f"kb_tidy_ledger:{agent_id}", json.dumps(ledger))
+    except Exception:
+        logger.debug("[MemoryManager] could not save kb tidy ledger for %s", agent_id)
 
 
 def get_kb_activity(agent_id: str) -> dict:
