@@ -100,7 +100,7 @@ def test_find_issues_dangling_unlinked_duplicate_empty_paren(tmp_path):
     _write(kb, "elsewhere", "Elsewhere", "Budi Santoso tinggal di sana.")
     docs = P.scan_vault(kb)
     text = "\n".join(P.find_issues(docs, ["budi", "empty", "gusdur"]))
-    assert "DANGLING link [[Ghost Person]]" in text
+    assert "DANGLING" in text and "[[Ghost Person]] -> no close doc" in text
     assert "UNLINKED mention of 'Surabaya'" in text
     assert "DUPLICATE?" in text and "[budi-2]" in text
     assert "[empty] EMPTY body" in text
@@ -125,3 +125,24 @@ def test_render_plan_lists_batch_neighbours_and_issues(tmp_path):
     out = P.render_plan(docs, batch, nb, reasons, P.find_issues(docs, batch))
     assert "FOCUS BATCH (1 of 1 docs" in out and "[a] Alpha (new)" in out
     assert "DETECTED ISSUES" in out and "Missing" in out
+
+
+def test_dangling_links_are_grouped_per_doc_with_closest_candidates(tmp_path):
+    kb = str(tmp_path)
+    _write(kb, "blue-heron-project", "Blue Heron Project", "x")
+    _write(kb, "series", "Blue Series",
+           "[[blue-heron]] and [[blue-heron]] and [[Totally Unknown Thing]]")
+    docs = P.scan_vault(kb)
+    issues = [i for i in P.find_issues(docs, ["series"]) if "DANGLING" in i]
+    assert len(issues) == 1                       # one line per doc, not per link
+    assert "[[blue-heron]] -> closest: [blue-heron-project] Blue Heron Project" in issues[0]
+    assert "[[Totally Unknown Thing]] -> no close doc" in issues[0]
+
+
+def test_dangling_list_is_capped_per_doc(tmp_path):
+    kb = str(tmp_path)
+    body = " ".join(f"[[Ghost{i:02d}xyz]]" for i in range(12))
+    _write(kb, "a", "Alpha", body)
+    docs = P.scan_vault(kb)
+    line = [i for i in P.find_issues(docs, ["a"]) if "DANGLING" in i][0]
+    assert f"(+{12 - P.MAX_DANGLING_PER_DOC} more dangling)" in line

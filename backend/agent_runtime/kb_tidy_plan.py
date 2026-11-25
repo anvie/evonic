@@ -14,6 +14,7 @@ should look at, in code:
 Pure functions over a scanned vault; no LLM, no DB. The caller owns the ledger.
 """
 
+import difflib
 import functools
 import os
 import re
@@ -22,6 +23,8 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 BATCH_CAP = 15            # docs per run drawn from the priority queue
 NEIGHBOR_CAP = 30         # safety bound on linked docs added on top of the cap
 MAX_ISSUES = 80           # issue lines handed to the LLM
+MAX_DANGLING_PER_DOC = 8  # dangling links listed per doc (rest summarised)
+_CLOSEST_MIN_RATIO = 0.72  # similarity for a 'closest existing doc' suggestion
 _MIN_NAME_LEN = 3         # shorter names are too ambiguous for plain-text matching
 _MTIME_EPS = 0.001
 
@@ -166,6 +169,37 @@ def plan_batch(docs: Dict[str, Doc], ledger: Dict[str, dict],
     return batch, neighbors, reasons
 
 
+def _norm(name: str) -> str:
+    return re.sub(r'[\s_\-]+', ' ', name.casefold()).strip()
+
+
+def closest_docs(target: str, docs: Dict[str, Doc], n: int = 2) -> List[Doc]:
+    """Existing docs whose slug/title/alias resembles *target* (for dangling
+    links, so the LLM needn't search the vault to find the intended doc)."""
+    t = _norm(target)
+    if len(t) < _MIN_NAME_LEN:
+        return []
+    scored = []
+    for d in docs.values():
+        best = 0.0
+        for cand in (d.slug.rsplit('/', 1)[-1], *_names(d)):
+            c = _norm(cand)
+            if not c:
+                continue
+            if t in c or c in t:
+                ratio = 0.9 if min(len(t), len(c)) >= _MIN_NAME_LEN else 0.0
+            else:
+                m = difflib.SequenceMatcher(None, t, c)
+                if m.real_quick_ratio() < _CLOSEST_MIN_RATIO or m.quick_ratio() < _CLOSEST_MIN_RATIO:
+                    continue
+                ratio = m.ratio()
+            best = max(best, ratio)
+        if best >= _CLOSEST_MIN_RATIO:
+            scored.append((best, d))
+    scored.sort(key=lambda p: p[0], reverse=True)
+    return [d for _, d in scored[:n]]
+
+
 def _unlinked_body(body: str) -> str:
     """Body with existing [[links]] blanked so plain-text matching skips them."""
     return _LINK_RE.sub(lambda m: ' ' * len(m.group(0)), body)
@@ -201,11 +235,22 @@ def find_issues(docs: Dict[str, Doc], focus: List[str],
             if others:
                 _emit(f"[{slug}] DUPLICATE?: name {n!r} also belongs to "
                       f"{', '.join('[' + s + ']' for s in others)}")
-        seen = set()
+        dangling, seen = [], set()
         for t in d.links:
             if t.casefold() not in idx and t.casefold() not in seen:
                 seen.add(t.casefold())
-                _emit(f"[{slug}] DANGLING link [[{t}]]: no doc has that title/alias")
+                dangling.append(t)
+        if dangling:
+            parts = []
+            for t in dangling[:MAX_DANGLING_PER_DOC]:
+                near = closest_docs(t, docs)
+                hint = (" -> closest: " + ", ".join(f"[{c.slug}] {c.title}" for c in near)
+                        if near else " -> no close doc")
+                parts.append(f"[[{t}]]{hint}")
+            more = len(dangling) - MAX_DANGLING_PER_DOC
+            tail = f" (+{more} more dangling)" if more > 0 else ""
+            _emit(f"[{slug}] DANGLING (no doc has that title/alias): "
+                  + "; ".join(parts) + tail)
 
     focus_set = set(focus)
     plain = {s: _unlinked_body(d.body) for s, d in docs.items()}
@@ -250,8 +295,9 @@ def render_plan(docs: Dict[str, Doc], batch: List[str], neighbors: List[str],
             lines.append(f"- [{s}] {docs[s].title}")
     lines.append("")
     if issues:
-        lines.append("DETECTED ISSUES (heuristic pre-analysis; each may be a FALSE "
-                     "POSITIVE — Read the doc and verify before fixing; do NOT link "
+        lines.append("DETECTED ISSUES (computed from the WHOLE vault already, so you "
+                     "do NOT need to search it; heuristic, so each may be a FALSE "
+                     "POSITIVE — Read the doc to verify before fixing; do NOT link "
                      "entities that merely share a name fragment):")
         lines.extend(f"- {i}" for i in issues)
     else:

@@ -15,6 +15,10 @@ _MAX_MATCHES = 500
 # 500 matches x 2KB lines.  50KB keeps ~125 typical 400-char lines
 # which is enough for the explorer to reason about.
 _MAX_OUTPUT_CHARS = 50_000
+# The KB organizer/janitor often runs on a small-context model: one 50KB result
+# (~12k tokens) can overflow it, so it gets much tighter caps.
+_KB_MAX_MATCHES = 40
+_KB_MAX_OUTPUT_CHARS = 6_000
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -34,7 +38,11 @@ def execute(agent: dict, args: dict) -> dict:
     if not info['exists']:
         return {'error': f'path not found: {search_path}'}
 
-    cmd = ['rg', '--json', '--no-heading', '--max-count', str(_MAX_MATCHES)]
+    max_matches, max_chars = _MAX_MATCHES, _MAX_OUTPUT_CHARS
+    if agent.get('is_kb_organizer'):
+        max_matches, max_chars = _KB_MAX_MATCHES, _KB_MAX_OUTPUT_CHARS
+
+    cmd = ['rg', '--json', '--no-heading', '--max-count', str(max_matches)]
 
     # An agent's KB vault lives under the gitignored agents/ tree; ripgrep honors
     # .gitignore by default and would skip every doc (0 matches). Search it in
@@ -78,7 +86,7 @@ def execute(agent: dict, args: dict) -> dict:
                 line_num = match_data.get('line_number', 0)
                 line_text = match_data.get('lines', {}).get('text', '').rstrip('\n')
 
-                if total_matches >= _MAX_MATCHES:
+                if total_matches >= max_matches:
                     truncated = True
                     break
 
@@ -106,16 +114,16 @@ def execute(agent: dict, args: dict) -> dict:
     result = {'matches': matches, 'total_matches': total_matches}
     if truncated:
         result['truncated'] = True
-        result['note'] = f'Results truncated at {_MAX_MATCHES} matches. Narrow your search.'
+        result['note'] = f'Results truncated at {max_matches} matches. Narrow your search.'
 
     # --- Output size cap ---
     # Even with _MAX_MATCHES=500, long line content can produce 1M+ chars
     # of JSON.  Truncate progressively (drop ~20 % of matches per pass)
     # until the serialised output fits within _MAX_OUTPUT_CHARS.
     _result_str = json.dumps(result)
-    if len(_result_str) > _MAX_OUTPUT_CHARS:
+    if len(_result_str) > max_chars:
         _dropped = 0
-        while len(_result_str) > _MAX_OUTPUT_CHARS and matches:
+        while len(_result_str) > max_chars and matches:
             _n_to_drop = max(1, len(matches) // 5)
             for _ in range(_n_to_drop):
                 if not matches:
@@ -129,7 +137,7 @@ def execute(agent: dict, args: dict) -> dict:
             result['truncated'] = True
             taken = total_matches - _dropped
             result['note'] = (
-                f'Output truncated to {_MAX_OUTPUT_CHARS} chars — '
+                f'Output truncated to {max_chars} chars — '
                 f'showing {taken}/{total_matches} matches across '
                 f'{len(matches)} file(s). Narrow your search pattern or scope.'
             )

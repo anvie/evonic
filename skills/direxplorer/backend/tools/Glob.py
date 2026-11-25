@@ -17,6 +17,9 @@ from ._utils import _prepare_path, _run_python_json
 # serialized payload fits, so long/escaped paths cannot blow the budget.
 _MAX_FILES = 1000
 _MAX_JSON_BYTES = 48 * 1024
+# Tight caps for the KB organizer/janitor (small-context models; see Grep.py).
+_KB_MAX_FILES = 100
+_KB_MAX_JSON_BYTES = 4 * 1024
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -36,11 +39,15 @@ def execute(agent: dict, args: dict) -> dict:
     if not info['is_dir']:
         return {'error': f'path is not a directory: {base_path}'}
 
+    max_files, max_json_bytes = _MAX_FILES, _MAX_JSON_BYTES
+    if agent.get('is_kb_organizer'):
+        max_files, max_json_bytes = _KB_MAX_FILES, _KB_MAX_JSON_BYTES
+
     code = f'''import glob, json, os
 base, pattern = {base_path!r}, {pattern!r}
 skip = {{'.git', 'node_modules', '__pycache__', 'venv', '.venv', 'vendor', 'target', 'build', 'dist'}}
-MAX_FILES = {_MAX_FILES}
-MAX_JSON_BYTES = {_MAX_JSON_BYTES}
+MAX_FILES = {max_files}
+MAX_JSON_BYTES = {max_json_bytes}
 files = []
 total = 0
 for path in sorted(glob.glob(os.path.join(base, pattern), recursive=True)):

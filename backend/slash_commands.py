@@ -1612,13 +1612,16 @@ def _register_builtins():
         """Dump the current agent session JSONL file and send it to the user."""
         import shutil
         from models.chatlog import chatlog_manager
+        from models.db import db
         from backend.agent_runtime import agent_runtime
 
         hash_part = session_id
         if hash_part.startswith(f'{agent_id}-'):
             hash_part = hash_part[len(agent_id) + 1:]
-        # ChatLog owns the path logic (sub-agent sessions live under /tmp, not agents/)
-        jsonl_path = chatlog_manager.get(agent_id, session_id)._path
+        # A sub-agent's session (organizer/explorer) is persisted under its PARENT's
+        # agent dir, so resolve the owning agent; ChatLog owns the path logic.
+        owner_id = db._find_agent_for_session(session_id) or agent_id
+        jsonl_path = chatlog_manager.get(owner_id, session_id)._path
 
         if not os.path.exists(jsonl_path):
             return f"Session log not found: {jsonl_path}"

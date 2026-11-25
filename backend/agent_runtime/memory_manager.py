@@ -273,7 +273,12 @@ Your job is NOT to file new knowledge — another process handles that. Your job
 5. WRONG TITLES — a `title` that includes parenthetical nicknames (e.g. `"Abdurrahman Wahid (Gus Dur)"`). Use str_replace to fix the title in frontmatter to the pure canonical name and move the nickname to `aliases`.
 
 APPROACH:
-- If the task lists a FOCUS BATCH and DETECTED ISSUES, work on those FIRST: Read each focus doc, verify every detected issue (they come from a heuristic and may be false positives) and fix the real ones. Only afterwards spend leftover effort on the rest of the vault.
+- If the task lists a FOCUS BATCH and DETECTED ISSUES, STAY INSIDE THEM. They were computed from the whole vault already (including the closest existing doc for each dangling link and which doc each plain-text mention belongs to), so you do NOT need to search the vault:
+  - Do NOT Glob the vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context.
+  - Work ONE doc at a time: Read it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front.
+  - To confirm a suggested doc, Read that doc (one file). If you must search, use a narrow Grep for ONE specific name.
+  - Detected issues are heuristic: skip false positives (e.g. two different people sharing a name fragment).
+  - Keep it small: roughly two tool calls per doc. Stop when the batch is done — do not widen the audit to the rest of the vault.
 - Otherwise start with Glob `**/*.md` to list all docs and Read a representative sample to understand the vault's state and naming conventions.
 - Grep systematically for problems:
   - `title:` to build a title index, spot duplicates.
@@ -382,11 +387,14 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
     try:
         task_msg = ((plan_text + "\n\n" if plan_text else "") +
                     "Audit the vault (your workspace) for structural problems. "
-                    + ("Start with the FOCUS BATCH and DETECTED ISSUES above, then "
-                       "Grep the whole vault to cross-check them. "
+                    + ("Work through the FOCUS BATCH and DETECTED ISSUES above one doc "
+                       "at a time; do NOT Glob or Grep the whole vault (the issues "
+                       "already come from a full-vault analysis). Fix the real ones. "
+                       "Problem types: "
                        if plan_text else
-                       "Use Glob to list all docs, Read a representative sample, ") +
-                    "Grep systematically for: (1) duplicate docs about the "
+                       "Use Glob to list all docs, Read a representative sample, "
+                       "then Grep systematically for: ") +
+                    "(1) duplicate docs about the "
                     "same entity under different names, (2) dangling [[links]] "
                     "whose target doesn't exist but may exist under another name, "
                     "(3) plain-text mentions of entities that HAVE docs but aren't "
