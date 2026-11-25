@@ -8,6 +8,8 @@ including standard XML thinking tags, Gemma 4, and Qwen formats.
 
 import contextvars
 import json
+import logging
+import os
 import re
 import socket
 import threading
@@ -22,9 +24,34 @@ from backend.normalizer import normalize_llm_text
 from evaluator.api_logger import log_api_call
 from evaluator.gemma4_parser import is_gemma4_format, strip_gemma4_thinking
 
+_logger = logging.getLogger(__name__)
+
 # Read timeout (seconds between bytes, not total) when a model sets none, so a
 # stalled provider cannot hang an agent thread forever.
 DEFAULT_READ_TIMEOUT = 900
+
+# A thinking model spends max_tokens on chain-of-thought before it answers, so the
+# request budget is doubled when no thinking_budget is set. The doubled value is
+# capped (never below the configured base): doubling an already large base (e.g.
+# 64k -> 128k) let a runaway reasoner burn ~40 minutes in one call.
+THINKING_MAX_EFFECTIVE_OUTPUT = int(os.environ.get("EVONIC_THINKING_MAX_EFFECTIVE_OUTPUT", "32768"))
+# Abort a stream that has produced this many (estimated) reasoning tokens and
+# still no answer/tool call; reported as generation_timeout. 0 disables.
+REASONING_ONLY_ABORT_TOKENS = int(os.environ.get("EVONIC_REASONING_ONLY_ABORT_TOKENS", "24000"))
+
+
+def effective_output_tokens(max_tokens, thinking, enable_thinking, thinking_budget):
+    """The ``max_tokens`` actually sent to the provider for a call.
+
+    Single source of truth shared with the request budget planner so the output
+    reserve it subtracts matches the request. ``None`` passes through (the client
+    then falls back to the model's configured value).
+    """
+    if max_tokens is None:
+        return None
+    if thinking and enable_thinking and not thinking_budget:
+        return max(max_tokens, min(max_tokens * 2, THINKING_MAX_EFFECTIVE_OUTPUT))
+    return max_tokens
 
 # ── Centralized error formatting ──────────────────────────────────────────────
 
@@ -359,6 +386,7 @@ def _iter_sse_lines(response: Any):
 def _consume_openai_stream(
     response: Any,
     on_delta: Optional[Callable[[str, str], None]] = None,
+    reasoning_only_abort_tokens: int = 0,
 ) -> Dict[str, Any]:
     """Consume an OpenAI-compatible SSE chat-completion stream.
 
@@ -369,6 +397,11 @@ def _consume_openai_stream(
 
     ``on_delta(kind, text)`` is called as text arrives; ``kind`` is
     ``"thinking"`` for reasoning deltas (``reasoning_content`` / ``reasoning``).
+
+    ``reasoning_only_abort_tokens`` (>0): once the reasoning alone reaches this many
+    estimated tokens with no content and no tool call yet, stop reading, close the
+    connection and report ``finish_reason="length"`` with empty content, which the
+    caller already treats as ``generation_timeout`` (a runaway reasoner).
 
     A frame carrying an ``error`` object returns ``{"error": ...}`` (handled by
     the caller like a non-streaming error body).  A stream that ends without a
@@ -383,6 +416,7 @@ def _consume_openai_stream(
     model = None
     resp_id = None
     done = False
+    reasoning_chars = 0
 
     for raw in _iter_sse_lines(response):
         if not raw:
@@ -419,11 +453,23 @@ def _consume_openai_stream(
         reasoning = delta.get("reasoning_content") or delta.get("reasoning")
         if reasoning:
             reasoning_parts.append(reasoning)
+            reasoning_chars += len(reasoning)
             if on_delta:
                 try:
                     on_delta("thinking", reasoning)
                 except Exception:
                     pass
+            if (reasoning_only_abort_tokens and not content_parts and not tool_calls
+                    and reasoning_chars // 3 >= reasoning_only_abort_tokens):
+                _logger.warning(
+                    "Aborting stream: ~%d reasoning tokens and no answer yet (limit %d)",
+                    reasoning_chars // 3, reasoning_only_abort_tokens)
+                finish_reason = "length"
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                break
         text = delta.get("content")
         if text:
             content_parts.append(text)
@@ -1073,8 +1119,8 @@ class LLMClient:
         # so actual output isn't crowded out by heavy reasoning. Only applied when thinking
         # is enabled and no explicit thinking_budget cap is configured (thinking_budget > 0
         # means the caller already sized the budget intentionally).
-        if self.thinking and enable_thinking and not self.thinking_budget:
-            max_tokens = max_tokens * 2
+        max_tokens = effective_output_tokens(
+            max_tokens, self.thinking, enable_thinking, self.thinking_budget)
         try:
             from models.db import db as _db
 
@@ -1337,7 +1383,9 @@ class LLMClient:
                             args=(response, _cancel, _finished), daemon=True,
                         ).start()
                     try:
-                        result = _consume_openai_stream(response, stream_callback)
+                        result = _consume_openai_stream(
+                            response, stream_callback,
+                            reasoning_only_abort_tokens=REASONING_ONLY_ABORT_TOKENS)
                     except Exception:
                         if _cancel is not None and _cancel.is_set():
                             return _stopped_result(int((time.time() - start_time) * 1000))

@@ -175,7 +175,7 @@ from backend.agent_runtime.output_parser import (
 )
 
 from models.db import db
-from backend.llm_client import llm_client, strip_thinking_tags, LLMClient, _split_trailing_think_close
+from backend.llm_client import llm_client, strip_thinking_tags, LLMClient, _split_trailing_think_close, effective_output_tokens
 
 # ── Tiktoken-based token counter (cached encoding) ────────────────────────
 _tiktoken_enc = None
@@ -673,6 +673,9 @@ def run_tool_loop(agent: Dict[str, Any],
     # Thinking budget cap state (Phase 2: small model efficiency)
     _thinking_token_count: int = 0       # running tally of thinking tokens this turn
     _thinking_budget_aborted: bool = False  # set True after first budget abort — prevents re-triggering
+    # After a generation_timeout (reasoning ate the whole output budget) the retry gets
+    # a reduced max_tokens for ONE call; None = use the model's normal budget.
+    _retry_output_cap: Optional[int] = None
     # Quality monitor — tracks and caps auto-correction messages (Phase 2)
     _quality_monitor = QualityMonitor()
     # Set of available tool function names for hallucinated-tool detection
@@ -1368,10 +1371,14 @@ def run_tool_loop(agent: Dict[str, Any],
         # an independently planned payload.
         from backend.agent_runtime.request_budget import plan_request
         _required_choice = _required_tool if _required_tool_pending else None
+        _cfg_primary = agent_model_config or {}
         _budget_plan = plan_request(
             _request.messages, _request.tools, tool_choice=_required_choice,
-            context_window=(agent_model_config or {}).get('context_window'),
-            max_tokens=(agent_model_config or {}).get('max_tokens'),
+            context_window=_cfg_primary.get('context_window'),
+            # the value really sent to the provider (post thinking-doubling / retry cap)
+            max_tokens=_retry_output_cap or effective_output_tokens(
+                _cfg_primary.get('max_tokens'), bool(_cfg_primary.get('thinking')),
+                _enable_thinking_this_call, _cfg_primary.get('thinking_budget')),
             thinking_budget=((agent_model_config or {}).get('thinking_budget')
                              if _enable_thinking_this_call else 0),
             safety_margin=REQUEST_BUDGET_SAFETY_MARGIN,
@@ -1450,12 +1457,13 @@ def run_tool_loop(agent: Dict[str, Any],
                     tools=_request.tools,
                     temperature=None,
                     enable_thinking=_enable_thinking_this_call,
-                    max_tokens=None,
+                    max_tokens=_retry_output_cap,
                     log_file=llm_log_path,
                     tool_choice=_required_choice,
                     **({'stream_callback': _thinking_stream} if _thinking_stream else {}),
                 )
             result = _run_interruptible(_chat_call, stop_event)
+        _retry_output_cap = None   # the reduced budget applies to the retry call only
         if result is _STOPPED:
             result = {'success': False, 'error_type': 'stopped'}
         if _thinking_stream:
@@ -1578,7 +1586,27 @@ def run_tool_loop(agent: Dict[str, Any],
                             messages.append(_partial_msg)
 
                 messages.append({"role": "assistant", "content": ""})
-                messages.append({"role": "user", "content": "[SYSTEM] Your previous response timed out. Please continue where you left off and provide your answer."})
+                if error_type == 'generation_timeout':
+                    # The model spent its whole output budget reasoning and never
+                    # answered. Replaying the identical request would do it again
+                    # (and cost the same minutes): retry with half the output
+                    # budget, thinking off, and an explicit "act now" instruction.
+                    _cfg_gt = agent_model_config or {}
+                    _gt_budget = effective_output_tokens(
+                        _cfg_gt.get('max_tokens'), bool(_cfg_gt.get('thinking')),
+                        _enable_thinking_this_call, _cfg_gt.get('thinking_budget'))
+                    if _gt_budget:
+                        _retry_output_cap = max(1024, _gt_budget // 2)
+                    _thinking_budget_aborted = True   # enable_thinking=False from now on
+                    _logger.warning(
+                        "generation_timeout retry: output budget %s -> %s, thinking disabled",
+                        _gt_budget, _retry_output_cap)
+                    messages.append({"role": "user", "content": (
+                        "[SYSTEM] Your previous response used its entire output budget on "
+                        "reasoning and produced no answer. Stop analysing: give your answer, "
+                        "or call the tool you need, right now, briefly.")})
+                else:
+                    messages.append({"role": "user", "content": "[SYSTEM] Your previous response timed out. Please continue where you left off and provide your answer."})
 
                 event_stream.emit('llm_retry', {
                     'agent_id': agent_id, 'session_id': session_id,
@@ -1817,7 +1845,11 @@ def run_tool_loop(agent: Dict[str, Any],
                         _fallback_request.messages, _fallback_request.tools,
                         tool_choice=_fallback_choice,
                         context_window=_fallback_config.get('context_window'),
-                        max_tokens=_fallback_config.get('max_tokens'),
+                        max_tokens=effective_output_tokens(
+                            _fallback_config.get('max_tokens'),
+                            bool(_fallback_config.get('thinking')),
+                            _enable_thinking_this_call,
+                            _fallback_config.get('thinking_budget')),
                         thinking_budget=(_fallback_config.get('thinking_budget')
                                          if _enable_thinking_this_call else 0),
                         safety_margin=REQUEST_BUDGET_SAFETY_MARGIN,
@@ -2475,6 +2507,16 @@ def run_tool_loop(agent: Dict[str, Any],
                         _inst.send_message_buffered(external_user_id, content)
                     except Exception as _e:
                         _logger.warning("Intermediate send error: %s", _e)
+
+        # Some agents (the KB organizer) run on small-context models and pile
+        # up many parallel Reads in one step. Keep only the first N calls, BEFORE
+        # the assistant message is stored, so history stays consistent and the
+        # model simply sees fewer results and asks again for the rest.
+        _max_calls = int(agent.get('max_tool_calls_per_turn') or 0)
+        if _max_calls and len(tool_calls) > _max_calls:
+            _logger.warning("Dropping %d tool call(s) over the per-turn cap of %d (agent=%s)",
+                            len(tool_calls) - _max_calls, _max_calls, agent_id)
+            tool_calls = tool_calls[:_max_calls]
 
         # Sanitize tool_calls before storing in conversation history.
         # If any arguments string is too large or invalid JSON, replace it with a

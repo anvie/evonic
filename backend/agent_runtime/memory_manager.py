@@ -209,6 +209,10 @@ Your ENTIRE reply MUST be the JSON object and nothing else: start with `{` and e
 # The janitor receives NO conversation input; it explores the vault and
 # fixes structural problems directly using write tools (str_replace, write_file,
 # delete_file). No JSON output — it does the work itself.
+# Parallel tool calls kept per LLM step for the organizer/janitor (small-context models
+# otherwise batch-read many docs at once and overflow).
+_KB_MAX_TOOL_CALLS_PER_TURN = 2
+
 _KB_TIDY_SYSTEM_PROMPT = """You are the KB Janitor — a meticulous auditor who keeps an AI assistant's personal knowledge vault clean and well-connected. The vault is YOUR WORKSPACE: a flat directory of Obsidian-compatible Markdown documents.
 
 VAULT STRUCTURE (Obsidian conventions):
@@ -275,7 +279,8 @@ Your job is NOT to file new knowledge — another process handles that. Your job
 APPROACH:
 - If the task lists a FOCUS BATCH and DETECTED ISSUES, STAY INSIDE THEM. They were computed from the whole vault already (including the closest existing doc for each dangling link and which doc each plain-text mention belongs to), so you do NOT need to search the vault:
   - Do NOT Glob the vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context.
-  - Work ONE doc at a time: Read it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front.
+  - Work ONE doc at a time: Read it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front: at most 2 tool calls per step (extra ones are dropped), and make at least one concrete fix (str_replace / delete_file) after every 2-3 docs you read.
+  - Read returns a short window of a doc; for a long doc use offset=N to continue only if the issue you are verifying is further down.
   - To confirm a suggested doc, Read that doc (one file). If you must search, use a narrow Grep for ONE specific name.
   - Detected issues are heuristic: skip false positives (e.g. two different people sharing a name fragment).
   - Keep it small: roughly two tool calls per doc. Stop when the batch is done — do not widen the audit to the rest of the vault.
@@ -347,6 +352,7 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
         cfg['sandbox_enabled'] = 0
         cfg['run_as_user'] = None
         cfg['is_kb_organizer'] = True
+        cfg['max_tool_calls_per_turn'] = _KB_MAX_TOOL_CALLS_PER_TURN
         cfg['name'] = (f"{agent.get('name', agent_id)} · kb janitor"
                        + (" (manual)" if keep_session else ""))
         return cfg
@@ -1342,6 +1348,7 @@ def _spawn_kb_organizer(agent: dict, source_text: str, recent_text: str = "",
         # tool restriction itself comes from the generic explorer rule in
         # build_tools (all explorers get only direxplorer tools).
         cfg['is_kb_organizer'] = True
+        cfg['max_tool_calls_per_turn'] = _KB_MAX_TOOL_CALLS_PER_TURN
         cfg['name'] = (f"{agent.get('name', agent_id)} · kb organizer"
                        + (" (manual)" if keep_session else ""))
         return cfg

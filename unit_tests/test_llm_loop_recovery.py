@@ -893,3 +893,119 @@ class TestHumanizeInsufficientToolMessages(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Tests: per-turn tool-call cap (max_tool_calls_per_turn, used by the KB organizer)
+# ---------------------------------------------------------------------------
+
+def _multi_tc_response(n):
+    calls = [{"id": f"c{i}", "type": "function",
+              "function": {"name": "read_file", "arguments": "{}"}} for i in range(n)]
+    return {
+        'success': True,
+        'response': {'choices': [{'message': {'content': '', 'tool_calls': calls},
+                                  'finish_reason': 'tool_calls'}]},
+        'duration_ms': 10,
+    }
+
+
+class _CapHarness:
+    """Reuses TestApiErrorOrphanRecovery._run_tool_loop with a configurable agent."""
+
+    def __init__(self, cap):
+        self.cap = cap
+
+    def _make_agent_context(self):
+        return {'user_id': 'u1', 'channel_id': 'ch1', 'is_super': False, 'agent_state': None}
+
+    def _make_agent(self, agent_id='test_agent'):
+        agent = {'id': agent_id, 'name': 'Test', 'model': None,
+                 'send_intermediate_responses': False, 'summarize_threshold': 0}
+        if self.cap:
+            agent['max_tool_calls_per_turn'] = self.cap
+        return agent
+
+
+_READ_FILE_TOOL = {"type": "function", "function": {
+    "name": "read_file", "description": "x",
+    "parameters": {"type": "object", "properties": {}}}}
+
+
+class TestPerTurnToolCallCap(unittest.TestCase):
+    def _stored_tool_call_counts(self, cap):
+        llm = MagicMock()
+        llm.chat_completion.side_effect = [_multi_tc_response(5), _ok('finished')]
+        messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}]
+        (_, mock_db), _ = TestApiErrorOrphanRecovery._run_tool_loop(
+            _CapHarness(cap), llm, messages, f'sess_cap_{cap}',
+            tools=[_READ_FILE_TOOL], return_db=True)
+        stored = [c.kwargs.get('tool_calls') for c in mock_db.add_chat_message.call_args_list
+                  if c.kwargs.get('tool_calls')]
+        return [len(tc) for tc in stored]
+
+    def test_extra_parallel_calls_are_dropped_before_history_is_stored(self):
+        self.assertEqual(self._stored_tool_call_counts(2), [2])
+
+    def test_no_cap_keeps_every_call(self):
+        self.assertEqual(self._stored_tool_call_counts(0), [5])
+
+
+# ---------------------------------------------------------------------------
+# Tests: generation_timeout (reasoning ate the whole output budget) retry
+# ---------------------------------------------------------------------------
+
+def _gen_timeout():
+    return {'success': False, 'error_type': 'generation_timeout',
+            'error_detail': 'Generation hit max_tokens limit (64000) without producing final answer.',
+            'response': {'error': 'ran out of tokens'}, 'answered': True}
+
+
+class TestGenerationTimeoutRetry(unittest.TestCase):
+    MODEL = {'name': 'm', 'provider': 'llama.cpp', 'base_url': 'http://x/v1', 'api_key': '',
+             'model_name': 'm', 'timeout': 900, 'thinking': 1, 'thinking_budget': 0,
+             'max_tokens': 64000, 'context_window': 256000, 'enabled': True}
+
+    def _run(self):
+        llm = MagicMock()
+        llm.chat_completion.side_effect = [_gen_timeout(), _ok('answered')]
+        mock_db = MagicMock()
+        mock_db.get_setting.side_effect = lambda key, default=None: default or '0'
+        mock_db.add_chat_message.return_value = None
+        mock_db.get_agent_model.return_value = dict(self.MODEL)
+        mock_db.get_agent_default_model.return_value = None
+        mock_db.get_agent_state.return_value = None
+        mock_db.get_agent_fallback_model.return_value = None
+        mock_db.get_summary.return_value = None
+        mock_tr = MagicMock()
+        mock_tr.get_builtin_executor.return_value = lambda n, a: None
+        mock_tr.get_real_executor.return_value = lambda n, a: None
+        import backend.event_stream as _es_mod
+        with patch.object(_llm_loop_mod, 'db', mock_db), \
+             patch.object(_llm_loop_mod, 'tool_registry', mock_tr), \
+             patch.object(_es_mod, 'event_stream', MagicMock()) as mock_es, \
+             patch.object(_llm_loop_mod, 'LLMClient', return_value=llm), \
+             patch.object(_llm_loop_mod, 'llm_client', llm):
+            _llm_loop_mod.run_tool_loop(
+                agent={'id': 'a', 'name': 'A', 'model': None,
+                       'send_intermediate_responses': False, 'summarize_threshold': 0},
+                agent_context={'user_id': 'u1', 'channel_id': 'ch1', 'is_super': False,
+                               'agent_state': None},
+                messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}],
+                tools=[], session_id='sess_gen_timeout', llm_lock=threading.Lock(),
+                stop_event=threading.Event(), session_skill_mds={}, session_skill_tools={},
+                llm_log_path=None)
+        budgets = [c[0][1]['output_reserve'] for c in mock_es.emit.call_args_list
+                   if c[0][0] == 'llm_request_budget']
+        return llm, budgets
+
+    def test_retry_halves_output_budget_disables_thinking_and_says_act_now(self):
+        llm, budgets = self._run()
+        first, second = llm.chat_completion.call_args_list
+        self.assertTrue(first.kwargs['enable_thinking'])
+        self.assertIsNone(first.kwargs['max_tokens'])
+        self.assertFalse(second.kwargs['enable_thinking'])
+        self.assertEqual(second.kwargs['max_tokens'], 32000)
+        self.assertIn('entire output budget', second.kwargs['messages'][-1]['content'])
+        # the planner's output reserve matches what is sent (no 2x doubling of 64k)
+        self.assertEqual(budgets[:2], [64000, 32000])

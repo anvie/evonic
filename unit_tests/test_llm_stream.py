@@ -235,3 +235,45 @@ def test_deltas_arrive_progressively_over_a_real_socket(chunked):
     assert len(stamps) == 4
     assert stamps[-1] - stamps[0] > 0.3
     assert stamps[0] < 0.3
+
+
+def test_reasoning_only_stream_is_cut_at_the_limit_as_length_with_no_content():
+    # 3 chars ~ 1 token: 10 frames x 30 chars = ~100 tokens of reasoning, limit 30
+    resp = FakeStreamResponse(
+        [chunk({'reasoning_content': 'x' * 30}) for _ in range(10)] +
+        [chunk({'content': 'never reached'}, finish='stop'), 'data: [DONE]'])
+    out = _consume_openai_stream(resp, reasoning_only_abort_tokens=30)
+    choice = out['choices'][0]
+    assert choice['finish_reason'] == 'length'
+    assert choice['message']['content'] == ''
+    assert len(choice['message']['reasoning_content']) < 300   # stopped early
+    assert resp.closed
+
+
+def test_reasoning_limit_does_not_cut_a_stream_that_already_answers():
+    resp = FakeStreamResponse(
+        [chunk({'content': 'Hi'})] +
+        [chunk({'reasoning_content': 'x' * 30}) for _ in range(10)] +
+        [chunk({}, finish='stop'), 'data: [DONE]'])
+    out = _consume_openai_stream(resp, reasoning_only_abort_tokens=30)
+    assert out['choices'][0]['finish_reason'] == 'stop'
+    assert not resp.closed
+
+
+def test_reasoning_limit_zero_disables_the_guard():
+    resp = FakeStreamResponse(
+        [chunk({'reasoning_content': 'x' * 30}) for _ in range(10)] +
+        [chunk({'content': 'ok'}, finish='stop'), 'data: [DONE]'])
+    out = _consume_openai_stream(resp, reasoning_only_abort_tokens=0)
+    assert out['choices'][0]['message']['content'] == 'ok'
+
+
+def test_effective_output_tokens_caps_thinking_doubling_but_keeps_small_budgets():
+    from backend.llm_client import effective_output_tokens as eff
+    assert eff(4096, True, True, 0) == 8192            # small budget: still doubled
+    assert eff(16384, True, True, 0) == 32768
+    assert eff(64000, True, True, 0) == 64000          # large budget: never doubled (was 128000)
+    assert eff(64000, True, True, 8192) == 64000       # explicit thinking_budget: untouched
+    assert eff(4096, True, False, 0) == 4096           # thinking disabled for this call
+    assert eff(4096, False, True, 0) == 4096
+    assert eff(None, True, True, 0) is None

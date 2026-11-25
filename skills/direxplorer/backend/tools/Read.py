@@ -9,6 +9,9 @@ from ._utils import _prepare_path
 
 _MAX_FILE_SIZE = 400 * 1024
 _CHUNK_CHARS = 8000
+# The KB organizer/janitor often runs on a small-context model (see Grep.py), and
+# reads several docs per turn, so each Read returns a smaller window for it.
+_KB_CHUNK_CHARS = 3000
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -47,13 +50,15 @@ def execute(agent: dict, args: dict) -> dict:
     file_size_kb = file_size / 1024
 
     start_idx = max(0, min(offset - 1, total_lines - 1))
+    kb_capped = bool(agent.get('is_kb_organizer'))
+    chunk_chars = _KB_CHUNK_CHARS if kb_capped else _CHUNK_CHARS
 
     output_lines = []
     chars = 0
     end_idx = start_idx
     for i in range(start_idx, total_lines):
         line_str = f'{i + 1}: {lines[i].rstrip()}'
-        if chars + len(line_str) + 1 > _CHUNK_CHARS and output_lines:
+        if chars + len(line_str) + 1 > chunk_chars and output_lines:
             break
         output_lines.append(line_str)
         chars += len(line_str) + 1
@@ -67,7 +72,8 @@ def execute(agent: dict, args: dict) -> dict:
 
     if shown_end < total_lines:
         remaining = total_lines - shown_end
-        footer = f'\n[...{remaining} lines remaining. Use offset={shown_end + 1} to continue.]'
+        cap_note = f' Output capped at {chunk_chars} chars for the KB organizer.' if kb_capped else ''
+        footer = f'\n[...{remaining} lines remaining.{cap_note} Use offset={shown_end + 1} to continue.]'
         full_text = f'{header}\n\n{content_block}{footer}'
     else:
         full_text = f'{header}\n\n{content_block}'
