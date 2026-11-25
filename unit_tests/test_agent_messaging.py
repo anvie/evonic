@@ -242,10 +242,14 @@ class TestExecSendAgentMessage(unittest.TestCase):
     def setUp(self):
         from backend.tools.agent_messaging import (
             _rate_limit_buckets, _global_rate_limit_buckets, _fanout_buckets,
+            _duplicate_buckets,
         )
         _rate_limit_buckets.clear()
         _global_rate_limit_buckets.clear()
         _fanout_buckets.clear()
+        # Tests reuse the same sender/target/message; the 60 s duplicate
+        # guard would otherwise refuse every call after the first.
+        _duplicate_buckets.clear()
 
     def _call(self, args, agent_context=None):
         from backend.tools.agent_messaging import _exec_send_agent_message
@@ -688,10 +692,14 @@ class TestMetadataInjection(unittest.TestCase):
     def setUp(self):
         from backend.tools.agent_messaging import (
             _rate_limit_buckets, _global_rate_limit_buckets, _fanout_buckets,
+            _duplicate_buckets,
         )
         _rate_limit_buckets.clear()
         _global_rate_limit_buckets.clear()
         _fanout_buckets.clear()
+        # Tests reuse the same sender/target/message; the 60 s duplicate
+        # guard would otherwise refuse every call after the first.
+        _duplicate_buckets.clear()
 
     def _call(self, args, agent_context=None):
         from backend.tools.agent_messaging import _exec_send_agent_message
@@ -704,8 +712,9 @@ class TestMetadataInjection(unittest.TestCase):
         ids = set()
         with mock.patch('backend.tools.agent_messaging.db.get_agent', return_value=target), \
              mock.patch('backend.agent_runtime.notifier.notify_agent'):
-            for _ in range(5):
-                result = self._call({'target_agent_id': 'agent_b', 'message': 'Hi'})
+            for i in range(5):
+                # Distinct messages: identical ones are refused by the duplicate guard.
+                result = self._call({'target_agent_id': 'agent_b', 'message': f'Hi {i}'})
                 ids.add(result['reply_to_id'])
         self.assertEqual(len(ids), 5, "Each call must produce a unique reply_to_id")
 
