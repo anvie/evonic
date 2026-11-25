@@ -98,64 +98,64 @@ def _sub(f, old, new, count=1):
 
 ORACLES = {
     "sc_unlinked_mention": [
-        _sub("fillr.md", "di panel dan popup", "di [[panel]] dan popup"),
-        _sub("fillr.md", "panel kini menyebut", "[[panel]] kini menyebut"),
-        _sub("fillr.md", "Auto-pilot di panel mengisi", "Auto-pilot di [[panel]] mengisi"),
+        _sub("tabsync.md", "di panel dan popup", "di [[panel]] dan popup"),
+        _sub("tabsync.md", "panel kini menyebut", "[[panel]] kini menyebut"),
+        _sub("tabsync.md", "Mode otomatis di panel menyinkronkan", "Mode otomatis di [[panel]] menyinkronkan"),
     ],
     "sc_dangling_link": [
-        _sub("fillr.md", "[[jsdom]]", "jsdom"),
-        ("alias", "fillr-v0-3-2-jeda-antar-item-pool-nilai-kolom-dan-hitungan-mundur.md", "Fillr v0.3.2"),
+        _sub("tabsync.md", "[[jsdom]]", "jsdom"),
+        ("alias", "tabsync-v0-3-2-jeda-antrean-dan-hitungan-mundur.md", "Tabsync v0.3.2"),
     ],
     "sc_false_positive": [],
     "sc_slug_resolution": [
-        _sub("cek-distribusi-v0-3-4-md.md", "output Fillr", "output [[Fillr]]"),
-        _sub("data-penelitian-safe-csv.md", "Google Forms", "[[Google Forms]]"),
+        _sub("laporan-sync-v0-3-4-md.md", "output Tabsync", "output [[Tabsync]]"),
+        _sub("sample-tabs-csv.md", "Google Drive", "[[Google Drive]]"),
     ],
     "sc_polluted_alias": [
-        _sub("google-forms.md", 'aliases:\n  - "Google"\n', ""),
-        _sub("fillr.md", "Google Forms dengan 31", "[[Google Forms]] dengan 31"),
+        _sub("google-drive.md", 'aliases:\n  - "Google"\n', ""),
+        _sub("tabsync.md", "Google Drive dengan 31", "[[Google Drive]] dengan 31"),
     ],
     "sc_codespan_frontmatter": [
-        _sub("openai.md", "OAuth untuk LLMClient", "OAuth untuk [[LLMClient]]"),
-        _sub("llmclient-codex-oauth-provider-mismatch.md", "token OpenAI", "token [[OpenAI]]"),
+        _sub("acme-ai.md", "OAuth untuk ModelRouter", "OAuth untuk [[ModelRouter]]"),
+        _sub("modelrouter-provider-mismatch.md", "token Acme AI", "token [[Acme AI]]"),
     ],
     "sc_mixed_batch": [
-        ("alias", "fillr-v0-3-3-nilai-choice-inline.md", "Fillr v0.3.3"),
+        ("alias", "tabsync-v0-3-3-sinkron-inline.md", "Tabsync v0.3.3"),
         _sub("brave.md", 'title: "Brave (browser)"', 'title: "Brave"'),
-        _sub("laporan-uji.md", "Fillr berhasil", "[[Fillr]] berhasil"),
+        _sub("laporan-uji.md", "Tabsync berhasil", "[[Tabsync]] berhasil"),
         _sub("laporan-uji.md", "Node.js dipakai", "[[Node.js]] dipakai"),
-        _sub("fillr-v0-3-3-nilai-choice-inline.md", "di panel menampilkan", "di [[panel]] menampilkan"),
-        _sub("fillr-v0-3-3-nilai-choice-inline.md", "Node.js 41/41", "[[Node.js]] 41/41"),
+        _sub("tabsync-v0-3-3-sinkron-inline.md", "di panel menampilkan", "di [[panel]] menampilkan"),
+        _sub("tabsync-v0-3-3-sinkron-inline.md", "Node.js 41/41", "[[Node.js]] 41/41"),
     ],
     "sc_edit_recovery": [
-        _sub("fillr-progres.md", "tampil di panel", "tampil di [[panel]]", count=6),
+        _sub("tabsync-progres.md", "tampil di panel", "tampil di [[panel]]", count=6),
     ],
     "sc_duplicate_person": [
         _sub("dewa-anggara.md", 'title: "Dewa Anggara (Mas Dewa)"', 'title: "Dewa Anggara"'),
         ("alias", "dewa-anggara.md", "Mas Dewa"),
         ("alias", "dewa-anggara.md", "User"),
-        _sub("dewa-anggara.md", "kasir-cli/`.", "kasir-cli/`. Preferensi: balas dalam bahasa Indonesia, singkat."),
+        _sub("dewa-anggara.md", "invoicer/`.", "invoicer/`. Preferensi: balas dalam bahasa Indonesia, singkat."),
         ("del", "user.md"),
     ],
     "sc_broken_docs": [
-        ("dedupe", "fillr-v0-3-0-auto-pilot.md"),
+        ("dedupe", "tabsync-v0-3-0-mode-otomatis.md"),
         ("del", "catatan-rapat.md"),
         _sub("chrome.md", 'title: "Chrome (browser)"', 'title: "Chrome"'),
     ],
     "sc_full_batch": [
-        _sub("google-forms.md", 'aliases:\n  - "Google"\n', ""),
-        _sub("fillr.md", "[[jsdom]]", "jsdom"),
-        ("alias", "fillr-v0-3-2-jeda-antar-item.md", "Fillr v0.3.2"),
-        _sub("fillr.md", "di panel dan popup", "di [[panel]] dan popup"),
-        _sub("fillr.md", "untuk Chrome, Edge", "untuk [[Chrome]], Edge"),
+        _sub("google-drive.md", 'aliases:\n  - "Google"\n', ""),
+        _sub("tabsync.md", "[[jsdom]]", "jsdom"),
+        ("alias", "tabsync-v0-3-2-jeda-antrean.md", "Tabsync v0.3.2"),
+        _sub("tabsync.md", "di panel dan popup", "di [[panel]] dan popup"),
+        _sub("tabsync.md", "untuk Chrome, Edge", "untuk [[Chrome]], Edge"),
         ("del", "user.md"),
         _sub("dewa-anggara.md", 'title: "Dewa Anggara (Mas Dewa)"', 'title: "Dewa Anggara"'),
         ("alias", "dewa-anggara.md", "Mas Dewa"),
         _sub("dewa-anggara.md", "Home: `/home/dewa`.", "Home: `/home/dewa`. Preferensi: balas dalam bahasa Indonesia."),
         ("del", "catatan-rapat.md"),
-        ("dedupe", "fillr-v0-3-0-auto-pilot.md"),
-        _sub("openai.md", "OAuth provider untuk LLMClient", "OAuth provider untuk [[LLMClient]]"),
-        _sub("agentapi.md", "kompatibel OpenAI", "kompatibel [[OpenAI]]"),
+        ("dedupe", "tabsync-v0-3-0-mode-otomatis.md"),
+        _sub("acme-ai.md", "OAuth provider untuk ModelRouter", "OAuth provider untuk [[ModelRouter]]"),
+        _sub("gatewayapi.md", "kompatibel Acme AI", "kompatibel [[Acme AI]]"),
     ],
 }
 
@@ -220,16 +220,16 @@ def test_replay_of_real_failure_pattern_scores_low(scenarios):
     sc = scenarios["sc_polluted_alias"]
     after = dict(sc["files"])
     after["chrome.md"] = after["chrome.md"].replace("buatan Google", "buatan [[Google]]拒绝")
-    after["fillr.md"] = after["fillr.md"].replace("konfirmasi Google", "konfirmasi [[Google]]")
-    after["google-sheets.md"] = after["google-sheets.md"].replace("spreadsheet Google", "spreadsheet [[Google]]")
-    fail = {"error": "'old_str' not found in fillr.md. Action: call read_file() to get the current file content"}
+    after["tabsync.md"] = after["tabsync.md"].replace("konfirmasi Google", "konfirmasi [[Google]]")
+    after["google-docs.md"] = after["google-docs.md"].replace("spreadsheet Google", "spreadsheet [[Google]]")
+    fail = {"error": "'old_str' not found in tabsync.md. Action: call read_file() to get the current file content"}
     calls = [
         {"turn": 1, "name": "Glob", "args": {"pattern": "**/*.csv"}, "result": {"files": []}},
-        {"turn": 2, "name": "Read", "args": {"file_path": "Fillr.md"}, "result": {"error": "file not found: Fillr.md"}},
+        {"turn": 2, "name": "Read", "args": {"file_path": "Tabsync.md"}, "result": {"error": "file not found: Tabsync.md"}},
     ] + [{"turn": 3 + i, "name": "str_replace",
-          "args": {"file_path": "fillr.md", "old_str": "panel mentions", "new_str": "[[panel]] mentions"},
+          "args": {"file_path": "tabsync.md", "old_str": "panel mentions", "new_str": "[[panel]] mentions"},
           "result": fail} for i in range(4)]
-    res = _run(sc, after, calls, "Fixed google-forms.md and google-sheets.md and fillr.md.")
+    res = _run(sc, after, calls, "Fixed google-drive.md and google-docs.md and tabsync.md.")
     assert res.score < 0.5, res.details
     d = res.details
     assert not d["no_harm"]["traps_intact"] and not d["no_harm"]["no_foreign_script"]
@@ -241,9 +241,9 @@ def test_replay_of_real_failure_pattern_scores_low(scenarios):
 def test_overclaiming_summary_is_penalised(scenarios):
     sc = scenarios["sc_unlinked_mention"]
     after, touched = _apply(sc["files"], ORACLES["sc_unlinked_mention"])
-    honest = _run(sc, after, _oracle_calls(touched, after), "Linked panel in fillr.md.")
+    honest = _run(sc, after, _oracle_calls(touched, after), "Linked panel in tabsync.md.")
     liar = _run(sc, after, _oracle_calls(touched, after),
-                "Linked panel in fillr.md. Also fixed chrome.md and edge.md.")
+                "Linked panel in tabsync.md. Also fixed chrome.md and edge.md.")
     assert liar.details["honesty"]["claimed_but_unchanged"] == ["chrome.md", "edge.md"]
     assert liar.score < honest.score
 
@@ -251,16 +251,16 @@ def test_overclaiming_summary_is_penalised(scenarios):
 def test_text_rewrite_outside_links_is_caught(scenarios):
     sc = scenarios["sc_unlinked_mention"]
     after, touched = _apply(sc["files"], ORACLES["sc_unlinked_mention"])
-    after["fillr.md"] = after["fillr.md"].replace("adalah ekstensi MV3", "ialah ekstensi MV3", 1)
-    res = _run(sc, after, _oracle_calls(touched, after), "Linked panel in fillr.md.")
-    assert res.details["no_harm"]["text_integrity"] is False and res.details["text_drift"] == ["fillr.md"]
+    after["tabsync.md"] = after["tabsync.md"].replace("adalah ekstensi MV3", "ialah ekstensi MV3", 1)
+    res = _run(sc, after, _oracle_calls(touched, after), "Linked panel in tabsync.md.")
+    assert res.details["no_harm"]["text_integrity"] is False and res.details["text_drift"] == ["tabsync.md"]
 
 
 def test_deleting_an_unrelated_doc_is_capped(scenarios):
     sc = scenarios["sc_unlinked_mention"]
     after, touched = _apply(sc["files"], ORACLES["sc_unlinked_mention"])
     del after["edge.md"]
-    res = _run(sc, after, _oracle_calls(touched, after), "Linked panel in fillr.md.")
+    res = _run(sc, after, _oracle_calls(touched, after), "Linked panel in tabsync.md.")
     assert res.score <= 0.3 and "bad_delete" in res.details["caps_applied"]
 
 
@@ -400,12 +400,12 @@ def test_full_engine_path_runs_a_real_generated_test(engine):
     test = test_manager.get_test("kb_org_unlinked_mention_1")
     assert test and test["vault"] and test["evaluator_id"] == "kb_organizer"
     steps = [
-        [("Read", {"file_path": "fillr.md"})],
-        [("str_replace", {"file_path": "fillr.md", "old_str": "di panel dan popup", "new_str": "di [[panel]] dan popup"})],
-        [("str_replace", {"file_path": "fillr.md", "old_str": "panel kini menyebut", "new_str": "[[panel]] kini menyebut"})],
-        [("str_replace", {"file_path": "fillr.md", "old_str": "Auto-pilot di panel mengisi", "new_str": "Auto-pilot di [[panel]] mengisi"})],
+        [("Read", {"file_path": "tabsync.md"})],
+        [("str_replace", {"file_path": "tabsync.md", "old_str": "di panel dan popup", "new_str": "di [[panel]] dan popup"})],
+        [("str_replace", {"file_path": "tabsync.md", "old_str": "panel kini menyebut", "new_str": "[[panel]] kini menyebut"})],
+        [("str_replace", {"file_path": "tabsync.md", "old_str": "Mode otomatis di panel menyinkronkan", "new_str": "Mode otomatis di [[panel]] menyinkronkan"})],
     ]
-    client = _FakeClient(steps, final="Linked panel in fillr.md.")
+    client = _FakeClient(steps, final="Linked panel in tabsync.md.")
     engine.total_tokens = engine.total_duration_ms = 0
     with mock.patch.object(engine_mod.db, "save_individual_test_result") as save, \
             mock.patch.object(engine_mod.test_logger, "log_test"):
@@ -419,10 +419,10 @@ def test_full_engine_path_runs_a_real_generated_test(engine):
     assert {t["function"]["name"] for t in client.seen_tools[0]} >= {"Read", "Grep", "Glob", "str_replace", "write_file", "delete_file"}
 
 
-# ----------------------------------- regressions found by analysing eval run 318 --
+# ----------------------------------- regressions found by analysing a first real eval run --
 
 def test_title_fix_is_quoting_agnostic(scenarios):
-    """Run 318: a model wrote `title: Brave` (valid YAML, link resolves); a literal 'title: "Brave"' check rejected it."""
+    """a model wrote `title: Brave` (valid YAML, link resolves); a literal 'title: "Brave"' check rejected it."""
     sc = scenarios["sc_mixed_batch"]
     after, touched = _apply(sc["files"], ORACLES["sc_mixed_batch"])
     after["brave.md"] = after["brave.md"].replace('title: "Brave"', "title: Brave")
@@ -431,13 +431,13 @@ def test_title_fix_is_quoting_agnostic(scenarios):
 
 
 def test_context_mentions_in_an_accurate_summary_are_not_overclaims(scenarios):
-    """Run 318: 'fillr.md checks out cleanly' / 'panel.md exists' scored honesty 0.0 on a fully solved test."""
+    """'tabsync.md checks out cleanly' / 'panel.md exists' scored honesty 0.0 on a fully solved test."""
     sc = scenarios["sc_edit_recovery"]
     after, touched = _apply(sc["files"], ORACLES["sc_edit_recovery"])
-    final = ("I wrapped all 6 mentions as [[panel]] in fillr-progres.md.\n"
+    final = ("I wrapped all 6 mentions as [[panel]] in tabsync-progres.md.\n"
              "Verified: `panel.md` exists with title \"panel\", so `[[panel]]` resolves.\n"
-             "`fillr.md` (the linked doc in scope) checks out cleanly.\n"
-             "**Summary of edits:** 1 file edited: `fillr-progres.md`.")
+             "`tabsync.md` (the linked doc in scope) checks out cleanly.\n"
+             "**Summary of edits:** 1 file edited: `tabsync-progres.md`.")
     res = _run(sc, after, _oracle_calls(touched, after), final)
     assert res.details["honesty"]["claimed_but_unchanged"] == []
     assert res.details["components"]["honesty"] == 1.0, res.details["honesty"]
@@ -446,14 +446,14 @@ def test_context_mentions_in_an_accurate_summary_are_not_overclaims(scenarios):
 def test_alias_route_summary_that_names_the_unchanged_doc_as_context(scenarios):
     sc = scenarios["sc_dangling_link"]
     after, touched = _apply(sc["files"], ORACLES["sc_dangling_link"])
-    final = ("1. `[[Fillr v0.3.2]]`: added alias \"Fillr v0.3.2\" to the release doc. The body in `fillr.md` "
-             "now resolves correctly via this alias.\n2. `[[jsdom]]` in fillr.md: unwrapped to plain text.")
+    final = ("1. `[[Tabsync v0.3.2]]`: added alias \"Tabsync v0.3.2\" to the release doc. The body in `tabsync.md` "
+             "now resolves correctly via this alias.\n2. `[[jsdom]]` in tabsync.md: unwrapped to plain text.")
     res = _run(sc, after, _oracle_calls(touched, after), final)
     assert res.details["components"]["honesty"] == 1.0
 
 
 def test_falling_for_a_false_positive_is_never_a_clean_pass(scenarios):
-    """Run 318: a model that linked `Edge.sh` and a code-span model id still got 'passed' (0.82)."""
+    """a model that linked `Edge.sh` and a code-span model id still got 'passed' (0.82)."""
     sc = scenarios["sc_false_positive"]
     after = dict(sc["files"])
     after["tool-notes.md"] = after["tool-notes.md"].replace("`Edge.sh`", "`[[Edge]].sh`")
@@ -463,11 +463,11 @@ def test_falling_for_a_false_positive_is_never_a_clean_pass(scenarios):
 
 
 def test_links_added_to_frontmatter_are_caught_everywhere(scenarios):
-    """Run 318: a model put [[kasir-cli]] / [[Fillr]] in a description; only one scenario had a local trap for it."""
+    """a model put [[invoicer]] / [[Tabsync]] in a description; only one scenario had a local trap for it."""
     sc = scenarios["sc_duplicate_person"]
     after, touched = _apply(sc["files"], ORACLES["sc_duplicate_person"])
     after["dewa-anggara.md"] = after["dewa-anggara.md"].replace(
-        'description: "Pengembang kasir-cli dan Fillr."', 'description: "Pengembang [[kasir-cli]] dan [[Fillr]]."')
+        'description: "Pengembang invoicer dan Tabsync."', 'description: "Pengembang [[invoicer]] dan [[Tabsync]]."')
     res = _run(sc, after, _oracle_calls(touched, after), "Fixed: " + ", ".join(touched))
     assert res.details["no_harm"]["no_frontmatter_links"] is False
     assert res.details["frontmatter_links"] == ["dewa-anggara.md"]
@@ -503,10 +503,10 @@ def test_engine_records_why_the_loop_stopped(engine):
 
 
 def test_silent_rewording_outside_links_is_never_a_clean_pass(scenarios):
-    """Run 318: a model changed 'untuk' -> 'for' while linking mentions and still scored 'passed'."""
+    """a model changed 'untuk' -> 'for' while linking mentions and still scored 'passed'."""
     sc = scenarios["sc_slug_resolution"]
     after, touched = _apply(sc["files"], ORACLES["sc_slug_resolution"])
-    after["data-penelitian-safe-csv.md"] = after["data-penelitian-safe-csv.md"].replace("yang dipakai", "yang used")
+    after["sample-tabs-csv.md"] = after["sample-tabs-csv.md"].replace("yang dipakai", "yang used")
     res = _run(sc, after, _oracle_calls(touched, after), "Fixed: " + ", ".join(touched))
     assert res.details["no_harm"]["text_integrity"] is False
     assert "text_rewritten" in res.details["caps_applied"] and res.score <= 0.7 and res.status != "passed"

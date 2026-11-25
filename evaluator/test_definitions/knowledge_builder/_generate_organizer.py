@@ -12,8 +12,8 @@ message ``_spawn_kb_tidy`` sends. The model therefore sees exactly the FOCUS BAT
 DETECTED ISSUES format Evonic produces, false positives included. The system prompt is
 the live ``_KB_TIDY_SYSTEM_PROMPT``.
 
-Fixtures are synthetic analogues of a real tidy-pass dump (same shapes and failure
-modes, renamed entities, no real paths). They mix Indonesian and English and carry
+Fixtures are invented (an imaginary tab-sync extension and its docs); they only borrow the *shapes*
+and failure modes seen in real tidy passes. They mix Indonesian and English and carry
 typographic characters (– → “ ” ±) because those are what made exact str_replace
 matching hard in the real run.
 
@@ -65,50 +65,50 @@ def slugify(s):
 
 
 def base_vault():
-    """The shared 'Fillr' universe: small, correctly linked docs. Scenarios add their pathologies."""
+    """The shared 'Tabsync' universe: small, correctly linked docs. Scenarios add their pathologies."""
     v = {}
 
     def add(title, body, slug=None, **kw):
         v[(slug or slugify(title)) + ".md"] = doc(title, body, **kw)
 
-    add("Fillr", "[[Fillr]] adalah ekstensi MV3 untuk [[Chrome]] yang mengisi [[Google Forms]]; dibuat oleh [[Dewa Anggara]].",
-        typ="product", desc="Ekstensi MV3 pengisi Google Forms.")
-    add("Chrome", "[[Chrome]] adalah browser berbasis Chromium; platform ekstensi [[Fillr]].", typ="product",
-        desc="Browser Chromium; platform ekstensi Fillr.")
-    add("Edge", "[[Edge]] adalah browser Chromium milik Microsoft yang juga menjalankan [[Fillr]].", typ="product",
+    add("Tabsync", "[[Tabsync]] adalah ekstensi MV3 untuk [[Chrome]] yang menyinkronkan tab ke [[Google Drive]]; dibuat oleh [[Dewa Anggara]].",
+        typ="product", desc="Ekstensi MV3 penyinkron tab ke Google Drive.")
+    add("Chrome", "[[Chrome]] adalah browser berbasis Chromium; platform ekstensi [[Tabsync]].", typ="product",
+        desc="Browser Chromium; platform ekstensi Tabsync.")
+    add("Edge", "[[Edge]] adalah browser Chromium milik Microsoft yang juga menjalankan [[Tabsync]].", typ="product",
         desc="Browser Chromium Microsoft.")
-    add("Brave", "[[Brave]] adalah browser Chromium berfokus privasi yang juga menjalankan [[Fillr]].", typ="product",
+    add("Brave", "[[Brave]] adalah browser Chromium berfokus privasi yang juga menjalankan [[Tabsync]].", typ="product",
         desc="Browser Chromium berfokus privasi.")
-    add("Firefox", "[[Firefox]] adalah browser Mozilla; [[Fillr]] belum mendukungnya.", typ="product",
+    add("Firefox", "[[Firefox]] adalah browser Mozilla; [[Tabsync]] belum mendukungnya.", typ="product",
         desc="Browser Mozilla.")
-    add("Google Forms", "[[Google Forms]] adalah platform formulir yang diisi otomatis oleh [[Fillr]].", typ="product",
-        desc="Platform formulir Google; target Fillr.")
-    add("Google Sheets", "[[Google Sheets]] menyimpan respons dari [[Google Forms]].", typ="product",
-        desc="Spreadsheet Google; tujuan respons form.")
-    add("Node.js", "[[Node.js]] menjalankan tes unit [[Fillr]] di mesin pengembang.", slug="nodejs", typ="product",
-        desc="Runtime JavaScript untuk tes Fillr.")
+    add("Google Drive", "[[Google Drive]] adalah penyimpanan berkas yang menjadi tujuan sinkronisasi [[Tabsync]].", typ="product",
+        desc="Penyimpanan berkas Google; tujuan Tabsync.")
+    add("Google Docs", "[[Google Docs]] membuka catatan hasil sinkronisasi dari [[Google Drive]].", typ="product",
+        desc="Editor dokumen Google.")
+    add("Node.js", "[[Node.js]] menjalankan tes unit [[Tabsync]] di mesin pengembang.", slug="nodejs", typ="product",
+        desc="Runtime JavaScript untuk tes Tabsync.")
     add("GitHub", "[[GitHub]] menyimpan kode sumber proyek milik [[Dewa Anggara]].", typ="company",
         desc="Hosting kode.")
     add("panel", "[[panel]] adalah plugin Evonic yang menampilkan sidebar status untuk ekstensi dan agen.", typ="product",
         desc="Plugin sidebar Evonic.")
-    add("Dewa Anggara", "[[Dewa Anggara]] adalah pengembang [[Fillr]] dan [[kasir-cli]]. Direktori home: `/home/dewa`.",
-        aliases=["Dewa"], typ="person", desc="Pengembang Fillr dan kasir-cli.")
-    add("kasir-cli", "[[kasir-cli]] adalah CLI Rust untuk reservasi dan invoice hotel, dikembangkan [[Dewa Anggara]].",
-        typ="product", desc="CLI Rust untuk reservasi hotel.")
+    add("Dewa Anggara", "[[Dewa Anggara]] adalah pengembang [[Tabsync]] dan [[invoicer]]. Direktori home: `/home/dewa`.",
+        aliases=["Dewa"], typ="person", desc="Pengembang Tabsync dan invoicer.")
+    add("invoicer", "[[invoicer]] adalah CLI Python untuk membuat invoice freelance, dikembangkan [[Dewa Anggara]].",
+        typ="product", desc="CLI Python untuk invoice freelance.")
     return v
 
 
 def long_release_notes(n, panel_mentions):
-    """A long Fillr doc (>> the 3000-char Read window). *panel_mentions* is a list of
+    """A long Tabsync doc (>> the 3000-char Read window). *panel_mentions* is a list of
     (position_index, sentence_with_plain_panel) inserted as their own paragraphs."""
     filler = [
-        "Versi {v} memperbaiki alur pengisian multi-halaman: hasil Scan digabung per halaman sehingga opsi "
-        "di seluruh halaman tersedia, dan mutasi hanya menyentuh 1–3 kolom non-Fixed per baris (angka ±1–5%, "
-        "tanggal ±1–7 hari, pilihan bergeser ke opsi tetangga).",
-        "Bukti: tes baru meniru halaman yang dirender tertunda 350 ms → menu muncul 400 ms setelah klik; "
-        "engine menunggu hingga `aria-expanded` bernilai true sebelum membaca opsi “Pilih”.",
-        "Known issues dari rilis sebelumnya: Lokasi bertipe radio dengan opsi “Other”, Likert 1–5 yang terpisah "
-        "(bukan grid), dan unggah berkas yang tetap manual. Cara update: ekstrak `fillr.zip` lalu timpa folder lama.",
+        "Versi {v} memperbaiki alur sinkronisasi multi-jendela: hasil Scan digabung per jendela sehingga tab "
+        "di seluruh jendela tersedia, dan pengurutan hanya menyentuh 1–3 grup per sesi (jeda ±1–5%, "
+        "tenggat ±1–7 hari, grup bergeser ke grup tetangga).",
+        "Bukti: tes baru meniru jendela yang dirender tertunda 350 ms → menu muncul 400 ms setelah klik; "
+        "engine menunggu hingga `aria-expanded` bernilai true sebelum membaca daftar “Pilih”.",
+        "Known issues dari rilis sebelumnya: grup bertipe radio dengan opsi “Other”, skala 1–5 yang terpisah "
+        "(bukan grid), dan unggah berkas yang tetap manual. Cara update: ekstrak `tabsync.zip` lalu timpa folder lama.",
     ]
     paras = []
     for i in range(n):
@@ -125,50 +125,50 @@ def long_release_notes(n, panel_mentions):
 def sc_unlinked_mention():
     v = base_vault()
     mentions = [
-        (3, "Tombol `Lanjut` (`FILLR_NEXT`) di panel dan popup memanggil `engine.advancePageOnce()` untuk maju satu halaman."),
-        (15, "Jika `Isi Form` berhenti di tengah, panel kini menyebut halaman dan tombol yang terlihat."),
-        (34, "Auto-pilot di panel mengisi semua halaman, menekan Submit, lalu menunggu konfirmasi."),
+        (3, "Tombol `Sinkron` (`TABSYNC_NOW`) di panel dan popup memanggil `engine.syncOnce()` untuk menyinkronkan satu jendela."),
+        (15, "Jika `Sinkron` berhenti di tengah, panel kini menyebut jendela dan tombol yang terlihat."),
+        (34, "Mode otomatis di panel menyinkronkan semua jendela, menekan Simpan, lalu menunggu konfirmasi."),
         (38, "Berkas `panel.js` memuat logika tampilan; bukan referensi ke plugin."),
     ]
-    body = ("[[Fillr]] adalah ekstensi MV3 untuk [[Chrome]], [[Edge]], dan [[Brave]] yang mengisi [[Google Forms]] dari dataset. "
+    body = ("[[Tabsync]] adalah ekstensi MV3 untuk [[Chrome]], [[Edge]], dan [[Brave]] yang menyinkronkan tab ke [[Google Drive]] dari dataset. "
             "Dibuat oleh [[Dewa Anggara]]; tes unit berjalan di [[Node.js]].\n\n"
             + long_release_notes(42, mentions))
-    v["fillr.md"] = doc("Fillr", body, typ="product", desc="Ekstensi MV3 pengisi Google Forms.")
+    v["tabsync.md"] = doc("Tabsync", body, typ="product", desc="Ekstensi MV3 penyinkron tab ke Google Drive.")
     assert len(body) > 9000 and body.index("panel kini menyebut") > 3000
     return dict(
         id="kb_org_unlinked_mention_1", level=3, name="Organizer: link plain mentions in a long doc",
         description="A ~10 KB doc has plain-text 'panel' mentions deep past the 3000-char Read window; wrap the real ones, keep `panel.js`, change nothing else.",
-        files=v, focus=["fillr"],
+        files=v, focus=["tabsync"],
         expected={
             "fixes": [
-                {"id": f"link_panel_{i}", "type": "contains", "file": "fillr.md", "text": t}
+                {"id": f"link_panel_{i}", "type": "contains", "file": "tabsync.md", "text": t}
                 for i, t in enumerate([
                     "di [[panel]] dan popup", "panel kini menyebut".replace("panel", "[[panel]]"),
-                    "Auto-pilot di [[panel]] mengisi"])
+                    "Mode otomatis di [[panel]] menyinkronkan"])
             ],
-            "traps": [{"file": "fillr.md", "forbid": ["[[panel]].js"]}],
+            "traps": [{"file": "tabsync.md", "forbid": ["[[panel]].js"]}],
             "call_budget": 24,
         })
 
 
 def sc_dangling_link():
     v = base_vault()
-    v["fillr-v0-3-2-jeda-antar-item-pool-nilai-kolom-dan-hitungan-mundur.md"] = doc(
-        "Fillr v0.3.2 Jeda Antar Item, Pool Nilai Kolom, dan Hitungan Mundur",
-        "[[Fillr]] v0.3.2 menambah jeda antar item, pool nilai per kolom, dan hitungan mundur sebelum Submit.",
-        typ="note", desc="Rilis Fillr v0.3.2.")
-    v["fillr.md"] = doc(
-        "Fillr",
-        "[[Fillr]] adalah ekstensi MV3 untuk [[Chrome]] yang mengisi [[Google Forms]] dari dataset. "
-        "Tes adapter DOM dengan [[jsdom]] lulus 21/21. Perubahan jeda dijelaskan di [[Fillr v0.3.2]]; "
-        "pembuat: [[Dewa Anggara]].", typ="product", desc="Ekstensi MV3 pengisi Google Forms.")
+    v["tabsync-v0-3-2-jeda-antrean-dan-hitungan-mundur.md"] = doc(
+        "Tabsync v0.3.2 Jeda Antrean dan Hitungan Mundur",
+        "[[Tabsync]] v0.3.2 menambah jeda antrean dan hitungan mundur sebelum Simpan.",
+        typ="note", desc="Rilis Tabsync v0.3.2.")
+    v["tabsync.md"] = doc(
+        "Tabsync",
+        "[[Tabsync]] adalah ekstensi MV3 untuk [[Chrome]] yang menyinkronkan tab ke [[Google Drive]] dari dataset. "
+        "Tes adapter DOM dengan [[jsdom]] lulus 21/21. Perubahan jeda dijelaskan di [[Tabsync v0.3.2]]; "
+        "pembuat: [[Dewa Anggara]].", typ="product", desc="Ekstensi MV3 penyinkron tab ke Google Drive.")
     return dict(
         id="kb_org_dangling_link_1", level=3, name="Organizer: resolve dangling links",
-        description="[[Fillr v0.3.2]] has a close doc (alias or retarget); [[jsdom]] has none (unwrap or create). No new dangling links allowed.",
-        files=v, focus=["fillr"],
+        description="[[Tabsync v0.3.2]] has a close doc (alias or retarget); [[jsdom]] has none (unwrap or create). No new dangling links allowed.",
+        files=v, focus=["tabsync"],
         expected={
             "fixes": [
-                {"id": "v032_resolves", "type": "not_dangling", "target": "Fillr v0.3.2"},
+                {"id": "v032_resolves", "type": "not_dangling", "target": "Tabsync v0.3.2"},
                 {"id": "jsdom_resolved", "type": "not_dangling", "target": "jsdom"},
             ],
             "call_budget": 16,
@@ -177,27 +177,27 @@ def sc_dangling_link():
 
 def sc_false_positive():
     v = base_vault()
-    v["kasir-cli.md"] = doc(
-        "kasir-cli",
-        "[[kasir-cli]] adalah CLI Rust untuk reservasi dan invoice hotel, dikembangkan [[Dewa Anggara]]. "
-        "Tugas terakhir: Edge Case Guards (validasi tanggal check-out sebelum check-in dan kamar ganda).",
-        typ="product", desc="CLI Rust untuk reservasi hotel.")
-    v["openai-gpt-5-6-luna.md"] = doc("openai/gpt-5.6-luna", "Model GPT dari [[OpenAI]].", typ="product", desc="Model OpenAI.")
-    v["openai.md"] = doc(
-        "OpenAI", "[[OpenAI]] menyediakan model GPT. Model `openai/gpt-5.6-luna` dikonfigurasi dengan `provider=openai`.",
-        typ="company", desc="Perusahaan AI penyedia model GPT.")
+    v["invoicer.md"] = doc(
+        "invoicer",
+        "[[invoicer]] adalah CLI Python untuk membuat invoice freelance, dikembangkan [[Dewa Anggara]]. "
+        "Tugas terakhir: Edge Case Guards (validasi tanggal jatuh tempo sebelum tanggal terbit dan nomor ganda).",
+        typ="product", desc="CLI Python untuk invoice freelance.")
+    v["acme-model-alpha.md"] = doc("acme/model-alpha", "Model bahasa dari [[Acme AI]].", typ="product", desc="Model Acme AI.")
+    v["acme-ai.md"] = doc(
+        "Acme AI", "[[Acme AI]] menyediakan model bahasa. Model `acme/model-alpha` dikonfigurasi dengan `provider=acme`.",
+        typ="company", desc="Perusahaan AI penyedia model bahasa.")
     v["tool-notes.md"] = doc(
         "Catatan Tool", "Catatan harian: script `Edge.sh` dipakai untuk menjalankan tes di browser lain.",
         typ="note", desc="Catatan tool.")
     return dict(
         id="kb_org_false_positive_1", level=3, name="Organizer: leave heuristic false positives alone",
         description="'Edge Case Guards', `Edge.sh` and a code-span model id are flagged as mentions; none is a real link. The vault must stay unchanged.",
-        files=v, focus=["kasir-cli", "openai", "tool-notes"],
+        files=v, focus=["invoicer", "acme-ai", "tool-notes"],
         expected={
             "traps": [
-                {"file": "kasir-cli.md", "unchanged": True},
+                {"file": "invoicer.md", "unchanged": True},
                 {"file": "tool-notes.md", "unchanged": True},
-                {"file": "openai.md", "keep": ["`openai/gpt-5.6-luna`"], "forbid": ["[[openai/gpt-5.6-luna]]"]},
+                {"file": "acme-ai.md", "keep": ["`acme/model-alpha`"], "forbid": ["[[acme/model-alpha]]"]},
             ],
             "call_budget": 12,
         })
@@ -205,28 +205,28 @@ def sc_false_positive():
 
 def sc_slug_resolution():
     v = base_vault()
-    v["cek-distribusi-v0-3-4-md.md"] = doc(
-        "cek-distribusi-v0.3.4.md",
-        "`cek-distribusi-v0.3.4.md` adalah laporan validasi statistik output Fillr v0.3.4 terhadap screenshot asli: "
-        "α Cronbach X/Y/M = 0.793/0.855/0.855, mean bergeser ≤ 0.05. Dataset: [[DATA_PENELITIAN_SAFE.csv]].",
-        typ="note", desc="Laporan validasi Fillr v0.3.4.")
-    v["cek-distribusi-test-demo-3-md.md"] = doc(
-        "cek-distribusi-test-demo-3.md",
-        "`cek-distribusi-test-demo-3.md` memvalidasi 404 submission dari `test-demo-3.zip`; "
-        "temuan: Lokasi teracak di 83% submisi. Lihat juga [[cek-distribusi-v0.3.4.md]].",
-        typ="note", desc="Laporan validasi test-demo-3.")
-    v["data-penelitian-safe-csv.md"] = doc(
-        "DATA_PENELITIAN_SAFE.csv",
-        "Dataset 122 baris × 31 kolom yang dipakai Fillr untuk mengisi Google Forms; baris 120–122 kosong.",
-        typ="note", desc="Dataset penelitian.")
+    v["laporan-sync-v0-3-4-md.md"] = doc(
+        "laporan-sync-v0.3.4.md",
+        "`laporan-sync-v0.3.4.md` adalah laporan uji sinkronisasi output Tabsync v0.3.4 terhadap tangkapan layar awal: "
+        "118 dari 120 tab tersinkron, selisih urutan ≤ 2. Dataset: [[SAMPLE_TABS.csv]].",
+        typ="note", desc="Laporan uji Tabsync v0.3.4.")
+    v["laporan-sync-demo-3-md.md"] = doc(
+        "laporan-sync-demo-3.md",
+        "`laporan-sync-demo-3.md` memvalidasi 40 sesi dari `demo-3.zip`; "
+        "temuan: urutan tab terbalik di 8% sesi. Lihat juga [[laporan-sync-v0.3.4.md]].",
+        typ="note", desc="Laporan uji demo-3.")
+    v["sample-tabs-csv.md"] = doc(
+        "SAMPLE_TABS.csv",
+        "Contoh 120 tab × 6 kolom yang dipakai Tabsync untuk menguji sinkronisasi ke Google Drive; baris 118–120 kosong.",
+        typ="note", desc="Contoh data tab.")
     return dict(
         id="kb_org_slug_resolution_1", level=3, name="Organizer: open docs by slug, not by title",
         description="Focus docs are titled 'x-v0.3.4.md' but live at 'x-v0-3-4-md.md'. Reading by title fails; Glob-ing the vault is forbidden.",
-        files=v, focus=["cek-distribusi-v0-3-4-md", "cek-distribusi-test-demo-3-md", "data-penelitian-safe-csv"],
+        files=v, focus=["laporan-sync-v0-3-4-md", "laporan-sync-demo-3-md", "sample-tabs-csv"],
         expected={
             "fixes": [
-                {"id": "link_fillr_report", "type": "contains", "file": "cek-distribusi-v0-3-4-md.md", "text": "output [[Fillr]]"},
-                {"id": "link_gforms_dataset", "type": "contains", "file": "data-penelitian-safe-csv.md", "text": "[[Google Forms]]"},
+                {"id": "link_tabsync_report", "type": "contains", "file": "laporan-sync-v0-3-4-md.md", "text": "output [[Tabsync]]"},
+                {"id": "link_drive_sample", "type": "contains", "file": "sample-tabs-csv.md", "text": "[[Google Drive]]"},
             ],
             "call_budget": 14,
         })
@@ -234,33 +234,33 @@ def sc_slug_resolution():
 
 def sc_polluted_alias():
     v = base_vault()
-    v["google-forms.md"] = doc(
-        "Google Forms", "[[Google Forms]] adalah platform formulir yang diisi otomatis oleh [[Fillr]].",
-        aliases=["Google"], typ="product", desc="Platform formulir Google; target Fillr.")
+    v["google-drive.md"] = doc(
+        "Google Drive", "[[Google Drive]] adalah penyimpanan berkas yang menjadi tujuan sinkronisasi [[Tabsync]].",
+        aliases=["Google"], typ="product", desc="Penyimpanan berkas Google; tujuan Tabsync.")
     v["chrome.md"] = doc(
-        "Chrome", "[[Chrome]] adalah browser Chromium buatan Google; platform ekstensi [[Fillr]].", typ="product",
-        desc="Browser Chromium; platform ekstensi Fillr.")
-    v["google-sheets.md"] = doc(
-        "Google Sheets", "[[Google Sheets]] adalah spreadsheet Google yang menyimpan respons dari [[Google Forms]].",
-        typ="product", desc="Spreadsheet Google.")
-    v["fillr.md"] = doc(
-        "Fillr",
-        "[[Fillr]] adalah ekstensi MV3 untuk [[Chrome]] yang mengisi formulir. Deteksi sukses submit bergantung pada "
-        "teks konfirmasi Google; dibuat oleh [[Dewa Anggara]]. Target uji adalah Google Forms dengan 31 pertanyaan.",
-        typ="product", desc="Ekstensi MV3 pengisi formulir.")
+        "Chrome", "[[Chrome]] adalah browser Chromium buatan Google; platform ekstensi [[Tabsync]].", typ="product",
+        desc="Browser Chromium; platform ekstensi Tabsync.")
+    v["google-docs.md"] = doc(
+        "Google Docs", "[[Google Docs]] adalah editor dokumen Google yang membuka catatan dari [[Google Drive]].",
+        typ="product", desc="Editor dokumen Google.")
+    v["tabsync.md"] = doc(
+        "Tabsync",
+        "[[Tabsync]] adalah ekstensi MV3 untuk [[Chrome]] yang menyinkronkan tab. Deteksi sukses sinkronisasi bergantung pada "
+        "teks konfirmasi Google; dibuat oleh [[Dewa Anggara]]. Target sinkronisasi adalah Google Drive dengan 31 folder.",
+        typ="product", desc="Ekstensi MV3 penyinkron tab.")
     return dict(
         id="kb_org_polluted_alias_1", level=4, name="Organizer: refuse links through a polluted alias",
-        description="google-forms carries the alias 'Google'; the heuristic suggests linking 'Google' (the company) everywhere. Remove the alias, link only the real 'Google Forms' mention.",
-        files=v, focus=["google-forms", "chrome", "google-sheets", "fillr"],
+        description="google-drive carries the alias 'Google'; the heuristic suggests linking 'Google' (the company) everywhere. Remove the alias, link only the real 'Google Drive' mention.",
+        files=v, focus=["google-drive", "chrome", "google-docs", "tabsync"],
         expected={
             "fixes": [
-                {"id": "alias_removed", "type": "alias_absent", "file": "google-forms.md", "alias": "Google"},
-                {"id": "link_real_gforms", "type": "contains", "file": "fillr.md", "text": "[[Google Forms]] dengan 31"},
+                {"id": "alias_removed", "type": "alias_absent", "file": "google-drive.md", "alias": "Google"},
+                {"id": "link_real_gforms", "type": "contains", "file": "tabsync.md", "text": "[[Google Drive]] dengan 31"},
             ],
             "traps": [
                 {"file": "chrome.md", "forbid": ["[[Google]]"]},
-                {"file": "google-sheets.md", "forbid": ["[[Google]]"]},
-                {"file": "fillr.md", "forbid": ["[[Google]]"]},
+                {"file": "google-docs.md", "forbid": ["[[Google]]"]},
+                {"file": "tabsync.md", "forbid": ["[[Google]]"]},
             ],
             "call_budget": 22,
         })
@@ -268,34 +268,34 @@ def sc_polluted_alias():
 
 def sc_codespan_frontmatter():
     v = base_vault()
-    v["openai-gpt-5-6-luna.md"] = doc("openai/gpt-5.6-luna", "Model GPT dari [[OpenAI]].", typ="product", desc="Model OpenAI.")
-    v["openai-gpt-5-6-terra.md"] = doc("openai/gpt-5.6-terra", "Model GPT dari [[OpenAI]].", typ="product", desc="Model OpenAI.")
-    v["llmclient.md"] = doc("LLMClient", "[[LLMClient]] adalah klien LLM internal Evonic yang memanggil penyedia model.",
-                            typ="product", desc="Klien LLM internal Evonic.")
-    v["openai.md"] = doc(
-        "OpenAI",
-        "[[OpenAI]] menyediakan model GPT, termasuk `openai/gpt-5.6-luna` dan `openai/gpt-5.6-terra`. "
-        "Perusahaan ini menjadi penyedia OAuth untuk LLMClient saat format API Codex dipakai.",
-        typ="company", desc="Penyedia GPT; OAuth provider untuk LLMClient.")
-    v["llmclient-codex-oauth-provider-mismatch.md"] = doc(
-        "LLMClient Codex OAuth Provider Mismatch",
-        "Bug: token OpenAI dicari di provider yang salah ketika `api_format=codex`. Model default di database adalah "
-        "`openai/gpt-5.6-luna`. Perbaikan: [[LLMClient]] kini memilih provider dari `api_format`.",
-        typ="note", desc="Bug OAuth provider pada LLMClient untuk OpenAI Codex.")
+    v["acme-model-alpha.md"] = doc("acme/model-alpha", "Model bahasa dari [[Acme AI]].", typ="product", desc="Model Acme AI.")
+    v["acme-model-beta.md"] = doc("acme/model-beta", "Model bahasa dari [[Acme AI]].", typ="product", desc="Model Acme AI.")
+    v["modelrouter.md"] = doc("ModelRouter", "[[ModelRouter]] adalah router model internal Evonic yang memanggil penyedia model.",
+                            typ="product", desc="Router model internal Evonic.")
+    v["acme-ai.md"] = doc(
+        "Acme AI",
+        "[[Acme AI]] menyediakan model bahasa, termasuk `acme/model-alpha` dan `acme/model-beta`. "
+        "Perusahaan ini menjadi penyedia OAuth untuk ModelRouter saat format API v2 dipakai.",
+        typ="company", desc="Penyedia model bahasa; OAuth provider untuk ModelRouter.")
+    v["modelrouter-provider-mismatch.md"] = doc(
+        "ModelRouter Provider Mismatch",
+        "Bug: token Acme AI dicari di provider yang salah ketika `api_format=v2`. Model default di database adalah "
+        "`acme/model-alpha`. Perbaikan: [[ModelRouter]] kini memilih provider dari `api_format`.",
+        typ="note", desc="Bug OAuth provider pada ModelRouter untuk Acme AI.")
     return dict(
         id="kb_org_codespan_frontmatter_1", level=4, name="Organizer: no links inside code spans or frontmatter",
         description="Model ids in backticks and entity names in `description:` are flagged or tempting; link only prose mentions.",
-        files=v, focus=["openai", "llmclient-codex-oauth-provider-mismatch"],
+        files=v, focus=["acme-ai", "modelrouter-provider-mismatch"],
         expected={
             "fixes": [
-                {"id": "link_llmclient_prose", "type": "contains", "file": "openai.md", "text": "OAuth untuk [[LLMClient]]"},
-                {"id": "link_openai_prose", "type": "contains", "file": "llmclient-codex-oauth-provider-mismatch.md", "text": "token [[OpenAI]]"},
+                {"id": "link_modelrouter_prose", "type": "contains", "file": "acme-ai.md", "text": "OAuth untuk [[ModelRouter]]"},
+                {"id": "link_openai_prose", "type": "contains", "file": "modelrouter-provider-mismatch.md", "text": "token [[Acme AI]]"},
             ],
             "traps": [
-                {"file": "openai.md", "keep": ["`openai/gpt-5.6-luna`", "`openai/gpt-5.6-terra`",
-                                                'description: "Penyedia GPT; OAuth provider untuk LLMClient."']},
-                {"file": "llmclient-codex-oauth-provider-mismatch.md",
-                 "keep": ["`openai/gpt-5.6-luna`", 'description: "Bug OAuth provider pada LLMClient untuk OpenAI Codex."']},
+                {"file": "acme-ai.md", "keep": ["`acme/model-alpha`", "`acme/model-beta`",
+                                                'description: "Penyedia model bahasa; OAuth provider untuk ModelRouter."']},
+                {"file": "modelrouter-provider-mismatch.md",
+                 "keep": ["`acme/model-alpha`", 'description: "Bug OAuth provider pada ModelRouter untuk Acme AI."']},
             ],
             "call_budget": 18,
         })
@@ -303,42 +303,42 @@ def sc_codespan_frontmatter():
 
 def sc_mixed_batch():
     v = base_vault()
-    v["fillr.md"] = doc(
-        "Fillr",
-        "[[Fillr]] adalah ekstensi MV3 untuk [[Chrome]] yang mengisi [[Google Forms]]. Perubahan terbaru: [[Fillr v0.3.3]]. "
-        "Dibuat oleh [[Dewa Anggara]].", typ="product", desc="Ekstensi MV3 pengisi Google Forms.")
-    v["fillr-v0-3-3-nilai-choice-inline.md"] = doc(
-        "Fillr v0.3.3 Nilai Choice Inline",
-        "Fillr v0.3.3 membaca nilai choice inline – “Pilih”, “Lainnya” → dan memilih acak di antara opsi sah. "
+    v["tabsync.md"] = doc(
+        "Tabsync",
+        "[[Tabsync]] adalah ekstensi MV3 untuk [[Chrome]] yang menyinkronkan tab ke [[Google Drive]]. Perubahan terbaru: [[Tabsync v0.3.3]]. "
+        "Dibuat oleh [[Dewa Anggara]].", typ="product", desc="Ekstensi MV3 penyinkron tab ke Google Drive.")
+    v["tabsync-v0-3-3-sinkron-inline.md"] = doc(
+        "Tabsync v0.3.3 Sinkron Inline",
+        "Tabsync v0.3.3 membaca grup inline – “Pilih”, “Lainnya” → dan menyinkronkan secara acak di antara jendela sah. "
         "Hasil tes: Node.js 41/41 lulus. Tampilan di panel menampilkan hitungan mundur.",
-        typ="note", desc="Rilis Fillr v0.3.3.")
+        typ="note", desc="Rilis Tabsync v0.3.3.")
     v["brave.md"] = doc("Brave (browser)", "[[Brave]] adalah browser Chromium berfokus privasi.", typ="product",
                         desc="Browser Chromium berfokus privasi.")
-    v["kasir-cli.md"] = doc(
-        "kasir-cli", "[[kasir-cli]] adalah CLI Rust untuk invoice hotel. Tugas: Edge Case Guards untuk tanggal “check-out” ≤ “check-in”.",
-        typ="product", desc="CLI Rust untuk reservasi hotel.")
+    v["invoicer.md"] = doc(
+        "invoicer", "[[invoicer]] adalah CLI Python untuk invoice freelance. Tugas: Edge Case Guards untuk tanggal “jatuh tempo” ≤ “terbit”.",
+        typ="product", desc="CLI Python untuk invoice freelance.")
     v["catatan-strategi.md"] = doc(
         "Catatan Strategi", "Brave new approach: pindahkan semua tes ke satu runner. Berkas Firefox-profile.zip tidak dipakai lagi.",
         typ="note", desc="Catatan strategi.")
     v["laporan-uji.md"] = doc(
-        "Laporan Uji", "Laporan uji manual. Fillr berhasil mengisi 31/31 pertanyaan; hasil ±2% dari target. Node.js dipakai untuk simulasi.",
+        "Laporan Uji", "Laporan uji manual. Tabsync berhasil menyinkronkan 31/31 tab; hasil ±2% dari target. Node.js dipakai untuk simulasi.",
         typ="note", desc="Laporan uji manual.")
-    focus = ["fillr", "fillr-v0-3-3-nilai-choice-inline", "brave", "kasir-cli", "catatan-strategi", "laporan-uji"]
+    focus = ["tabsync", "tabsync-v0-3-3-sinkron-inline", "brave", "invoicer", "catatan-strategi", "laporan-uji"]
     return dict(
         id="kb_org_mixed_batch_1", level=4, name="Organizer: mixed batch of real issues and false positives",
         description="Six real fixes (dangling link, polluted title, three plain mentions) mixed with three heuristic false positives, in text full of en-dashes, curly quotes and ±.",
         files=v, focus=focus,
         expected={
             "fixes": [
-                {"id": "v033_resolves", "type": "not_dangling", "target": "Fillr v0.3.3"},
+                {"id": "v033_resolves", "type": "not_dangling", "target": "Tabsync v0.3.3"},
                 {"id": "brave_title", "type": "title_is", "file": "brave.md", "title": "Brave"},
-                {"id": "link_fillr_report", "type": "contains", "file": "laporan-uji.md", "text": "[[Fillr]] berhasil"},
+                {"id": "link_tabsync_report", "type": "contains", "file": "laporan-uji.md", "text": "[[Tabsync]] berhasil"},
                 {"id": "link_node_report", "type": "contains", "file": "laporan-uji.md", "text": "[[Node.js]] dipakai"},
-                {"id": "link_panel_release", "type": "contains", "file": "fillr-v0-3-3-nilai-choice-inline.md", "text": "di [[panel]] menampilkan"},
-                {"id": "link_node_release", "type": "contains", "file": "fillr-v0-3-3-nilai-choice-inline.md", "text": "[[Node.js]] 41/41"},
+                {"id": "link_panel_release", "type": "contains", "file": "tabsync-v0-3-3-sinkron-inline.md", "text": "di [[panel]] menampilkan"},
+                {"id": "link_node_release", "type": "contains", "file": "tabsync-v0-3-3-sinkron-inline.md", "text": "[[Node.js]] 41/41"},
             ],
             "traps": [
-                {"file": "kasir-cli.md", "unchanged": True},
+                {"file": "invoicer.md", "unchanged": True},
                 {"file": "catatan-strategi.md", "unchanged": True},
             ],
             "call_budget": 36,
@@ -352,16 +352,16 @@ def sc_edit_recovery():
     lines = []
     for i in range(1, 7):
         lines.append(f"Langkah {i}{nb}– “Lanjut”{nb}→ tampil di panel{nb}dan popup (±{i}% jeda); lihat log.")
-    body = ("[[Fillr]] menampilkan progres pengisian.\n\n" + "\n\n".join(lines) +
+    body = ("[[Tabsync]] menampilkan progres sinkronisasi.\n\n" + "\n\n".join(lines) +
             "\n\nCatatan penutup: semua langkah di atas memakai alur yang sama.")
-    v["fillr-progres.md"] = doc("Fillr Progres", body, typ="note", desc="Progres pengisian Fillr.")
+    v["tabsync-progres.md"] = doc("Tabsync Progres", body, typ="note", desc="Progres sinkronisasi Tabsync.")
     # Every one of the six lines must be linked.
-    fixes = [{"id": f"step_{i}", "type": "contains", "file": "fillr-progres.md",
+    fixes = [{"id": f"step_{i}", "type": "contains", "file": "tabsync-progres.md",
               "text": f"tampil di [[panel]]{nb}dan popup (±{i}% jeda)"} for i in range(1, 7)]
     return dict(
         id="kb_org_edit_recovery_1", level=4, name="Organizer: recover from failing edits",
         description="Six near-identical lines with NBSP, curly quotes and ±: a short old_str matches several lines and a typed-from-memory one misses. Needs Read, unique context, no blind retries.",
-        files=v, focus=["fillr-progres"],
+        files=v, focus=["tabsync-progres"],
         expected={"fixes": fixes, "call_budget": 30})
 
 
@@ -369,20 +369,20 @@ def sc_duplicate_person():
     v = base_vault()
     v["dewa-anggara.md"] = doc(
         "Dewa Anggara (Mas Dewa)",
-        "Dewa adalah pengembang utama [[kasir-cli]] dan [[Fillr]]. Kode [[kasir-cli]] ada di `/home/dewa/dev/kasir-cli/`.",
-        aliases=["Dewa"], typ="person", desc="Pengembang kasir-cli dan Fillr.")
+        "Dewa adalah pengembang utama [[invoicer]] dan [[Tabsync]]. Kode [[invoicer]] ada di `/home/dewa/dev/invoicer/`.",
+        aliases=["Dewa"], typ="person", desc="Pengembang invoicer dan Tabsync.")
     v["user.md"] = doc(
         "User",
         "User adalah pemilik dan operator asisten ini. Direktori home User adalah `/home/dewa`. "
-        "User mengembangkan [[kasir-cli]] dan memakai [[Fillr]] untuk entri data penelitian. "
+        "User mengembangkan [[invoicer]] dan memakai [[Tabsync]] untuk sinkronisasi catatan. "
         "Preferensi: balas dalam bahasa Indonesia, singkat.",
         typ="note", desc="Pemilik asisten.")
-    v["fillr.md"] = doc(
-        "Fillr", "[[Fillr]] adalah ekstensi MV3 yang dibuat untuk [[Dewa Anggara]] agar mengisi [[Google Forms]] dari dataset.",
-        typ="product", desc="Ekstensi MV3 pengisi Google Forms.")
-    v["kasir-cli.md"] = doc(
-        "kasir-cli", "[[kasir-cli]] adalah CLI Rust untuk invoice hotel. Pengembang utama: [[User]].",
-        typ="product", desc="CLI Rust untuk reservasi hotel.")
+    v["tabsync.md"] = doc(
+        "Tabsync", "[[Tabsync]] adalah ekstensi MV3 yang dibuat untuk [[Dewa Anggara]] agar menyinkronkan tab ke [[Google Drive]] dari dataset.",
+        typ="product", desc="Ekstensi MV3 penyinkron tab ke Google Drive.")
+    v["invoicer.md"] = doc(
+        "invoicer", "[[invoicer]] adalah CLI Python untuk invoice freelance. Pengembang utama: [[User]].",
+        typ="product", desc="CLI Python untuk invoice freelance.")
     return dict(
         id="kb_org_duplicate_person_1", level=5, name="Organizer: merge the owner doc into the person doc",
         description="'User' (the owner) and 'Dewa Anggara (Mas Dewa)' are the same person; the person title is polluted, [[Dewa Anggara]] dangles, [[User]] links exist. Merge, delete, keep links resolving.",
@@ -395,7 +395,7 @@ def sc_duplicate_person():
                 {"id": "unique_fact_merged", "type": "contains", "file": "dewa-anggara.md", "text": "bahasa Indonesia"},
                 {"id": "person_links_resolve", "type": "not_dangling", "target": "Dewa Anggara"},
             ],
-            "traps": [{"file": "dewa-anggara.md", "forbid": ["dev/[[kasir-cli]]"]}],   # path inside a code span
+            "traps": [{"file": "dewa-anggara.md", "forbid": ["dev/[[invoicer]]"]}],   # path inside a code span
             "allow_delete": ["user.md"],
             "rewrite_allowed": ["dewa-anggara.md"],
             "call_budget": 26,
@@ -404,29 +404,29 @@ def sc_duplicate_person():
 
 def sc_broken_docs():
     v = base_vault()
-    para = ("Fillr v0.3.0 menambah mode Auto-pilot penuh: mengisi semua halaman, menekan Submit, menunggu halaman konfirmasi, "
-            "lalu menekan “Submit another response” untuk baris berikutnya.")
-    v["fillr-v0-3-0-auto-pilot.md"] = doc("Fillr v0.3.0 Auto-pilot", para + "\n\n" + para, typ="note",
-                                         desc="Rilis Fillr v0.3.0.")
+    para = ("Tabsync v0.3.0 menambah mode otomatis penuh: menyinkronkan semua jendela, menekan Simpan, menunggu halaman konfirmasi, "
+            "lalu menekan “Sync again” untuk jendela berikutnya.")
+    v["tabsync-v0-3-0-mode-otomatis.md"] = doc("Tabsync v0.3.0 Mode Otomatis", para + "\n\n" + para, typ="note",
+                                         desc="Rilis Tabsync v0.3.0.")
     v["catatan-rapat.md"] = doc("Catatan Rapat", "", typ="note", desc="Catatan rapat.")
-    v["chrome.md"] = doc("Chrome (browser)", "[[Chrome]] adalah browser Chromium; platform ekstensi [[Fillr]].", typ="product",
+    v["chrome.md"] = doc("Chrome (browser)", "[[Chrome]] adalah browser Chromium; platform ekstensi [[Tabsync]].", typ="product",
                          desc="Browser Chromium.")
-    v["fillr.md"] = doc("Fillr", "[[Fillr]] adalah ekstensi MV3 untuk [[Chrome]]; rilis otomatis: [[Fillr v0.3.0 Auto-pilot]].",
+    v["tabsync.md"] = doc("Tabsync", "[[Tabsync]] adalah ekstensi MV3 untuk [[Chrome]]; rilis otomatis: [[Tabsync v0.3.0 Mode Otomatis]].",
                         typ="product", desc="Ekstensi MV3.")
     return dict(
         id="kb_org_broken_docs_1", level=5, name="Organizer: repair broken docs",
         description="A body concatenated onto itself, an empty doc, and a title with a parenthetical. Repair or remove each correctly; nothing else may change.",
-        files=v, focus=["fillr-v0-3-0-auto-pilot", "catatan-rapat", "chrome"],
+        files=v, focus=["tabsync-v0-3-0-mode-otomatis", "catatan-rapat", "chrome"],
         expected={
             "fixes": [
-                {"id": "dup_body_once", "type": "contains", "file": "fillr-v0-3-0-auto-pilot.md",
-                 "text": "menambah mode Auto-pilot penuh: mengisi semua halaman", "min": 1, "max": 1},
+                {"id": "dup_body_once", "type": "contains", "file": "tabsync-v0-3-0-mode-otomatis.md",
+                 "text": "menambah mode otomatis penuh: menyinkronkan semua jendela", "min": 1, "max": 1},
                 {"id": "empty_removed", "type": "deleted", "file": "catatan-rapat.md"},
                 {"id": "chrome_title", "type": "title_is", "file": "chrome.md", "title": "Chrome"},
             ],
             "allow_delete": ["catatan-rapat.md"],
-            "rewrite_allowed": ["fillr-v0-3-0-auto-pilot.md"],
-            "traps": [{"file": "fillr.md", "unchanged": True}],
+            "rewrite_allowed": ["tabsync-v0-3-0-mode-otomatis.md"],
+            "traps": [{"file": "tabsync.md", "unchanged": True}],
             "call_budget": 20,
         })
 
@@ -435,81 +435,81 @@ def sc_full_batch():
     """Scaled replica of the real run: 15 focus docs + neighbours, ~25 issues, a third false positives."""
     v = base_vault()
     mentions = [
-        (3, "Tombol `Lanjut` di panel dan popup memanggil `engine.advancePageOnce()`."),
-        (9, "Jika `Isi Form` berhenti di tengah, panel kini menyebut halaman dan tombol yang terlihat."),
+        (3, "Tombol `Sinkron` di panel dan popup memanggil `engine.syncOnce()`."),
+        (9, "Jika `Sinkron` berhenti di tengah, panel kini menyebut jendela dan tombol yang terlihat."),
     ]
-    v["fillr.md"] = doc("Fillr",
-                        "[[Fillr]] adalah ekstensi MV3 untuk Chrome, Edge, dan Brave yang mengisi [[Google Forms]] dari dataset. "
-                        "Tes adapter DOM dengan [[jsdom]] lulus 21/21; perubahan jeda ada di [[Fillr v0.3.2]]. "
-                        "Deteksi sukses submit bergantung pada teks konfirmasi Google.\n\n" + long_release_notes(10, mentions),
-                        typ="product", desc="Ekstensi MV3 pengisi Google Forms.")
-    v["fillr-v0-3-2-jeda-antar-item.md"] = doc("Fillr v0.3.2 Jeda Antar Item",
-                                              "Fillr v0.3.2 menambah jeda antar item; progres tampil di panel.", typ="note",
-                                              desc="Rilis Fillr v0.3.2.")
-    v["fillr-v0-3-4-nama-perusahaan.md"] = doc("Fillr v0.3.4 Nama Perusahaan",
-                                              "Fillr v0.3.4 memaksa nama PT/CV minimal 3 kata; hasil divalidasi di Node.js.", typ="note",
-                                              desc="Rilis Fillr v0.3.4.")
-    v["google-forms.md"] = doc("Google Forms", "[[Google Forms]] adalah platform formulir yang diisi otomatis oleh [[Fillr]].",
-                               aliases=["Google"], typ="product", desc="Platform formulir Google; target Fillr.")
-    v["chrome.md"] = doc("Chrome", "[[Chrome]] adalah browser Chromium buatan Google; platform ekstensi [[Fillr]].", typ="product",
+    v["tabsync.md"] = doc("Tabsync",
+                        "[[Tabsync]] adalah ekstensi MV3 untuk Chrome, Edge, dan Brave yang menyinkronkan tab ke [[Google Drive]] dari dataset. "
+                        "Tes adapter DOM dengan [[jsdom]] lulus 21/21; perubahan jeda ada di [[Tabsync v0.3.2]]. "
+                        "Deteksi sukses sinkronisasi bergantung pada teks konfirmasi Google.\n\n" + long_release_notes(10, mentions),
+                        typ="product", desc="Ekstensi MV3 penyinkron tab ke Google Drive.")
+    v["tabsync-v0-3-2-jeda-antrean.md"] = doc("Tabsync v0.3.2 Jeda Antrean",
+                                              "Tabsync v0.3.2 menambah jeda antrean; progres tampil di panel.", typ="note",
+                                              desc="Rilis Tabsync v0.3.2.")
+    v["tabsync-v0-3-4-nama-grup.md"] = doc("Tabsync v0.3.4 Nama Grup",
+                                              "Tabsync v0.3.4 memaksa nama grup minimal 3 kata; hasil divalidasi di Node.js.", typ="note",
+                                              desc="Rilis Tabsync v0.3.4.")
+    v["google-drive.md"] = doc("Google Drive", "[[Google Drive]] adalah penyimpanan berkas yang menjadi tujuan sinkronisasi [[Tabsync]].",
+                               aliases=["Google"], typ="product", desc="Penyimpanan berkas Google; tujuan Tabsync.")
+    v["chrome.md"] = doc("Chrome", "[[Chrome]] adalah browser Chromium buatan Google; platform ekstensi [[Tabsync]].", typ="product",
                          desc="Browser Chromium.")
-    v["google-sheets.md"] = doc("Google Sheets", "[[Google Sheets]] adalah spreadsheet Google untuk respons form.", typ="product",
-                                desc="Spreadsheet Google.")
-    v["github.md"] = doc("GitHub", "[[GitHub]] menyimpan kode sumber, termasuk [[kasir-cli]]; webhook ditangani plugin lain.",
+    v["google-docs.md"] = doc("Google Docs", "[[Google Docs]] adalah editor dokumen Google untuk catatan sinkronisasi.", typ="product",
+                                desc="Editor dokumen Google.")
+    v["github.md"] = doc("GitHub", "[[GitHub]] menyimpan kode sumber, termasuk [[invoicer]]; webhook ditangani plugin lain.",
                          typ="company", desc="Hosting kode.")
-    v["kasir-cli.md"] = doc("kasir-cli",
-                            "[[kasir-cli]] adalah CLI Rust untuk invoice hotel, dikembangkan [[Dewa Anggara]]. Tugas: Edge Case Guards untuk tanggal.",
-                            typ="product", desc="CLI Rust untuk reservasi hotel.")
+    v["invoicer.md"] = doc("invoicer",
+                            "[[invoicer]] adalah CLI Python untuk invoice freelance, dikembangkan [[Dewa Anggara]]. Tugas: Edge Case Guards untuk tanggal.",
+                            typ="product", desc="CLI Python untuk invoice freelance.")
     v["dewa-anggara.md"] = doc("Dewa Anggara (Mas Dewa)",
-                               "Dewa adalah pengembang utama [[kasir-cli]]. Home: `/home/dewa`.", aliases=["Dewa"], typ="person",
-                               desc="Pengembang kasir-cli dan Fillr.")
-    v["user.md"] = doc("User", "User adalah pemilik asisten; home `/home/dewa`; pengembang [[kasir-cli]]; memakai [[Fillr]]. "
+                               "Dewa adalah pengembang utama [[invoicer]]. Home: `/home/dewa`.", aliases=["Dewa"], typ="person",
+                               desc="Pengembang invoicer dan Tabsync.")
+    v["user.md"] = doc("User", "User adalah pemilik asisten; home `/home/dewa`; pengembang [[invoicer]]; memakai [[Tabsync]]. "
                                "Preferensi: balas dalam bahasa Indonesia.", typ="note", desc="Pemilik asisten.")
-    v["openai-gpt-5-6-luna.md"] = doc("openai/gpt-5.6-luna", "Model GPT dari [[OpenAI]].", typ="product", desc="Model OpenAI.")
-    v["llmclient.md"] = doc("LLMClient", "[[LLMClient]] adalah klien LLM internal Evonic.", typ="product", desc="Klien LLM Evonic.")
-    v["openai.md"] = doc("OpenAI", "[[OpenAI]] menyediakan GPT, termasuk `openai/gpt-5.6-luna`; OAuth provider untuk LLMClient.",
-                         typ="company", desc="Penyedia GPT.")
+    v["acme-model-alpha.md"] = doc("acme/model-alpha", "Model bahasa dari [[Acme AI]].", typ="product", desc="Model Acme AI.")
+    v["modelrouter.md"] = doc("ModelRouter", "[[ModelRouter]] adalah router model internal Evonic.", typ="product", desc="Router model Evonic.")
+    v["acme-ai.md"] = doc("Acme AI", "[[Acme AI]] menyediakan model bahasa, termasuk `acme/model-alpha`; OAuth provider untuk ModelRouter.",
+                         typ="company", desc="Penyedia model bahasa.")
     v["catatan-strategi.md"] = doc("Catatan Strategi", "Brave new approach: satu runner. Berkas Firefox-profile.zip tidak dipakai.",
                                    typ="note", desc="Catatan strategi.")
-    v["fillr-v0-3-0-auto-pilot.md"] = doc("Fillr v0.3.0 Auto-pilot",
-                                         "Fillr v0.3.0 menambah Auto-pilot di panel/popup.\n\nFillr v0.3.0 menambah Auto-pilot di panel/popup.",
-                                         typ="note", desc="Rilis Fillr v0.3.0.")
+    v["tabsync-v0-3-0-mode-otomatis.md"] = doc("Tabsync v0.3.0 Mode Otomatis",
+                                         "Tabsync v0.3.0 menambah mode otomatis di panel/popup.\n\nTabsync v0.3.0 menambah mode otomatis di panel/popup.",
+                                         typ="note", desc="Rilis Tabsync v0.3.0.")
     v["catatan-rapat.md"] = doc("Catatan Rapat", "", typ="note", desc="Catatan rapat.")
-    v["agentapi.md"] = doc("agentapi", "[[agentapi]] adalah plugin Evonic yang membuka agen lewat REST kompatibel OpenAI.",
+    v["gatewayapi.md"] = doc("gatewayapi", "[[gatewayapi]] adalah plugin Evonic yang membuka agen lewat REST kompatibel Acme AI.",
                            typ="product", desc="Plugin REST Evonic.")
-    focus = ["fillr", "fillr-v0-3-2-jeda-antar-item", "fillr-v0-3-4-nama-perusahaan", "google-forms", "chrome", "google-sheets",
-             "github", "kasir-cli", "dewa-anggara", "user", "openai", "catatan-strategi", "fillr-v0-3-0-auto-pilot",
-             "catatan-rapat", "agentapi"]
+    focus = ["tabsync", "tabsync-v0-3-2-jeda-antrean", "tabsync-v0-3-4-nama-grup", "google-drive", "chrome", "google-docs",
+             "github", "invoicer", "dewa-anggara", "user", "acme-ai", "catatan-strategi", "tabsync-v0-3-0-mode-otomatis",
+             "catatan-rapat", "gatewayapi"]
     return dict(
         id="kb_org_full_batch_1", level=5, name="Organizer: full tidy pass (replica of a real run)",
         description="15 focus docs + neighbours, roughly 25 detected issues of which a third are false positives: polluted alias, duplicate owner doc, dangling links, empty and self-duplicated docs, code spans. Scored on fixes, harm, edit discipline and an honest summary.",
         files=v, focus=focus,
         expected={
             "fixes": [
-                {"id": "alias_google_removed", "type": "alias_absent", "file": "google-forms.md", "alias": "Google"},
-                {"id": "v032_resolves", "type": "not_dangling", "target": "Fillr v0.3.2"},
+                {"id": "alias_google_removed", "type": "alias_absent", "file": "google-drive.md", "alias": "Google"},
+                {"id": "v032_resolves", "type": "not_dangling", "target": "Tabsync v0.3.2"},
                 {"id": "jsdom_resolved", "type": "not_dangling", "target": "jsdom"},
-                {"id": "link_panel_fillr", "type": "contains", "file": "fillr.md", "text": "di [[panel]] dan popup"},
-                {"id": "link_chrome_fillr", "type": "contains", "file": "fillr.md", "text": "untuk [[Chrome]]"},
+                {"id": "link_panel_tabsync", "type": "contains", "file": "tabsync.md", "text": "di [[panel]] dan popup"},
+                {"id": "link_chrome_tabsync", "type": "contains", "file": "tabsync.md", "text": "untuk [[Chrome]]"},
                 {"id": "owner_merged", "type": "deleted", "file": "user.md"},
                 {"id": "person_title", "type": "title_is", "file": "dewa-anggara.md", "title": "Dewa Anggara"},
                 {"id": "owner_facts", "type": "contains", "file": "dewa-anggara.md", "text": "bahasa Indonesia"},
                 {"id": "empty_removed", "type": "deleted", "file": "catatan-rapat.md"},
-                {"id": "selfdup_fixed", "type": "contains", "file": "fillr-v0-3-0-auto-pilot.md",
-                 "text": "v0.3.0 menambah Auto-pilot di", "min": 1, "max": 1},
-                {"id": "link_llmclient", "type": "contains", "file": "openai.md", "text": "OAuth provider untuk [[LLMClient]]"},
-                {"id": "link_openai_agentapi", "type": "contains", "file": "agentapi.md", "text": "kompatibel [[OpenAI]]"},
+                {"id": "selfdup_fixed", "type": "contains", "file": "tabsync-v0-3-0-mode-otomatis.md",
+                 "text": "v0.3.0 menambah mode otomatis di", "min": 1, "max": 1},
+                {"id": "link_modelrouter", "type": "contains", "file": "acme-ai.md", "text": "OAuth provider untuk [[ModelRouter]]"},
+                {"id": "link_openai_gatewayapi", "type": "contains", "file": "gatewayapi.md", "text": "kompatibel [[Acme AI]]"},
             ],
             "traps": [
-                {"file": "kasir-cli.md", "unchanged": True},
+                {"file": "invoicer.md", "unchanged": True},
                 {"file": "catatan-strategi.md", "unchanged": True},
-                {"file": "openai.md", "keep": ["`openai/gpt-5.6-luna`"]},
+                {"file": "acme-ai.md", "keep": ["`acme/model-alpha`"]},
                 {"file": "chrome.md", "forbid": ["[[Google]]"]},
-                {"file": "google-sheets.md", "forbid": ["[[Google]]"]},
-                {"file": "fillr.md", "forbid": ["[[Google]]"]},
+                {"file": "google-docs.md", "forbid": ["[[Google]]"]},
+                {"file": "tabsync.md", "forbid": ["[[Google]]"]},
             ],
             "allow_delete": ["user.md", "catatan-rapat.md"],
-            "rewrite_allowed": ["dewa-anggara.md", "fillr-v0-3-0-auto-pilot.md"],
+            "rewrite_allowed": ["dewa-anggara.md", "tabsync-v0-3-0-mode-otomatis.md"],
             "call_budget": 70,
         })
 
