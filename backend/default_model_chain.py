@@ -1,4 +1,4 @@
-"""Global model fallback chains (default model and vision model).
+"""Global model fallback chains (default, vision and KB organizer models).
 
 Each chain has a main model and up to ``MAX_DEFAULT_FALLBACKS`` fallback
 models, tried in order when the main one fails. The fallbacks are stored as a
@@ -76,6 +76,7 @@ class FallbackChain:
 DEFAULT_CHAIN = FallbackChain('default_model_fallback_ids', ['default_model_fallback_id'])
 VISION_CHAIN = FallbackChain('vision_fallback_model_ids',
                              ['vision_fallback_model_id', 'vision_fallback_model_2_id'])
+KB_ORGANIZER_CHAIN = FallbackChain('kb_organizer_fallback_model_ids', [])
 
 # Kept for callers of the default chain.
 CHAIN_KEY = DEFAULT_CHAIN.chain_key

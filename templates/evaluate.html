@@ -609,13 +609,15 @@ function showCompletionModal(data) {
     const scoreText = data.score !== null && data.score !== undefined
         ? `${fmtPts(data.score)} pts` : '—';
     const activeDomains = Object.keys(data.domains || {});
-    const total = activeDomains.reduce((sum, d) => sum + (DOMAIN_TEST_COUNTS[d] || 0), 0);
-    let passed = 0;
+    // Count tests, not cells: each domain/level cell carries its own passed/count.
+    let passed = 0, counted = 0;
     for (const levels of Object.values(data.domains || {})) {
         for (const cell of Object.values(levels)) {
-            if (cell.status === 'passed') passed++;
+            passed += cell.passed || 0;
+            counted += cell.count || 0;
         }
     }
+    const total = counted || activeDomains.reduce((sum, d) => sum + (DOMAIN_TEST_COUNTS[d] || 0), 0);
 
     document.getElementById('completion-score-text').textContent = scoreText;
     document.getElementById('completion-tests-label').textContent = `${passed}/${total} tests passed`;

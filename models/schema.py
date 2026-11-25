@@ -1570,9 +1570,9 @@ class SchemaMixin:
                 builtin_agent_profiles,
             )
             # The learned-skill gate is active from the start: it names no model
-            # and runs on the default decision models (Settings > Decision
-            # Profiles). Until those are set it has no effect and the skill
-            # learner falls back to its own heuristic.
+            # and runs on the default decision models (System > General >
+            # Models & Routing). Until those are set it has no effect and the
+            # skill learner falls back to its own heuristic.
             cursor.execute(
                 """INSERT OR IGNORE INTO decision_profiles (
                     profile_key, display_name, description, enabled, mode,

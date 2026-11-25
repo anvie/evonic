@@ -63,7 +63,6 @@ def test_settings_general_uses_shared_helper_for_all_routing_selects():
     assert "ui.populateModelSelect(el, list, {" in source
     assert 'selectedValue: selectedId || ""' in source
     for select_id in [
-        "kb-organizer-model-select",
         "task-classifier-model-select",
         "cmp-model-select",
     ]:

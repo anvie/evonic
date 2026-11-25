@@ -42,6 +42,22 @@ def _build_evaluation_llm_client():
 # Maximum iterations for multi-turn tool calling (configurable via EVAL_MAX_TOOL_ITERATIONS env var)
 MAX_TOOL_ITERATIONS = config.EVAL_MAX_TOOL_ITERATIONS
 
+# Hard cap on turns for tool-calling tests (a test may set its own max_tool_turns).
+# A run that is still calling tools at the cap is stopped and its score is penalised.
+TOOL_CALLING_MAX_TURNS = 50
+MAX_TURNS_PENALTY = 0.5
+
+# Project files the mocked file tools (bash, read_file, write_file, runpy,
+# str_replace) share within one run, so a write is visible to a later read.
+DEFAULT_WORKSPACE = {
+    "app.py": "from flask import Flask, request\nfrom auth import authenticate\nfrom discount import calculate_discount\n\napp = Flask(__name__)\n\n@app.route(\"/login\", methods=[\"POST\"])\ndef login():\n    data = request.get_json()\n    if authenticate(data[\"username\"], data[\"password\"]):\n        return {\"status\": \"ok\"}\n    return {\"status\": \"unauthorized\"}, 401\n\nif __name__ == \"__main__\":\n    app.run(debug=True)",
+    "auth.py": "import hashlib\n\nUSERS = {\"admin\": \"8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918\"}\n\ndef authenticate(username, password):\n    hashed = hashlib.sha256(password.encode()).hexdigest()\n    return USERS.get(username) == hashed",
+    "discount.py": "def calculate_discount(price, percent):\n    # Menghitung harga akhir setelah diskon persen.\n    # BUG: percent dalam satuan persen sehingga harus dibagi 100.\n    return price - (price * percent)\n\ndef apply_bulk_discount(prices, percent):\n    return [calculate_discount(p, percent) for p in prices]",
+    "utils.py": "def format_currency(amount):\n    return \"Rp \" + format(amount, \",.0f\").replace(\",\", \".\")\n\ndef slugify(text):\n    return text.lower().strip().replace(\" \", \"-\")",
+    "models.py": "class Product:\n    def __init__(self, name, price):\n        self.name = name\n        self.price = price",
+    "requirements.txt": "flask\n",
+}
+
 
 class EvaluationEngine:
     def __init__(self, use_configurable_tests: bool = False):
@@ -922,7 +938,7 @@ class EvaluationEngine:
                     lines.append(f"{prefix}- {item}")
         return "\n".join(lines)
 
-    def _execute_python_mock(self, py_code: str, args: dict):
+    def _execute_python_mock(self, py_code: str, args: dict, workspace: dict = None):
         """Execute Python mock response via exec() with AST-based sandboxing.
 
         Before execution, the code is parsed and validated against a denylist
@@ -976,6 +992,8 @@ class EvaluationEngine:
         _dt.datetime.strptime('2000-01-01', '%Y-%m-%d')
         namespace = {
             'args': args,
+            # Mutable files shared by the mocked file tools within one run.
+            'workspace': workspace if workspace is not None else {},
             'math': math,
             'json': json,
             're': __import__('re'),
@@ -1050,6 +1068,7 @@ class EvaluationEngine:
 
         # Initialize variables for tool calling
         loop_result = None
+        max_turns = None
         tools = None
         
         self._log(f'')
@@ -1133,8 +1152,10 @@ class EvaluationEngine:
                 mock_responses = {}
 
             # Run tool calling loop
+            capped = not vault_ctx and (domain == "tool_calling" or uses_tool_evaluator)
+            max_turns = (test.get('max_tool_turns') or TOOL_CALLING_MAX_TURNS) if capped else None
             try:
-                loop_result = self._run_tool_calling_loop(prompt, tools, mock_responses, system_prompt=system_prompt, mock_response_types=mock_response_types, no_mock_tools=no_mock_tools, run_llm_client=_client, vault_ctx=vault_ctx)
+                loop_result = self._run_tool_calling_loop(prompt, tools, mock_responses, system_prompt=system_prompt, mock_response_types=mock_response_types, no_mock_tools=no_mock_tools, run_llm_client=_client, vault_ctx=vault_ctx, max_turns=max_turns)
             finally:
                 if vault_ctx:
                     self._vault_finish(vault_ctx)
@@ -1238,7 +1259,17 @@ class EvaluationEngine:
         details = result.details if hasattr(result, 'details') else {}
         if not isinstance(details, dict):
             details = {"details": str(details)}
-        
+
+        # A tool-calling run still calling tools at the turn cap was stopped: penalise it.
+        if max_turns and loop_result and loop_result.get("stop_reason") == "max_turns":
+            result.score = result.score * MAX_TURNS_PENALTY
+            if result.status == 'passed' and result.score < 0.8:
+                result.status = 'failed'
+            details["max_turns_exceeded"] = True
+            details["max_turns"] = max_turns
+            details["max_turns_penalty"] = MAX_TURNS_PENALTY
+            self._log(f'[TOOL-LOOP] Hit the {max_turns}-turn cap; score x{MAX_TURNS_PENALTY}')
+
         # Add evaluator info
         if evaluator_config and evaluator_config.type == 'custom':
             details["evaluator"] = f"custom:{evaluator_config.name}"
@@ -1498,7 +1529,7 @@ class EvaluationEngine:
             'stop_reason': (loop_result or {}).get('stop_reason'),
         }
 
-    def _run_tool_calling_loop(self, prompt: str, tools: list, mock_responses: Dict[str, Any] = None, system_prompt: str = None, mock_response_types: Dict[str, str] = None, no_mock_tools: set = None, enable_planning: bool = True, run_llm_client=None, vault_ctx: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _run_tool_calling_loop(self, prompt: str, tools: list, mock_responses: Dict[str, Any] = None, system_prompt: str = None, mock_response_types: Dict[str, str] = None, no_mock_tools: set = None, enable_planning: bool = True, run_llm_client=None, vault_ctx: Dict[str, Any] = None, max_turns: int = None) -> Dict[str, Any]:
         """
         Run multi-turn tool calling loop with mock execution.
         
@@ -1533,6 +1564,10 @@ class EvaluationEngine:
             # shield, no state compaction, no forced answer — only the per-step cap.
             max_tool_iterations = int(vault_ctx['max_turns'])
             enable_planning = False
+
+        if max_turns:
+            max_tool_iterations = min(max_tool_iterations, int(max_turns))
+        workspace = dict(DEFAULT_WORKSPACE)
 
         messages = []
         if system_prompt:
@@ -1776,7 +1811,7 @@ class EvaluationEngine:
                         mock_result_data = self._execute_js_mock(mock_value, func_args)
                         self._log(f'[MOCK] Executed JS mock for {func_name}')
                     elif mock_type == 'python' and isinstance(mock_value, str):
-                        mock_result_data = self._execute_python_mock(mock_value, func_args)
+                        mock_result_data = self._execute_python_mock(mock_value, func_args, workspace)
                         self._log(f'[MOCK] Executed Python mock for {func_name}')
                     else:
                         mock_result_data = mock_value

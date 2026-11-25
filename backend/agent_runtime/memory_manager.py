@@ -302,6 +302,27 @@ IMPORTANT RULES:
 - When adding aliases, preserve the existing YAML list format — append to the list, don't replace it."""
 
 
+def _kb_organizer_models(agent):
+    """Organizer model id and its ordered fallback ids.
+
+    The model is the System Settings organizer model, then the env override,
+    then the parent agent's own model. Fallbacks come from the organizer
+    fallback chain; with none configured, a distinct organizer model falls
+    back to the global default model, and otherwise the runtime walks the
+    default model's own chain.
+    """
+    from backend.default_model_chain import KB_ORGANIZER_CHAIN
+    model_id = (db.get_setting('kb_organizer_model_id', '')
+                or os.environ.get('EVOMEM_KB_ORGANIZER_MODEL')
+                or agent.get('model_id') or None)
+    fallback_ids = [i for i in KB_ORGANIZER_CHAIN.get_ids(db) if i != model_id]
+    if not fallback_ids:
+        default_id = (db.get_default_model() or {}).get('id')
+        if model_id and default_id and model_id != default_id:
+            fallback_ids = [default_id]
+    return model_id, fallback_ids
+
+
 def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
     """Run the KB Janitor sub-agent for a SEFTON tidy pass.
 
@@ -333,17 +354,11 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
         return f"Tool resolution failed: {tool_err}"
 
     timeout = int(os.environ.get('EVOMEM_KB_ORGANIZER_TIMEOUT', '600'))
-    _kb_model_id = (db.get_setting('kb_organizer_model_id', '')
-                    or os.environ.get('EVOMEM_KB_ORGANIZER_MODEL')
-                    or agent.get('model_id') or None)
-    _default_model_id = (db.get_default_model() or {}).get('id')
-    _fallback_model_id = (_default_model_id
-                          if _kb_model_id and _default_model_id
-                          and _kb_model_id != _default_model_id else None)
+    _kb_model_id, _fallback_ids = _kb_organizer_models(agent)
     skill_cfg = {
         'system_prompt': _KB_TIDY_SYSTEM_PROMPT,
         'model_id': _kb_model_id,
-        'fallback_model_id': _fallback_model_id,
+        'fallback_model_ids': _fallback_ids,
     }
 
     def _build(eid):
@@ -1317,23 +1332,11 @@ def _spawn_kb_organizer(agent: dict, source_text: str, recent_text: str = "",
     # instance), so a long blocking wait is fine — and far better than discarding a
     # result that arrives a few seconds late. Tune via EVOMEM_KB_ORGANIZER_TIMEOUT.
     timeout = int(os.environ.get('EVOMEM_KB_ORGANIZER_TIMEOUT', '600'))
-    _kb_model_id = (db.get_setting('kb_organizer_model_id', '')
-                    or os.environ.get('EVOMEM_KB_ORGANIZER_MODEL')
-                    or agent.get('model_id') or None)
-    # When a distinct organizer model is configured, fall back to the global
-    # default model if that model fails at runtime (the runtime's per-agent
-    # fallback machinery picks this up via explorer.fallback_model). When no
-    # organizer model is set, the organizer uses the parent agent's default
-    # model (or the global default if the agent has none), so a fallback
-    # equal to the primary would be pointless.
-    _default_model_id = (db.get_default_model() or {}).get('id')
-    _fallback_model_id = (_default_model_id
-                          if _kb_model_id and _default_model_id
-                          and _kb_model_id != _default_model_id else None)
+    _kb_model_id, _fallback_ids = _kb_organizer_models(agent)
     skill_cfg = {
         'system_prompt': _KB_ORGANIZER_SYSTEM_PROMPT,
         'model_id': _kb_model_id,
-        'fallback_model_id': _fallback_model_id,
+        'fallback_model_ids': _fallback_ids,
     }
 
     def _build(eid):
