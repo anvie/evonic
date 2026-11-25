@@ -459,6 +459,45 @@ def _tool_survives_pruning(fn_name: str,
     )
 
 
+def _budget_failure_message(plan) -> str:
+    """Return an honest, actionable message for an unplannable request.
+
+    ``output_reserve_exceeds_capacity`` is a model-configuration defect: the
+    configured ``max_tokens`` is too large for the context window, so the plan
+    never had room for input and every request failed before the provider was
+    called.  ``irreducible_payload`` is a genuine size problem that survived
+    every deterministic reduction.  Reporting the first as "conversation too
+    long" sent the operator after the wrong cause.
+    """
+    if plan.diagnostic in ("invalid_tool_protocol", "invalid_tool_protocol_after_repair"):
+        # Unrepaired structural history defect: never a size verdict.
+        return (
+            "LLM Error: the conversation history is in an invalid tool-call "
+            "state (an assistant message declares tool calls whose results are "
+            "missing, duplicated, or out of order) and the automatic repair "
+            "pass could not fix it. This is a history defect, not a "
+            "context-size or budget problem. Start a fresh session with "
+            "/clear, or send your message again to retry the repair.")
+    requested = getattr(plan, "output_reserve_requested", plan.output_reserve)
+    if plan.diagnostic == "output_reserve_exceeds_capacity":
+        return (
+            f"LLM Error: the model's request budget is misconfigured, not too "
+            f"long. Its configured output reserve ({requested} tokens) does not "
+            f"leave enough room for the prompt inside the context window "
+            f"({plan.capacity} tokens), so the request could not be built -- "
+            f"the payload itself is only about {plan.estimated_tokens} tokens. "
+            f"Fix max_tokens and/or context_window for this model in Settings "
+            f"(max_tokens must stay well below the window); trimming the "
+            f"conversation cannot fix it.")
+    return (
+        f"LLM Error: this request still needs about {plan.estimated_tokens} "
+        f"tokens after every automatic reduction, but the model's safe input "
+        f"budget is {plan.input_budget} tokens out of a {plan.capacity}-token "
+        f"window. It cannot be reduced further without dropping required "
+        f"context (system prompt or your latest message). Start a fresh session "
+        f"with /clear, or switch to a model with a larger context window.")
+
+
 def pop_safety_provenance(tool_result) -> dict:
     """Remove and return the out-of-band safety provenance of a tool result.
 
@@ -1481,7 +1520,37 @@ def run_tool_loop(agent: Dict[str, Any],
                     'timeline': timeline, 'error': True,
                 })
                 return _protocol_msg, tool_trace, timeline
-            return ("The current request exceeds this model's safe context budget and cannot be reduced without removing required context.", tool_trace, timeline)
+            # Unplannable request for a size/configuration reason. Persist the
+            # explanation and emit final_answer: returning a bare string here
+            # left the caller with a turn that ended without any reply.
+            _budget_msg = _budget_failure_message(_budget_plan)
+            _budget_dur = round(time.time() - _loop_start_time, 1)
+            _logger.error(
+                'request_budget unplannable session=%s path=%s diagnostic=%s '
+                'estimated_tokens=%d input_budget=%d capacity=%d '
+                'output_reserve=%d',
+                session_id, _request.path, _budget_plan.diagnostic,
+                _budget_plan.estimated_tokens, _budget_plan.input_budget,
+                _budget_plan.capacity, _budget_plan.output_reserve)
+            db.add_chat_message(session_id, 'assistant', _budget_msg,
+                                agent_id=db_agent_id,
+                                metadata={'error': True,
+                                          'budget_error': _budget_plan.diagnostic,
+                                          'timeline': timeline,
+                                          'thinking_duration': _budget_dur})
+            chatlog.append({'type': 'error', 'session_id': session_id,
+                            'content': _budget_msg,
+                            'metadata': {'error': True,
+                                         'budget_error': _budget_plan.diagnostic}})
+            chatlog.append({'type': 'turn_end', 'session_id': session_id,
+                            'thinking_duration': _budget_dur})
+            event_stream.emit('final_answer', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': external_user_id, 'channel_id': channel_id,
+                'answer': _budget_msg, 'tool_trace': tool_trace,
+                'timeline': timeline, 'error': True,
+            })
+            return _budget_msg, tool_trace, timeline
         if REQUEST_BUDGET_MODE == 'enforced':
             _request = _request.derive(messages=_budget_plan.messages, tools=_budget_plan.tools,
                                        path='budget_' + _budget_plan.stage)

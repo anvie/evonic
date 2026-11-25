@@ -1034,3 +1034,71 @@ class TestGenerationTimeoutRetry(unittest.TestCase):
                            if c[0][0] == 'llm_request_budget'
                            and c[0][1].get('path') != 'fallback']
         self.assertEqual(primary_budgets, [64000])
+
+
+class TestRequestBudgetUnplannable(TestApiErrorOrphanRecovery):
+    """An unplannable request must answer the caller, not end the turn silently.
+
+    The non-protocol non-fit branch used to return a bare string: no assistant
+    row, no ``final_answer`` event, so the caller saw a turn that died with no
+    reply (Kanban #929).
+    """
+
+    @staticmethod
+    def _unfittable_plan(content_len):
+        import importlib
+        rb = importlib.import_module('backend.agent_runtime.request_budget')
+        plan = rb.plan_request(
+            [{'role': 'system', 'content': 'x' * content_len}], [],
+            context_window=64000, max_tokens=64000)
+        assert not plan.fit, 'fixture must produce an unplannable request'
+        return rb, plan
+
+    def _run_unfittable(self, content_len, session_id):
+        rb, plan = self._unfittable_plan(content_len)
+        llm = MagicMock()
+        llm.chat_completion.return_value = _ok('must never be called')
+        messages = [{'role': 'system', 'content': 'sys'},
+                    {'role': 'user', 'content': 'go'}]
+        with patch.object(rb, 'plan_request', return_value=plan), \
+             patch.object(_llm_loop_mod, 'REQUEST_BUDGET_MODE', 'enforced'):
+            (result, mock_db), mock_es = self._run_tool_loop(
+                llm, messages, session_id, return_db=True)
+        return result, mock_db, mock_es, llm, plan
+
+    def test_output_reserve_defect_persists_message_and_emits_final_answer(self):
+        result, mock_db, mock_es, llm, plan = self._run_unfittable(
+            400000, 'sess_budget_reserve')
+        self.assertEqual(plan.diagnostic, 'output_reserve_exceeds_capacity')
+        # No provider call: the request could not be built at all.
+        self.assertEqual(llm.chat_completion.call_count, 0)
+        text = str(result[0])
+        self.assertIn('misconfigured', text.lower())
+        self.assertIn('max_tokens', text)
+        self.assertNotIn('conversation too long', text.lower())
+        # Persisted so the turn is not silent in the transcript.
+        saved = [c for c in mock_db.add_chat_message.call_args_list
+                 if len(c[0]) >= 3 and c[0][1] == 'assistant' and c[0][2] == text]
+        self.assertTrue(saved, 'expected the budget message to be persisted')
+        # Emitted so SSE/channel callers receive an answer.
+        finals = [c[0][1] for c in mock_es.emit.call_args_list
+                  if c[0][0] == 'final_answer']
+        self.assertTrue(finals, 'expected a final_answer event')
+        self.assertEqual(finals[-1]['answer'], text)
+        self.assertTrue(finals[-1]['error'])
+        budgets = [c[0][1] for c in mock_es.emit.call_args_list
+                   if c[0][0] == 'llm_request_budget']
+        self.assertEqual(budgets[-1]['diagnostic'], 'output_reserve_exceeds_capacity')
+        self.assertGreater(budgets[-1]['input_budget'], 0)
+
+    def test_irreducible_payload_message_blames_context_not_config(self):
+        result, mock_db, mock_es, llm, plan = self._run_unfittable(
+            600000, 'sess_budget_payload')
+        self.assertEqual(plan.diagnostic, 'irreducible_payload')
+        self.assertEqual(llm.chat_completion.call_count, 0)
+        text = str(result[0]).lower()
+        self.assertIn('/clear', text)
+        self.assertNotIn('misconfigured', text)
+        finals = [c[0][1] for c in mock_es.emit.call_args_list
+                  if c[0][0] == 'final_answer']
+        self.assertEqual(finals[-1]['answer'], str(result[0]))
