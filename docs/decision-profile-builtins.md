@@ -18,6 +18,10 @@ Create a profile in the Decision Profiles administration UI using the stable key
 
 Use `shadow` mode to validate a profile without changing agent behaviour. Only `enabled: true` plus `mode: enforce` allows a valid result to alter a consumer. `off` and disabled profiles make no provider request.
 
+## Default decision models
+
+A profile may leave its primary model empty. It then runs on the default decision models, an ordered chain of up to five models set in System > General > Models & Routing (`GET`/`PUT /api/admin/decision-default-models`). Each model in the chain gets one try, in order, within the profile's timeout. An active profile with no model is only valid while the chain is non-empty; without it the profile fails closed to its consumer's fallback.
+
 ## Playground presets
 
 The administration Playground should expose only the profile's table inputs. The built-in presets are defined in `backend.agent_decisions.BUILTIN_DECISION_SPECS`; they are intentionally synthetic and contain no session data. Operators should test with similarly minimal, non-sensitive examples.

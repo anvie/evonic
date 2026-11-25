@@ -15,13 +15,14 @@ window.settingsGeneral = {
         this._renderPresets();
 
         try {
-            const [general, models, defaultModel, classifier, cmpModel, decisionProfiles] = await Promise.all([
+            const [general, models, defaultModel, classifier, cmpModel, decisionProfiles, decisionDefaults] = await Promise.all([
                 apiGet("/api/settings/general"),
                 ModelsCache.get(),
                 apiGet("/api/settings/default-model").catch(() => null),
                 apiGet("/api/settings/task-classifier").catch(() => null),
                 apiGet("/api/settings/cmp-model").catch(() => null),
                 apiGet("/api/admin/decision-profiles").catch(() => ({profiles: []})),
+                apiGet("/api/admin/decision-default-models").catch(() => ({model_ids: []})),
             ]);
             if (!general || general.error) {
                 throw new Error((general && general.error) || "Failed to load settings");
@@ -54,6 +55,12 @@ window.settingsGeneral = {
                     mainId: general.kb_organizer_model_id || "",
                     fallbackIds: general.kb_organizer_fallback_model_ids || [],
                 });
+            }
+            const decisionChain = this._getDecisionChain();
+            if (decisionChain) {
+                decisionChain.setModels(models);
+                const [mainId, ...fallbackIds] = decisionDefaults.model_ids || [];
+                decisionChain.setValue({ mainId: mainId || "", fallbackIds });
             }
             await this._loadTwoFactorAuth();
             await this._loadEvonetJoin();
@@ -315,6 +322,32 @@ window.settingsGeneral = {
         return this._visionChain;
     },
 
+    _decisionChain: null,
+
+    _getDecisionChain() {
+        if (this._decisionChain) return this._decisionChain;
+        const root = document.getElementById("decision-model-chain");
+        if (!root || !window.ModelChain) return null;
+        this._decisionChain = new ModelChain(root, {
+            requireMain: false,
+            mainEmptyText: "Not set",
+            eligible: (model) => !!model.enabled && model.type === "decision",
+            ineligibleLabel: "Not a decision model",
+            onSave: async ({ mainId, fallbackIds }) => {
+                const res = await apiPut("/api/admin/decision-default-models", {
+                    model_ids: [mainId, ...fallbackIds].filter(Boolean),
+                });
+                if (!res || res.success === false) {
+                    const err = res && res.error;
+                    throw new Error((err && err.message) || "Save failed");
+                }
+                const [savedMain, ...savedFallbacks] = res.model_ids || [];
+                return { mainId: savedMain || "", fallbackIds: savedFallbacks };
+            },
+        });
+        return this._decisionChain;
+    },
+
     _kbOrganizerChain: null,
 
     _getKbOrganizerChain() {
@@ -411,6 +444,8 @@ window.settingsGeneral = {
         if (vision) vision.setModels(models);
         const kbChain = this._getKbOrganizerChain();
         if (kbChain) kbChain.setModels(models);
+        const decisionChain = this._getDecisionChain();
+        if (decisionChain) decisionChain.setModels(models);
         fill(
             "task-classifier-model-select",
             models,

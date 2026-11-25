@@ -290,3 +290,35 @@ def test_a_model_deep_in_a_fallback_chain_is_still_referenced():
     assert "application.refs" in db.get_model_references("test/fb-2")["profiles"]
     with db._connect() as conn:
         assert db._model_is_referenced(conn.cursor(), "test/fb-2")
+
+
+def test_default_models_chain_round_trips_and_is_validated(client):
+    for index in range(6):
+        _model(f"test/default-{index}")
+    assert client.get("/api/admin/decision-default-models").get_json() == {"model_ids": []}
+
+    chain = [f"test/default-{index}" for index in range(5)]
+    saved = client.put("/api/admin/decision-default-models", json={"model_ids": chain})
+    assert saved.get_json() == {"success": True, "model_ids": chain}
+    assert client.get("/api/admin/decision-default-models").get_json() == {"model_ids": chain}
+
+    for bad, code in ((chain + ["test/default-5"], "too_many_default_models"),
+                      (["test/default-0", "test/default-0"], "duplicate_default_model"),
+                      (["missing/model"], "unknown_model")):
+        response = client.put("/api/admin/decision-default-models", json={"model_ids": bad})
+        assert response.status_code == 400
+        assert response.get_json()["error"]["code"] == code
+    assert db.get_default_decision_model_ids() == chain
+
+
+def test_active_profile_without_a_model_needs_the_default_chain(client):
+    _model()
+    missing = client.post("/api/admin/decision-profiles", json=_payload(primary_model_id=""))
+    assert missing.status_code == 400
+    assert missing.get_json()["error"]["path"] == "primary_model_id"
+
+    db.set_default_decision_model_ids(["test/profile-primary"])
+    created = client.post("/api/admin/decision-profiles", json=_payload(primary_model_id=""))
+    assert created.status_code == 201
+    assert created.get_json()["profile"]["primary_model_id"] == ""
+    assert created.get_json()["profile"]["fallback_model_ids"] == []

@@ -239,6 +239,14 @@ class DecisionRuntime:
             # retry_limit counts every try after the first; a longer fallback
             # chain may raise the cap so each of its models gets one try.
             max_attempts = min(max(MAX_ATTEMPTS, len(model_ids)), int(profile["retry_limit"]) + 1)
+            if not profile["primary_model_id"]:
+                # A profile without a model of its own runs on the global
+                # default chain, one try per model.
+                defaults = getattr(self.db, "get_default_decision_model_ids", None)
+                model_ids = list(defaults()) if callable(defaults) else []
+                if not model_ids:
+                    raise DecisionRuntimeError(DecisionRuntimeErrorCode.PROFILE_INVALID, "Decision profile has no model and no default decision models are set.")
+                max_attempts = len(model_ids)
             last: DecisionResult | None = None
             for attempt in range(max_attempts):
                 model_id = model_ids[min(attempt, len(model_ids) - 1)]

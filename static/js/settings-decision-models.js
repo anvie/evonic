@@ -100,10 +100,10 @@ window.decisionModels = {
         return String(model.name || model.model_name || model.id || "");
     },
 
-    modelOptions(selected, includeEmpty) {
+    modelOptions(selected, emptyLabel) {
         const compatible = this.compatibleModels();
         const options = compatible.map((model) => `<option value="${this.escape(model.id)}" ${model.id === selected ? "selected" : ""}>${this.escape(this.modelLabel(model))}</option>`);
-        return (includeEmpty ? '<option value="">No fallback</option>' : '<option value="" disabled selected>Select a compatible model</option>') + options.join("");
+        return `<option value="">${this.escape(emptyLabel)}</option>` + options.join("");
     },
 
     openCreate() {
@@ -111,8 +111,8 @@ window.decisionModels = {
         document.getElementById("decision-profile-modal-title").textContent = "New Decision Profile";
         document.getElementById("decision-profile-revision").value = "";
         document.getElementById("decision-profile-key").disabled = false;
-        document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(null, false);
-        document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(null, true);
+        document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(null, "Use default decision models");
+        document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(null, "No fallback");
         this.showMoreFallbacks([]);
         document.getElementById("decision-profile-schema").value = JSON.stringify({version: "decision-schema/v1", fields: [{key: "approved", kind: "boolean"}]}, null, 2);
         this.clearError();
@@ -128,8 +128,8 @@ window.decisionModels = {
         Object.entries(fields).forEach(([id, field]) => document.getElementById(id).value = profile[field] || "");
         document.getElementById("decision-profile-key").disabled = true;
         document.getElementById("decision-profile-enabled").checked = profile.enabled;
-        document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(profile.primary_model_id, false);
-        document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(profile.fallback_model_id, true);
+        document.getElementById("decision-profile-primary").innerHTML = this.modelOptions(profile.primary_model_id, "Use default decision models");
+        document.getElementById("decision-profile-fallback").innerHTML = this.modelOptions(profile.fallback_model_id, "No fallback");
         this.showMoreFallbacks(profile.fallback_model_ids || []);
         document.getElementById("decision-profile-timeout").value = profile.timeout_ms;
         document.getElementById("decision-profile-retries").value = profile.retry_limit;
