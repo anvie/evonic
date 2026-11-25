@@ -20,21 +20,26 @@ _logger = logging.getLogger(__name__)
 # Auto-destroy after 30 minutes of idle (default), configurable via env
 _SUBAGENT_IDLE_TTL = int(os.environ.get("EVONIC_SUBAGENT_IDLE_TTL", "1800"))
 _MAX_SUBAGENTS_PER_PARENT = 10
+# Sub-agents spawned with keep_session (manual /kb-organize) outlive the idle TTL
+# so their sessions stay inspectable / dumpable: 7 days.
+KEPT_SESSION_TTL = 7 * 24 * 3600
 
 
 class SubAgent:
     """In-memory representation of a spawned sub-agent."""
 
     __slots__ = (
-        'id', 'parent_id', 'config', 'created_at', 'last_active_at',
+        'id', 'parent_id', 'config', 'created_at', 'last_active_at', 'ttl',
     )
 
-    def __init__(self, sub_id: str, parent_id: str, config: Dict[str, Any]):
+    def __init__(self, sub_id: str, parent_id: str, config: Dict[str, Any],
+                 ttl: Optional[float] = None):
         self.id = sub_id
         self.parent_id = parent_id
         self.config = config          # Full agent config dict (as if from DB)
         self.created_at = time.time()
         self.last_active_at = time.time()
+        self.ttl = ttl                # per-agent idle TTL override (None = default)
 
     def touch(self) -> None:
         """Mark this sub-agent as recently active."""
@@ -42,6 +47,8 @@ class SubAgent:
 
     def is_expired(self, ttl: float = _SUBAGENT_IDLE_TTL) -> bool:
         """Return True if this sub-agent has been idle beyond TTL."""
+        if self.ttl is not None:
+            ttl = self.ttl
         return (time.time() - self.last_active_at) > ttl
 
 
@@ -119,7 +126,8 @@ class SubAgentManager:
 
         return sub_id
 
-    def spawn_explorer(self, parent_agent: Dict[str, Any], build_config, id_kind: str = 'explorer') -> str:
+    def spawn_explorer(self, parent_agent: Dict[str, Any], build_config, id_kind: str = 'explorer',
+                       keep_ttl: Optional[float] = None) -> str:
         """Spawn an explorer sub-agent from a pre-built config (NOT a parent copy).
 
         Unlike ``spawn``, the explorer's config is supplied by ``build_config`` — a
@@ -132,6 +140,8 @@ class SubAgentManager:
         Args:
             parent_agent: Full agent dict from DB (must have 'id').
             build_config: Callable[[explorer_id: str], Dict] returning the config.
+            keep_ttl: idle TTL in seconds overriding the default (keeps the session
+                around longer); None uses the default.
 
         Returns:
             The explorer's ID string.
@@ -162,7 +172,7 @@ class SubAgentManager:
         explorer_id = f"{parent_id}_{id_kind}_{counter}"
         config = build_config(explorer_id)
 
-        sub = SubAgent(explorer_id, parent_id, config)
+        sub = SubAgent(explorer_id, parent_id, config, ttl=keep_ttl)
 
         with self._lock:
             self._subagents[explorer_id] = sub

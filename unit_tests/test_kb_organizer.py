@@ -476,7 +476,7 @@ def test_spawn_organizer_forces_server_local_kb_config(tmp_path):
     captured = {}
     es = _FakeES()
 
-    def _fake_spawn(parent, build_config, id_kind="explorer"):
+    def _fake_spawn(parent, build_config, id_kind="explorer", keep_ttl=None):
         captured["cfg"] = build_config("eid")
         captured["id_kind"] = id_kind
         return "eid"

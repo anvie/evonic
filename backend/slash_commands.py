@@ -1592,8 +1592,8 @@ def _register_builtins():
         from models.db import db
         agent = db.get_agent(agent_id)
         if agent and resolve_kb_organizer_mode(agent) == 'sefton':
-            return sefton_tidy_agent(agent_id)
-        return trigger_kb_organizer(agent_id, session_id)
+            return sefton_tidy_agent(agent_id, keep_session=True)
+        return trigger_kb_organizer(agent_id, session_id, keep_session=True)
 
     command_registry.register(
         "kb-organize",

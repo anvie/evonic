@@ -30,6 +30,7 @@ from typing import List, Optional
 
 from models.db import db
 from backend.llm_client import llm_client, strip_thinking_tags
+from backend.subagent_manager import KEPT_SESSION_TTL
 from backend.agent_runtime.evomem_client import (
     get_engine, is_available as evomem_available,
     search as evomem_search, think as evomem_think,
@@ -291,7 +292,7 @@ IMPORTANT RULES:
 - When adding aliases, preserve the existing YAML list format — append to the list, don't replace it."""
 
 
-def _spawn_kb_tidy(agent: dict) -> str:
+def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
     """Run the KB Janitor sub-agent for a SEFTON tidy pass.
 
     The janitor explores the vault with Grep/Glob/Read and fixes problems
@@ -341,11 +342,14 @@ def _spawn_kb_tidy(agent: dict) -> str:
         cfg['sandbox_enabled'] = 0
         cfg['run_as_user'] = None
         cfg['is_kb_organizer'] = True
-        cfg['name'] = f"{agent.get('name', agent_id)} · kb janitor"
+        cfg['name'] = (f"{agent.get('name', agent_id)} · kb janitor"
+                       + (" (manual)" if keep_session else ""))
         return cfg
 
     try:
-        explorer_id = subagent_manager.spawn_explorer(agent, _build, id_kind='organizer')
+        explorer_id = subagent_manager.spawn_explorer(
+            agent, _build, id_kind='organizer',
+            keep_ttl=KEPT_SESSION_TTL if keep_session else None)
     except Exception:
         return "Failed to spawn KB Janitor sub-agent."
 
@@ -1209,7 +1213,8 @@ def _organizer_docs_from(agent_id, explorer_id, session_id, event_answer):
 
 
 def _spawn_kb_organizer(agent: dict, source_text: str, recent_text: str = "",
-                        source_label: str = "SUMMARY / NOTE (what to file)"):
+                        source_label: str = "SUMMARY / NOTE (what to file)",
+                        keep_session: bool = False):
     """Run the Knowledge Organizer sub-agent over the agent's server-local KB and
     return the parsed ``docs`` list of write-ops, or ``None`` on any failure/timeout.
 
@@ -1281,11 +1286,14 @@ def _spawn_kb_organizer(agent: dict, source_text: str, recent_text: str = "",
         # tool restriction itself comes from the generic explorer rule in
         # build_tools (all explorers get only direxplorer tools).
         cfg['is_kb_organizer'] = True
-        cfg['name'] = f"{agent.get('name', agent_id)} · kb organizer"
+        cfg['name'] = (f"{agent.get('name', agent_id)} · kb organizer"
+                       + (" (manual)" if keep_session else ""))
         return cfg
 
     try:
-        explorer_id = subagent_manager.spawn_explorer(agent, _build, id_kind='organizer')
+        explorer_id = subagent_manager.spawn_explorer(
+            agent, _build, id_kind='organizer',
+            keep_ttl=KEPT_SESSION_TTL if keep_session else None)
     except Exception:
         return None
 
@@ -1727,7 +1735,7 @@ def process_knowledge(agent: dict, session_id: str, summary: str,
     _author_docs(agent, session_id, summary, llm_lock, recent_messages=recent_messages)
 
 
-def trigger_kb_organizer(agent_id: str, session_id: str) -> str:
+def trigger_kb_organizer(agent_id: str, session_id: str, keep_session: bool = False) -> str:
     """Manually trigger the KB Organizer sub-agent for the current agent.
 
     Unlike the automatic ``_author_docs`` pipeline, this bypasses all cooldowns,
@@ -1760,7 +1768,8 @@ def trigger_kb_organizer(agent_id: str, session_id: str) -> str:
     folder = _get_active_collection(agent_id, session_id)
 
     # Spawn organizer (bypasses cooldowns, delta checks, debounce — manual trigger)
-    docs = _spawn_kb_organizer(agent, summary, recent_text="", source_label="MANUAL TRIGGER")
+    docs = _spawn_kb_organizer(agent, summary, recent_text="", source_label="MANUAL TRIGGER",
+                           keep_session=keep_session)
 
     if docs is None:
         return "KB organizer failed to produce results. Try increasing EVOMEM_KB_ORGANIZER_TIMEOUT."
@@ -1769,7 +1778,7 @@ def trigger_kb_organizer(agent_id: str, session_id: str) -> str:
     return _apply_kb_ops(agent_id, session_id, docs, folder)
 
 
-def sefton_tidy_agent(agent_id: str) -> str:
+def sefton_tidy_agent(agent_id: str, keep_session: bool = False) -> str:
     """Run the KB Janitor for a sefton-mode agent. Called by the scheduler.
 
     Spawns a tidy sub-agent that explores the vault and fixes structural
@@ -1785,7 +1794,7 @@ def sefton_tidy_agent(agent_id: str) -> str:
     if not _kb_organizer_infra_ok():
         return f"Agent {agent_id}: DirExplorer infra not available."
 
-    result = _spawn_kb_tidy(agent)
+    result = _spawn_kb_tidy(agent, keep_session=keep_session)
     _save_kb_last_organized(agent_id, time.time())
 
     try:
