@@ -375,44 +375,57 @@ if __name__ == "__main__":
 
 
 class TestRunLogDownload:
-    """Test /api/run/<id>/log endpoint"""
+    """Test /api/run/<id>/log endpoint (zip of logs/eval/<run-id>)"""
 
-    def test_downloads_full_run_log_as_json_attachment(self):
+    @pytest.fixture
+    def log_dir(self, monkeypatch, tmp_path):
+        import config
+        monkeypatch.setattr(config, 'BASE_DIR', str(tmp_path))
+        return tmp_path / 'logs' / 'eval'
+
+    def test_downloads_run_log_directory_as_zip(self, log_dir):
+        import io
+        import zipfile
         from app import app
 
         run_id = db.create_evaluation_run("test-model-log-download")
+        run_dir = log_dir / str(run_id)
+        run_dir.mkdir(parents=True)
+        (run_dir / '_run_meta.json').write_text('{"run_id": %d}' % run_id)
+        (run_dir / 'math_L1_001.json').write_text('{"prompt": "1+1"}')
 
         with app.test_client() as client:
             _auth(client)
             response = client.get(f'/api/run/{run_id}/log')
             assert response.status_code == 200
-            assert f'evaluation-run-{run_id}-log.json' in response.headers['Content-Disposition']
+            assert f'evaluation-run-{run_id}-logs.zip' in response.headers['Content-Disposition']
 
-            data = json.loads(response.get_data(as_text=True))
-            assert data['run_info']['model_name'] == "test-model-log-download"
-            assert isinstance(data['test_results'], list)
-            assert isinstance(data['individual_test_results'], list)
+            names = zipfile.ZipFile(io.BytesIO(response.data)).namelist()
+            assert sorted(names) == [f'{run_id}/_run_meta.json', f'{run_id}/math_L1_001.json']
 
-    def test_unknown_run_is_404(self):
+    def test_run_without_log_directory_is_404(self, log_dir):
         from app import app
 
+        run_id = db.create_evaluation_run("test-model-log-missing")
         with app.test_client() as client:
             _auth(client)
-            assert client.get('/api/run/99999999/log').status_code == 404
+            assert client.get(f'/api/run/{run_id}/log').status_code == 404
 
-    def test_requires_authentication(self):
+    def test_requires_authentication(self, log_dir):
         from app import app
 
         run_id = db.create_evaluation_run("test-model-log-auth")
+        (log_dir / str(run_id)).mkdir(parents=True)
         with app.test_client() as client:
             assert client.get(f'/api/run/{run_id}/log').status_code in (401, 302)
 
-    def test_detail_page_shows_download_button_only_when_authenticated(self):
+    def test_detail_page_shows_button_only_when_log_files_exist(self, log_dir):
         from app import app
 
         run_id = db.create_evaluation_run("test-model-log-button")
+        link = f'/api/run/{run_id}/log'.encode()
         with app.test_client() as client:
             _auth(client)
-            page = client.get(f'/history/{run_id}')
-            assert page.status_code == 200
-            assert f'/api/run/{run_id}/log'.encode() in page.data
+            assert link not in client.get(f'/history/{run_id}').data
+            (log_dir / str(run_id)).mkdir(parents=True)
+            assert link in client.get(f'/history/{run_id}').data

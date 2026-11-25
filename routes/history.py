@@ -1,9 +1,11 @@
+import io
 import json
 import os
 import shutil
 import sqlite3
+import zipfile
 
-from flask import Blueprint, render_template, jsonify, request, redirect, Response
+from flask import Blueprint, render_template, jsonify, request, redirect, send_file
 
 from evaluator.points import run_score
 from models.db import db
@@ -206,7 +208,8 @@ def history_detail(run_id):
                            stats=stats,
                            individual_stats=individual_stats,
                            domains=domains,
-                           domain_names=all_domain_meta)
+                           domain_names=all_domain_meta,
+                           has_log_files=os.path.isdir(_run_log_dir(run_id)))
 
 
 @history_bp.route('/api/run/<int:run_id>')
@@ -223,24 +226,26 @@ def api_run_details(run_id):
     })
 
 
+def _run_log_dir(run_id: int) -> str:
+    return os.path.join(config.BASE_DIR, 'logs', 'eval', str(run_id))
+
+
 @history_bp.route('/api/run/<int:run_id>/log')
 def api_run_log_download(run_id):
-    """Download the full evaluation log of a run (untruncated) as a JSON file."""
-    run_info = db.get_evaluation_run(run_id)
-    if not run_info:
-        return jsonify({'error': 'Run not found'}), 404
+    """Download the per-test log files of a run (logs/eval/<run-id>) as one zip."""
+    log_dir = _run_log_dir(run_id)
+    if not os.path.isdir(log_dir):
+        return jsonify({'error': 'No log files for this run'}), 404
 
-    payload = {
-        'run_info': run_info,
-        'stats': db.get_run_stats(run_id),
-        'test_results': [_parse_test_result(r) for r in db.get_test_results(run_id)],
-        'individual_test_results': [
-            _parse_test_result(r) for r in db.get_individual_test_results(run_id)],
-    }
-    return Response(
-        json.dumps(payload, indent=2, ensure_ascii=False, default=str),
-        mimetype='application/json',
-        headers={'Content-Disposition': f'attachment; filename="evaluation-run-{run_id}-log.json"'})
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, _dirs, files in os.walk(log_dir):
+            for name in sorted(files):
+                path = os.path.join(root, name)
+                zf.write(path, os.path.join(str(run_id), os.path.relpath(path, log_dir)))
+    buf.seek(0)
+    return send_file(buf, mimetype='application/zip', as_attachment=True,
+                     download_name=f'evaluation-run-{run_id}-logs.zip')
 
 
 @history_bp.route('/api/run/<int:run_id>/notes', methods=['PATCH'])
