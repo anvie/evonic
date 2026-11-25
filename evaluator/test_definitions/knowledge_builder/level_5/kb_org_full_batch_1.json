@@ -1,0 +1,164 @@
+{
+  "id": "kb_org_full_batch_1",
+  "name": "Organizer: full tidy pass (replica of a real run)",
+  "description": "15 focus docs + neighbours, roughly 25 detected issues of which a third are false positives: polluted alias, duplicate owner doc, dangling links, empty and self-duplicated docs, code spans. Scored on fixes, harm, edit discipline and an honest summary.",
+  "system_prompt": "You are the KB Janitor — a meticulous auditor who keeps an AI assistant's personal knowledge vault clean and well-connected. The vault is YOUR WORKSPACE: a flat directory of Obsidian-compatible Markdown documents.\n\nVAULT STRUCTURE (Obsidian conventions):\n- Each doc is a `.md` file whose FILENAME is the slug (kebab-case, e.g. `budi-santoso.md`).\n- A [[Wiki Link]] like `[[Budi Santoso]]` resolves by matching against: (1) a doc's `title` frontmatter field, OR (2) any entry in its `aliases` list. If neither matches any doc, the link is DANGLING.\n- The slug (filename without `.md`) is also used as an identifier for updates.\n- All docs live in one flat directory (no subdirectories) — your workspace root.\n\nDOC FORMAT — each .md file has YAML frontmatter + Markdown body:\n```\n---\ntitle: \"Raden Wijaya Kusuma\"\naliases:\n  - \"Mas Wijaya\"\n  - \"RWK\"\ntype: person\ndescription: \"Pendiri yayasan sosial di Surabaya\"\ntags:\n  - person\nthumbnail: /api/agents/.../image.webp\n---\n\nBody prose with inline [[Wiki Links]]. User bertemu [[Raden Wijaya Kusuma]] di [[Surabaya]] di kantor [[Yayasan Harapan Bangsa]].\n```\n\nKEY FIELDS:\n- `title`: the subject's PURE canonical name — no nicknames, no abbreviations. The title determines how `[[Wiki Links]]` resolve to this doc.\n- `aliases`: alternative names that ALSO resolve [[links]] to this doc. Nicknames, abbreviations, gelar/titel, short forms go here.\n- `type`: one of: note, person, place, venue, event, organization, company, product, contact.\n- `description`: one-line summary.\n- `thumbnail`: representative image URL (optional).\n\nHOW [[WIKI LINKS]] WORK:\n- `[[Budi Santoso]]` resolves if ANY doc has `title: \"Budi Santoso\"` OR `aliases: [\"Budi Santoso\", ...]`.\n- If no doc matches → the link is DANGLING (broken).\n- Adding a name to a doc's `aliases` makes all `[[That Name]]` links across the vault resolve to that doc — this is the preferred fix for dangling links over rewriting link text everywhere.\n\nYOUR TOOLS:\n- Glob, Grep, Read — explore the vault (read-only)\n- str_replace — edit existing doc content (fix links, merge content, fix frontmatter)\n- write_file — create NEW docs (for missing link targets that are durable entities)\n- delete_file — remove duplicate or broken docs\n\nYour job is NOT to file new knowledge — another process handles that. Your job is to find and fix STRUCTURAL PROBLEMS by directly editing files:\n\n1. DUPLICATE DOCS — two or more docs about the SAME real-world entity under different slugs. Grep `title:` and `aliases:` lines, then Read candidates. When confirmed:\n   - Pick the keeper (richer body, better slug).\n   - Use str_replace on the keeper to merge any unique info from the duplicate and add the duplicate's title to its `aliases` (so existing [[links]] to the duplicate still resolve).\n   - Use delete_file to remove the duplicate.\n\n2. DANGLING [[LINKS]] — a `[[link]]` whose text does NOT match any doc's `title` or `aliases`. The entity may exist under a different name:\n   - Grep `title:`/`aliases:` and bodies for the linked text and its variants (shorter/longer form, nickname, canonical name).\n   - If found: PREFER adding the variant to that doc's `aliases` list via str_replace (this fixes ALL occurrences of `[[That Name]]` vault-wide at once). Only rewrite the link text as a last resort.\n   - If genuinely missing and the entity is durable: use write_file to create a minimal doc for it.\n\n3. MISSING RETRO-LINKS — a doc body mentions an entity as PLAIN TEXT, but that entity HAS its own doc (so the mention should be a `[[link]]`). Use str_replace to wrap the plain mention: old_str `Budi Santoso` → new_str `[[Budi Santoso]]`.\n   - This is often the MOST valuable cleanup — it wires the knowledge graph.\n   - Only wrap when the linked text exactly matches a doc's `title` or `aliases`. Do NOT guess.\n\n4. BROKEN/EMPTY DOCS — docs with empty bodies, no meaningful content, or self-duplicated content (same block copy-pasted). Use str_replace to fix minor issues, or delete_file to remove truly broken docs.\n\n5. WRONG TITLES — a `title` that includes parenthetical nicknames (e.g. `\"Abdurrahman Wahid (Gus Dur)\"`). Use str_replace to fix the title in frontmatter to the pure canonical name and move the nickname to `aliases`.\n\nAPPROACH:\n- If the task lists a FOCUS BATCH and DETECTED ISSUES, STAY INSIDE THEM. They were computed from the whole vault already (including the closest existing doc for each dangling link and which doc each plain-text mention belongs to), so you do NOT need to search the vault:\n  - Do NOT Glob the vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context.\n  - Work ONE doc at a time: Read it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front: at most 2 tool calls per step (extra ones are dropped), and make at least one concrete fix (str_replace / delete_file) after every 2-3 docs you read.\n  - Read returns a short window of a doc; for a long doc use offset=N to continue only if the issue you are verifying is further down.\n  - To confirm a suggested doc, Read that doc (one file). If you must search, use a narrow Grep for ONE specific name.\n  - Detected issues are heuristic: skip false positives (e.g. two different people sharing a name fragment).\n  - Keep it small: roughly two tool calls per doc. Stop when the batch is done — do not widen the audit to the rest of the vault.\n- Otherwise start with Glob `**/*.md` to list all docs and Read a representative sample to understand the vault's state and naming conventions.\n- Grep systematically for problems:\n  - `title:` to build a title index, spot duplicates.\n  - `\\[\\[` to find all wiki-links, cross-check against known titles/aliases for dangling ones.\n  - Known entity names as plain text to find retro-link candidates.\n- Be thorough but conservative — don't change content meaning, only fix structure.\n- After making changes, briefly summarize what you fixed.\n\nIMPORTANT RULES:\n- NEVER use str_replace with old_str == new_str (no-op edits waste time).\n- Always Read a file BEFORE using str_replace on it — you need the exact current text.\n- For retro-linking, make old_str unique enough to avoid false matches (include surrounding words if the name alone appears multiple times).\n- Do NOT wrap \"User\" in [[links]] — \"User\" refers to the assistant's owner, not a knowledge entity.\n- NEVER link entities just because they share a name fragment. \"Budi Santoso\" and \"Ahmad Budi Pratama\" are DIFFERENT people — linking one to the other creates a false connection. Only link when a real-world relationship exists.\n- Do NOT link names mentioned only for disambiguation/clarification (e.g. \"bukan yang sama dengan X\"). A [[link]] means the entities are genuinely related.\n- When adding aliases, preserve the existing YAML list format — append to the list, don't replace it.",
+  "system_prompt_mode": "overwrite",
+  "prompt": "FOCUS BATCH (15 of 22 docs; audit these FIRST):\n- [user] User (new)\n- [openai] OpenAI (new)\n- [kasir-cli] kasir-cli (new)\n- [google-sheets] Google Sheets (new)\n- [google-forms] Google Forms (new)\n- [github] GitHub (new)\n- [fillr] Fillr (new)\n- [fillr-v0-3-4-nama-perusahaan] Fillr v0.3.4 Nama Perusahaan (new)\n- [fillr-v0-3-2-jeda-antar-item] Fillr v0.3.2 Jeda Antar Item (new)\n- [fillr-v0-3-0-auto-pilot] Fillr v0.3.0 Auto-pilot (new)\n- [dewa-anggara] Dewa Anggara (Mas Dewa) (new)\n- [chrome] Chrome (new)\n- [catatan-strategi] Catatan Strategi (new)\n- [catatan-rapat] Catatan Rapat (new)\n- [agentapi] agentapi (new)\n\nLINKED TO THE NEW/CHANGED DOCS ABOVE (also in scope):\n- [openai-gpt-5-6-luna] openai/gpt-5.6-luna\n- [brave] Brave\n- [edge] Edge\n- [firefox] Firefox\n- [nodejs] Node.js\n\nDETECTED ISSUES (computed from the WHOLE vault already, so you do NOT need to search it; heuristic, so each may be a FALSE POSITIVE — Read the doc to verify before fixing; do NOT link entities that merely share a name fragment):\n- [kasir-cli] DANGLING (no doc has that title/alias): [[Dewa Anggara]] -> closest: [dewa-anggara] Dewa Anggara (Mas Dewa)\n- [fillr] DANGLING (no doc has that title/alias): [[jsdom]] -> no close doc; [[Fillr v0.3.2]] -> closest: [fillr-v0-3-2-jeda-antar-item] Fillr v0.3.2 Jeda Antar Item, [fillr] Fillr\n- [dewa-anggara] WRONG TITLE: parenthetical in title 'Dewa Anggara (Mas Dewa)' (move the nickname to aliases)\n- [catatan-rapat] EMPTY body\n- [openai] UNLINKED mention of 'LLMClient' (has doc [llmclient])\n- [openai] UNLINKED mention of 'openai/gpt-5.6-luna' (has doc [openai-gpt-5-6-luna])\n- [kasir-cli] UNLINKED mention of 'Edge' (has doc [edge])\n- [google-sheets] UNLINKED mention of 'Google' (has doc [google-forms])\n- [fillr] UNLINKED mention of 'Brave' (has doc [brave])\n- [fillr] UNLINKED mention of 'Chrome' (has doc [chrome])\n- [fillr] UNLINKED mention of 'Edge' (has doc [edge])\n- [fillr] UNLINKED mention of 'Google' (has doc [google-forms])\n- [fillr] UNLINKED mention of 'panel' (has doc [panel])\n- [fillr-v0-3-4-nama-perusahaan] UNLINKED mention of 'Fillr' (has doc [fillr])\n- [fillr-v0-3-4-nama-perusahaan] UNLINKED mention of 'Node.js' (has doc [nodejs])\n- [fillr-v0-3-2-jeda-antar-item] UNLINKED mention of 'Fillr' (has doc [fillr])\n- [fillr-v0-3-2-jeda-antar-item] UNLINKED mention of 'panel' (has doc [panel])\n- [fillr-v0-3-0-auto-pilot] UNLINKED mention of 'Fillr' (has doc [fillr])\n- [fillr-v0-3-0-auto-pilot] UNLINKED mention of 'panel' (has doc [panel])\n- [chrome] UNLINKED mention of 'Google' (has doc [google-forms])\n- [catatan-strategi] UNLINKED mention of 'Brave' (has doc [brave])\n- [catatan-strategi] UNLINKED mention of 'Firefox' (has doc [firefox])\n- [agentapi] UNLINKED mention of 'OpenAI' (has doc [openai])\n\nAudit the vault (your workspace) for structural problems. Work through the FOCUS BATCH and DETECTED ISSUES above one doc at a time; do NOT Glob or Grep the whole vault (the issues already come from a full-vault analysis). Fix the real ones. Problem types: (1) duplicate docs about the same entity under different names, (2) dangling [[links]] whose target doesn't exist but may exist under another name, (3) plain-text mentions of entities that HAVE docs but aren't wrapped in [[links]], (4) broken or empty docs, (5) titles polluted with nicknames. Fix each problem directly using your tools (str_replace, write_file, delete_file). When done, summarize what you fixed.",
+  "expected": {
+    "fixes": [
+      {
+        "id": "alias_google_removed",
+        "type": "alias_absent",
+        "file": "google-forms.md",
+        "alias": "Google"
+      },
+      {
+        "id": "v032_resolves",
+        "type": "not_dangling",
+        "target": "Fillr v0.3.2"
+      },
+      {
+        "id": "jsdom_resolved",
+        "type": "not_dangling",
+        "target": "jsdom"
+      },
+      {
+        "id": "link_panel_fillr",
+        "type": "contains",
+        "file": "fillr.md",
+        "text": "di [[panel]] dan popup"
+      },
+      {
+        "id": "link_chrome_fillr",
+        "type": "contains",
+        "file": "fillr.md",
+        "text": "untuk [[Chrome]]"
+      },
+      {
+        "id": "owner_merged",
+        "type": "deleted",
+        "file": "user.md"
+      },
+      {
+        "id": "person_title",
+        "type": "title_is",
+        "file": "dewa-anggara.md",
+        "title": "Dewa Anggara"
+      },
+      {
+        "id": "owner_facts",
+        "type": "contains",
+        "file": "dewa-anggara.md",
+        "text": "bahasa Indonesia"
+      },
+      {
+        "id": "empty_removed",
+        "type": "deleted",
+        "file": "catatan-rapat.md"
+      },
+      {
+        "id": "selfdup_fixed",
+        "type": "contains",
+        "file": "fillr-v0-3-0-auto-pilot.md",
+        "text": "v0.3.0 menambah Auto-pilot di",
+        "min": 1,
+        "max": 1
+      },
+      {
+        "id": "link_llmclient",
+        "type": "contains",
+        "file": "openai.md",
+        "text": "OAuth provider untuk [[LLMClient]]"
+      },
+      {
+        "id": "link_openai_agentapi",
+        "type": "contains",
+        "file": "agentapi.md",
+        "text": "kompatibel [[OpenAI]]"
+      }
+    ],
+    "traps": [
+      {
+        "file": "kasir-cli.md",
+        "unchanged": true
+      },
+      {
+        "file": "catatan-strategi.md",
+        "unchanged": true
+      },
+      {
+        "file": "openai.md",
+        "keep": [
+          "`openai/gpt-5.6-luna`"
+        ]
+      },
+      {
+        "file": "chrome.md",
+        "forbid": [
+          "[[Google]]"
+        ]
+      },
+      {
+        "file": "google-sheets.md",
+        "forbid": [
+          "[[Google]]"
+        ]
+      },
+      {
+        "file": "fillr.md",
+        "forbid": [
+          "[[Google]]"
+        ]
+      }
+    ],
+    "allow_delete": [
+      "user.md",
+      "catatan-rapat.md"
+    ],
+    "rewrite_allowed": [
+      "dewa-anggara.md",
+      "fillr-v0-3-0-auto-pilot.md"
+    ],
+    "call_budget": 70
+  },
+  "vault": {
+    "files": {
+      "agentapi.md": "---\ntitle: \"agentapi\"\ntype: product\ndescription: \"Plugin REST Evonic.\"\n---\n\n[[agentapi]] adalah plugin Evonic yang membuka agen lewat REST kompatibel OpenAI.\n",
+      "brave.md": "---\ntitle: \"Brave\"\ntype: product\ndescription: \"Browser Chromium berfokus privasi.\"\n---\n\n[[Brave]] adalah browser Chromium berfokus privasi yang juga menjalankan [[Fillr]].\n",
+      "catatan-rapat.md": "---\ntitle: \"Catatan Rapat\"\ntype: note\ndescription: \"Catatan rapat.\"\n---\n\n\n",
+      "catatan-strategi.md": "---\ntitle: \"Catatan Strategi\"\ntype: note\ndescription: \"Catatan strategi.\"\n---\n\nBrave new approach: satu runner. Berkas Firefox-profile.zip tidak dipakai.\n",
+      "chrome.md": "---\ntitle: \"Chrome\"\ntype: product\ndescription: \"Browser Chromium.\"\n---\n\n[[Chrome]] adalah browser Chromium buatan Google; platform ekstensi [[Fillr]].\n",
+      "dewa-anggara.md": "---\ntitle: \"Dewa Anggara (Mas Dewa)\"\naliases:\n  - \"Dewa\"\ntype: person\ndescription: \"Pengembang kasir-cli dan Fillr.\"\n---\n\nDewa adalah pengembang utama [[kasir-cli]]. Home: `/home/dewa`.\n",
+      "edge.md": "---\ntitle: \"Edge\"\ntype: product\ndescription: \"Browser Chromium Microsoft.\"\n---\n\n[[Edge]] adalah browser Chromium milik Microsoft yang juga menjalankan [[Fillr]].\n",
+      "fillr-v0-3-0-auto-pilot.md": "---\ntitle: \"Fillr v0.3.0 Auto-pilot\"\ntype: note\ndescription: \"Rilis Fillr v0.3.0.\"\n---\n\nFillr v0.3.0 menambah Auto-pilot di panel/popup.\n\nFillr v0.3.0 menambah Auto-pilot di panel/popup.\n",
+      "fillr-v0-3-2-jeda-antar-item.md": "---\ntitle: \"Fillr v0.3.2 Jeda Antar Item\"\ntype: note\ndescription: \"Rilis Fillr v0.3.2.\"\n---\n\nFillr v0.3.2 menambah jeda antar item; progres tampil di panel.\n",
+      "fillr-v0-3-4-nama-perusahaan.md": "---\ntitle: \"Fillr v0.3.4 Nama Perusahaan\"\ntype: note\ndescription: \"Rilis Fillr v0.3.4.\"\n---\n\nFillr v0.3.4 memaksa nama PT/CV minimal 3 kata; hasil divalidasi di Node.js.\n",
+      "fillr.md": "---\ntitle: \"Fillr\"\ntype: product\ndescription: \"Ekstensi MV3 pengisi Google Forms.\"\n---\n\n[[Fillr]] adalah ekstensi MV3 untuk Chrome, Edge, dan Brave yang mengisi [[Google Forms]] dari dataset. Tes adapter DOM dengan [[jsdom]] lulus 21/21; perubahan jeda ada di [[Fillr v0.3.2]]. Deteksi sukses submit bergantung pada teks konfirmasi Google.\n\n### Rilis v0.1.0\n\nVersi 0.1.0 memperbaiki alur pengisian multi-halaman: hasil Scan digabung per halaman sehingga opsi di seluruh halaman tersedia, dan mutasi hanya menyentuh 1–3 kolom non-Fixed per baris (angka ±1–5%, tanggal ±1–7 hari, pilihan bergeser ke opsi tetangga).\n\n### Rilis v0.1.1\n\nBukti: tes baru meniru halaman yang dirender tertunda 350 ms → menu muncul 400 ms setelah klik; engine menunggu hingga `aria-expanded` bernilai true sebelum membaca opsi “Pilih”.\n\n### Rilis v0.1.2\n\nKnown issues dari rilis sebelumnya: Lokasi bertipe radio dengan opsi “Other”, Likert 1–5 yang terpisah (bukan grid), dan unggah berkas yang tetap manual. Cara update: ekstrak `fillr.zip` lalu timpa folder lama.\n\nTombol `Lanjut` di panel dan popup memanggil `engine.advancePageOnce()`.\n\n### Rilis v0.2.0\n\nVersi 0.2.0 memperbaiki alur pengisian multi-halaman: hasil Scan digabung per halaman sehingga opsi di seluruh halaman tersedia, dan mutasi hanya menyentuh 1–3 kolom non-Fixed per baris (angka ±1–5%, tanggal ±1–7 hari, pilihan bergeser ke opsi tetangga).\n\n### Rilis v0.2.1\n\nBukti: tes baru meniru halaman yang dirender tertunda 350 ms → menu muncul 400 ms setelah klik; engine menunggu hingga `aria-expanded` bernilai true sebelum membaca opsi “Pilih”.\n\n### Rilis v0.2.2\n\nKnown issues dari rilis sebelumnya: Lokasi bertipe radio dengan opsi “Other”, Likert 1–5 yang terpisah (bukan grid), dan unggah berkas yang tetap manual. Cara update: ekstrak `fillr.zip` lalu timpa folder lama.\n\n### Rilis v0.3.0\n\nVersi 0.3.0 memperbaiki alur pengisian multi-halaman: hasil Scan digabung per halaman sehingga opsi di seluruh halaman tersedia, dan mutasi hanya menyentuh 1–3 kolom non-Fixed per baris (angka ±1–5%, tanggal ±1–7 hari, pilihan bergeser ke opsi tetangga).\n\n### Rilis v0.3.1\n\nBukti: tes baru meniru halaman yang dirender tertunda 350 ms → menu muncul 400 ms setelah klik; engine menunggu hingga `aria-expanded` bernilai true sebelum membaca opsi “Pilih”.\n\n### Rilis v0.3.2\n\nKnown issues dari rilis sebelumnya: Lokasi bertipe radio dengan opsi “Other”, Likert 1–5 yang terpisah (bukan grid), dan unggah berkas yang tetap manual. Cara update: ekstrak `fillr.zip` lalu timpa folder lama.\n\nJika `Isi Form` berhenti di tengah, panel kini menyebut halaman dan tombol yang terlihat.\n\n### Rilis v0.4.0\n\nVersi 0.4.0 memperbaiki alur pengisian multi-halaman: hasil Scan digabung per halaman sehingga opsi di seluruh halaman tersedia, dan mutasi hanya menyentuh 1–3 kolom non-Fixed per baris (angka ±1–5%, tanggal ±1–7 hari, pilihan bergeser ke opsi tetangga).\n",
+      "firefox.md": "---\ntitle: \"Firefox\"\ntype: product\ndescription: \"Browser Mozilla.\"\n---\n\n[[Firefox]] adalah browser Mozilla; [[Fillr]] belum mendukungnya.\n",
+      "github.md": "---\ntitle: \"GitHub\"\ntype: company\ndescription: \"Hosting kode.\"\n---\n\n[[GitHub]] menyimpan kode sumber, termasuk [[kasir-cli]]; webhook ditangani plugin lain.\n",
+      "google-forms.md": "---\ntitle: \"Google Forms\"\naliases:\n  - \"Google\"\ntype: product\ndescription: \"Platform formulir Google; target Fillr.\"\n---\n\n[[Google Forms]] adalah platform formulir yang diisi otomatis oleh [[Fillr]].\n",
+      "google-sheets.md": "---\ntitle: \"Google Sheets\"\ntype: product\ndescription: \"Spreadsheet Google.\"\n---\n\n[[Google Sheets]] adalah spreadsheet Google untuk respons form.\n",
+      "kasir-cli.md": "---\ntitle: \"kasir-cli\"\ntype: product\ndescription: \"CLI Rust untuk reservasi hotel.\"\n---\n\n[[kasir-cli]] adalah CLI Rust untuk invoice hotel, dikembangkan [[Dewa Anggara]]. Tugas: Edge Case Guards untuk tanggal.\n",
+      "llmclient.md": "---\ntitle: \"LLMClient\"\ntype: product\ndescription: \"Klien LLM Evonic.\"\n---\n\n[[LLMClient]] adalah klien LLM internal Evonic.\n",
+      "nodejs.md": "---\ntitle: \"Node.js\"\ntype: product\ndescription: \"Runtime JavaScript untuk tes Fillr.\"\n---\n\n[[Node.js]] menjalankan tes unit [[Fillr]] di mesin pengembang.\n",
+      "openai-gpt-5-6-luna.md": "---\ntitle: \"openai/gpt-5.6-luna\"\ntype: product\ndescription: \"Model OpenAI.\"\n---\n\nModel GPT dari [[OpenAI]].\n",
+      "openai.md": "---\ntitle: \"OpenAI\"\ntype: company\ndescription: \"Penyedia GPT.\"\n---\n\n[[OpenAI]] menyediakan GPT, termasuk `openai/gpt-5.6-luna`; OAuth provider untuk LLMClient.\n",
+      "panel.md": "---\ntitle: \"panel\"\ntype: product\ndescription: \"Plugin sidebar Evonic.\"\n---\n\n[[panel]] adalah plugin Evonic yang menampilkan sidebar status untuk ekstensi dan agen.\n",
+      "user.md": "---\ntitle: \"User\"\ntype: note\ndescription: \"Pemilik asisten.\"\n---\n\nUser adalah pemilik asisten; home `/home/dewa`; pengembang [[kasir-cli]]; memakai [[Fillr]]. Preferensi: balas dalam bahasa Indonesia.\n"
+    }
+  },
+  "tool_ids": [
+    "skill:direxplorer:Read",
+    "skill:direxplorer:Grep",
+    "skill:direxplorer:Glob",
+    "str_replace",
+    "write_file",
+    "delete_file"
+  ],
+  "max_tool_turns": 80,
+  "evaluator_id": "kb_organizer",
+  "timeout_ms": 600000,
+  "weight": 1.0,
+  "enabled": true
+}

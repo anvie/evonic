@@ -1,0 +1,8 @@
+{
+  "id": "kb_organizer",
+  "name": "KB Organizer Evaluator",
+  "type": "predefined",
+  "description": "Scores the agentic KB Organizer tidy pass on the final vault state and tool-call trajectory (fixes, no harm, edit discipline, honest summary). Deterministic, no PASS2.",
+  "uses_pass2": false,
+  "config": {}
+}

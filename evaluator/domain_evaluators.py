@@ -12,6 +12,7 @@ from .strategies.sql_executor import SQLExecutorEvaluator
 from .strategies.tool_call import ToolCallEvaluator
 from .strategies.icd_code import IcdCodeEvaluator
 from .strategies.knowledge_builder import KnowledgeBuilderEvaluator
+from .strategies.kb_organizer import KBOrganizerEvaluator
 
 
 # Domain → Evaluator mapping
@@ -34,6 +35,7 @@ EVALUATOR_TYPES = {
     "tool_call": ToolCallEvaluator,
     "icd_code_judge": IcdCodeEvaluator,
     "knowledge_builder": KnowledgeBuilderEvaluator,
+    "kb_organizer": KBOrganizerEvaluator,
 }
 
 

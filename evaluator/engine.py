@@ -1078,6 +1078,8 @@ class EvaluationEngine:
         evaluator_id = test.get('evaluator_id', '')
         uses_tool_evaluator = evaluator_id == 'tool_call'
         has_registry_tools = len(registry_tools) > 0
+        vault_ctx = None  # set below for tests that run the real tools against a temp vault
+        eval_expected = expected
 
         if domain == "tool_calling" or has_embedded_tools or uses_tool_evaluator or has_registry_tools:
             # Start with registry tools (if any)
@@ -1124,8 +1126,18 @@ class EvaluationEngine:
             if no_mock_tools:
                 self._log(f'[TOOLS] No-mock (real backend): {sorted(no_mock_tools)}')
 
+            if test.get('vault'):
+                # Real tools against a real temp vault: nothing is mocked.
+                vault_ctx = self._vault_setup(test, test_id)
+                no_mock_tools = {t["function"]["name"] for t in tools}
+                mock_responses = {}
+
             # Run tool calling loop
-            loop_result = self._run_tool_calling_loop(prompt, tools, mock_responses, system_prompt=system_prompt, mock_response_types=mock_response_types, no_mock_tools=no_mock_tools, run_llm_client=_client)
+            try:
+                loop_result = self._run_tool_calling_loop(prompt, tools, mock_responses, system_prompt=system_prompt, mock_response_types=mock_response_types, no_mock_tools=no_mock_tools, run_llm_client=_client, vault_ctx=vault_ctx)
+            finally:
+                if vault_ctx:
+                    self._vault_finish(vault_ctx)
 
             duration_ms = loop_result["total_duration_ms"]
             total_tokens = loop_result["total_tokens"]
@@ -1141,7 +1153,11 @@ class EvaluationEngine:
             # Build response content
             all_tool_calls = loop_result["all_tool_calls"]
             final_response = loop_result["final_response"]
-            if evaluator_id == 'tool_call':
+            if vault_ctx:
+                # The organizer's answer is its summary; the evaluator also gets the vault diff and trajectory.
+                response_content = final_response
+                eval_expected = {**(expected or {}), "_run": self._vault_run_record(vault_ctx, loop_result, final_response)}
+            elif evaluator_id == 'tool_call':
                 # tool_call evaluator scores which tools were called
                 response_content = json.dumps({"tool_calls": all_tool_calls}, indent=2) if all_tool_calls else final_response
             else:
@@ -1206,17 +1222,17 @@ class EvaluationEngine:
         if evaluator_config and evaluator_config.type in ('custom', 'regex', 'hybrid'):
             custom_eval = CustomEvaluator(evaluator_config.to_dict(), llm_client_override=self.evaluation_llm_client)
             self._log(f'[EVAL] Using custom evaluator: {evaluator_config.name} (type: {evaluator_config.type})')
-            result = custom_eval.evaluate(response_content, expected, level)
+            result = custom_eval.evaluate(response_content, eval_expected, level)
         elif evaluator_id:
             # Use built-in evaluator type (tool_call, keyword, two_pass, sql_executor)
             evaluator = get_evaluator(domain, evaluator_type=evaluator_id)
             self._log(f'[EVAL] Using {evaluator.name} (type: {evaluator_id})')
-            result = evaluator.evaluate(response_content, expected, level)
+            result = evaluator.evaluate(response_content, eval_expected, level)
         else:
             # Fall back to domain default evaluator
             evaluator = get_evaluator(domain)
             self._log(f'[EVAL] Using {evaluator.name} (PASS2: {evaluator.uses_pass2})')
-            result = evaluator.evaluate(response_content, expected, level)
+            result = evaluator.evaluate(response_content, eval_expected, level)
         
         # Build details
         details = result.details if hasattr(result, 'details') else {}
@@ -1375,7 +1391,114 @@ class EvaluationEngine:
             self._log(f'[JS-MOCK] Exception: {str(e)}')
             return {"error": f"JS mock failed: {str(e)}"}
 
-    def _run_tool_calling_loop(self, prompt: str, tools: list, mock_responses: Dict[str, Any] = None, system_prompt: str = None, mock_response_types: Dict[str, str] = None, no_mock_tools: set = None, enable_planning: bool = True, run_llm_client=None) -> Dict[str, Any]:
+    # Per-step tool-call cap of the production KB organizer (memory_manager._KB_MAX_TOOL_CALLS_PER_TURN).
+    _VAULT_MAX_CALLS_PER_STEP = 2
+    _VAULT_DEFAULT_MAX_TURNS = 40
+
+    def _vault_setup(self, test: Dict[str, Any], test_id: str) -> Dict[str, Any]:
+        """Write test['vault']['files'] into a temp dir and build the agent dict the tools run as."""
+        import tempfile
+        root = tempfile.mkdtemp(prefix=f'evonic_vault_{test_id}_')
+        files = (test.get('vault') or {}).get('files') or {}
+        for rel, content in files.items():
+            dest = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, 'w', encoding='utf-8') as f:
+                f.write(content)
+        # Mirrors _spawn_kb_tidy's config: local backend, workspace = the vault, organizer caps on.
+        agent = {
+            'id': f'eval_{test_id}',
+            'session_id': f'eval-{test_id}',
+            'workspace': root,
+            'workplace_id': None,
+            'sandbox_enabled': 0,
+            'run_as_user': None,
+            'is_kb_organizer': True,
+            'max_tool_calls_per_turn': self._VAULT_MAX_CALLS_PER_STEP,
+        }
+        self._log(f'[VAULT] {len(files)} file(s) in {root}')
+        return {
+            'dir': root,
+            'agent': agent,
+            'before': self._vault_snapshot(root),
+            'after': None,
+            'max_calls': self._VAULT_MAX_CALLS_PER_STEP,
+            'max_turns': test.get('max_tool_turns') or self._VAULT_DEFAULT_MAX_TURNS,
+        }
+
+    # Tool args that carry a filesystem path.
+    _VAULT_PATH_ARGS = ('file_path', 'path', 'directory', 'dir')
+
+    @classmethod
+    def _vault_guard(cls, vault_ctx: Dict[str, Any], func_name: str, func_args: Any) -> Optional[Dict[str, Any]]:
+        """Return an error result if a tool call reaches outside the temp vault, else None.
+
+        The models under test are untrusted and the write tools run for real, so containment is
+        enforced here rather than trusted to the tools: resolve_workspace_path() passes absolute
+        paths outside the workspace through unchanged, despite its docstring.
+        """
+        if not isinstance(func_args, dict):
+            return None
+        root = os.path.realpath(vault_ctx['dir'])
+
+        def inside(p: str) -> bool:
+            p = os.path.expanduser(p)
+            if p == '/workspace' or p.startswith('/workspace/'):   # virtual prefix the real tools map to the workspace
+                p = p[len('/workspace'):].lstrip('/')
+            if not os.path.isabs(p):
+                p = os.path.join(root, p)
+            real = os.path.realpath(p)
+            return real == root or real.startswith(root + os.sep)
+
+        for key in cls._VAULT_PATH_ARGS:
+            v = func_args.get(key)
+            if isinstance(v, str) and v and not inside(v):
+                return {"error": "Access denied: path escapes workspace"}
+        pattern = func_args.get('pattern')
+        if func_name == 'Glob' and isinstance(pattern, str) and (
+                os.path.isabs(pattern) or pattern.startswith('~') or '..' in pattern.replace('\\', '/').split('/')):
+            return {"error": "Access denied: path escapes workspace"}
+        return None
+
+    @staticmethod
+    def _vault_snapshot(root: str) -> Dict[str, str]:
+        out = {}
+        for dirpath, _dirs, names in os.walk(root):
+            for name in names:
+                full = os.path.join(dirpath, name)
+                with open(full, 'r', encoding='utf-8', errors='replace') as f:
+                    out[os.path.relpath(full, root)] = f.read()
+        return out
+
+    def _vault_finish(self, vault_ctx: Dict[str, Any]) -> None:
+        """Snapshot the vault after the run, then delete the temp dir."""
+        import shutil
+        try:
+            vault_ctx['after'] = self._vault_snapshot(vault_ctx['dir'])
+        finally:
+            shutil.rmtree(vault_ctx['dir'], ignore_errors=True)
+
+    @staticmethod
+    def _vault_run_record(vault_ctx: Dict[str, Any], loop_result: Dict[str, Any], final_response: str) -> Dict[str, Any]:
+        calls = []
+        for turn in (loop_result or {}).get('conversation_log') or []:
+            results = turn.get('tool_results') or []
+            for i, tc in enumerate(turn.get('tool_calls') or []):
+                calls.append({
+                    'turn': turn.get('turn'),
+                    'name': tc.get('name'),
+                    'args': tc.get('arguments') or {},
+                    'result': results[i].get('result') if i < len(results) else None,
+                })
+        return {
+            'vault_before': vault_ctx['before'],
+            'vault_after': vault_ctx['after'] if vault_ctx['after'] is not None else vault_ctx['before'],
+            'tool_calls': calls,
+            'final': final_response or '',
+            'stop_reason': (loop_result or {}).get('stop_reason'),
+        }
+
+    def _run_tool_calling_loop(self, prompt: str, tools: list, mock_responses: Dict[str, Any] = None, system_prompt: str = None, mock_response_types: Dict[str, str] = None, no_mock_tools: set = None, enable_planning: bool = True, run_llm_client=None, vault_ctx: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Run multi-turn tool calling loop with mock execution.
         
@@ -1405,6 +1528,11 @@ class EvaluationEngine:
 
         # Read max tool iterations from DB (respects web UI override)
         max_tool_iterations = int(db.get_setting('max_tool_iterations', str(MAX_TOOL_ITERATIONS)))
+        if vault_ctx:
+            # Vault tests mirror the production organizer: no plan, no duplicate-call
+            # shield, no state compaction, no forced answer — only the per-step cap.
+            max_tool_iterations = int(vault_ctx['max_turns'])
+            enable_planning = False
 
         messages = []
         if system_prompt:
@@ -1470,6 +1598,7 @@ class EvaluationEngine:
             )
             messages.append({"role": "user", "content": plan_msg})
 
+        stop_reason = 'max_turns'  # overwritten below when the loop ends any other way
         for iteration in range(max_tool_iterations):
             # Estimate prompt tokens from messages (rough: 1 token ≈ 4 chars)
             prompt_chars = sum(len(m.get("content", "") or "") for m in messages)
@@ -1507,6 +1636,7 @@ class EvaluationEngine:
                             turn_log["thinking"] = reasoning
                             thinking_content = thinking_content or reasoning
                 self._log(f'[TOOL-LOOP] Breaking due to LLM error after {iteration + 1} iterations')
+                stop_reason = f'llm_error:{error_type}'
                 conversation_log.append(turn_log)
                 break
 
@@ -1548,8 +1678,14 @@ class EvaluationEngine:
                 turn_log["response"] = response_content
                 conversation_log.append(turn_log)
                 self._log(f'[TOOL-LOOP] Final answer received (no more tool calls)')
+                stop_reason = 'final'
                 break
             
+            # Same per-step cap as llm_loop.py: extra calls are dropped before they run.
+            if vault_ctx and vault_ctx.get('max_calls') and len(tool_calls) > vault_ctx['max_calls']:
+                self._log(f'[TOOL-LOOP] Dropping {len(tool_calls) - vault_ctx["max_calls"]} tool call(s) over the per-step cap')
+                tool_calls = tool_calls[:vault_ctx['max_calls']]
+
             # Process tool calls
             self._log(f'[TOOL-LOOP] Got {len(tool_calls)} tool call(s)')
             iteration_has_new_call = False
@@ -1579,7 +1715,7 @@ class EvaluationEngine:
 
                 # --- Duplicate tool call detection ---
                 call_key = f"{func_name}:{json.dumps(func_args, sort_keys=True) if isinstance(func_args, dict) else func_args_str}"
-                if call_key in seen_tool_calls:
+                if call_key in seen_tool_calls and not vault_ctx:
                     cached_preview = seen_tool_calls[call_key]
                     result_str = (
                         f"[DUPLICATE SEARCH] You already searched this exact query. Previous top results:\n"
@@ -1607,8 +1743,13 @@ class EvaluationEngine:
                 if no_mock_tools and func_name in no_mock_tools:
                     from backend.tools.registry import ToolRegistry
                     _registry = ToolRegistry()
-                    _module = _registry._load_tool_module(func_name)
-                    if _module is None:
+                    _skill_id = 'direxplorer' if vault_ctx and func_name in ('Read', 'Grep', 'Glob') else None
+                    _module = _registry._load_tool_module(func_name, skill_id=_skill_id)
+                    _escape = self._vault_guard(vault_ctx, func_name, func_args) if vault_ctx else None
+                    if _escape:
+                        mock_result_data = _escape
+                        self._log(f'[VAULT] blocked {func_name}: path escapes the vault')
+                    elif _module is None:
                         mock_result_data = {"error": f"No backend implementation for tool: {func_name}"}
                         self._log(f'[BACKEND] ERROR: no backend found for {func_name}')
                     elif not hasattr(_module, 'execute'):
@@ -1616,7 +1757,7 @@ class EvaluationEngine:
                         self._log(f'[BACKEND] ERROR: {func_name}.execute() not found')
                     else:
                         try:
-                            mock_result_data = _module.execute({}, func_args)
+                            mock_result_data = _module.execute(vault_ctx['agent'] if vault_ctx else {}, func_args)
                         except Exception as e:
                             mock_result_data = {"error": f"Backend execution error: {str(e)}"}
                             self._log(f'[BACKEND] ERROR executing {func_name}: {e}')
@@ -1729,6 +1870,7 @@ class EvaluationEngine:
                 consecutive_dupes += 1
                 if consecutive_dupes >= 2:
                     self._log(f'[TOOL-LOOP] Breaking: {consecutive_dupes} consecutive duplicate-only iterations')
+                    stop_reason = 'duplicate_loop'
                     break
 
             # --- Context management: State Machine compaction (zero LLM calls) ---
@@ -1741,7 +1883,7 @@ class EvaluationEngine:
             _STATE_MARKER = "## Agent State"
             prompt_chars = sum(len(m.get("content", "") or "") for m in messages)
             est_tokens = prompt_chars // 4
-            if est_tokens > COMPACT_THRESHOLD:
+            if est_tokens > COMPACT_THRESHOLD and not vault_ctx:
                 # --- Build state table from search history ---
                 table_lines = ["| # | Query | Top Results |", "|---|-------|-------------|"]
                 for i, (query, top_3) in enumerate(agent_state_searches, 1):
@@ -1802,7 +1944,7 @@ class EvaluationEngine:
                 self._log(f'[TOOL-LOOP] State compacted: {est_tokens}tok → ~{state_chars//4}tok ({len(agent_state_searches)} searches)')
                 self._log(f'[TOOL-LOOP] State:\n{state_content[:500]}...')
 
-        if not final_response and all_tool_calls:
+        if not final_response and all_tool_calls and not vault_ctx:
             self._log(f'[TOOL-LOOP] No final response yet — forcing output with agent state')
 
             # Build plan summary for forced output
@@ -1868,7 +2010,8 @@ class EvaluationEngine:
             "total_tokens": total_tokens,
             "thinking": thinking_content,
             "conversation_log": conversation_log,
-            "messages": messages
+            "messages": messages,
+            "stop_reason": stop_reason,
         }
     
     def _run_single_domain_level(self, run_id: int, model_name: str, domain_id: str,

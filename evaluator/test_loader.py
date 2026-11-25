@@ -54,6 +54,8 @@ class TestDefinition:
     updated_at: str = ""
     tools: List[Dict[str, Any]] = None  # Embedded tool definitions with mock responses
     tool_ids: Optional[List[str]] = None  # Registry tool IDs attached to this test
+    vault: Optional[Dict[str, Any]] = None  # {"files": {path: content}} — run the tools against a real temp vault
+    max_tool_turns: Optional[int] = None  # Per-test tool-loop step limit (vault tests)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -80,7 +82,9 @@ class TestDefinition:
             created_at=data.get('created_at', datetime.now().isoformat()),
             updated_at=data.get('updated_at', datetime.now().isoformat()),
             tools=data.get('tools', None),
-            tool_ids=data.get('tool_ids', None)
+            tool_ids=data.get('tool_ids', None),
+            vault=data.get('vault', None),
+            max_tool_turns=data.get('max_tool_turns', None)
         )
 
 
