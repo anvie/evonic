@@ -50,6 +50,31 @@ class TestResolveReportToFromContext(unittest.TestCase):
         self.assertEqual(sid, 'amar-e17cfaa3')
         mock_lookup.assert_not_called()
 
+    def test_agent_session_origin_needs_no_separate_session_id(self):
+        """A verification session's report_to_id *is* the route.
+
+        Privnt's verify request sets report_to_id='__agent__privnt_verify_*'
+        without a session_id. The route must survive as-is; the sender's latest
+        human session must never be consulted (that is where the answer used to
+        leak, with memory writes and KB authoring allowed).
+        """
+        with mock.patch('models.db.db.get_latest_human_session') as mock_lookup:
+            rid, ch, sid = resolve_report_to_from_context(
+                {
+                    'user_id': '__agent__privnt_verify_x',
+                    'channel_id': '',
+                    'session_id': 'aisyah-privnt-verify-x',
+                    'origin_report_to_id': '__agent__privnt_verify_x',
+                    'origin_report_to_channel_id': '',
+                    # origin_session_id deliberately absent
+                },
+                'aisyah',
+            )
+        self.assertEqual(rid, '__agent__privnt_verify_x')
+        self.assertEqual(ch, '')
+        self.assertEqual(sid, '')
+        mock_lookup.assert_not_called()
+
     def test_subagent_uses_parent_for_lookup(self):
         human = {'external_user_id': 'user_456', 'channel_id': None}
         with mock.patch(

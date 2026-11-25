@@ -1055,6 +1055,61 @@ class TestOnFinalAnswer(unittest.TestCase):
             'sess_001', agent_id='agent_b', sender_agent_id='agent_a',
         )
 
+    def test_agent_session_forward_not_remembered_when_session_is_gone(self):
+        """A reply into a vanished agent session must not open a memory-eligible one.
+
+        A Privnt verification session is created with ``save_memory=False`` and
+        removed after its TTL. If a late answer is forwarded after that, the
+        forward must not create a fresh session that would remember the
+        read-only verification conversation.
+        """
+        metadata = {
+            'from_agent_id': 'agent_a',
+            'report_to_id': '__agent__privnt_verify_x',
+        }
+        target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
+        with mock.patch(
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=metadata,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.get_session_id',
+            return_value=None,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.get_agent',
+            return_value=target_agent,
+        ), mock.patch(
+            'backend.agent_runtime.notifier.notify_agent',
+        ) as mock_notify:
+            self._call(self._build_data(answer='verdict'))
+
+        kwargs = mock_notify.call_args.kwargs
+        self.assertEqual(kwargs.get('external_user_id'), '__agent__privnt_verify_x')
+        self.assertNotIn('session_id', kwargs)
+        self.assertFalse(kwargs.get('save_memory'))
+
+    def test_agent_session_forward_keeps_flags_of_existing_session(self):
+        """An existing chain session governs its own memory flags unchanged."""
+        metadata = {
+            'from_agent_id': 'agent_a',
+            'report_to_id': '__agent__privnt_verify_x',
+        }
+        target_agent = _make_target_agent(agent_id='agent_b', name='Agent B')
+        with mock.patch(
+            'backend.tools.agent_messaging.db.get_latest_agent_request_metadata',
+            return_value=metadata,
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.get_session_id',
+            return_value='aisyah-privnt-verify-x',
+        ), mock.patch(
+            'backend.tools.agent_messaging.db.get_agent',
+            return_value=target_agent,
+        ), mock.patch(
+            'backend.agent_runtime.notifier.notify_agent',
+        ) as mock_notify:
+            self._call(self._build_data(answer='verdict'))
+
+        self.assertTrue(mock_notify.call_args.kwargs.get('save_memory'))
+
     def test_auto_forward_uses_parent_db_for_subagent(self):
         """Sub-agent replies resolve request metadata from the parent's chat DB."""
         metadata = {

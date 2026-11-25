@@ -25,7 +25,15 @@ def resolve_report_to_from_context(
     origin_report_to_id = agent_context.get("origin_report_to_id", "") or ""
     origin_report_to_channel_id = agent_context.get("origin_report_to_channel_id", "") or ""
     origin_session_id = agent_context.get("origin_session_id", "") or ""
-    if origin_report_to_id and origin_session_id:
+    # An origin that is itself an agent session is a complete route: its
+    # external_user_id *is* the session (answers start that session's next
+    # turn), so it needs no separate session_id. Such requests (e.g. Privnt's
+    # verification sessions) deliberately omit session_id; falling back to
+    # _lookup_human_session would deliver the answer to the agent's latest
+    # human chat, where memory writes and KB authoring are allowed.
+    if origin_report_to_id and (
+        origin_session_id or origin_report_to_id.startswith(_AGENT_MSG_PREFIX)
+    ):
         return origin_report_to_id, origin_report_to_channel_id, origin_session_id
 
     lookup_id = sender_id

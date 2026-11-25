@@ -957,6 +957,29 @@ def _on_final_answer(data: dict) -> None:
     original_depth = meta.get('agent_message_depth', 0)
     subagent_user_direct = meta.get('subagent_user_direct', False)
 
+    # A reply routed back into another agent's session (chained delegation) has
+    # no human fallback: that session's external_user_id *is* the route. If the
+    # destination session no longer exists (e.g. a Privnt verification session
+    # reaped by its TTL), the forward below would create a fresh one with no
+    # flags, turning a read-only verification answer into a memory-eligible
+    # conversation. Mark such a forward as not-to-be-remembered. When the
+    # session does exist its own flags govern, so ordinary chains are unchanged.
+    save_memory = True
+    if report_to_id.startswith(_AGENT_MSG_PREFIX):
+        try:
+            # Sub-agents keep their sessions in the parent's chat DB.
+            _sender_db_id = sender_id
+            from backend.subagent_manager import subagent_manager
+            _sender_sub = subagent_manager.get(sender_id)
+            if _sender_sub:
+                _sender_db_id = _sender_sub.get('parent_id', sender_id)
+            save_memory = bool(db.get_session_id(
+                sender_id, report_to_id, report_to_channel_id,
+                db_agent_id=_sender_db_id,
+            ))
+        except Exception:
+            save_memory = True
+
     # Guard: if report_to_id would create a self-session (agent_b == sender extracted from
     # report_to_id), bail out. This catches any residual cases where report_to_id was set
     # to an inter-agent external_user_id that references the same agent as agent_b_id.
@@ -1017,6 +1040,7 @@ def _on_final_answer(data: dict) -> None:
             channel_id=report_to_channel_id,
             dedup=False,
             trigger_llm=True,
+            save_memory=save_memory,
             metadata={
                 'agent_message': True,
                 'from_agent_id': agent_b_id,
