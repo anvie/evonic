@@ -811,3 +811,36 @@ def test_is_agent_busy_self_heals_a_turn_whose_worker_died(monkeypatch):
         assert runtime.is_agent_busy("agent-a") is False
         assert runtime.get_busy_agents() == {}
         store.close()
+
+
+def test_boot_recovery_leaves_turns_of_another_live_process_alone():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        before = store.events_after(0, {"chat"}, session_id="session-a", agent_id="agent-a")
+        with store._connect() as conn:
+            # the parent process is alive and is not this one
+            conn.execute("UPDATE active_turns SET owner_pid = ? WHERE turn_id = ?",
+                         (os.getppid(), turn_id))
+
+        assert store.interrupt_stale_turns() == []
+        assert [t["turn_id"] for t in store.active_turns()] == [turn_id]
+        after = store.events_after(0, {"chat"}, session_id="session-a", agent_id="agent-a")
+        assert [e["event"] for e in after] == [e["event"] for e in before]
+        assert not [e for e in after if e["event"] == "done"]
+        store.close()
+
+
+def test_boot_recovery_still_finalizes_live_pid_with_dead_heartbeat():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = make_store(tmpdir)
+        turn_id, _ = store.queue_turn("agent-a", "session-a", "turn-a")
+        store.start_turn(turn_id)
+        with store._connect() as conn:
+            conn.execute("UPDATE active_turns SET owner_pid = ?, updated_at_ms = 1 WHERE turn_id = ?",
+                         (os.getppid(), turn_id))
+
+        assert [t["turn_id"] for t in store.interrupt_stale_turns()] == [turn_id]
+        assert store.active_turns() == []
+        store.close()

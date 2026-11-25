@@ -700,16 +700,35 @@ class RealtimeStore:
         }, agent_id=turn['agent_id'], session_id=turn['session_id'])
 
     def interrupt_stale_turns(self) -> list[dict]:
+        """Boot recovery: finalize turns left behind by a previous process.
+
+        Rows owned by ANOTHER live process are skipped: a helper script that
+        imports the runtime while the server is up must not mark the server's
+        running turns as interrupted.  Rows with this process's own pid are
+        always stale here (recovery runs once, at boot, before this process has
+        started any turn), which also covers a restart that reuses the same pid.
+        """
         key = (os.getpid(), self._resolve_db_path())
         with self._recovery_lock:
             if key in self._recovered:
                 return []
-            self._maybe_cleanup(_now_ms())
-            stale = self.active_turns()
+            now = _now_ms()
+            self._maybe_cleanup(now)
+            stale = [t for t in self.active_turns() if not self._owned_by_live_peer(t, now)]
             for turn in stale:
                 self._finalize_turn(turn, 'server_restart')
             self._recovered.add(key)
             return stale
+
+    @staticmethod
+    def _owned_by_live_peer(turn: dict, now: int) -> bool:
+        """True when another live process still owns this turn (same liveness
+        rule as ``reap_stale_turns``: a running turn must also have a fresh heartbeat)."""
+        pid = turn['owner_pid']
+        if pid == os.getpid() or not _pid_alive(pid):
+            return False
+        return (turn['state'] != 'running'
+                or now - (turn['updated_at_ms'] or 0) <= STALE_TURN_HEARTBEAT_MS)
 
     def reap_stale_turns(self) -> list[dict]:
         """Clear busy state left behind by a crashed worker or a hung turn.
