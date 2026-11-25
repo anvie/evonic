@@ -20,6 +20,7 @@ from models.mixins.transfer_jobs import TransferJobMixin
 from models.mixins.system_alerts import SystemAlertMixin
 from models.mixins.escalations import EscalationMixin
 from models.mixins.session_flags import SessionFlagsMixin
+from models.mixins.background_jobs import BackgroundJobsMixin
 
 __all__ = [
     'EvaluationMixin',
@@ -44,4 +45,5 @@ __all__ = [
     'SystemAlertMixin',
     'EscalationMixin',
     'SessionFlagsMixin',
+    'BackgroundJobsMixin',
 ]
