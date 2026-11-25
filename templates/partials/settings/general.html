@@ -72,23 +72,10 @@
                        'Used by the describe_image tool. If the primary model fails, the fallbacks are tried from top to bottom. Leave it empty to use the first vision-capable model. Only models with vision support can be picked.',
                        fallbacks=5, main_label='Primary',
                        search='vision primary fallback describe image analysis multimodal') }}
-        <div class="setting-row stacked" data-search="kb organizer model knowledge base memory vault background sub-agent">
-            <div class="setting-row-text">
-                <div class="setting-row-title">KB Organizer Model</div>
-                <div class="setting-row-desc">
-                    Model used by the KB Organizer background sub-agent that files
-                    conversation knowledge into each agent's memory vault. Defaults
-                    to the agent's own model when unset.
-                </div>
-            </div>
-            <div class="setting-row-control">
-                <select id="kb-organizer-model-select" class="setting-select"
-                        data-setting-key="kb_organizer_model_id">
-                    <option value="">Loading models…</option>
-                </select>
-                <span class="save-status" aria-live="polite"></span>
-            </div>
-        </div>
+        {{ model_chain('kb-organizer-model-chain', 'KB Organizer model & fallbacks',
+                       "Model used by the KB Organizer background sub-agent that files conversation knowledge into each agent's memory vault. If it fails, the fallbacks are tried from top to bottom. Leave the main model empty to use the agent's own model.",
+                       fallbacks=5, main_label='Organizer',
+                       search='kb organizer model knowledge base memory vault background sub-agent fallback chain') }}
         <div class="setting-row" data-search="kb organizer vault janitor nightly schedule time memory cleanup">
             <div class="setting-row-text">
                 <div class="setting-row-title">KB Organizer Schedule</div>

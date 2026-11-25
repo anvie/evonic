@@ -1068,6 +1068,7 @@ def api_get_general_settings():
         'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
         'vision_fallback_model_ids': _default_chain.VISION_CHAIN.get_ids(db),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
+        'kb_organizer_fallback_model_ids': _default_chain.KB_ORGANIZER_CHAIN.get_ids(db),
         'kb_organizer_nightly_time': db.get_setting(
             'kb_organizer_nightly_time',
             os.getenv('EVOMEM_KB_ORGANIZER_NIGHTLY_TIME', '03:00'),
@@ -1457,6 +1458,39 @@ def api_batch_save():
             # Allow clearing the setting (falls back to env / agent default)
             db.set_setting('kb_organizer_model_id', '')
             results['kb_organizer_model_id'] = ''
+
+    # KB Organizer fallback chain — tried in order when the organizer model fails.
+    if 'kb_organizer_fallback_model_ids' in settings:
+        raw = settings['kb_organizer_fallback_model_ids']
+        primary_id = db.get_setting('kb_organizer_model_id', '') or ''
+        chain_errors = []
+        if not isinstance(raw, list):
+            chain_errors.append('must be a list of model ids')
+            raw = []
+        requested = [str(v).strip() for v in raw if str(v or '').strip()]
+        if len(requested) > _default_chain.MAX_DEFAULT_FALLBACKS:
+            chain_errors.append(
+                f'at most {_default_chain.MAX_DEFAULT_FALLBACKS} fallback models are allowed')
+        if len(set(requested)) != len(requested):
+            chain_errors.append('each fallback model can appear only once')
+        if primary_id and primary_id in requested:
+            chain_errors.append('a fallback must differ from the organizer model')
+        resolved = []
+        for model_id in requested:
+            model = db.get_model_by_id(model_id)
+            if not model:
+                chain_errors.append(f'Model not found: {model_id}')
+            else:
+                resolved.append(model['id'])
+        if chain_errors:
+            errors.append('kb_organizer_fallback_model_ids: ' + '; '.join(chain_errors))
+        else:
+            old_ids = _default_chain.KB_ORGANIZER_CHAIN.get_ids(db)
+            saved = _default_chain.KB_ORGANIZER_CHAIN.save_ids(db, resolved)
+            if saved != old_ids:
+                _audit_setting_change('kb_organizer_fallback_model_ids',
+                                      ','.join(old_ids), ','.join(saved))
+            results['kb_organizer_fallback_model_ids'] = saved
 
     # KB Organizer nightly schedule — global time for the Vault Janitor.
     if 'kb_organizer_nightly_time' in settings:

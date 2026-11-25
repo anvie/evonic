@@ -284,3 +284,30 @@ def test_vision_chain_saves_primary_and_five_fallbacks():
     client.post('/api/settings/batch', json={'settings': {'vision_fallback_model_2_id': ''}})
     assert db.get_setting('vision_fallback_model_ids') == \
         '["vc_fb1", "vc_fb3", "vc_fb4", "vc_fb5"]'
+
+
+def test_kb_organizer_fallback_chain_saves_validates_and_feeds_organizer():
+    from backend.agent_runtime.memory_manager import _kb_organizer_models
+    for model_id in ('kb_main', 'kb_fb_1', 'kb_fb_2'):
+        _vision_model(model_id, vision_supported=0)
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['authenticated'] = True
+
+    response = client.post('/api/settings/batch', json={'settings': {
+        'kb_organizer_model_id': 'kb_main',
+        'kb_organizer_fallback_model_ids': ['kb_fb_1', 'kb_fb_2'],
+    }})
+    assert response.get_json() == {'success': True, 'results': {
+        'kb_organizer_model_id': 'kb_main',
+        'kb_organizer_fallback_model_ids': ['kb_fb_1', 'kb_fb_2'],
+    }}
+    settings = client.get('/api/settings/general').get_json()
+    assert settings['kb_organizer_fallback_model_ids'] == ['kb_fb_1', 'kb_fb_2']
+    assert _kb_organizer_models({}) == ('kb_main', ['kb_fb_1', 'kb_fb_2'])
+
+    response = client.post('/api/settings/batch', json={'settings': {
+        'kb_organizer_fallback_model_ids': ['kb_main'],
+    }})
+    assert response.get_json()['errors']
+    assert db.get_setting('kb_organizer_fallback_model_ids') == '["kb_fb_1", "kb_fb_2"]'

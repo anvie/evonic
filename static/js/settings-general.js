@@ -47,10 +47,17 @@ window.settingsGeneral = {
                         : (general.default_model_fallback_id ? [general.default_model_fallback_id] : []),
                 });
             }
+            const kbChain = this._getKbOrganizerChain();
+            if (kbChain) {
+                kbChain.setModels(models);
+                kbChain.setValue({
+                    mainId: general.kb_organizer_model_id || "",
+                    fallbackIds: general.kb_organizer_fallback_model_ids || [],
+                });
+            }
             await this._loadTwoFactorAuth();
             await this._loadEvonetJoin();
             this._populateModelSelects(models, {
-                kbOrganizerModelId: general.kb_organizer_model_id || "",
                 classifierModelId: classifier ? classifier.model_id || "" : "",
                 cmpModelId: cmpModel ? cmpModel.model_id || "" : "",
                 taskDecisionProfile: this._profile(decisionProfiles.profiles, "agent.task_complexity"),
@@ -308,6 +315,37 @@ window.settingsGeneral = {
         return this._visionChain;
     },
 
+    _kbOrganizerChain: null,
+
+    _getKbOrganizerChain() {
+        if (this._kbOrganizerChain) return this._kbOrganizerChain;
+        const root = document.getElementById("kb-organizer-model-chain");
+        if (!root || !window.ModelChain) return null;
+        this._kbOrganizerChain = new ModelChain(root, {
+            mainLabel: "Organizer",
+            mainEmptyText: "Agent's own model",
+            requireMain: false,
+            eligible: (model) => !!model.enabled,
+            onSave: async ({ mainId, fallbackIds }) => {
+                const res = await apiPost("/api/settings/batch", {
+                    settings: {
+                        kb_organizer_model_id: mainId,
+                        kb_organizer_fallback_model_ids: fallbackIds,
+                    },
+                });
+                if (!res || res.success === false) throw new Error((res && res.error) || "Save failed");
+                if (res.errors && res.errors.length) throw new Error(res.errors.join("; "));
+                const r = res.results || {};
+                return {
+                    mainId: "kb_organizer_model_id" in r ? r.kb_organizer_model_id : mainId,
+                    fallbackIds: Array.isArray(r.kb_organizer_fallback_model_ids)
+                        ? r.kb_organizer_fallback_model_ids : fallbackIds,
+                };
+            },
+        });
+        return this._kbOrganizerChain;
+    },
+
     _profile(profiles, key) {
         return (profiles || []).find((profile) => profile.profile_key === key) || null;
     },
@@ -318,7 +356,6 @@ window.settingsGeneral = {
             return el ? el.value : "";
         };
         return {
-            kbOrganizerModelId: val("kb-organizer-model-select"),
             classifierModelId: val("task-classifier-model-select"),
             cmpModelId: val("cmp-model-select"),
             taskDecisionProfile: this._profileFromSelect("agent.task_complexity", "task-classifier-decision-model-select"),
@@ -372,12 +409,8 @@ window.settingsGeneral = {
         if (chain) chain.setModels(models);
         const vision = this._getVisionChain();
         if (vision) vision.setModels(models);
-        fill(
-            "kb-organizer-model-select",
-            enabled,
-            current.kbOrganizerModelId,
-            "Use agent’s default model",
-        );
+        const kbChain = this._getKbOrganizerChain();
+        if (kbChain) kbChain.setModels(models);
         fill(
             "task-classifier-model-select",
             models,
