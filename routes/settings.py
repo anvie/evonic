@@ -9,6 +9,7 @@ from typing import Dict, Any
 from flask import Blueprint, render_template, jsonify, request, Response, stream_with_context
 
 from backend.audit_logger import audit
+from backend import default_model_chain as _default_chain
 import config
 from models.boolean import FALSE_VALUES, TRUE_VALUES
 from models.db import db
@@ -1060,9 +1061,12 @@ def api_get_general_settings():
         'agent_sidebar_limit': int(db.get_setting('agent_sidebar_limit', str(config.AGENT_SIDEBAR_LIMIT))),
         'theme': db.get_setting('theme', 'system'),
         'default_model_fallback_id': db.get_setting('default_model_fallback_id', ''),
+        'default_model_fallback_ids': _default_chain.get_fallback_ids(db),
+        'default_model_fallback_max': _default_chain.MAX_DEFAULT_FALLBACKS,
         'vision_model_id': db.get_setting('vision_model_id', ''),
         'vision_fallback_model_id': db.get_setting('vision_fallback_model_id', ''),
         'vision_fallback_model_2_id': db.get_setting('vision_fallback_model_2_id', ''),
+        'vision_fallback_model_ids': _default_chain.VISION_CHAIN.get_ids(db),
         'kb_organizer_model_id': db.get_setting('kb_organizer_model_id', ''),
         'kb_organizer_nightly_time': db.get_setting(
             'kb_organizer_nightly_time',
@@ -1302,27 +1306,109 @@ def api_batch_save():
             else:
                 errors.append('default_model_id: Model not found')
 
-    # Global default-model fallback. An empty value disables the fallback.
-    if 'default_model_fallback_id' in settings:
-        model_id = settings['default_model_fallback_id'] or ''
-        if model_id:
-            model = db.get_model_by_id(model_id)
-            if model:
-                db.set_setting('default_model_fallback_id', model['id'])
-                results['default_model_fallback_id'] = model['id']
-            else:
-                errors.append('default_model_fallback_id: Model not found')
+    # Global default-model fallback chain. The list form replaces the chain;
+    # the legacy single key sets a one-entry chain. Empty disables fallback.
+    if 'default_model_fallback_ids' in settings or 'default_model_fallback_id' in settings:
+        key = ('default_model_fallback_ids' if 'default_model_fallback_ids' in settings
+               else 'default_model_fallback_id')
+        raw = settings[key]
+        if key == 'default_model_fallback_id':
+            raw = [raw] if raw else []
+        if not isinstance(raw, list):
+            errors.append(f'{key}: must be a list of model ids')
         else:
-            db.set_setting('default_model_fallback_id', '')
-            results['default_model_fallback_id'] = ''
+            requested = [str(v).strip() for v in raw if str(v or '').strip()]
+            default_id = results.get('default_model_id') or (db.get_default_model() or {}).get('id')
+            chain_errors = []
+            if len(requested) > _default_chain.MAX_DEFAULT_FALLBACKS:
+                chain_errors.append(
+                    f'at most {_default_chain.MAX_DEFAULT_FALLBACKS} fallback models are allowed')
+            if len(set(requested)) != len(requested):
+                chain_errors.append('each fallback model can appear only once')
+            resolved = []
+            for model_id in requested:
+                model = db.get_model_by_id(model_id)
+                if not model:
+                    chain_errors.append('Model not found' if key == 'default_model_fallback_id'
+                                        else f'Model not found: {model_id}')
+                elif model.get('type') == 'decision':
+                    chain_errors.append(f'{model.get("name") or model_id} is a decision model')
+                elif default_id and model['id'] == default_id:
+                    chain_errors.append('a fallback must differ from the main model')
+                else:
+                    resolved.append(model['id'])
+            if chain_errors:
+                errors.append(f'{key}: ' + '; '.join(chain_errors))
+            else:
+                old_ids = _default_chain.get_fallback_ids(db)
+                saved = _default_chain.save_fallback_ids(db, resolved)
+                if saved != old_ids:
+                    _audit_setting_change('default_model_fallback_ids',
+                                          ','.join(old_ids), ','.join(saved))
+                results[key] = saved if key == 'default_model_fallback_ids' else (
+                    saved[0] if saved else '')
 
-    # Vision routing chain (primary + two fallbacks)
+    # Vision routing chain: primary + up to MAX_DEFAULT_FALLBACKS fallbacks.
+    # The list form saves the primary and the whole chain together; the
+    # legacy per-slot keys still work and update the first two entries.
+    if 'vision_fallback_model_ids' in settings:
+        raw = settings['vision_fallback_model_ids']
+        primary_id = settings.get('vision_model_id', db.get_setting('vision_model_id', '')) or ''
+        chain_errors = []
+        if not isinstance(raw, list):
+            chain_errors.append('must be a list of model ids')
+            raw = []
+        requested = [str(v).strip() for v in raw if str(v or '').strip()]
+        if len(requested) > _default_chain.MAX_DEFAULT_FALLBACKS:
+            chain_errors.append(
+                f'at most {_default_chain.MAX_DEFAULT_FALLBACKS} fallback models are allowed')
+        if len(set(requested)) != len(requested):
+            chain_errors.append('each fallback model can appear only once')
+        if primary_id and primary_id in requested:
+            chain_errors.append('a fallback must differ from the primary model')
+        resolved = []
+        for model_id in requested:
+            model = db.get_model_by_id(model_id)
+            if not model:
+                chain_errors.append(f'Model not found: {model_id}')
+            elif not model.get('vision_supported'):
+                chain_errors.append(f'{model.get("name") or model_id} does not support vision')
+            else:
+                resolved.append(model['id'])
+        primary_error = None
+        if 'vision_model_id' in settings and primary_id:
+            model = db.get_model_by_id(primary_id)
+            if not model:
+                primary_error = 'vision_model_id: Model not found'
+            elif not model.get('vision_supported'):
+                primary_error = 'vision_model_id: Model does not support vision'
+        if chain_errors or primary_error:
+            if primary_error:
+                errors.append(primary_error)
+            if chain_errors:
+                errors.append('vision_fallback_model_ids: ' + '; '.join(chain_errors))
+        else:
+            if 'vision_model_id' in settings:
+                db.set_setting('vision_model_id', primary_id)
+                results['vision_model_id'] = primary_id
+            old_ids = _default_chain.VISION_CHAIN.get_ids(db)
+            saved = _default_chain.VISION_CHAIN.save_ids(db, resolved)
+            if saved != old_ids:
+                _audit_setting_change('vision_fallback_model_ids',
+                                      ','.join(old_ids), ','.join(saved))
+            results['vision_fallback_model_ids'] = saved
+        settings = {k: v for k, v in settings.items()
+                    if k not in ('vision_model_id', 'vision_fallback_model_id',
+                                 'vision_fallback_model_2_id')}
+
+    # Legacy vision keys (primary + first two fallbacks)
     vision_setting_keys = (
         'vision_model_id',
         'vision_fallback_model_id',
         'vision_fallback_model_2_id',
     )
     if any(key in settings for key in vision_setting_keys):
+        _vision_chain_before = _default_chain.VISION_CHAIN.get_ids(db)
         vision_ids = {
             key: settings.get(key, db.get_setting(key, ''))
             for key in vision_setting_keys
@@ -1350,6 +1436,12 @@ def api_batch_save():
             else:
                 db.set_setting(key, '')
                 results[key] = ''
+        if any(k in results for k in vision_setting_keys[1:]):
+            # Keep the list in step: slots 1-2 come from the legacy keys.
+            _default_chain.VISION_CHAIN.save_ids(db, [
+                db.get_setting('vision_fallback_model_id', ''),
+                db.get_setting('vision_fallback_model_2_id', ''),
+            ] + _vision_chain_before[2:])
 
     # KB Organizer Model — global default for the KB organizer background sub-agent
     if 'kb_organizer_model_id' in settings:

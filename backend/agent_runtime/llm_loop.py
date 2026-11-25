@@ -1775,15 +1775,20 @@ def run_tool_loop(agent: Dict[str, Any],
             _fallback_succeeded = False
             _fallback_vision_stripped = False
             from backend.agent_runtime import explorer as _explorer
-            _fallback_model = _explorer.fallback_model(agent) or db.get_agent_fallback_model(agent_id)
+            # An agent's (or explorer's) own fallbacks are the only ones tried.
+            # Agents on the global default model walk the global chain in order.
+            _fallback_candidates = _explorer.fallback_models(agent)
+            if not _fallback_candidates:
+                _agent_fallback = db.get_agent_fallback_model(agent_id)
+                _fallback_candidates = [_agent_fallback] if _agent_fallback else []
             _using_global_fallback = False
-            if not _fallback_model and _using_global_default_model:
-                _global_fallback_id = db.get_setting('default_model_fallback_id', '')
-                _global_fallback = db.get_model_by_id(_global_fallback_id) if _global_fallback_id else None
-                if _global_fallback and _global_fallback.get('enabled', True):
-                    _fallback_model = _global_fallback
-                    _using_global_fallback = True
-            if _fallback_model:
+            if not _fallback_candidates and _using_global_default_model:
+                from backend.default_model_chain import get_fallback_models as _chain_models
+                _primary_id = (db.get_default_model() or {}).get('id')
+                _fallback_candidates = [
+                    _m for _m in _chain_models(db) if _m.get('id') != _primary_id]
+                _using_global_fallback = bool(_fallback_candidates)
+            for _fallback_model in _fallback_candidates:
                 _logger.warning(
                     "Primary model failed [%s] for agent %s — attempting fallback model %s (%s)",
                     error_type, agent_id, _fallback_model.get('name'), _fallback_model.get('model_name'))
@@ -1922,6 +1927,7 @@ def run_tool_loop(agent: Dict[str, Any],
                                 _logger.warning(
                                     "Failed to persist fallback to agent_state for agent %s: %s",
                                     agent_id, _ase)
+                        break
                     else:
                         _fb_err = _fallback_result.get('error_type', 'unknown')
                         _logger.error(
@@ -1934,6 +1940,8 @@ def run_tool_loop(agent: Dict[str, Any],
                             'fallback_model': _fallback_model.get('name'),
                             'fallback_error': _fb_err,
                         })
+                        if _fb_err == 'stopped':
+                            break
                 except Exception as _fe:
                     _logger.error(
                         "Fallback model exception for agent %s: %s", agent_id, _fe)

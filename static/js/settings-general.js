@@ -27,14 +27,29 @@ window.settingsGeneral = {
                 throw new Error((general && general.error) || "Failed to load settings");
             }
             this._fill(general);
+            const vision = this._getVisionChain();
+            if (vision) {
+                vision.setModels(models);
+                vision.setValue({
+                    mainId: general.vision_model_id || "",
+                    fallbackIds: Array.isArray(general.vision_fallback_model_ids)
+                        ? general.vision_fallback_model_ids
+                        : [general.vision_fallback_model_id, general.vision_fallback_model_2_id],
+                });
+            }
+            const chain = this._getModelChain();
+            if (chain) {
+                chain.setModels(models);
+                chain.setValue({
+                    mainId: defaultModel && defaultModel.model ? defaultModel.model.id : "",
+                    fallbackIds: Array.isArray(general.default_model_fallback_ids)
+                        ? general.default_model_fallback_ids
+                        : (general.default_model_fallback_id ? [general.default_model_fallback_id] : []),
+                });
+            }
             await this._loadTwoFactorAuth();
             await this._loadEvonetJoin();
             this._populateModelSelects(models, {
-                defaultModelId: defaultModel && defaultModel.model ? defaultModel.model.id : "",
-                defaultModelFallbackId: general.default_model_fallback_id || "",
-                visionModelId: general.vision_model_id || "",
-                visionFallbackModelId: general.vision_fallback_model_id || "",
-                visionFallbackModel2Id: general.vision_fallback_model_2_id || "",
                 kbOrganizerModelId: general.kb_organizer_model_id || "",
                 classifierModelId: classifier ? classifier.model_id || "" : "",
                 cmpModelId: cmpModel ? cmpModel.model_id || "" : "",
@@ -238,6 +253,61 @@ window.settingsGeneral = {
         });
     },
 
+    /* ---- Default model chain (ModelChain component) ---- */
+    _modelChain: null,
+
+    _getModelChain() {
+        if (this._modelChain) return this._modelChain;
+        const root = document.getElementById("default-model-chain");
+        if (!root || !window.ModelChain) return null;
+        this._modelChain = new ModelChain(root, {
+            eligible: (model) => !!model.enabled,
+            onSave: async ({ mainId, fallbackIds }) => {
+                const res = await apiPost("/api/settings/batch", {
+                    settings: { default_model_id: mainId, default_model_fallback_ids: fallbackIds },
+                });
+                if (!res || res.success === false) throw new Error((res && res.error) || "Save failed");
+                if (res.errors && res.errors.length) throw new Error(res.errors.join("; "));
+                const r = res.results || {};
+                return {
+                    mainId: r.default_model_id || mainId,
+                    fallbackIds: Array.isArray(r.default_model_fallback_ids)
+                        ? r.default_model_fallback_ids : fallbackIds,
+                };
+            },
+        });
+        return this._modelChain;
+    },
+
+    _visionChain: null,
+
+    _getVisionChain() {
+        if (this._visionChain) return this._visionChain;
+        const root = document.getElementById("vision-model-chain");
+        if (!root || !window.ModelChain) return null;
+        this._visionChain = new ModelChain(root, {
+            mainLabel: "Primary",
+            mainEmptyText: "Auto-detect (first vision-capable model)",
+            requireMain: false,
+            eligible: (model) => !!model.enabled && !!model.vision_supported,
+            ineligibleLabel: "No vision",
+            onSave: async ({ mainId, fallbackIds }) => {
+                const res = await apiPost("/api/settings/batch", {
+                    settings: { vision_model_id: mainId, vision_fallback_model_ids: fallbackIds },
+                });
+                if (!res || res.success === false) throw new Error((res && res.error) || "Save failed");
+                if (res.errors && res.errors.length) throw new Error(res.errors.join("; "));
+                const r = res.results || {};
+                return {
+                    mainId: "vision_model_id" in r ? r.vision_model_id : mainId,
+                    fallbackIds: Array.isArray(r.vision_fallback_model_ids)
+                        ? r.vision_fallback_model_ids : fallbackIds,
+                };
+            },
+        });
+        return this._visionChain;
+    },
+
     _profile(profiles, key) {
         return (profiles || []).find((profile) => profile.profile_key === key) || null;
     },
@@ -248,11 +318,6 @@ window.settingsGeneral = {
             return el ? el.value : "";
         };
         return {
-            defaultModelId: val("default-model-select"),
-            defaultModelFallbackId: val("default-model-fallback-select"),
-            visionModelId: val("vision-model-select"),
-            visionFallbackModelId: val("vision-fallback-model-select"),
-            visionFallbackModel2Id: val("vision-fallback-model-2-select"),
             kbOrganizerModelId: val("kb-organizer-model-select"),
             classifierModelId: val("task-classifier-model-select"),
             cmpModelId: val("cmp-model-select"),
@@ -303,32 +368,10 @@ window.settingsGeneral = {
             "Use legacy CMP classifier",
             "decision",
         );
-        fill("default-model-select", models, current.defaultModelId, "— Select model —");
-        fill(
-            "default-model-fallback-select",
-            enabled,
-            current.defaultModelFallbackId,
-            "None / disabled",
-        );
-        fill(
-            "vision-model-select",
-            enabled.filter((m) => m.vision_supported),
-            current.visionModelId,
-            "Auto-detect (first vision-capable model)",
-        );
-        const visionModels = enabled.filter((m) => m.vision_supported);
-        fill(
-            "vision-fallback-model-select",
-            visionModels,
-            current.visionFallbackModelId,
-            "No fallback",
-        );
-        fill(
-            "vision-fallback-model-2-select",
-            visionModels,
-            current.visionFallbackModel2Id,
-            "No fallback",
-        );
+        const chain = this._getModelChain();
+        if (chain) chain.setModels(models);
+        const vision = this._getVisionChain();
+        if (vision) vision.setModels(models);
         fill(
             "kb-organizer-model-select",
             enabled,

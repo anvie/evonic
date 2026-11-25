@@ -177,9 +177,7 @@ def _get_classifier_client(setting_key: str = 'task_classifier_model_id') -> LLM
             _logger.warning("Classifier model_id '%s' not found, falling back to default", model_id)
     except Exception as e:
         _logger.warning("Could not load classifier model config: %s", e)
-    fallback_model = _global_fallback_model()
-    if fallback_model:
-        return LLMClient(fallback_model_config=fallback_model)
+    # The default-model client walks the whole global fallback chain itself.
     return LLMClient()
 
 
@@ -187,17 +185,16 @@ def _global_fallback_model() -> Optional[dict]:
     """Return the system-wide fallback model row, or None when unset.
 
     Generic LLM callers (classifiers, CMP) have no per-agent fallback, so they
-    share the default_model_fallback_id setting.  LLMClient resolves that on
+    share the first entry of the global fallback chain.  LLMClient resolves that on
     its own for the default model; passing it explicitly also covers
     classifiers pinned to a specific model, which would otherwise have no
     failover at all.
     """
     try:
         from models.db import db
-        fallback_id = db.get_setting('default_model_fallback_id', '')
-        if not fallback_id:
-            return None
-        return db.get_model_by_id(fallback_id)
+        from backend.default_model_chain import get_fallback_models
+        chain = get_fallback_models(db)
+        return chain[0] if chain else None
     except Exception as e:
         _logger.warning('Could not load global fallback model: %s', e)
         return None

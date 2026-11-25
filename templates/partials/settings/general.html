@@ -3,6 +3,7 @@
    handles persistence and per-row feedback. Toggles are written inline
    (same .dyn-toggle pattern as partials/toggle.html) so they can carry
    data attributes. #}
+{% from 'partials/model_chain.html' import model_chain %}
 
 <!-- ================= Appearance ================= -->
 <section class="setting-group subpage" id="group-appearance" data-page="general-appearance">
@@ -64,89 +65,13 @@
     </div>
     <p class="setting-group-desc">Default, fallback and vision models, and how tasks are routed.</p>
     <div class="setting-group-body">
-        <div class="setting-row stacked" data-search="default llm model global agents evaluations">
-            <div class="setting-row-text">
-                <div class="setting-row-title">Default LLM Model</div>
-                <div class="setting-row-desc">
-                    Global default model for all agents and evaluations.
-                </div>
-            </div>
-            <div class="setting-row-control">
-                <select id="default-model-select" class="setting-select"
-                        data-setting-key="default_model_id">
-                    <option value="">Loading models…</option>
-                </select>
-                <span class="save-status" aria-live="polite"></span>
-            </div>
-        </div>
-        <div class="setting-row stacked" data-search="default model fallback backup reliability">
-            <div class="setting-row-text">
-                <div class="setting-row-title">Default Model Fallback</div>
-                <div class="setting-row-desc">Backup model used when the global default model fails.</div>
-            </div>
-            <div class="setting-row-control">
-                <select id="default-model-fallback-select" class="setting-select"
-                        data-setting-key="default_model_fallback_id">
-                    <option value="">Loading models...</option>
-                </select>
-                <span class="save-status" aria-live="polite"></span>
-            </div>
-        </div>
-        <section class="setting-subgroup vision-models-group" aria-label="Vision Models">
-            <div class="setting-subgroup-head">
-                <i data-lucide="eye" aria-hidden="true"></i>
-                <h4>Vision models</h4>
-                <p>Primary model and fallback order used to describe images.</p>
-            </div>
-            <div class="setting-subgroup-body">
-                <div class="setting-row stacked" data-search="vision primary fallback describe image analysis multimodal">
-                    <div class="setting-row-text">
-                        <div class="setting-row-title">Vision Model (Primary)</div>
-                        <div class="setting-row-desc">
-                            First vision-capable model used by the <code>describe_image</code>
-                            tool. Only models with vision support are listed.
-                        </div>
-                    </div>
-                    <div class="setting-row-control">
-                        <select id="vision-model-select" class="setting-select"
-                                data-setting-key="vision_model_id">
-                            <option value="">Loading models…</option>
-                        </select>
-                        <span class="save-status" aria-live="polite"></span>
-                    </div>
-                </div>
-                <div class="setting-row stacked" data-search="vision fallback 1 model secondary backup describe image">
-                    <div class="setting-row-text">
-                        <div class="setting-row-title">Vision Fallback 1</div>
-                        <div class="setting-row-desc">
-                            First backup model used when the primary vision model fails.
-                        </div>
-                    </div>
-                    <div class="setting-row-control">
-                        <select id="vision-fallback-model-select" class="setting-select"
-                                data-setting-key="vision_fallback_model_id">
-                            <option value="">Loading models…</option>
-                        </select>
-                        <span class="save-status" aria-live="polite"></span>
-                    </div>
-                </div>
-                <div class="setting-row stacked" data-search="vision fallback 2 model tertiary backup describe image">
-                    <div class="setting-row-text">
-                        <div class="setting-row-title">Vision Fallback 2</div>
-                        <div class="setting-row-desc">
-                            Second backup model used when the primary model and Fallback 1 fail.
-                        </div>
-                    </div>
-                    <div class="setting-row-control">
-                        <select id="vision-fallback-model-2-select" class="setting-select"
-                                data-setting-key="vision_fallback_model_2_id">
-                            <option value="">Loading models…</option>
-                        </select>
-                        <span class="save-status" aria-live="polite"></span>
-                    </div>
-                </div>
-            </div>
-        </section>
+        {{ model_chain('default-model-chain', 'Default model & fallbacks',
+                       'The main model is used by every agent and evaluation that has no model of its own. If it fails, the fallbacks are tried from top to bottom.',
+                       fallbacks=5, search='default llm model fallback chain backup reliability global agents evaluations') }}
+        {{ model_chain('vision-model-chain', 'Vision models',
+                       'Used by the describe_image tool. If the primary model fails, the fallbacks are tried from top to bottom. Leave it empty to use the first vision-capable model. Only models with vision support can be picked.',
+                       fallbacks=5, main_label='Primary',
+                       search='vision primary fallback describe image analysis multimodal') }}
         <div class="setting-row stacked" data-search="kb organizer model knowledge base memory vault background sub-agent">
             <div class="setting-row-text">
                 <div class="setting-row-title">KB Organizer Model</div>

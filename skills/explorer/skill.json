@@ -14,20 +14,29 @@
     {
       "name": "model_id",
       "label": "Explorer model",
-      "type": "select",
-      "options_source": "models",
-      "empty_label": "Global default model",
+      "type": "model_chain",
+      "fallbacks": 5,
+      "fallbacks_var": "fallback_model_ids",
+      "legacy_fallback_var": "fallback_model_id",
+      "inherit_label": "Global default model",
       "default": "",
-      "description": "The LLM model explorer sub-agents use. Leave on the global default to inherit the platform default model."
+      "description": "The model explorer sub-agents use, with fallbacks tried in order when it fails. On the global default, explorers follow the default model and fallbacks from System Settings."
+    },
+    {
+      "name": "fallback_model_ids",
+      "label": "Explorer fallback models",
+      "type": "model_list",
+      "hidden": true,
+      "default": [],
+      "description": "Ordered fallback model ids, edited through the Explorer model picker."
     },
     {
       "name": "fallback_model_id",
-      "label": "Explorer fallback model",
-      "type": "select",
-      "options_source": "models",
-      "empty_label": "No fallback",
+      "label": "Explorer fallback model (legacy)",
+      "type": "string",
+      "hidden": true,
       "default": "",
-      "description": "Model used if the primary explorer model fails. Leave as 'No fallback' to disable."
+      "description": "First fallback model id, kept in sync for older readers."
     },
     {
       "name": "system_prompt",
