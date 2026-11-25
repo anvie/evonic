@@ -60,6 +60,15 @@
         if (messages) messages.scrollTop = messages.scrollHeight;
     }
 
+    // A card that opened while the user was away (or before the history finished
+    // rendering) is off-screen on return; bring it into view again once they are back.
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && cards.size) setTimeout(revealDock, 150);
+    });
+    window.addEventListener('focus', () => {
+        if (cards.size) setTimeout(revealDock, 150);
+    });
+
     // While a question is open the agent is blocked on it, so the composer is
     // locked: answering or cancelling the card is the only way forward.
     function lockComposer(locked) {
@@ -92,7 +101,14 @@
         const open = list.children.length > 0;
         const wasHidden = dock.hidden;
         dock.hidden = !open;
-        if (open) { pinToEnd(); if (wasHidden) revealDock(); }
+        if (open) {
+            pinToEnd();
+            if (wasHidden) {
+                revealDock();
+                // History bubbles may still be rendering; scroll again once layout settles.
+                setTimeout(revealDock, 300);
+            }
+        }
         lockComposer(open);
         setWaitingLabel(open);
     }
