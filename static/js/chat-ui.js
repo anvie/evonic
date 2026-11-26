@@ -2032,7 +2032,7 @@ function buildMessageBubble(role, content, opts = {}, cfg = {}) {
         if ($exit.length && typeof cfg.onAskAgent === 'function') {
             $exit.after(' ', $('<button type="button">').text('ask agent to check')
                 .attr('title', 'Quote this command and its output in the message box')
-                .css({ 'margin-left': '0.5rem', 'font-size': '0.75rem', 'color': '#4fb34f', 'text-decoration': 'underline' })
+                .css({ 'margin-left': '0.5rem', 'font-size': '0.75rem', 'color': '#4fb34f', 'text-decoration': 'underline', 'cursor': 'pointer' })
                 .on('click', () => cfg.onAskAgent(content)));
         }
         $bubble.find('img').each(function() {
