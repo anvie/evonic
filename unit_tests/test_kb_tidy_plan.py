@@ -117,6 +117,17 @@ def test_existing_links_are_not_reported_as_unlinked(tmp_path):
     assert not [i for i in P.find_issues(docs, ["a"]) if "UNLINKED" in i]
 
 
+def test_mentions_inside_code_are_not_reported_as_unlinked(tmp_path):
+    kb = str(tmp_path)
+    _write(kb, "a", "Alpha", "token `Bearer` dirotasi\n```\nBearer=1\n```\n")
+    _write(kb, "bearer", "Bearer", "Token.")
+    docs = P.scan_vault(kb)
+    assert not [i for i in P.find_issues(docs, ["a"]) if "UNLINKED" in i]
+    _write(kb, "b", "Beta", "token Bearer dirotasi")
+    docs = P.scan_vault(kb)
+    assert [i for i in P.find_issues(docs, ["b"]) if "UNLINKED" in i]
+
+
 def test_render_plan_lists_batch_neighbours_and_issues(tmp_path):
     kb = str(tmp_path)
     _write(kb, "a", "Alpha", "x [[Missing]]")

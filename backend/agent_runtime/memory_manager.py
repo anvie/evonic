@@ -164,7 +164,7 @@ NAMING — the `title` is the subject's PURE canonical name ONLY. Put nicknames,
   - title "Dewi Anggraini Putri", aliases ["DAP"]
 The aliases let other names still resolve to this one doc.
 
-LINKING IS MANDATORY — every named entity you mention in a `body` MUST be wrapped in an inline [[Wiki Link]]: people, places, organizations, companies, products, venues, events. This is how the knowledge graph connects — a body with no links is WRONG. ESPECIALLY every PERSON's name MUST be a [[link]] — never leave a person as plain text. Link the entity's canonical name, e.g. "User bertemu [[Budi Santoso]] di [[Jakarta]] di kantor [[Acme Corp]]." Do NOT wrap "User" in a link.
+LINKING IS MANDATORY — every named entity you mention in a `body` MUST be wrapped in an inline [[Wiki Link]]: people, places, organizations, companies, products, venues, events. This is how the knowledge graph connects — a body with no links is WRONG. ESPECIALLY every PERSON's name MUST be a [[link]] — never leave a person as plain text. Link the entity's canonical name, e.g. "User bertemu [[Budi Santoso]] di [[Jakarta]] di kantor [[Acme Corp]]." Do NOT wrap "User" in a link. Never place a link inside a backtick code span or fenced code block (identifiers, env vars, model ids, paths stay as code).
 
 LINKING EXCEPTIONS — do NOT link in these cases:
   - DISAMBIGUATION / NOTES about a DIFFERENT entity with a similar name. If a doc mentions another person only to clarify "this is NOT the same person", leave it as plain text — linking would create a false connection in the knowledge graph.
@@ -297,6 +297,7 @@ IMPORTANT RULES:
 - Always read_file a file BEFORE using str_replace on it — you need the exact current text.
 - For retro-linking, make old_str unique enough to avoid false matches (include surrounding words if the name alone appears multiple times).
 - Do NOT wrap "User" in [[links]] — "User" refers to the assistant's owner, not a knowledge entity.
+- NEVER put a [[link]] inside a backtick code span, a fenced code block, or the frontmatter: identifiers, env vars, model ids and paths such as `X_BEARER_TOKEN` stay verbatim code (do not strip the backticks either). A detected issue that points at such a mention is a false positive — skip it.
 - NEVER link entities just because they share a name fragment. "Budi Santoso" and "Ahmad Budi Pratama" are DIFFERENT people — linking one to the other creates a false connection. Only link when a real-world relationship exists.
 - Do NOT link names mentioned only for disambiguation/clarification (e.g. "bukan yang sama dengan X"). A [[link]] means the entities are genuinely related.
 - When adding aliases, preserve the existing YAML list format — append to the list, don't replace it."""

@@ -321,6 +321,18 @@ def test_link_in_doc_skips_already_linked(brain):
     assert W.link_in_doc(AGENT, "x", "ERPNext", "ERPNext") is False   # no plain mention → no-op
 
 
+def test_link_in_doc_skips_code_spans_and_fences(brain):
+    body = "token `X_BEARER_TOKEN` perlu dirotasi\n```\nX_BEARER_TOKEN=1\n```\nlalu X_BEARER_TOKEN dipakai"
+    W.upsert_doc(AGENT, title="X", doc_type="note", description="d", body=body)
+    assert W.link_in_doc(AGENT, "x", "X_BEARER_TOKEN", "X_BEARER_TOKEN") is True
+    out = W.read_doc(AGENT, "x")["body"]
+    assert "`X_BEARER_TOKEN` perlu" in out and "X_BEARER_TOKEN=1" in out
+    assert "lalu [[X_BEARER_TOKEN]] dipakai" in out
+
+    W.upsert_doc(AGENT, title="Y", doc_type="note", description="d", body="hanya `X_BEARER_TOKEN` di sini")
+    assert W.link_in_doc(AGENT, "y", "X_BEARER_TOKEN", "X_BEARER_TOKEN") is False
+
+
 def test_link_in_doc_no_partial_word_match(brain):
     W.upsert_doc(AGENT, title="X", doc_type="note", description="d", body="the ERP module only")
     assert W.link_in_doc(AGENT, "x", "ERPNext", "ERPNext") is False   # 'ERP' must not match

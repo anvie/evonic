@@ -29,6 +29,8 @@ _MIN_NAME_LEN = 3         # shorter names are too ambiguous for plain-text match
 _MTIME_EPS = 0.001
 
 _LINK_RE = re.compile(r'\[\[([^\]\n]+)\]\]')
+# Fenced blocks (closed, or open to the end of the doc) and inline code spans.
+_CODE_RE = re.compile(r'^(```|~~~).*?(?:^\1|\Z)|`[^`\n]+`', re.DOTALL | re.MULTILINE)
 _PAREN_TITLE_RE = re.compile(r'\([^)]+\)\s*$')
 _SKIP_NAMES = frozenset({"user", "assistant", "note", "notes", "summary"})
 
@@ -200,9 +202,15 @@ def closest_docs(target: str, docs: Dict[str, Doc], n: int = 2) -> List[Doc]:
     return [d for _, d in scored[:n]]
 
 
+def blank_code(body: str) -> str:
+    """Body with code spans and fenced blocks blanked (same length), so names
+    inside code (identifiers, paths, model ids) are never taken for prose."""
+    return _CODE_RE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group(0)), body)
+
+
 def _unlinked_body(body: str) -> str:
-    """Body with existing [[links]] blanked so plain-text matching skips them."""
-    return _LINK_RE.sub(lambda m: ' ' * len(m.group(0)), body)
+    """Body with existing [[links]] and code blanked so plain-text matching skips them."""
+    return _LINK_RE.sub(lambda m: ' ' * len(m.group(0)), blank_code(body))
 
 
 @functools.lru_cache(maxsize=2048)

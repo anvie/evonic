@@ -592,8 +592,10 @@ def _first_unlinked_span(body: str, text: str):
     ``text`` in ``body``, or None. Boundaries reject partial-word hits ("ERP" in
     "ERPNext") and any mention already adjacent to ``[``/``]``/``|`` (i.e. already a
     link or alias), so a re-link is never attempted on text that's already linked.
+    Mentions inside code spans or fenced blocks are skipped: they are code, not prose.
     """
-    m = re.search(r'(?<![\w\[|])' + re.escape(text) + r'(?![\w\]|])', body)
+    from backend.agent_runtime.kb_tidy_plan import blank_code
+    m = re.search(r'(?<![\w\[|])' + re.escape(text) + r'(?![\w\]|])', blank_code(body))
     return (m.start(), m.end()) if m else None
 
 
