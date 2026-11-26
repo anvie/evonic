@@ -80,19 +80,85 @@ die() {
     exit 1
 }
 
-banner() {
-    printf '%s' "$accent"
-    cat << 'EOBANNER'
+# Mascot and wordmark, coloured top to bottom with the colour of the day
+# (the same gradient as the evonic CLI banner). Truecolor when the terminal
+# has it, 256 colours otherwise, plain when piped.
+gradient() {
+    if [ -z "$FANCY" ]; then cat; return; fi
+    tc=0
+    case "$COLORTERM" in truecolor|24bit) tc=1 ;; esac
+    awk -v day="$(date +%u)" -v tc="$tc" '
+        function hex(s,   i, v, c) {
+            v = 0
+            for (i = 1; i <= length(s); i++) { c = index("0123456789abcdef", substr(s, i, 1)) - 1; v = v * 16 + c }
+            return v
+        }
+        BEGIN {
+            split("ff7a7a c0264f e08bff 6d3bd2 7be0a4 1d8f6a ffd76a e0802b 7fb2ff 4a4fe0 7ff0ff 2a8fd6 ffe9a0 e0a42b", p, " ")
+            top = p[2 * day - 1]; bot = p[2 * day]
+        }
+        { line[NR] = $0 }
+        END {
+            n = NR > 1 ? NR - 1 : 1
+            for (i = 1; i <= NR; i++) {
+                if (line[i] ~ /^[ ]*$/) { print line[i]; continue }
+                t = (i - 1) / n
+                r = int(hex(substr(top, 1, 2)) + (hex(substr(bot, 1, 2)) - hex(substr(top, 1, 2))) * t + 0.5)
+                g = int(hex(substr(top, 3, 2)) + (hex(substr(bot, 3, 2)) - hex(substr(top, 3, 2))) * t + 0.5)
+                b = int(hex(substr(top, 5, 2)) + (hex(substr(bot, 5, 2)) - hex(substr(top, 5, 2))) * t + 0.5)
+                if (tc) printf "\033[38;2;%d;%d;%dm%s\033[0m\n", r, g, b, line[i]
+                else printf "\033[38;5;%dm%s\033[0m\n", 16 + 36 * int(r / 255 * 5 + 0.5) + 6 * int(g / 255 * 5 + 0.5) + int(b / 255 * 5 + 0.5), line[i]
+            }
+        }'
+}
 
+art_full() {
+    cat << 'EOART'
+           ░░░░░░░░░░░░░░░░░░░░░░░░
+         ░░▒▒███████████████████▒▒░░
+       ░░▒▒██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓██▒▒░░      ___________                  .__.
+       ░░▒▒██▓█████████████████▓██▒▒░░      \_   _____/__  ______   ____ |__| _____
+       ░░▒▒██▓█████ ██  ██ ████▓██▒▒░░       |    __)_\  \/ /    \ /    \|  |/ ____\
+       ░░▒▒██▓█████████████████▓██▒▒░░       |        \\   (  ()  )   |  \  \  \____
+       ░░▒▒███████████████████████▒▒░░      /_______  / \_/ \____/|___|  /__|\___  /
+         ░░▒▒░░░░░░░░░░░░░░░░░░▒▒░░                 \/                 \/        \/
+          ▓▓ ░░▓▓ ░░ ▓▓ ░░▓▓ ░░▓▓
+        ▒▒ ░░ ▒▒ ▓▓  ▒▒  ▓▓   ▒▒▒
+          ░░ ░▒░  ▓▓  ▒▒  ▓▓  ░▓
+            ▒▒ ▒▒░▒▒  ▒▒░░▒  ▒▒
+              ░░    ▓▓▓▓    ▓▓
+                ▒▒        ▒▒
+EOART
+}
+
+art_wordmark() {
+    cat << 'EOART'
   ___________                  .__.
   \_   _____/__  ______   ____ |__| ____
    |    __)_\  \/ /    \ /    \|  |/ ___\
    |        \\   (   O  )   |  \  \  \____
   /_______  / \_/ \____/|___|  /__|\___  /
           \/                 \/        \/
-EOBANNER
-    printf '%s\n' "$reset"
-    printf '  %sEvonic Platform Installer%s  %s·  https://evonic.dev%s\n\n' "$bold" "$reset" "$dim" "$reset"
+EOART
+}
+
+banner() {
+    cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
+    printf '\n'
+    # The full mascot needs about 90 columns; narrower terminals get the wordmark.
+    if [ "$cols" -ge 90 ] 2>/dev/null; then art_full; else art_wordmark; fi | gradient
+    printf '\n'
+}
+
+# Title and target in a small card, like the result card at the end.
+welcome_card() {
+    card_top
+    card_line "Evonic Platform Installer" "$bold"
+    card_line "https://evonic.dev" "$dim"
+    card_sep
+    card_kv "Install to" "$(short_path "$EVONIC_HOME" $((CARD_W - 11)))" "$accent"
+    card_bottom
+    printf '\n'
 }
 
 # Run a long command with a spinner. Output goes to $TASK_LOG so the terminal
@@ -472,6 +538,7 @@ prompt_path() {
 # ── Result card ──────────────────────────────────────────────────────────────
 CARD_W=58
 card_top()    { printf '  %s╭%s╮%s\n' "$dim" "$(hline $((CARD_W + 2)))" "$reset"; }
+card_sep()    { printf '  %s├%s┤%s\n' "$dim" "$(hline $((CARD_W + 2)))" "$reset"; }
 card_bottom() { printf '  %s╰%s╯%s\n' "$dim" "$(hline $((CARD_W + 2)))" "$reset"; }
 card_blank()  { printf '  %s│%s %s %s│%s\n' "$dim" "$reset" "$(spaces "$CARD_W")" "$dim" "$reset"; }
 # card_line "plain text" [style]  — text is padded before it is coloured.
@@ -528,8 +595,7 @@ show_result() {
 # ── Main ─────────────────────────────────────────────────────────────────────
 main() {
     banner
-
-    printf '  %sInstall to%s %s%s%s\n' "$dim" "$reset" "$accent" "$(short_path "$EVONIC_HOME")" "$reset"
+    welcome_card
     ask "  ${bold}?${reset} Continue? ${dim}[Y/n]${reset} "
     case "$REPLY" in
         [nN]|[nN][oO]) die "Installation cancelled." ;;
