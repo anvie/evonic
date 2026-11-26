@@ -148,6 +148,18 @@ def test_executor_routes_learned_tool_to_script(skills_root, monkeypatch):
     assert calls[0]["env"]["ARG_SOURCE"] == "a.md"
 
 
+def test_executor_routes_a_learned_tool_loaded_mid_turn(skills_root, monkeypatch):
+    """use_skill adds the tool id after the executor was built."""
+    _write_skill(skills_root, "agent-a", "make-pdf", tools=["create_pdf"],
+                 scripts={"create_pdf.sh": "echo hi"})
+    monkeypatch.setattr(bash, "execute", lambda agent, args: {"exit_code": 0})
+    agent_context = {"id": "agent-a", "assigned_tool_ids": ["bash"]}
+    executor = tool_registry.get_real_executor(agent_context)
+    agent_context["assigned_tool_ids"].append("skill:make-pdf:create_pdf")
+
+    assert executor("create_pdf", {}) == {"exit_code": 0}
+
+
 def test_export_then_import_into_another_agent(skills_root, tmp_path):
     _write_skill(skills_root, "agent-a", "make-pdf", tools=["create_pdf"],
                  scripts={"create_pdf.sh": "echo hi"})
