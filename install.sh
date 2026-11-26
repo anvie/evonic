@@ -167,32 +167,144 @@ open_url() {
 }
 
 # ── Step 1: prerequisites ────────────────────────────────────────────────────
-check_prereqs() {
-    missing=""
-    for cmd in git python3; do
-        command -v "$cmd" >/dev/null 2>&1 || missing="$missing $cmd"
+# What is wrong with the system, as plain checks. They run the tools instead of
+# only looking them up: on macOS /usr/bin/python3 and /usr/bin/git can be stubs
+# that fail until the Command Line Tools are installed.
+have_git()     { git --version >/dev/null 2>&1; }
+runs_python()  { python3 -c 'import sys' >/dev/null 2>&1; }
+new_python()   { python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; }
+have_venv()    { python3 -c 'import venv, ensurepip' >/dev/null 2>&1; }
+
+# Find the system package manager (sets PM, empty when there is none).
+detect_pm() {
+    PM=""
+    if [ "$(uname -s)" = "Darwin" ]; then
+        command -v brew >/dev/null 2>&1 && PM="brew"
+        return 0
+    fi
+    for c in apt-get dnf yum pacman zypper apk; do
+        if command -v "$c" >/dev/null 2>&1; then PM="$c"; return 0; fi
     done
-    if [ -n "$missing" ]; then
-        row_fail "Prerequisites" "missing:$missing"
-        die "Install$missing and re-run."
+    return 0
+}
+
+# The command that installs what is missing (sets PKGS and PM_CMD).
+#   $1 = need git (1/0)   $2 = need python (1/0)
+pm_command() {
+    need_git="$1"; need_py="$2"
+    PKGS=""; PM_PRE=""
+    case "$PM" in
+        brew)    [ "$need_py" = 1 ] && PKGS="python"
+                 [ "$need_git" = 1 ] && PKGS="$PKGS git"
+                 PM_CMD="brew install" ;;
+        apt-get) [ "$need_py" = 1 ] && PKGS="python3 python3-venv python3-pip"
+                 [ "$need_git" = 1 ] && PKGS="$PKGS git"
+                 PM_PRE="apt-get update -qq"
+                 PM_CMD="DEBIAN_FRONTEND=noninteractive apt-get install -y -qq" ;;
+        dnf|yum) [ "$need_py" = 1 ] && PKGS="python3"
+                 [ "$need_git" = 1 ] && PKGS="$PKGS git"
+                 PM_CMD="$PM install -y -q" ;;
+        pacman)  [ "$need_py" = 1 ] && PKGS="python"
+                 [ "$need_git" = 1 ] && PKGS="$PKGS git"
+                 PM_CMD="pacman -S --noconfirm --needed" ;;
+        zypper)  [ "$need_py" = 1 ] && PKGS="python3"
+                 [ "$need_git" = 1 ] && PKGS="$PKGS git"
+                 PM_CMD="zypper --non-interactive install" ;;
+        apk)     [ "$need_py" = 1 ] && PKGS="python3 py3-pip"
+                 [ "$need_git" = 1 ] && PKGS="$PKGS git"
+                 PM_CMD="apk add --quiet" ;;
+    esac
+    PKGS="${PKGS# }"
+    return 0
+}
+
+# Offer to install what is missing, and do it when the user agrees.
+#   $1 = what is missing (for the message)   $2 = need git   $3 = need python
+offer_install() {
+    what="$1"          # e.g. "python3, git"
+    detect_pm
+    if [ -z "$PM" ]; then
+        row_fail "Prerequisites" "missing: $what"
+        if [ "$(uname -s)" = "Darwin" ]; then
+            note "Install Homebrew (https://brew.sh), then run: brew install python git"
+            note "or install Apple's tools with: xcode-select --install"
+        else
+            note "No supported package manager found. Install $what and re-run."
+        fi
+        die "Missing prerequisites."
+    fi
+    pm_command "$2" "$3"
+
+    # Everything except Homebrew needs root: use sudo unless we already are root.
+    SUDO=""
+    if [ "$PM" != "brew" ] && [ "$(id -u)" -ne 0 ]; then
+        command -v sudo >/dev/null 2>&1 || {
+            row_fail "Prerequisites" "missing: $what"
+            note "Run as root: ${PM_PRE:+$PM_PRE && }$PM_CMD $PKGS"
+            die "Missing prerequisites."
+        }
+        SUDO="sudo"
+    fi
+    if [ "$PM" = "brew" ] && [ "$(id -u)" -eq 0 ]; then
+        row_fail "Prerequisites" "missing: $what"
+        note "Homebrew cannot run as root. Re-run as your normal user."
+        die "Missing prerequisites."
     fi
 
-    # The codebase uses Python 3.10+ type union syntax (X | Y).
-    # Python 3.9 is the absolute minimum supported version.
-    pyver=$(python3 --version 2>&1 | awk '{print $2}')
-    major=$(echo "$pyver" | cut -d. -f1)
-    minor=$(echo "$pyver" | cut -d. -f2)
-    if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 9 ]; }; then
-        row_fail "Prerequisites" "Python $pyver"
-        die "Python 3.9+ is required."
+    row_warn "Prerequisites" "missing: $what"
+    note "Evonic can install $PKGS with $PM:"
+    [ -n "$PM_PRE" ] && note "  ${SUDO:+$SUDO }$PM_PRE"
+    note "  ${SUDO:+$SUDO }$PM_CMD $PKGS"
+
+    # Unattended runs install only when that needs no password.
+    if [ -n "$EVONIC_YES" ]; then
+        if [ -n "$SUDO" ] && ! sudo -n true 2>/dev/null; then
+            die "sudo needs a password. Run the command above, then re-run the installer."
+        fi
+    else
+        ask "  ${bold}?${reset} Install now? ${dim}[Y/n]${reset} "
+        case "$REPLY" in
+            [nN]|[nN][oO]) die "Install $what, then re-run the installer." ;;
+        esac
+        # Ask for the password up front, outside the spinner.
+        if [ -n "$SUDO" ]; then
+            sudo -v || die "Could not get administrator access."
+        fi
     fi
 
-    # The installer needs the venv module (with ensurepip), not a system pip3.
-    if ! python3 -c 'import venv, ensurepip' 2>/dev/null; then
-        row_fail "Prerequisites" "Python venv module is missing"
-        die "Install it (e.g. sudo apt install python3-venv) and re-run."
+    if [ -n "$SUDO" ]; then
+        task "Packages" "installing $PKGS" sudo -n sh -c "${PM_PRE:+$PM_PRE && }$PM_CMD $PKGS" \
+            || task_failed "Packages" "could not install $PKGS"
+    else
+        task "Packages" "installing $PKGS" sh -c "${PM_PRE:+$PM_PRE && }$PM_CMD $PKGS" \
+            || task_failed "Packages" "could not install $PKGS"
     fi
-    row_ok "Prerequisites" "git · Python $pyver · venv"
+    hash -r 2>/dev/null || true
+    row_ok "Packages" "$PKGS installed"
+}
+
+check_prereqs() {
+    need_git=0; need_py=0; problems=""
+    have_git || { need_git=1; problems="git"; }
+    if ! runs_python; then
+        need_py=1; problems="${problems:+$problems, }python3"
+    elif ! new_python; then
+        need_py=1; problems="${problems:+$problems, }Python 3.9+ (found $(python3 --version 2>&1 | awk '{print $2}'))"
+    elif ! have_venv; then
+        need_py=1; problems="${problems:+$problems, }the Python venv module"
+    fi
+
+    if [ -n "$problems" ]; then
+        offer_install "$problems" "$need_git" "$need_py"
+    fi
+
+    # Whatever happened above, the system has to be usable now.
+    have_git || die "git is still not available. Install it and re-run."
+    runs_python || die "python3 is still not available. Install it and re-run."
+    new_python || die "Python 3.9+ is required. Found: $(python3 --version 2>&1)"
+    have_venv || die "The Python venv module is missing. Install it (e.g. sudo apt install python3-venv) and re-run."
+
+    row_ok "Prerequisites" "git · Python $(python3 --version 2>&1 | awk '{print $2}') · venv"
 }
 
 # --- Fix remote fetch config so branches and tags are tracked ---
@@ -488,4 +600,5 @@ main() {
     show_result "$url" "$started" "$setup_url"
 }
 
-main
+# Sourcing the file for tests (EVONIC_NO_MAIN=1) defines the functions only.
+[ -n "$EVONIC_NO_MAIN" ] || main
