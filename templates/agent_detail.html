@@ -3185,7 +3185,7 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=81" defer></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=82" defer></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=15" defer></script>
 <script src="{{ url_for('static', filename='js/state-ui.js') }}?v=16" defer></script>
 <script src="{{ url_for('static', filename='js/ask-user.js') }}?v=4" defer></script>
@@ -10649,7 +10649,25 @@ function _createChatUI() {
         assistantBubbleClass: 'bg-gray-200 text-gray-800 dark:bg-[#152A3A] border dark:border-[#1B394F] dark:text-gray-100',
         agentAvatarUrl: '/api/agents/' + encodeURIComponent(AGENT_ID) + '/avatar?size=small',
         agentId: AGENT_ID,
+        onAskAgent: quoteBashOutputToComposer,
     });
+}
+
+// "ask agent to check" under a failed !command: the agent never sees !commands,
+// so quote the command and its output into the composer and let the user add context.
+function quoteBashOutputToComposer(content) {
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    const quote = String(content || '').split('\n')
+        .filter(line => !/^```/.test(line))
+        .map(line => '> ' + line.replace(/^_(\(exit code -?\d+\))_$/, '$1'))
+        .join('\n');
+    const draft = input.value.trim();
+    setChatBashMode(false);   // a quote is a message for the agent, not a command to run
+    input.value = quote + '\n\n' + (draft ? draft : '');
+    chatInputChanged(input);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
 }
 
 $(function () {
