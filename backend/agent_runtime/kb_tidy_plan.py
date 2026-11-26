@@ -77,12 +77,12 @@ def _link_target(raw: str) -> str:
 
 
 def scan_vault(kb_dir: str) -> Dict[str, Doc]:
-    """Read every ``.md`` doc under *kb_dir* (skipping dot dirs and ``inbox``)."""
+    """Read every ``.md`` doc under *kb_dir* (skipping dot dirs, ``inbox`` and ``privnt``)."""
     docs: Dict[str, Doc] = {}
     if not kb_dir or not os.path.isdir(kb_dir):
         return docs
     for root, dirs, fnames in os.walk(kb_dir):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != 'inbox']
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('inbox', 'privnt')]
         for fn in sorted(fnames):
             if not fn.endswith('.md') or fn.startswith('.'):
                 continue
