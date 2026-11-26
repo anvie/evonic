@@ -896,7 +896,8 @@ def main():
     args = parser.parse_args()
 
     if args.command is None:
-        print(EVONIC_BANNER)
+        from cli.commands import print_motd
+        print_motd()
         parser.print_help()
         sys.exit(0)
 
