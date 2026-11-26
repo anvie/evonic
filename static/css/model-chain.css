@@ -1,4 +1,4 @@
-/* ModelChain — "main model + ordered fallbacks" table + picker modal.
+/* ModelChain — "main model + ordered fallbacks" card + picker modal.
    Markup is built by js/model-chain.js (root from partials/model_chain.html).
    Self-contained: only the global tokens from evonic.css are required; the
    --st-* settings tokens are used when present, with fallbacks otherwise. */
@@ -68,7 +68,7 @@ html.dark .mc-btn-primary:hover:not(:disabled) {
 }
 .mc-head {
     width: 100%;
-    max-width: 640px;  /* same as .mc-table-wrap */
+    max-width: 640px;  /* same as .mc-card */
     display: flex;
     align-items: flex-start;
     gap: 12px 20px;
@@ -88,78 +88,11 @@ html.dark .mc-btn-primary:hover:not(:disabled) {
     color: var(--st-err, #ef4444);
 }
 
-.mc-table-wrap {
-    width: 100%;
-    max-width: 640px;
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    overflow-x: auto;
-    background: var(--bg-secondary);
-}
-.mc-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.85rem;
-}
-.mc-table th,
-.mc-table td {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border-color);
-    color: var(--text-primary);
-    vertical-align: middle;
-}
-.mc-table tbody tr:last-child td {
-    border-bottom: none;
-}
 /* Main model row sits in <thead>, styled as the table's header band. */
-.mc-table thead tr.is-main > * {
-    padding-top: 12px;
-    padding-bottom: 12px;
-    background: var(--st-accent-soft, rgba(99, 102, 241, 0.10));
-    border-bottom: 1px solid var(--border-color);
-}
-.mc-table thead .mc-order {
-    font-weight: 400;
-    text-align: left;
-    color: var(--st-accent, #6366f1);
-}
-.mc-table thead .mc-model {
-    font-weight: 650;
-}
-.mc-col-order {
-    width: 44px;
-}
-.mc-col-role {
-    width: 120px;
-}
-.mc-col-provider {
-    width: 28%;
-}
-.mc-col-action {
-    width: 1%;
-}
-.mc-table .mc-action {
-    padding-top: 0;
-    padding-bottom: 0;
-    padding-left: 0;
-    text-align: right;
-    white-space: nowrap;
-}
-.mc-table .mc-action .mc-status {
-    margin-right: 8px;
-}
-.mc-table thead .mc-action {
-    padding-right: 10px;
-}
 .mc-btn-sm {
     min-height: 28px;
     padding: 4px 10px;
     font-size: 0.78rem;
-}
-.mc-order {
-    font-family: var(--st-mono, ui-monospace, monospace);
-    font-size: 0.78rem;
-    color: var(--text-muted);
 }
 .mc-role {
     display: inline-flex;
@@ -173,31 +106,185 @@ html.dark .mc-btn-primary:hover:not(:disabled) {
     border: 1px solid var(--border-color);
     background: var(--bg-card);
 }
-.is-main .mc-role {
-    color: var(--st-accent-strong, #4f46e5);
-    border-color: var(--st-accent, #6366f1);
-}
-.mc-model {
-    font-weight: 550;
-    color: var(--text-heading);
-    overflow-wrap: anywhere;
-}
-.mc-unset {
-    font-style: italic;
-    color: var(--text-muted);
-}
-.mc-provider {
-    color: var(--text-muted);
-}
 .mc-flag {
     margin-left: 6px;
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--st-err, #ef4444);
 }
-.mc-loading {
-    text-align: center;
+
+/* ---------- Chain card: main model on top, fallbacks as pills ---------- */
+.mc-card {
+    width: 100%;
+    max-width: 640px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+}
+.mc-card[hidden] {
+    display: none;
+}
+.mc-hero {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: linear-gradient(90deg, var(--st-accent-soft, rgba(99, 102, 241, 0.14)), transparent 75%);
+}
+.mc-hero.is-empty {
+    background: none;
+}
+.mc-badge {
+    flex-shrink: 0;
+    padding: 1px 9px;
+    border: 1px solid var(--st-accent, #6366f1);
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--st-accent-strong, #4f46e5);
+}
+html.dark .mc-badge {
+    color: #a5b4fc;
+}
+.mc-hero-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 4px 8px;
+    flex-wrap: wrap;
+}
+.mc-hero .mc-unset {
+    flex: 1 1 auto;
+}
+.mc-hero-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+.mc-model {
+    font-size: 1rem;
+    font-weight: 650;
+    color: var(--text-heading);
+    overflow-wrap: anywhere;
+}
+.mc-provider {
+    font-size: 0.78rem;
     color: var(--text-muted);
+}
+.mc-unset {
+    font-style: italic;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+.mc-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 12px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-card);
+}
+.mc-strip-label {
+    margin-right: 4px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.mc-none {
+    font-size: 0.78rem;
+    font-style: italic;
+    color: var(--text-muted);
+}
+.mc-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 3px 10px 3px 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    font-size: 0.78rem;
+    color: var(--text-primary);
+    transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.mc-pill:hover {
+    border-color: var(--text-muted);
+    background: var(--bg-hover);
+}
+.mc-pill.is-missing .mc-pill-name {
+    color: var(--text-secondary);
+}
+.mc-pill-n {
+    position: relative;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+    font: inherit;
+    font-size: 0.66rem;
+    font-weight: 650;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.mc-pill-n > * {
+    grid-area: 1 / 1;
+}
+.mc-pill-rm {
+    display: none;
+}
+.mc-pill-rm svg {
+    width: 11px;
+    height: 11px;
+}
+/* On hover the number turns into a remove button, so nothing is reserved. */
+.mc-pill:hover .mc-pill-num,
+.mc-pill-n:focus-visible .mc-pill-num {
+    display: none;
+}
+.mc-pill:hover .mc-pill-rm,
+.mc-pill-n:focus-visible .mc-pill-rm {
+    display: block;
+}
+.mc-pill-n:hover {
+    background: var(--st-err, #ef4444);
+    color: #fff;
+}
+.mc-pill-n:focus-visible {
+    outline: 2px solid var(--st-accent, #6366f1);
+    outline-offset: 1px;
+}
+.mc-pill-n:disabled {
+    cursor: progress;
+}
+.mc-pill-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mc-pill-prov {
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+.mc-count-inline {
+    margin-left: 4px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
 }
 
 /* ---------- Picker modal ---------- */
@@ -542,6 +629,10 @@ html.mc-modal-open {
 .mc-source-select {
     width: 100%;
 }
+/* Under the full-width combobox the card follows the same width. */
+.mc-source ~ .mc-card {
+    max-width: none;
+}
 .mc-source-default {
     padding: 8px 10px;
     font-size: 0.85rem;
@@ -549,9 +640,6 @@ html.mc-modal-open {
     background: var(--bg-card);
     border: 1px solid var(--border-input, var(--border-color));
     border-radius: 8px;
-}
-.mc-table-wrap[hidden] {
-    display: none;
 }
 
 /* Inherit mode: summary line under the combobox */
@@ -589,6 +677,9 @@ html.dark .mc-inherit-note a {
     .mc-head {
         flex-direction: column;
     }
+    .mc-hero {
+        flex-wrap: wrap;
+    }
     .mc-dialog-body {
         grid-template-columns: 1fr;
         overflow-y: auto;
@@ -599,9 +690,5 @@ html.dark .mc-inherit-note a {
     }
     .mc-list {
         max-height: 40vh;
-    }
-    .mc-col-provider,
-    .mc-table .mc-provider {
-        display: none;
     }
 }

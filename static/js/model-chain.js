@@ -1,4 +1,4 @@
-/* ModelChain — reusable "main model + ordered fallbacks" table + picker.
+/* ModelChain — reusable "main model + ordered fallbacks" card + picker.
  *
  * Self-contained: builds its own markup inside the root element and needs only
  * css/model-chain.css and ui-utils' shared tokens. Server-rendered pages emit
@@ -12,7 +12,7 @@
  *       eligible: (model) => model.enabled,    // pickable models
  *       ineligibleLabel: "No vision",          // hint for enabled-but-rejected models
  *       requireMain: true,                     // false: saving nothing is allowed
- *       mainEmptyText: "Not set",              // table text for an empty main slot
+ *       mainEmptyText: "Not set",              // text for an empty main slot
  *       inherit: {                             // optional "use the global chain" mode:
  *           label: "Global default model",     //   adds a source combobox (global / custom);
  *           note: "Uses the default model and fallbacks from System Settings.",
@@ -25,10 +25,13 @@
  *   chain.setValue({ mainId, fallbackIds });   // mainId "" = inherit (if enabled)
  *   chain.setInherited({ mainId, fallbackIds }); // the chain inherit mode shows
  *
- * The table is read-only. Edit opens a modal: search and every model on the
- * left, the selection in order on the right (first = main, rest = fallbacks;
- * reorder with the arrows or by dragging). onSave persists the chain and
- * returns what was stored, or throws with a message shown in the modal.
+ * The card shows the main model on top and the fallbacks as pills below it
+ * (only filled slots are shown). A pill can be removed in place (saved right
+ * away); everything else goes through Manage, which opens a modal: search and
+ * every model on the left, the selection in order on the right (first = main,
+ * rest = fallbacks; reorder with the arrows or by dragging). onSave persists
+ * the chain and returns what was stored, or throws with a message (shown in the
+ * modal, or next to the Manage button for an inline removal).
  */
 (function () {
     "use strict";
@@ -83,6 +86,7 @@
             this.value = { mainId: "", fallbackIds: [] };
             this.inherited = { mainId: "", fallbackIds: [] };
             this.loaded = false;
+            this._busy = false;
             this.draft = [];
             this.query = "";
 
@@ -106,7 +110,7 @@
 
         setModels(models) {
             this.models = (Array.isArray(models) ? models : []).filter((m) => m.type !== "decision");
-            this.renderTable();
+            this.renderChain();
             if (this.isOpen()) this.renderPicker();
         }
 
@@ -117,7 +121,7 @@
             // Inherit mode follows the global chain whole: no own fallbacks.
             this.value = { mainId, fallbackIds: this.inherit && !mainId ? [] : fallbackIds };
             this.loaded = true;
-            this.renderTable();
+            this.renderChain();
         }
 
         setInherited(value) {
@@ -126,7 +130,7 @@
                 mainId: v.mainId || "",
                 fallbackIds: (v.fallbackIds || []).filter(Boolean).slice(0, this.fallbacks),
             };
-            this.renderTable();
+            this.renderChain();
             if (this.isOpen()) this.renderPicker();
         }
 
@@ -183,16 +187,8 @@
                         <option value="custom">Custom models…</option>
                     </select>
                 </div>` : ""}
-                <div class="mc-table-wrap" data-mc-table>
-                    <table class="mc-table" aria-label="${esc(this.title)}">
-                        <colgroup>
-                            <col class="mc-col-order"><col class="mc-col-role"><col><col class="mc-col-provider"><col class="mc-col-action">
-                        </colgroup>
-                        <thead data-mc-main></thead>
-                        <tbody data-mc-body>
-                            <tr><td colspan="5" class="mc-loading">Loading models…</td></tr>
-                        </tbody>
-                    </table>
+                <div class="mc-card" data-mc-card aria-label="${esc(this.title)}">
+                    <div class="mc-hero"><span class="mc-unset">Loading models…</span></div>
                 </div>
                 <p class="mc-inherit-note" data-mc-note hidden></p>`;
 
@@ -241,8 +237,6 @@
 
             const $ = (sel) => this.root.querySelector(sel);
             const m = (sel) => modal.querySelector(sel);
-            this.head = $("[data-mc-main]");
-            this.body = $("[data-mc-body]");
             this.status = document.createElement("span");
             this.status.className = "mc-status";
             this.status.setAttribute("aria-live", "polite");
@@ -253,10 +247,10 @@
             this.btnEdit.disabled = true;
             this.btnEdit.setAttribute("aria-haspopup", "dialog");
             this.btnEdit.setAttribute("aria-controls", this.uid + "-picker");
-            this.btnEdit.setAttribute("aria-label", "Edit " + this.title);
-            this.btnEdit.innerHTML = icon("pencil") + "Edit";
+            this.btnEdit.setAttribute("aria-label", "Manage " + this.title);
+            this.btnEdit.innerHTML = icon("pencil") + "Manage";
             this.source = $("[data-mc-source]");
-            this.tableWrap = $("[data-mc-table]");
+            this.card = $("[data-mc-card]");
             this.search = m("[data-mc-search]");
             this.list = m("[data-mc-list]");
             this.selected = m("[data-mc-selected]");
@@ -265,62 +259,99 @@
             this.btnSave = m("[data-mc-save]");
         }
 
-        /* ---------- read-only table ---------- */
+        /* ---------- chain card ---------- */
 
         _byId() {
             return new Map(this.models.map((m) => [m.id, m]));
         }
 
-        renderTable() {
+        _flag(model) {
+            const flag = !model ? "deleted" : (model.enabled ? "" : "disabled");
+            return flag ? `<span class="mc-flag">${flag}</span>` : "";
+        }
+
+        renderChain() {
             const byId = this._byId();
             const inheriting = this.inheriting;
-            const ids = [this.value.mainId, ...this.value.fallbackIds];
-            const row = (i, tag) => {
-                const id = ids[i] || "";
-                const model = byId.get(id);
-                let cell;
-                if (!id) {
-                    const empty = i === 0 ? this.mainEmptyText : "None";
-                    cell = `<span class="mc-unset">${esc(empty)}</span>`;
-                } else {
-                    const flag = !model ? "deleted" : (model.enabled ? "" : "disabled");
-                    cell = `<span class="mc-model${model ? "" : " is-missing"}">${esc(model ? model.name : id)}</span>`
-                        + (flag ? `<span class="mc-flag">${flag}</span>` : "");
-                }
-                const first = tag === "th" ? '<th scope="row" class="mc-order">' : '<td class="mc-order">';
-                return `<tr class="${i === 0 ? "is-main" : ""}">
-                    ${first}${i === 0 ? "★" : i}</${tag}>
-                    <td><span class="mc-role">${esc(this.roleLabel(i))}</span></td>
-                    <td>${cell}</td>
-                    <td class="mc-provider">${esc(model ? model.provider || "" : "")}</td>
-                    <td class="mc-action"></td>
-                </tr>`;
-            };
-            // The main model is the table head; fallbacks follow in the body.
-            this.head.innerHTML = row(0, "th");
-            // Edit lives at the end of the main row; the same element is
-            // moved back in on every render so its listener stays bound.
-            this.head.querySelector(".mc-action").append(this.status, this.btnEdit);
-            const rows = [];
-            for (let i = 1; i < this.capacity; i++) rows.push(row(i, "td"));
-            this.body.innerHTML = rows.join("");
+            const { mainId, fallbackIds } = this.value;
 
-            // On the global chain the table is hidden; a summary line names
+            // Hero: the main model (or the empty state) with Manage on its right.
+            const main = byId.get(mainId);
+            let hero;
+            if (!this.loaded) {
+                hero = '<span class="mc-unset">Loading models…</span>';
+            } else if (!mainId) {
+                hero = `<span class="mc-unset">${esc(this.mainEmptyText)}</span>`;
+            } else {
+                hero = `<span class="mc-badge">${esc(this.mainLabel)}</span>
+                    <span class="mc-hero-text">
+                        <span class="mc-model${main ? "" : " is-missing"}" title="${esc(main ? main.name : mainId)}">${esc(main ? main.name : mainId)}</span>
+                        ${main && main.provider ? `<span class="mc-provider">${esc(main.provider)}</span>` : ""}
+                        ${this._flag(main)}
+                    </span>`;
+            }
+            this.card.classList.toggle("is-empty", !mainId);
+            this.card.innerHTML = `<div class="mc-hero${mainId ? "" : " is-empty"}">${hero}<span class="mc-hero-actions" data-mc-actions></span></div>`
+                + (mainId ? this._renderStrip(byId, fallbackIds) : "");
+            // The status and Manage elements are moved back in on every render so
+            // their listeners stay bound.
+            this.card.querySelector("[data-mc-actions]").append(this.status, this.btnEdit);
+            this.btnEdit.innerHTML = icon("pencil") + (mainId || !this.loaded ? "Manage" : "Choose model");
+
+            // On the global chain the card is hidden; a summary line names
             // the inherited models and links to where they are set.
-            this.tableWrap.hidden = inheriting;
+            this.card.hidden = inheriting;
             this.note.hidden = !inheriting;
             if (inheriting) {
-                const main = byId.get(this.inherited.mainId);
+                const inhMain = byId.get(this.inherited.mainId);
                 const n = this.inherited.fallbackIds.length;
                 const summary = this.inherited.mainId
-                    ? ` Currently <b>${esc(main ? main.name : this.inherited.mainId)}</b>`
+                    ? ` Currently <b>${esc(inhMain ? inhMain.name : this.inherited.mainId)}</b>`
                         + (n ? ` with ${n} fallback${n === 1 ? "" : "s"}.` : " with no fallbacks.")
                     : "";
                 this.note.innerHTML = esc(this.inherit.note || "") + summary
                     + (this.inherit.href ? ` <a href="${esc(this.inherit.href)}">Change in System Settings</a>` : "");
             }
             this._syncSource();
-            this.btnEdit.disabled = !this.loaded;
+            this.btnEdit.disabled = !this.loaded || this._busy;
+        }
+
+        _renderStrip(byId, fallbackIds) {
+            const pills = fallbackIds.map((id, i) => {
+                const m = byId.get(id);
+                const name = m ? m.name : id;
+                const tip = m && m.provider ? `${name} · ${m.provider}` : name;
+                return `<span class="mc-pill${m ? "" : " is-missing"}" data-index="${i}" title="${esc(tip)}">
+                        <button type="button" class="mc-pill-n" data-act="remove" data-index="${i}"
+                                aria-label="Remove ${esc(name)}" title="Remove">
+                            <span class="mc-pill-num">${i + 1}</span><span class="mc-pill-rm">${icon("x")}</span>
+                        </button>
+                        <span class="mc-pill-name">${esc(name)}</span>
+                        ${m && m.provider ? `<span class="mc-pill-prov">${esc(m.provider)}</span>` : ""}
+                        ${this._flag(m)}
+                    </span>`;
+            }).join("");
+            const none = fallbackIds.length ? "" : '<span class="mc-none">No fallbacks</span>';
+            return `<div class="mc-strip"><span class="mc-strip-label">↳ If it fails <span class="mc-count-inline">${fallbackIds.length}/${this.fallbacks}</span></span>${none}${pills}</div>`;
+        }
+
+        /* Inline removal persists right away. */
+        async _commit(ids) {
+            if (this._busy) return;
+            const [mainId = "", ...fallbackIds] = ids;
+            this._busy = true;
+            this._setStatus(this.status, "saving", "Saving…");
+            this.renderChain();
+            try {
+                const stored = (await this.onSave({ mainId, fallbackIds })) || { mainId, fallbackIds };
+                this._busy = false;
+                this.setValue(stored);
+                this._setStatus(this.status, "saved", "Saved");
+            } catch (err) {
+                this._busy = false;
+                this.renderChain();
+                this._setStatus(this.status, "error", (err && err.message) || "Save failed");
+            }
         }
 
         _syncSource() {
@@ -493,6 +524,15 @@
 
         _bind() {
             this.btnEdit.addEventListener("click", () => this.open());
+
+            // Fallback pills: remove. Adding and reordering live in the Manage picker.
+            this.card.addEventListener("click", (e) => {
+                const btn = e.target.closest("[data-act]");
+                if (!btn || btn.disabled || this._busy) return;
+                const ids = [this.value.mainId, ...this.value.fallbackIds];
+                const i = Number(btn.dataset.index) + 1;  // slot in ids (0 = main)
+                if (btn.dataset.act === "remove") { ids.splice(i, 1); this._commit(ids); }
+            });
             this.btnSave.addEventListener("click", () => this.save());
             this.modal.querySelectorAll("[data-mc-close]").forEach((b) =>
                 b.addEventListener("click", () => this.close()));
