@@ -303,13 +303,13 @@ def render_plan(docs: Dict[str, Doc], batch: List[str], neighbors: List[str],
             lines.append(f"- [{s}] {docs[s].title}")
     lines.append("")
     if issues:
-        lines.append("DETECTED ISSUES (computed from the WHOLE vault already, so you "
-                     "do NOT need to search it; heuristic, so each may be a FALSE "
-                     "POSITIVE — read_file the doc to verify before fixing; do NOT link "
-                     "entities that merely share a name fragment):")
+        lines.append("CANDIDATES TO VERIFY (heuristic hints computed from the WHOLE vault "
+                     "already, so you do NOT need to search it; many are FALSE "
+                     "POSITIVES — read_file the doc and fix only the ones that are "
+                     "real; do NOT link entities that merely share a name fragment):")
         lines.extend(f"- {i}" for i in issues)
     else:
-        lines.append("DETECTED ISSUES: none found by the heuristic pre-analysis.")
+        lines.append("CANDIDATES TO VERIFY: none found by the heuristic pre-analysis.")
     return "\n".join(lines)
 
 

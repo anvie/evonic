@@ -131,13 +131,13 @@ def _base_version() -> str:
 def get_version() -> str:
     """Return the version string for display (e.g. '0.8.7' or '0.8.7-28').
 
-    On the 'dev' branch the commit offset since the last VERSION bump is
-    appended (e.g. '0.8.7-28'). On 'main' and every other branch the clean
-    base version is returned.
+    On every branch except 'main' the commit offset since the last VERSION bump
+    is appended (e.g. '0.8.7-28'). On 'main' the clean base version is returned.
     """
     base = _base_version()
-    # Suffix the commit offset only on dev; main and others stay clean.
-    if _current_branch() == "dev":
+    # Suffix the commit offset on any branch but main; main stays clean.
+    branch = _current_branch()
+    if branch and branch != "main":
         n = _commits_since_version_bump()
         if n > 0:
             return f"{base}-{n}"
