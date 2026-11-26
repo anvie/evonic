@@ -2294,6 +2294,11 @@ def setup_command(non_interactive=False):
         doctor_command(fix=True)
         return
 
+    import logging
+    # Importing the runtime starts workers and sweepers; their INFO lines are
+    # noise in the middle of the wizard. Warnings and errors still show.
+    logging.disable(logging.INFO)
+
     print()
     print("  ╔══════════════════════════════════════════════════╗")
     print("  ║        Welcome to Evonic Setup Wizard            ║")
@@ -2346,7 +2351,9 @@ def setup_command(non_interactive=False):
             print("  [non-interactive] Skipping API key — you can set it later in .env")
         else:
             try:
-                api_key = getpass.getpass(f"  {provider_cfg['label']} API key: ").strip()
+                api_key = getpass.getpass(
+                    f"  {provider_cfg['label']} API key (optional, Enter to add it later): "
+                ).strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n  Setup aborted.")
                 return
@@ -2481,7 +2488,11 @@ def setup_command(non_interactive=False):
     # (--non-interactive) skip the prompt; install.sh provisions evomem directly
     # via `python -m backend.evomem_provision`. ensure_evomem() is idempotent, so
     # the prompt is safe even when the installer already fetched the binary.
-    if not non_interactive:
+    from backend.evomem_provision import default_binary_path
+    _evomem_bin = default_binary_path()
+    if os.path.isfile(_evomem_bin) and os.access(_evomem_bin, os.X_OK):
+        _info(f"evomem memory engine ready ({_evomem_bin})")
+    elif not non_interactive:
         try:
             reply = input("\n  Install evomem memory engine? [Y/n]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):

@@ -4,7 +4,10 @@
 # Served at: https://evonic.dev/install
 # Usage:    curl -fsSL https://evonic.dev/install | bash
 #
-# Installs: Evonic → evonic setup → evonic start -d
+# Installs: Evonic → evonic setup (terminal or browser) → evonic start -d
+#
+# Unattended: EVONIC_YES=1 skips every prompt, runs `evonic setup
+# --non-interactive` and starts the platform (the admin password is generated).
 # =============================================================================
 
 set -e
@@ -17,9 +20,10 @@ BIN_DIR="$EVONIC_HOME/bin"
 WRAPPER="$BIN_DIR/evonic"
 
 # ── Color helpers ────────────────────────────────────────────────────────────
-bold=""; red=""; green=""; yellow=""; blue=""; cyan=""; reset=""
+bold=""; dim=""; red=""; green=""; yellow=""; blue=""; cyan=""; reset=""
 if [ -t 1 ] && [ -n "$TERM" ] && [ "$TERM" != "dumb" ]; then
     bold="$(printf '\033[1m')"
+    dim="$(printf '\033[2m')"
     red="$(printf '\033[31m')"
     green="$(printf '\033[32m')"
     yellow="$(printf '\033[33m')"
@@ -53,6 +57,33 @@ EOBANNER
 die() {
     err "$*"
     exit 1
+}
+
+# Ask a question and put the answer in $REPLY. Works under `curl | bash` (stdin
+# is the script) by reading from the terminal; with no terminal, or with
+# EVONIC_YES=1, the answer is empty so the caller's default applies.
+ask() {
+    REPLY=""
+    [ -n "$EVONIC_YES" ] && return 0
+    printf '%s' "$1"
+    if [ -t 0 ]; then
+        read -r REPLY || REPLY=""
+    elif [ -r /dev/tty ]; then
+        read -r REPLY < /dev/tty || REPLY=""
+    fi
+}
+
+# Port the platform listens on (from .env, default 8080).
+evonic_port() {
+    [ -n "$PORT" ] && { printf '%s' "$PORT"; return; }
+    p=$(sed -n 's/^PORT=//p' "$EVONIC_HOME/.env" 2>/dev/null | tail -1 | tr -d '"' | tr -d "'")
+    printf '%s' "${p:-8080}"
+}
+
+open_url() {
+    if command -v open >/dev/null 2>&1; then open "$1" >/dev/null 2>&1 || true
+    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1 || true
+    fi
 }
 
 # ── Step 1: Prerequisite checks ─────────────────────────────────────────────
@@ -129,8 +160,8 @@ clone_repo() {
         fix_remote_fetch
         git -C "$EVONIC_HOME" fetch --tags origin 2>/dev/null
         if [ "$LATEST_TAG" != "main" ]; then
-            git -C "$EVONIC_HOME" checkout "tags/$LATEST_TAG" 2>/dev/null || \
-                git -C "$EVONIC_HOME" checkout "$LATEST_TAG" 2>/dev/null || \
+            git -c advice.detachedHead=false -C "$EVONIC_HOME" checkout "tags/$LATEST_TAG" 2>/dev/null || \
+                git -c advice.detachedHead=false -C "$EVONIC_HOME" checkout "$LATEST_TAG" 2>/dev/null || \
                 warn "Could not checkout $LATEST_TAG; continuing with existing code."
         else
             git -C "$EVONIC_HOME" pull --ff-only origin main 2>/dev/null || \
@@ -138,20 +169,22 @@ clone_repo() {
                 warn "Could not pull; continuing with existing code."
         fi
         ok "Repository updated"
-    elif [ -d "$EVONIC_HOME" ]; then
-        warn "$EVONIC_HOME exists but is not a git repo. Removing and re-cloning..."
-        rm -rf "$EVONIC_HOME"
-        if [ "$LATEST_TAG" != "main" ]; then
-            git clone --depth 1 --branch "$LATEST_TAG" "$REPO_URL" "$EVONIC_HOME"
-        else
-            git clone --depth 1 "$REPO_URL" "$EVONIC_HOME"
-        fi
-        ok "Repository cloned"
     else
+        if [ -d "$EVONIC_HOME" ]; then
+            # Never delete what we did not create: it may hold a .env or a
+            # database from an earlier install.
+            backup="$EVONIC_HOME.bak-$(date +%Y%m%d-%H%M%S)"
+            warn "$EVONIC_HOME exists but is not a git repo."
+            mv "$EVONIC_HOME" "$backup" || die "Could not move $EVONIC_HOME aside. Move or remove it and re-run."
+            info "Moved it to $backup (nothing was deleted)"
+        fi
+        info "Downloading Evonic $LATEST_TAG..."
         if [ "$LATEST_TAG" != "main" ]; then
-            git clone --depth 1 --branch "$LATEST_TAG" "$REPO_URL" "$EVONIC_HOME"
+            git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$LATEST_TAG" "$REPO_URL" "$EVONIC_HOME" \
+                || die "Could not download Evonic. Check your network connection and re-run."
         else
-            git clone --depth 1 "$REPO_URL" "$EVONIC_HOME"
+            git clone --quiet --depth 1 "$REPO_URL" "$EVONIC_HOME" \
+                || die "Could not download Evonic. Check your network connection and re-run."
         fi
         ok "Repository cloned"
     fi
@@ -160,8 +193,8 @@ clone_repo() {
     # Ensure we have local tracking branches for main and dev
     # (shallow tag clones leave us in detached HEAD with no local branches)
     for branch in main dev; do
-        git -C "$EVONIC_HOME" checkout "$branch" 2>/dev/null || \
-            git -C "$EVONIC_HOME" checkout -b "$branch" "origin/$branch" 2>/dev/null || \
+        git -c advice.detachedHead=false -C "$EVONIC_HOME" checkout --quiet "$branch" 2>/dev/null || \
+            git -C "$EVONIC_HOME" checkout --quiet -b "$branch" "origin/$branch" 2>/dev/null || \
             warn "Could not create local $branch branch."
     done
 }
@@ -201,9 +234,20 @@ install_deps() {
     py="$VENV_DIR/bin/python"
     [ -x "$py" ] || py="$VENV_DIR/bin/python3"
 
-    "$py" -m pip install --upgrade pip --quiet
-    "$py" -m pip install -r "$EVONIC_HOME/requirements.txt"
-    ok "Dependencies installed"
+    # Keep the terminal readable: pip's output goes to a log that is only shown
+    # when the install fails.
+    pip_log="${TMPDIR:-/tmp}/evonic-pip-$$.log"
+    info "Installing packages (the first run can take a minute)..."
+    "$py" -m pip install --disable-pip-version-check --upgrade pip --quiet >"$pip_log" 2>&1 || true
+    if ! "$py" -m pip install --disable-pip-version-check --progress-bar off --quiet \
+            -r "$EVONIC_HOME/requirements.txt" >>"$pip_log" 2>&1; then
+        err "Installing dependencies failed. Last lines of the log:"
+        tail -n 25 "$pip_log"
+        die "Full log: $pip_log"
+    fi
+    rm -f "$pip_log"
+    count=$("$py" -m pip list --format=freeze 2>/dev/null | wc -l | tr -d ' ')
+    ok "Dependencies installed${count:+ ($count packages)}"
 
     # Provision the evomem memory-engine binary (best-effort: unsupported
     # platforms or network issues fall back to FTS5, so never fail the install).
@@ -267,16 +311,9 @@ prompt_path() {
 main() {
     banner
 
-    # Quick confirmation — force prompt even when piped via curl | bash
-    printf '%sThis will install Evonic to: %s%s\n' "$bold" "$reset" "$EVONIC_HOME"
-    printf '%sContinue? [Y/n]%s ' "$bold" "$reset"
-    if [ -t 0 ]; then
-        read -r reply
-    else
-        read -r reply < /dev/tty
-    fi
-
-    case "$reply" in
+    printf '%sThis will install Evonic to: %s%s%s\n' "$bold" "$reset" "$cyan$EVONIC_HOME" "$reset"
+    ask "${bold}Continue? [Y/n]${reset} "
+    case "$REPLY" in
         [nN]|[nN][oO]) die "Installation cancelled." ;;
         *) info "Starting installation..." ;;
     esac
@@ -288,7 +325,7 @@ main() {
     create_wrapper
     prompt_path
 
-    # ── Done ────────────────────────────────────────────────────────────────
+    # ── Installed ───────────────────────────────────────────────────────────
     printf '\n%s' "$bold$green"
     cat << 'EODONE'
 ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -298,24 +335,63 @@ main() {
 ╚══════════════════════════════════════════════════════════════════════════════╝
 EODONE
     printf '%s' "$reset"
+    printf '  %sVersion %s · %s%s\n' "$dim" "$LATEST_TAG" "$EVONIC_HOME" "$reset"
 
-    if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
-        printf '%s  ⚡  %sApply PATH now:  %ssource %s%s\n'             "$bold$yellow" "$reset" "$bold" "$profile" "$reset"
+    # ── Setup ───────────────────────────────────────────────────────────────
+    # The super agent has to exist before the dashboard is usable. Do it here
+    # in the terminal, or hand over to the browser wizard.
+    mode=1
+    if [ -z "$EVONIC_YES" ]; then
+        printf '\n%s  ──  Set up Evonic%s\n' "$bold" "$reset"
+        printf '      %s1)%s Terminal wizard  %s(a few questions, ~1 minute)%s\n' "$bold$cyan" "$reset" "$dim" "$reset"
+        printf '      %s2)%s In your browser  %s(starts Evonic and opens the setup page)%s\n' "$bold$cyan" "$reset" "$dim" "$reset"
+        ask "${bold}Choose [1/2]${reset} (default 1): "
+        [ "$REPLY" = "2" ] && mode=2
+    fi
+
+    started=""
+    if [ "$mode" = "2" ]; then
+        "$WRAPPER" start -d && started=1
+        url="http://localhost:$(evonic_port)/setup"
+        printf '\n  %sFinish setup at:%s %s%s%s\n' "$bold" "$reset" "$cyan" "$url" "$reset"
+        [ -n "$started" ] && open_url "$url"
     else
-        printf '%s  ⚡  %sReady to use:%s\n' "$bold$green" "$reset" "$reset"
+        # `set -e` would stop the installer on a failed setup, so capture the code.
+        rc=0
+        if [ -n "$EVONIC_YES" ]; then
+            "$WRAPPER" setup --non-interactive || rc=$?
+        else
+            "$WRAPPER" setup || rc=$?
+        fi
+        if [ "$rc" -eq 0 ]; then
+            ask "
+${bold}Start Evonic now? [Y/n]${reset} "
+            case "$REPLY" in
+                [nN]|[nN][oO]) ;;
+                *) "$WRAPPER" start -d && started=1 ;;
+            esac
+            if [ -n "$started" ]; then
+                url="http://localhost:$(evonic_port)"
+                printf '\n  %sEvonic is running at%s %s%s%s\n' "$bold$green" "$reset" "$cyan" "$url" "$reset"
+                printf '  %sSign in with the admin password shown above.%s\n' "$dim" "$reset"
+                [ -z "$EVONIC_YES" ] && open_url "$url"
+            fi
+        else
+            warn "Setup did not finish. Run 'evonic setup' to try again."
+        fi
     fi
 
-    printf '\n%s  ──  Running evonic setup...%s\n\n' "$bold" "$reset"
-    "$WRAPPER" setup
-
-    printf '\n%s  ──  Next step:%s\n' "$bold" "$reset"
+    # ── Next steps ──────────────────────────────────────────────────────────
+    printf '\n%s  ──  Next steps%s\n' "$bold" "$reset"
     if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
-        printf '%s     %sFirst, add evonic to your PATH:%s\n' "$bold" "$yellow" "$reset"
-        printf '%s     %ssource %s%s\n' "$bold" "$cyan" "$profile" "$reset"
-        printf '%s     %s(or restart your terminal)%s\n\n' "$bold" "$blue" "$reset"
+        printf '     %s1.%s Add evonic to your PATH: %ssource %s%s %s(or restart your terminal)%s\n' \
+            "$bold$yellow" "$reset" "$cyan" "$profile" "$reset" "$dim" "$reset"
     fi
-    printf '%s     %sevonic start -d    %s%s# start the platform as a daemon%s\n'         "$bold" "$cyan" "$reset" "$blue" "$reset"
-    printf '\n'
+    if [ -z "$started" ]; then
+        printf '     %sevonic start -d%s     %s# start the platform as a daemon%s\n' "$cyan" "$reset" "$dim" "$reset"
+    fi
+    printf '     %sevonic pass%s         %s# change the admin password%s\n' "$cyan" "$reset" "$dim" "$reset"
+    printf '     %sevonic --help%s       %s# all commands%s\n\n' "$cyan" "$reset" "$dim" "$reset"
 }
 
 main
