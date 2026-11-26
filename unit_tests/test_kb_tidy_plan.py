@@ -128,14 +128,14 @@ def test_mentions_inside_code_are_not_reported_as_unlinked(tmp_path):
     assert [i for i in P.find_issues(docs, ["b"]) if "UNLINKED" in i]
 
 
-def test_render_plan_lists_batch_neighbours_and_issues(tmp_path):
+def test_render_plan_lists_batch_and_neighbours(tmp_path):
     kb = str(tmp_path)
     _write(kb, "a", "Alpha", "x [[Missing]]")
     docs = P.scan_vault(kb)
     batch, nb, reasons = P.plan_batch(docs, {})
-    out = P.render_plan(docs, batch, nb, reasons, P.find_issues(docs, batch))
+    out = P.render_plan(docs, batch, nb, reasons)
     assert "FOCUS BATCH (1 of 1 docs" in out and "[a] Alpha (new)" in out
-    assert "CANDIDATES TO VERIFY" in out and "Missing" in out
+    assert "CANDIDATES" not in out and "DETECTED" not in out
 
 
 def test_dangling_links_are_grouped_per_doc_with_closest_candidates(tmp_path):

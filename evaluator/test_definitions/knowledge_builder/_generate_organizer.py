@@ -7,9 +7,9 @@ evaluator on the final vault state + trajectory.
 
 Nothing here is hand-written prompt text: for every scenario we build the fixture
 vault, then run the PRODUCTION planner on it (``kb_tidy_plan.scan_vault`` →
-``plan_batch`` → ``find_issues`` → ``render_plan``) and wrap it in the same task
-message ``_spawn_kb_tidy`` sends. The model therefore sees exactly the FOCUS BATCH /
-CANDIDATES TO VERIFY format Evonic produces, false positives included. The system prompt is
+``plan_batch`` → ``render_plan``) and wrap it in the same task
+message ``_spawn_kb_tidy`` sends. The model therefore sees exactly the FOCUS BATCH
+format Evonic produces. The system prompt is
 the live ``_KB_TIDY_SYSTEM_PROMPT``.
 
 Fixtures are invented (an imaginary tab-sync extension and its docs); they only borrow the *shapes*
@@ -31,9 +31,8 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 # Tail of the task message, copied from _spawn_kb_tidy (guarded by a drift test).
 _TASK_TAIL_WITH_PLAN = (
     "Audit the vault (your workspace) for structural problems. "
-    "Work through the FOCUS BATCH and CANDIDATES TO VERIFY above one doc "
-    "at a time; do NOT Glob or Grep the whole vault (the candidates "
-    "already come from a full-vault analysis). Fix only the real ones. "
+    "Work through the FOCUS BATCH above one doc at a time; do NOT Glob "
+    "or Grep the whole vault. Fix only the real problems. "
     "Problem types: "
     "(1) duplicate docs about the "
     "same entity under different names, (2) dangling [[links]] "
@@ -539,9 +538,7 @@ def render_task(files, focus):
         vault = kb_tidy_plan.scan_vault(tmp)
         ledger = {s: {"m": d.mtime, "t": 1.0} for s, d in vault.items() if s not in focus}
         batch, neighbors, reasons = kb_tidy_plan.plan_batch(vault, ledger, cap=max(len(focus), 1))
-        plan_slugs = batch + neighbors
-        plan_text = kb_tidy_plan.render_plan(vault, batch, neighbors, reasons,
-                                             kb_tidy_plan.find_issues(vault, plan_slugs))
+        plan_text = kb_tidy_plan.render_plan(vault, batch, neighbors, reasons)
     return plan_text + "\n\n" + _TASK_TAIL_WITH_PLAN
 
 

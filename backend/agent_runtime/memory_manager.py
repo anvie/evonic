@@ -277,12 +277,11 @@ Your job is NOT to file new knowledge — another process handles that. Your job
 5. WRONG TITLES — a `title` that includes parenthetical nicknames (e.g. `"Abdurrahman Wahid (Gus Dur)"`). Use str_replace to fix the title in frontmatter to the pure canonical name and move the nickname to `aliases`.
 
 APPROACH:
-- If the task lists a FOCUS BATCH and CANDIDATES TO VERIFY, STAY INSIDE THEM. They were computed from the whole vault already (including the closest existing doc for each dangling link and which doc each plain-text mention belongs to), so you do NOT need to search the vault:
-  - Do NOT Glob the vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context.
+- If the task lists a FOCUS BATCH, audit those docs first (and the docs listed as linked to them). Nothing pre-computes the problems for you: read each doc, judge what is really wrong, and fix only that:
+  - Do NOT Glob the whole vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context. Use a narrow Grep for ONE specific name when you need to check whether a doc exists.
   - Work ONE doc at a time: read_file it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front: at most 2 tool calls per step (extra ones are dropped), and make at least one concrete fix (str_replace / delete_file) after every 2-3 docs you read.
-  - read_file returns a short window of a doc; for a long doc use offset=N to continue only if the issue you are verifying is further down.
-  - To confirm a suggested doc, read_file that doc (one file). If you must search, use a narrow Grep for ONE specific name.
-  - Candidates are heuristic: skip false positives (e.g. two different people sharing a name fragment).
+  - read_file returns a short window of a doc; for a long doc use offset=N to continue only if needed.
+  - Skip anything you are not sure about (e.g. two different people sharing a name fragment): leaving a doc alone is better than a wrong link or merge.
   - Keep it small: roughly two tool calls per doc. Stop when the batch is done — do not widen the audit to the rest of the vault.
 - Otherwise start with Glob `**/*.md` to list all docs and read_file a representative sample to understand the vault's state and naming conventions.
 - Grep systematically for problems:
@@ -297,7 +296,7 @@ IMPORTANT RULES:
 - Always read_file a file BEFORE using str_replace on it — you need the exact current text.
 - For retro-linking, make old_str unique enough to avoid false matches (include surrounding words if the name alone appears multiple times).
 - Do NOT wrap "User" in [[links]] — "User" refers to the assistant's owner, not a knowledge entity.
-- NEVER put a [[link]] inside a backtick code span, a fenced code block, or the frontmatter: identifiers, env vars, model ids and paths such as `X_BEARER_TOKEN` stay verbatim code (do not strip the backticks either). A candidate that points at such a mention is a false positive — skip it.
+- NEVER put a [[link]] inside a backtick code span, a fenced code block, or the frontmatter: identifiers, env vars, model ids and paths such as `X_BEARER_TOKEN` stay verbatim code (do not strip the backticks either). Do not link such a mention.
 - NEVER link entities just because they share a name fragment. "Budi Santoso" and "Ahmad Budi Pratama" are DIFFERENT people — linking one to the other creates a false connection. Only link when a real-world relationship exists.
 - Do NOT link names mentioned only for disambiguation/clarification (e.g. "bukan yang sama dengan X"). A [[link]] means the entities are genuinely related.
 - When adding aliases, preserve the existing YAML list format — append to the list, don't replace it."""
@@ -398,9 +397,7 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
         batch, neighbors, reasons = kb_tidy_plan.plan_batch(vault, ledger)
         if batch:
             plan_slugs = batch + neighbors
-            plan_text = kb_tidy_plan.render_plan(
-                vault, batch, neighbors, reasons,
-                kb_tidy_plan.find_issues(vault, plan_slugs))
+            plan_text = kb_tidy_plan.render_plan(vault, batch, neighbors, reasons)
     except Exception:
         logger.warning("[MemoryManager] kb-janitor[%s]: planning failed; running "
                        "unfocused", agent_id, exc_info=True)
@@ -409,9 +406,8 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
     try:
         task_msg = ((plan_text + "\n\n" if plan_text else "") +
                     "Audit the vault (your workspace) for structural problems. "
-                    + ("Work through the FOCUS BATCH and CANDIDATES TO VERIFY above one doc "
-                       "at a time; do NOT Glob or Grep the whole vault (the candidates "
-                       "already come from a full-vault analysis). Fix only the real ones. "
+                    + ("Work through the FOCUS BATCH above one doc at a time; do NOT Glob "
+                       "or Grep the whole vault. Fix only the real problems. "
                        "Problem types: "
                        if plan_text else
                        "Use Glob to list all docs, read_file a representative sample, "
