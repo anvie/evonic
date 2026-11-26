@@ -31,8 +31,11 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 # Tail of the task message, copied from _spawn_kb_tidy (guarded by a drift test).
 _TASK_TAIL_WITH_PLAN = (
     "Audit the vault (your workspace) for structural problems. "
-    "Work through the FOCUS BATCH above one doc at a time; do NOT Glob "
-    "or Grep the whole vault. Fix only the real problems. "
+    "Audit and fix ONLY the docs listed above, one at a time. Look "
+    "elsewhere only to check something about a listed doc (a narrow "
+    "Grep or a single read_file), and touch an unlisted doc only as "
+    "the direct fix for a listed doc. Leave other docs' problems for "
+    "a later pass. Stop once every listed doc is done. "
     "Problem types: "
     "(1) duplicate docs about the "
     "same entity under different names, (2) dangling [[links]] "
@@ -41,7 +44,7 @@ _TASK_TAIL_WITH_PLAN = (
     "wrapped in [[links]], (4) broken or empty docs, (5) titles "
     "polluted with nicknames. Fix each problem directly using your "
     "tools (str_replace, write_file, delete_file). When done, "
-    "summarize what you fixed."
+    "summarize what you fixed. Stay on the listed docs."
 )
 
 

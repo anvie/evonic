@@ -277,12 +277,15 @@ Your job is NOT to file new knowledge — another process handles that. Your job
 5. WRONG TITLES — a `title` that includes parenthetical nicknames (e.g. `"Abdurrahman Wahid (Gus Dur)"`). Use str_replace to fix the title in frontmatter to the pure canonical name and move the nickname to `aliases`.
 
 APPROACH:
-- If the task lists a FOCUS BATCH, audit those docs first (and the docs listed as linked to them). Nothing pre-computes the problems for you: read each doc, judge what is really wrong, and fix only that:
-  - Do NOT Glob the whole vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context. Use a narrow Grep for ONE specific name when you need to check whether a doc exists.
+- If the task lists a FOCUS BATCH, the listed docs (the batch plus the docs listed as linked to it) are the ONLY docs you audit and fix. Nothing pre-computes the problems for you: read each listed doc, judge what is really wrong, and fix only that.
+  - Exploring is fine, but ONLY to check something about a listed doc: a narrow Grep for ONE specific name, or one read_file, to see whether a linked name has a doc, whether an entity is a duplicate, or to read the target before adding an alias. Roughly 2-3 lookups per listed doc at most.
+  - Do NOT Glob the whole vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context.
+  - Edit a doc outside the list ONLY as the direct fix for a listed doc's problem (e.g. adding an alias to the target of a listed doc's dangling link, or merging a duplicate of a listed doc into its keeper).
+  - If you notice problems in an unlisted doc, LEAVE THEM: a later pass will get to that doc. Do not start auditing the doc you just looked up.
   - Work ONE doc at a time: read_file it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front: at most 2 tool calls per step (extra ones are dropped), and make at least one concrete fix (str_replace / delete_file) after every 2-3 docs you read.
   - read_file returns a short window of a doc; for a long doc use offset=N to continue only if needed.
   - Skip anything you are not sure about (e.g. two different people sharing a name fragment): leaving a doc alone is better than a wrong link or merge.
-  - Keep it small: roughly two tool calls per doc. Stop when the batch is done — do not widen the audit to the rest of the vault.
+  - Stop as soon as every listed doc is done — do not widen the audit to the rest of the vault.
 - Otherwise start with Glob `**/*.md` to list all docs and read_file a representative sample to understand the vault's state and naming conventions.
 - Grep systematically for problems:
   - `title:` to build a title index, spot duplicates.
@@ -406,8 +409,11 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
     try:
         task_msg = ((plan_text + "\n\n" if plan_text else "") +
                     "Audit the vault (your workspace) for structural problems. "
-                    + ("Work through the FOCUS BATCH above one doc at a time; do NOT Glob "
-                       "or Grep the whole vault. Fix only the real problems. "
+                    + ("Audit and fix ONLY the docs listed above, one at a time. Look "
+                       "elsewhere only to check something about a listed doc (a narrow "
+                       "Grep or a single read_file), and touch an unlisted doc only as "
+                       "the direct fix for a listed doc. Leave other docs' problems for "
+                       "a later pass. Stop once every listed doc is done. "
                        "Problem types: "
                        if plan_text else
                        "Use Glob to list all docs, read_file a representative sample, "
@@ -419,7 +425,8 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
                     "wrapped in [[links]], (4) broken or empty docs, (5) titles "
                     "polluted with nicknames. Fix each problem directly using your "
                     "tools (str_replace, write_file, delete_file). When done, "
-                    "summarize what you fixed.")
+                    "summarize what you fixed."
+                    + (" Stay on the listed docs." if plan_text else ""))
         res = notify_agent(
             agent_id=explorer_id, tag=f"AGENT/{parent_name}", message=task_msg,
             external_user_id=f"__agent__{agent_id}", channel_id=None, dedup=False,
