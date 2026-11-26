@@ -54,7 +54,7 @@ trap cleanup EXIT
 trap 'cleanup; exit 130' INT TERM
 
 spaces() { n=$1; s=""; while [ "$n" -gt 0 ]; do s="$s "; n=$((n - 1)); done; printf '%s' "$s"; }
-hline()  { n=$1; s=""; while [ "$n" -gt 0 ]; do s="$s─"; n=$((n - 1)); done; printf '%s' "$s"; }
+hline()  { n=$1; s=""; while [ "$n" -gt 0 ]; do s="${s}─"; n=$((n - 1)); done; printf '%s' "$s"; }
 
 # $HOME → ~, and keep only the tail of very long paths.
 short_path() {
