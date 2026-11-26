@@ -371,9 +371,9 @@ card_line() {
 }
 # card_kv "Label" "value" [value-style]
 card_kv() {
-    label="$(printf '%-10s' "$1")"
+    label="$(printf '%-11s' "$1")"
     val="$2"; vstyle="$3"
-    room=$((CARD_W - 10))
+    room=$((CARD_W - 11))
     pad=$((room - ${#val}))
     [ "$pad" -lt 0 ] && pad=0
     printf '  %s│%s %s%s%s%s%s%s%s %s│%s\n' "$dim" "$reset" "$dim" "$label" "$reset" "$vstyle" "$val" "$reset" "$(spaces "$pad")" "$dim" "$reset"
@@ -398,7 +398,7 @@ show_result() {
     fi
     if [ -n "$pw" ]; then
         card_kv "Password" "$pw" "$bold$accent"
-        card_kv "Saved in" "$(short_path "$EVONIC_HOME/data/initial_admin_password" $((CARD_W - 10)))" "$dim"
+        card_kv "Saved in" "$(short_path "$EVONIC_HOME/data/initial_admin_password" $((CARD_W - 11)))" "$dim"
     fi
     card_blank
     if [ -z "$started" ]; then card_kv "Start" "evonic start -d" "$accent"; fi

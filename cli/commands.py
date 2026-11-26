@@ -2496,7 +2496,8 @@ def setup_command(non_interactive=False):
     from backend.evomem_provision import default_binary_path
     _evomem_bin = default_binary_path()
     if os.path.isfile(_evomem_bin) and os.access(_evomem_bin, os.X_OK):
-        _info(f"evomem memory engine ready ({_evomem_bin})")
+        if not os.environ.get("EVONIC_INSTALLER"):
+            _info(f"evomem memory engine ready ({ui.home_short(_evomem_bin)})")
     elif not non_interactive:
         try:
             reply = input("\n  Install evomem memory engine? [Y/n]: ").strip().lower()
