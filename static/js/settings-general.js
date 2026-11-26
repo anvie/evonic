@@ -331,6 +331,9 @@ window.settingsGeneral = {
         this._decisionChain = new ModelChain(root, {
             requireMain: false,
             mainEmptyText: "Not set",
+            // Only decision models belong in this chain; without it the picker
+            // lists chat LLMs that can never be selected.
+            kind: "decision",
             eligible: (model) => !!model.enabled && model.type === "decision",
             ineligibleLabel: "Not a decision model",
             onSave: async ({ mainId, fallbackIds }) => {

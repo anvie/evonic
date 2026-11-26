@@ -4,17 +4,19 @@
   and modal from these data attributes (new ModelChain(root, {...})).
   Styles: static/css/model-chain.css.
 
-  model_chain(id, title, description, fallbacks=5, search='', main_label='Main')
+  model_chain(id, title, description, fallbacks=5, search='', main_label='Main', kind='')
     id           str — id of the root element, passed to ModelChain
     title        str — row title
     description  str — row description (plain text)
     fallbacks    int — number of fallback slots
     search       str — extra keywords for the settings search index
     main_label   str — name of the first slot
+    kind         str — model type to list: '' (default, LLMs) or 'decision'
 #}
-{% macro model_chain(id, title, description, fallbacks=5, search='', main_label='Main') %}
+{% macro model_chain(id, title, description, fallbacks=5, search='', main_label='Main', kind='') %}
 <div class="setting-row stacked model-chain" id="{{ id }}"
      data-title="{{ title }}" data-description="{{ description }}"
      data-fallbacks="{{ fallbacks }}" data-main-label="{{ main_label }}"
+     {% if kind %}data-kind="{{ kind }}"{% endif %}
      data-search="{{ title|lower }} {{ search }}"></div>
 {% endmacro %}
