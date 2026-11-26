@@ -291,8 +291,8 @@ def find_issues(docs: Dict[str, Doc], focus: List[str],
 
 
 def render_plan(docs: Dict[str, Doc], batch: List[str], neighbors: List[str],
-                reasons: Dict[str, str], issues: List[str]) -> str:
-    """Task-message section describing this run's focus batch and findings."""
+                reasons: Dict[str, str]) -> str:
+    """Task-message section describing this run's focus batch."""
     lines = [f"FOCUS BATCH ({len(batch)} of {len(docs)} docs; audit these FIRST):"]
     for s in batch:
         lines.append(f"- [{s}] {docs[s].title} ({reasons[s]})")
@@ -301,15 +301,6 @@ def render_plan(docs: Dict[str, Doc], batch: List[str], neighbors: List[str],
         lines.append("LINKED TO THE NEW/CHANGED DOCS ABOVE (also in scope):")
         for s in neighbors:
             lines.append(f"- [{s}] {docs[s].title}")
-    lines.append("")
-    if issues:
-        lines.append("CANDIDATES TO VERIFY (heuristic hints computed from the WHOLE vault "
-                     "already, so you do NOT need to search it; many are FALSE "
-                     "POSITIVES — read_file the doc and fix only the ones that are "
-                     "real; do NOT link entities that merely share a name fragment):")
-        lines.extend(f"- {i}" for i in issues)
-    else:
-        lines.append("CANDIDATES TO VERIFY: none found by the heuristic pre-analysis.")
     return "\n".join(lines)
 
 
