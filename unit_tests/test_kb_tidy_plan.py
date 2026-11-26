@@ -21,6 +21,16 @@ def _audit_all(docs, t=1000.0):
     return {s: {"m": d.mtime, "t": t + i} for i, (s, d) in enumerate(docs.items())}
 
 
+def test_scan_skips_privnt_and_inbox_dirs(tmp_path):
+    kb = str(tmp_path)
+    for d in ("privnt", "inbox"):
+        os.makedirs(os.path.join(kb, d))
+    _write(kb, "a", "Alpha", "x")
+    _write(kb, "privnt/b", "Beta", "x")
+    _write(kb, "inbox/c", "Gamma", "x")
+    assert set(P.scan_vault(kb)) == {"a"}
+
+
 def test_scan_parses_block_and_flow_aliases(tmp_path):
     kb = str(tmp_path)
     _write(kb, "a", "Alpha", "x", aliases=["Al", "A1"])
