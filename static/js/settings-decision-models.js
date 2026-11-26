@@ -2,7 +2,6 @@
 window.decisionModels = {
     profiles: [],
     models: [],
-    defaultModelIds: [],
 
     async init() {
         await this.load();
@@ -17,16 +16,13 @@ window.decisionModels = {
     async load() {
         const status = document.getElementById("decision-profiles-status");
         try {
-            const [profilesData, models, defaults] = await Promise.all([
+            const [profilesData, models] = await Promise.all([
                 apiGet("/api/admin/decision-profiles"),
                 ModelsCache.get(),
-                apiGet("/api/admin/decision-default-models"),
             ]);
             this.profiles = profilesData.profiles || [];
             this.models = models || [];
-            this.defaultModelIds = defaults.model_ids || [];
             this.render();
-            this.renderDefaultModels();
             this.populateActivityOptions();
         } catch (error) {
             status.textContent = "Could not load Decision Profiles. Refresh and try again.";
@@ -108,27 +104,6 @@ window.decisionModels = {
         const compatible = this.compatibleModels();
         const options = compatible.map((model) => `<option value="${this.escape(model.id)}" ${model.id === selected ? "selected" : ""}>${this.escape(this.modelLabel(model))}</option>`);
         return `<option value="">${this.escape(emptyLabel)}</option>` + options.join("");
-    },
-
-    // The default chain: five ordered slots; empty slots are skipped on save.
-    renderDefaultModels() {
-        const list = document.getElementById("decision-default-models-list");
-        if (!list) return;
-        list.innerHTML = [0, 1, 2, 3, 4].map((index) => `<select class="decision-default-model w-full border rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100" aria-label="Default decision model ${index + 1}">${this.modelOptions(this.defaultModelIds[index], index ? "No fallback " + index : "No default model")}</select>`).join("");
-    },
-
-    async saveDefaultModels() {
-        const ids = Array.from(document.querySelectorAll(".decision-default-model")).map((el) => el.value).filter(Boolean);
-        try {
-            const response = await apiPut("/api/admin/decision-default-models", {model_ids: ids});
-            if (!response.success) {
-                if (window.toast) toast.show((response.error && response.error.message ? response.error.path + ": " + response.error.message : "Could not save default models."), "error");
-                return;
-            }
-            this.defaultModelIds = response.model_ids;
-            this.renderDefaultModels();
-            if (window.toast) toast.show("Default decision models saved", "success");
-        } catch (error) { if (window.toast) toast.show("Could not save default models.", "error"); }
     },
 
     openCreate() {

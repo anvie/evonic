@@ -21,6 +21,16 @@ def _audit_all(docs, t=1000.0):
     return {s: {"m": d.mtime, "t": t + i} for i, (s, d) in enumerate(docs.items())}
 
 
+def test_scan_skips_privnt_and_inbox_dirs(tmp_path):
+    kb = str(tmp_path)
+    for d in ("privnt", "inbox"):
+        os.makedirs(os.path.join(kb, d))
+    _write(kb, "a", "Alpha", "x")
+    _write(kb, "privnt/b", "Beta", "x")
+    _write(kb, "inbox/c", "Gamma", "x")
+    assert set(P.scan_vault(kb)) == {"a"}
+
+
 def test_scan_parses_block_and_flow_aliases(tmp_path):
     kb = str(tmp_path)
     _write(kb, "a", "Alpha", "x", aliases=["Al", "A1"])
@@ -117,14 +127,25 @@ def test_existing_links_are_not_reported_as_unlinked(tmp_path):
     assert not [i for i in P.find_issues(docs, ["a"]) if "UNLINKED" in i]
 
 
-def test_render_plan_lists_batch_neighbours_and_issues(tmp_path):
+def test_mentions_inside_code_are_not_reported_as_unlinked(tmp_path):
+    kb = str(tmp_path)
+    _write(kb, "a", "Alpha", "token `Bearer` dirotasi\n```\nBearer=1\n```\n")
+    _write(kb, "bearer", "Bearer", "Token.")
+    docs = P.scan_vault(kb)
+    assert not [i for i in P.find_issues(docs, ["a"]) if "UNLINKED" in i]
+    _write(kb, "b", "Beta", "token Bearer dirotasi")
+    docs = P.scan_vault(kb)
+    assert [i for i in P.find_issues(docs, ["b"]) if "UNLINKED" in i]
+
+
+def test_render_plan_lists_batch_and_neighbours(tmp_path):
     kb = str(tmp_path)
     _write(kb, "a", "Alpha", "x [[Missing]]")
     docs = P.scan_vault(kb)
     batch, nb, reasons = P.plan_batch(docs, {})
-    out = P.render_plan(docs, batch, nb, reasons, P.find_issues(docs, batch))
+    out = P.render_plan(docs, batch, nb, reasons)
     assert "FOCUS BATCH (1 of 1 docs" in out and "[a] Alpha (new)" in out
-    assert "DETECTED ISSUES" in out and "Missing" in out
+    assert "CANDIDATES" not in out and "DETECTED" not in out
 
 
 def test_dangling_links_are_grouped_per_doc_with_closest_candidates(tmp_path):

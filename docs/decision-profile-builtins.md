@@ -21,7 +21,7 @@ Use `shadow` mode to validate a profile without changing agent behaviour. Only `
 
 ## Default decision models
 
-A profile may leave its primary model empty. It then runs on the default decision models, an ordered chain of up to five models set at the top of Settings > Decision Profiles (`GET`/`PUT /api/admin/decision-default-models`). Each model in the chain gets one try, in order, within the profile's timeout. An active profile with no model is only valid while the chain is non-empty; without it the profile fails closed to its consumer's fallback.
+A profile may leave its primary model empty. It then runs on the default decision models, an ordered chain of up to five models set in System > General > Models & Routing (`GET`/`PUT /api/admin/decision-default-models`). Each model in the chain gets one try, in order, within the profile's timeout. An active profile with no model is only valid while the chain is non-empty; without it the profile fails closed to its consumer's fallback.
 
 `agent.skill_worthiness` is seeded enabled, in `enforce` mode, with no model of its own, so it starts working as soon as the default decision models are set.
 

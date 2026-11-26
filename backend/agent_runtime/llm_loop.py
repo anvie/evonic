@@ -845,6 +845,9 @@ def run_tool_loop(agent: Dict[str, Any],
     # Provider-reported prompt size of the previous request — the primary signal
     # for proactive compaction on the first iteration of this turn (#842).
     _last_provider_prompt_tokens = None
+    # (provider prompt tokens / local estimate, model) of that same request: the
+    # request budget scales its local estimate by it once the model is known.
+    _calibration_seed = None
     try:
         _session_raw = db.get_session_state(session_id, agent_id=agent_id)
         _session_data = json.loads(_session_raw) if _session_raw else {}
@@ -859,6 +862,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 _seed_prompt = _cu_seed.get('prompt_tokens') or 0
                 if _seed_prompt > 0:
                     _last_provider_prompt_tokens = int(_seed_prompt)
+                _calibration_seed = (_cu_seed.get('estimate_ratio'),
+                                     (_cu_seed.get('effective_request') or {}).get('model'))
     except (TypeError, ValueError):
         pass
 
@@ -883,6 +888,12 @@ def run_tool_loop(agent: Dict[str, Any],
     else:
         _agent_reasoning_effort = None
 
+    # A model with no declared window uses the global context length, the same
+    # fallback the context monitor shows (routes/agents.py).
+    _global_context_window = db.get_setting('llm_context_length', 0)
+    _global_context_window = (int(_global_context_window)
+                              if str(_global_context_window).strip().isdigit() else 0)
+
     # Helper: build model_config dict from a model DB row
     def _build_model_config(_model: dict) -> dict:
         return {
@@ -897,7 +908,7 @@ def run_tool_loop(agent: Dict[str, Any],
             'reasoning_effort': resolve_reasoning_effort(
                 _agent_reasoning_effort, _model.get('reasoning_effort')),
             'max_tokens': _model.get('max_tokens', 32768),
-            'context_window': _model.get('context_window'),
+            'context_window': _model.get('context_window') or _global_context_window or None,
             'temperature': _model.get('temperature'),
             'vision_supported': bool(_model.get('vision_supported', False)),
             'api_format': _model.get('api_format', 'openai'),
@@ -1008,6 +1019,13 @@ def run_tool_loop(agent: Dict[str, Any],
 
     # Create LLMClient with resolved model config.
     llm = LLMClient(model_config=agent_model_config) if agent_model_config else llm_client
+    # The ratio is a property of the model's tokenizer and template, so a seed
+    # from another model says nothing about this one.
+    _budget_calibration = None
+    if _calibration_seed and _calibration_seed[1] == str(getattr(llm, 'model', '') or ''):
+        _budget_calibration = _calibration_seed[0]
+    _budget_stub_through = None
+    _sent_local_tokens = 0
     # Reuse the conversation id as the OpenCode Go/Zen session so repeated
     # turns in the same conversation share routing/prompt-cache state. Only
     # set on a per-loop client to avoid mutating the shared fallback client.
@@ -1309,7 +1327,7 @@ def run_tool_loop(agent: Dict[str, Any],
         _effective_tools = _prune_tools(tools, _iteration) if tools else None
         _active_context_threshold = resolve_soft_token_threshold(
             ACTIVE_CONTEXT_SOFT_TOKENS,
-            (agent_model_config or {}).get('context_window'),
+            (agent_model_config or {}).get('context_window') or _global_context_window,
             ACTIVE_CONTEXT_CAPACITY_PERCENT,
         )
         try:
@@ -1406,7 +1424,7 @@ def run_tool_loop(agent: Dict[str, Any],
         _cfg_primary = agent_model_config or {}
         _budget_plan = plan_request(
             _request.messages, _request.tools, tool_choice=_required_choice,
-            context_window=_cfg_primary.get('context_window'),
+            context_window=_cfg_primary.get('context_window') or _global_context_window,
             # the value really sent to the provider (post thinking-doubling / retry cap)
             max_tokens=_retry_output_cap or effective_output_tokens(
                 _cfg_primary.get('max_tokens'), bool(_cfg_primary.get('thinking')),
@@ -1415,7 +1433,11 @@ def run_tool_loop(agent: Dict[str, Any],
                              if _enable_thinking_this_call else 0),
             safety_margin=REQUEST_BUDGET_SAFETY_MARGIN,
             enforce=REQUEST_BUDGET_MODE == 'enforced',
+            calibration=_budget_calibration,
+            stub_through=_budget_stub_through,
         )
+        _budget_stub_through = _budget_plan.stub_through
+        _sent_local_tokens = _budget_plan.local_tokens
         event_stream.emit('llm_request_budget', {
             'agent_id': agent_id, 'session_id': session_id, 'attempt': _iteration,
             'mode': REQUEST_BUDGET_MODE, 'path': _request.path,
@@ -1947,6 +1969,7 @@ def run_tool_loop(agent: Dict[str, Any],
                         llm = _fallback_llm
                         result = _fallback_result
                         _request = _fallback_request
+                        _sent_local_tokens = _fallback_plan.local_tokens
                         _fallback_succeeded = True
                         if not _session_model_override:
                             # Persist the fallback model ID to agent_state (per-agent and global-default
@@ -2065,6 +2088,8 @@ def run_tool_loop(agent: Dict[str, Any],
             _last_provider_prompt_tokens = max(0, int(_reported_prompt)) or None
         except (TypeError, ValueError):
             _last_provider_prompt_tokens = None
+        if _last_provider_prompt_tokens and _sent_local_tokens:
+            _budget_calibration = _last_provider_prompt_tokens / _sent_local_tokens
         _cu_prompt = _reported_prompt
         _cu_estimated = False
         if _cu_prompt <= 0:
@@ -2084,6 +2109,7 @@ def run_tool_loop(agent: Dict[str, Any],
                     'model': (result.get('request_payload') or {}).get('model') or _request.model,
                     'provider': _request.provider,
                     'estimated': _cu_estimated,
+                    'estimate_ratio': _budget_calibration,
                     'effective_request': _request.metrics(),
                     'active_context': _active_projection.metrics(),
                     'ts': int(time.time()),

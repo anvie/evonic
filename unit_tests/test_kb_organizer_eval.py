@@ -59,7 +59,7 @@ def test_task_tail_matches_spawn_kb_tidy():
     src = inspect.getsource(memory_manager._spawn_kb_tidy)
     flat = re.sub(r'"\s*\n\s*(\+\s*)?\(?"', "", src)
     for fragment in ("Fix each problem directly using your ", "summarize what you fixed.",
-                     "do NOT Glob or Grep the whole vault"):
+                     "Audit and fix ONLY the docs listed above", "Stay on the listed docs."):
         assert fragment in flat or fragment.replace(" ", "") in flat.replace(" ", ""), (
             f"_spawn_kb_tidy no longer contains {fragment!r}; update _TASK_TAIL_WITH_PLAN and regenerate")
 

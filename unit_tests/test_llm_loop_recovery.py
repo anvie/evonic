@@ -1009,3 +1009,77 @@ class TestGenerationTimeoutRetry(unittest.TestCase):
         self.assertIn('entire output budget', second.kwargs['messages'][-1]['content'])
         # the planner's output reserve matches what is sent (no 2x doubling of 64k)
         self.assertEqual(budgets[:2], [64000, 32000])
+
+
+# ---------------------------------------------------------------------------
+# Tests: request budget follows the provider's token count, not only the local one
+# ---------------------------------------------------------------------------
+
+class TestProviderCalibratedBudget(unittest.TestCase):
+    # no declared window: the global llm_context_length applies
+    MODEL = {'name': 'm', 'provider': 'llama.cpp', 'base_url': 'http://x/v1', 'api_key': '',
+             'model_name': 'm', 'timeout': 900, 'thinking': 0, 'thinking_budget': 0,
+             'max_tokens': 1000, 'context_window': 0, 'enabled': True}
+
+    def _run(self, seed_model):
+        llm = MagicMock()
+        llm.model = 'm'
+        ok = _ok('answered')
+        ok['prompt_tokens'] = 30000
+        llm.chat_completion.side_effect = [ok]
+        mock_db = MagicMock()
+        mock_db.get_setting.side_effect = lambda key, default=None: (
+            '20000' if key == 'llm_context_length' else default or '0')
+        mock_db.get_session_state.return_value = json.dumps({'context_usage': {
+            'prompt_tokens': 100, 'estimate_ratio': 1.6, 'effective_request': {'model': seed_model}}})
+        mock_db.add_chat_message.return_value = None
+        mock_db.get_agent_model.return_value = dict(self.MODEL)
+        mock_db.get_agent_default_model.return_value = None
+        mock_db.get_agent_state.return_value = None
+        mock_db.get_agent_fallback_model.return_value = None
+        mock_db.get_summary.return_value = None
+        mock_tr = MagicMock()
+        messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}]
+        for i in range(6):
+            messages.append(_asst_tc(f'g{i}', 'bash'))
+            messages.append({"role": "tool", "tool_call_id": f'g{i}', "content": f"line {i} " * 700})
+        messages.append({"role": "user", "content": "continue"})
+        import backend.event_stream as _es_mod
+        with patch.object(_llm_loop_mod, 'db', mock_db), \
+             patch.object(_llm_loop_mod, 'tool_registry', mock_tr), \
+             patch.object(_es_mod, 'event_stream', MagicMock()) as mock_es, \
+             patch.object(_llm_loop_mod, 'LLMClient', return_value=llm), \
+             patch.object(_llm_loop_mod, 'llm_client', llm):
+            _llm_loop_mod.run_tool_loop(
+                agent={'id': 'a', 'name': 'A', 'model': None,
+                       'send_intermediate_responses': False, 'summarize_threshold': 0},
+                agent_context={'user_id': 'u1', 'channel_id': 'ch1', 'is_super': False,
+                               'agent_state': None},
+                messages=messages,
+                tools=[], session_id='sess_calibrated', llm_lock=threading.Lock(),
+                stop_event=threading.Event(), session_skill_mds={}, session_skill_tools={},
+                llm_log_path=None)
+        budget = next(c[0][1] for c in mock_es.emit.call_args_list
+                      if c[0][0] == 'llm_request_budget')
+        sent = llm.chat_completion.call_args.kwargs['messages']
+        usage = next(json.loads(c[0][1])['context_usage']
+                     for c in reversed(mock_db.upsert_session_state.call_args_list)
+                     if 'context_usage' in c[0][1])
+        return budget, sent, usage
+
+    def test_seeded_ratio_stubs_old_tool_output_within_the_global_window(self):
+        budget, sent, usage = self._run('m')
+        self.assertEqual(budget['capacity'], 20000)
+        self.assertEqual(budget['stage'], 'tool_results')
+        self.assertLessEqual(budget['local_tokens'] * 1.6, budget['input_budget'])
+        tool_msgs = [m for m in sent if m.get('role') == 'tool']
+        self.assertEqual(len(tool_msgs), 6)
+        self.assertTrue(tool_msgs[0]['content'].startswith('[Tool output dropped'))
+        self.assertTrue(tool_msgs[-1]['content'].startswith('line 5'))
+        # the ratio the next request starts from is this request's own
+        self.assertAlmostEqual(usage['estimate_ratio'], 30000 / budget['local_tokens'])
+
+    def test_ratio_from_another_model_is_ignored(self):
+        budget, sent, _ = self._run('other-model')
+        self.assertEqual(budget['stage'], 'initial')
+        self.assertEqual(budget['estimated_tokens'], budget['local_tokens'])

@@ -2026,6 +2026,15 @@ function buildMessageBubble(role, content, opts = {}, cfg = {}) {
             'background': 'transparent'
         });
         $bubble.find('em').css('color', '#6b8e6b');
+        // A failed command (the server only prints a non-zero exit code) offers
+        // a hand-off: the page quotes it into the composer for the user to send.
+        const $exit = $bubble.find('em').filter((_, el) => /^\(exit code -?\d+\)$/.test(el.textContent)).last();
+        if ($exit.length && typeof cfg.onAskAgent === 'function') {
+            $exit.after(' ', $('<button type="button">').text('ask agent to check')
+                .attr('title', 'Quote this command and its output in the message box')
+                .css({ 'margin-left': '0.5rem', 'font-size': '0.75rem', 'color': '#4fb34f', 'text-decoration': 'underline' })
+                .on('click', () => cfg.onAskAgent(content)));
+        }
         $bubble.find('img').each(function() {
             const $img = $(this);
             _wrapImageWithDownload($img);

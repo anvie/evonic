@@ -29,6 +29,8 @@ _MIN_NAME_LEN = 3         # shorter names are too ambiguous for plain-text match
 _MTIME_EPS = 0.001
 
 _LINK_RE = re.compile(r'\[\[([^\]\n]+)\]\]')
+# Fenced blocks (closed, or open to the end of the doc) and inline code spans.
+_CODE_RE = re.compile(r'^(```|~~~).*?(?:^\1|\Z)|`[^`\n]+`', re.DOTALL | re.MULTILINE)
 _PAREN_TITLE_RE = re.compile(r'\([^)]+\)\s*$')
 _SKIP_NAMES = frozenset({"user", "assistant", "note", "notes", "summary"})
 
@@ -75,12 +77,12 @@ def _link_target(raw: str) -> str:
 
 
 def scan_vault(kb_dir: str) -> Dict[str, Doc]:
-    """Read every ``.md`` doc under *kb_dir* (skipping dot dirs and ``inbox``)."""
+    """Read every ``.md`` doc under *kb_dir* (skipping dot dirs, ``inbox`` and ``privnt``)."""
     docs: Dict[str, Doc] = {}
     if not kb_dir or not os.path.isdir(kb_dir):
         return docs
     for root, dirs, fnames in os.walk(kb_dir):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != 'inbox']
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('inbox', 'privnt')]
         for fn in sorted(fnames):
             if not fn.endswith('.md') or fn.startswith('.'):
                 continue
@@ -200,9 +202,15 @@ def closest_docs(target: str, docs: Dict[str, Doc], n: int = 2) -> List[Doc]:
     return [d for _, d in scored[:n]]
 
 
+def blank_code(body: str) -> str:
+    """Body with code spans and fenced blocks blanked (same length), so names
+    inside code (identifiers, paths, model ids) are never taken for prose."""
+    return _CODE_RE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group(0)), body)
+
+
 def _unlinked_body(body: str) -> str:
-    """Body with existing [[links]] blanked so plain-text matching skips them."""
-    return _LINK_RE.sub(lambda m: ' ' * len(m.group(0)), body)
+    """Body with existing [[links]] and code blanked so plain-text matching skips them."""
+    return _LINK_RE.sub(lambda m: ' ' * len(m.group(0)), blank_code(body))
 
 
 @functools.lru_cache(maxsize=2048)
@@ -283,8 +291,8 @@ def find_issues(docs: Dict[str, Doc], focus: List[str],
 
 
 def render_plan(docs: Dict[str, Doc], batch: List[str], neighbors: List[str],
-                reasons: Dict[str, str], issues: List[str]) -> str:
-    """Task-message section describing this run's focus batch and findings."""
+                reasons: Dict[str, str]) -> str:
+    """Task-message section describing this run's focus batch."""
     lines = [f"FOCUS BATCH ({len(batch)} of {len(docs)} docs; audit these FIRST):"]
     for s in batch:
         lines.append(f"- [{s}] {docs[s].title} ({reasons[s]})")
@@ -293,15 +301,6 @@ def render_plan(docs: Dict[str, Doc], batch: List[str], neighbors: List[str],
         lines.append("LINKED TO THE NEW/CHANGED DOCS ABOVE (also in scope):")
         for s in neighbors:
             lines.append(f"- [{s}] {docs[s].title}")
-    lines.append("")
-    if issues:
-        lines.append("DETECTED ISSUES (computed from the WHOLE vault already, so you "
-                     "do NOT need to search it; heuristic, so each may be a FALSE "
-                     "POSITIVE — read_file the doc to verify before fixing; do NOT link "
-                     "entities that merely share a name fragment):")
-        lines.extend(f"- {i}" for i in issues)
-    else:
-        lines.append("DETECTED ISSUES: none found by the heuristic pre-analysis.")
     return "\n".join(lines)
 
 

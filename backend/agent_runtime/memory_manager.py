@@ -164,7 +164,7 @@ NAMING — the `title` is the subject's PURE canonical name ONLY. Put nicknames,
   - title "Dewi Anggraini Putri", aliases ["DAP"]
 The aliases let other names still resolve to this one doc.
 
-LINKING IS MANDATORY — every named entity you mention in a `body` MUST be wrapped in an inline [[Wiki Link]]: people, places, organizations, companies, products, venues, events. This is how the knowledge graph connects — a body with no links is WRONG. ESPECIALLY every PERSON's name MUST be a [[link]] — never leave a person as plain text. Link the entity's canonical name, e.g. "User bertemu [[Budi Santoso]] di [[Jakarta]] di kantor [[Acme Corp]]." Do NOT wrap "User" in a link.
+LINKING IS MANDATORY — every named entity you mention in a `body` MUST be wrapped in an inline [[Wiki Link]]: people, places, organizations, companies, products, venues, events. This is how the knowledge graph connects — a body with no links is WRONG. ESPECIALLY every PERSON's name MUST be a [[link]] — never leave a person as plain text. Link the entity's canonical name, e.g. "User bertemu [[Budi Santoso]] di [[Jakarta]] di kantor [[Acme Corp]]." Do NOT wrap "User" in a link. Never place a link inside a backtick code span or fenced code block (identifiers, env vars, model ids, paths stay as code).
 
 LINKING EXCEPTIONS — do NOT link in these cases:
   - DISAMBIGUATION / NOTES about a DIFFERENT entity with a similar name. If a doc mentions another person only to clarify "this is NOT the same person", leave it as plain text — linking would create a false connection in the knowledge graph.
@@ -277,13 +277,15 @@ Your job is NOT to file new knowledge — another process handles that. Your job
 5. WRONG TITLES — a `title` that includes parenthetical nicknames (e.g. `"Abdurrahman Wahid (Gus Dur)"`). Use str_replace to fix the title in frontmatter to the pure canonical name and move the nickname to `aliases`.
 
 APPROACH:
-- If the task lists a FOCUS BATCH and DETECTED ISSUES, STAY INSIDE THEM. They were computed from the whole vault already (including the closest existing doc for each dangling link and which doc each plain-text mention belongs to), so you do NOT need to search the vault:
-  - Do NOT Glob the vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context.
+- If the task lists a FOCUS BATCH, the listed docs (the batch plus the docs listed as linked to it) are the ONLY docs you audit and fix. Nothing pre-computes the problems for you: read each listed doc, judge what is really wrong, and fix only that.
+  - Exploring is fine, but ONLY to check something about a listed doc: a narrow Grep for ONE specific name, or one read_file, to see whether a linked name has a doc, whether an entity is a duplicate, or to read the target before adding an alias. Roughly 2-3 lookups per listed doc at most.
+  - Do NOT Glob the whole vault and do NOT run vault-wide Grep (`\\[\\[`, `title:`, ...): results are capped small and flood your limited context.
+  - Edit a doc outside the list ONLY as the direct fix for a listed doc's problem (e.g. adding an alias to the target of a listed doc's dangling link, or merging a duplicate of a listed doc into its keeper).
+  - If you notice problems in an unlisted doc, LEAVE THEM: a later pass will get to that doc. Do not start auditing the doc you just looked up.
   - Work ONE doc at a time: read_file it, fix its real issues with your edit tools right away, then move on. Do not read the whole batch up front: at most 2 tool calls per step (extra ones are dropped), and make at least one concrete fix (str_replace / delete_file) after every 2-3 docs you read.
-  - read_file returns a short window of a doc; for a long doc use offset=N to continue only if the issue you are verifying is further down.
-  - To confirm a suggested doc, read_file that doc (one file). If you must search, use a narrow Grep for ONE specific name.
-  - Detected issues are heuristic: skip false positives (e.g. two different people sharing a name fragment).
-  - Keep it small: roughly two tool calls per doc. Stop when the batch is done — do not widen the audit to the rest of the vault.
+  - read_file returns a short window of a doc; for a long doc use offset=N to continue only if needed.
+  - Skip anything you are not sure about (e.g. two different people sharing a name fragment): leaving a doc alone is better than a wrong link or merge.
+  - Stop as soon as every listed doc is done — do not widen the audit to the rest of the vault.
 - Otherwise start with Glob `**/*.md` to list all docs and read_file a representative sample to understand the vault's state and naming conventions.
 - Grep systematically for problems:
   - `title:` to build a title index, spot duplicates.
@@ -297,9 +299,31 @@ IMPORTANT RULES:
 - Always read_file a file BEFORE using str_replace on it — you need the exact current text.
 - For retro-linking, make old_str unique enough to avoid false matches (include surrounding words if the name alone appears multiple times).
 - Do NOT wrap "User" in [[links]] — "User" refers to the assistant's owner, not a knowledge entity.
+- NEVER put a [[link]] inside a backtick code span, a fenced code block, or the frontmatter: identifiers, env vars, model ids and paths such as `X_BEARER_TOKEN` stay verbatim code (do not strip the backticks either). Do not link such a mention.
 - NEVER link entities just because they share a name fragment. "Budi Santoso" and "Ahmad Budi Pratama" are DIFFERENT people — linking one to the other creates a false connection. Only link when a real-world relationship exists.
 - Do NOT link names mentioned only for disambiguation/clarification (e.g. "bukan yang sama dengan X"). A [[link]] means the entities are genuinely related.
 - When adding aliases, preserve the existing YAML list format — append to the list, don't replace it."""
+
+
+def _kb_organizer_models(agent):
+    """Organizer model id and its ordered fallback ids.
+
+    The model is the System Settings organizer model, then the env override,
+    then the parent agent's own model. Fallbacks come from the organizer
+    fallback chain; with none configured, a distinct organizer model falls
+    back to the global default model, and otherwise the runtime walks the
+    default model's own chain.
+    """
+    from backend.default_model_chain import KB_ORGANIZER_CHAIN
+    model_id = (db.get_setting('kb_organizer_model_id', '')
+                or os.environ.get('EVOMEM_KB_ORGANIZER_MODEL')
+                or agent.get('model_id') or None)
+    fallback_ids = [i for i in KB_ORGANIZER_CHAIN.get_ids(db) if i != model_id]
+    if not fallback_ids:
+        default_id = (db.get_default_model() or {}).get('id')
+        if model_id and default_id and model_id != default_id:
+            fallback_ids = [default_id]
+    return model_id, fallback_ids
 
 
 def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
@@ -333,17 +357,11 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
         return f"Tool resolution failed: {tool_err}"
 
     timeout = int(os.environ.get('EVOMEM_KB_ORGANIZER_TIMEOUT', '600'))
-    _kb_model_id = (db.get_setting('kb_organizer_model_id', '')
-                    or os.environ.get('EVOMEM_KB_ORGANIZER_MODEL')
-                    or agent.get('model_id') or None)
-    _default_model_id = (db.get_default_model() or {}).get('id')
-    _fallback_model_id = (_default_model_id
-                          if _kb_model_id and _default_model_id
-                          and _kb_model_id != _default_model_id else None)
+    _kb_model_id, _fallback_ids = _kb_organizer_models(agent)
     skill_cfg = {
         'system_prompt': _KB_TIDY_SYSTEM_PROMPT,
         'model_id': _kb_model_id,
-        'fallback_model_id': _fallback_model_id,
+        'fallback_model_ids': _fallback_ids,
     }
 
     def _build(eid):
@@ -382,9 +400,7 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
         batch, neighbors, reasons = kb_tidy_plan.plan_batch(vault, ledger)
         if batch:
             plan_slugs = batch + neighbors
-            plan_text = kb_tidy_plan.render_plan(
-                vault, batch, neighbors, reasons,
-                kb_tidy_plan.find_issues(vault, plan_slugs))
+            plan_text = kb_tidy_plan.render_plan(vault, batch, neighbors, reasons)
     except Exception:
         logger.warning("[MemoryManager] kb-janitor[%s]: planning failed; running "
                        "unfocused", agent_id, exc_info=True)
@@ -393,9 +409,11 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
     try:
         task_msg = ((plan_text + "\n\n" if plan_text else "") +
                     "Audit the vault (your workspace) for structural problems. "
-                    + ("Work through the FOCUS BATCH and DETECTED ISSUES above one doc "
-                       "at a time; do NOT Glob or Grep the whole vault (the issues "
-                       "already come from a full-vault analysis). Fix the real ones. "
+                    + ("Audit and fix ONLY the docs listed above, one at a time. Look "
+                       "elsewhere only to check something about a listed doc (a narrow "
+                       "Grep or a single read_file), and touch an unlisted doc only as "
+                       "the direct fix for a listed doc. Leave other docs' problems for "
+                       "a later pass. Stop once every listed doc is done. "
                        "Problem types: "
                        if plan_text else
                        "Use Glob to list all docs, read_file a representative sample, "
@@ -407,7 +425,8 @@ def _spawn_kb_tidy(agent: dict, keep_session: bool = False) -> str:
                     "wrapped in [[links]], (4) broken or empty docs, (5) titles "
                     "polluted with nicknames. Fix each problem directly using your "
                     "tools (str_replace, write_file, delete_file). When done, "
-                    "summarize what you fixed.")
+                    "summarize what you fixed."
+                    + (" Stay on the listed docs." if plan_text else ""))
         res = notify_agent(
             agent_id=explorer_id, tag=f"AGENT/{parent_name}", message=task_msg,
             external_user_id=f"__agent__{agent_id}", channel_id=None, dedup=False,
@@ -1317,23 +1336,11 @@ def _spawn_kb_organizer(agent: dict, source_text: str, recent_text: str = "",
     # instance), so a long blocking wait is fine — and far better than discarding a
     # result that arrives a few seconds late. Tune via EVOMEM_KB_ORGANIZER_TIMEOUT.
     timeout = int(os.environ.get('EVOMEM_KB_ORGANIZER_TIMEOUT', '600'))
-    _kb_model_id = (db.get_setting('kb_organizer_model_id', '')
-                    or os.environ.get('EVOMEM_KB_ORGANIZER_MODEL')
-                    or agent.get('model_id') or None)
-    # When a distinct organizer model is configured, fall back to the global
-    # default model if that model fails at runtime (the runtime's per-agent
-    # fallback machinery picks this up via explorer.fallback_model). When no
-    # organizer model is set, the organizer uses the parent agent's default
-    # model (or the global default if the agent has none), so a fallback
-    # equal to the primary would be pointless.
-    _default_model_id = (db.get_default_model() or {}).get('id')
-    _fallback_model_id = (_default_model_id
-                          if _kb_model_id and _default_model_id
-                          and _kb_model_id != _default_model_id else None)
+    _kb_model_id, _fallback_ids = _kb_organizer_models(agent)
     skill_cfg = {
         'system_prompt': _KB_ORGANIZER_SYSTEM_PROMPT,
         'model_id': _kb_model_id,
-        'fallback_model_id': _fallback_model_id,
+        'fallback_model_ids': _fallback_ids,
     }
 
     def _build(eid):
