@@ -1,5 +1,6 @@
 """CLI setup wizard timezone prompt regressions."""
 
+import re
 from unittest.mock import MagicMock, patch
 
 
@@ -24,7 +25,8 @@ def test_cli_setup_defaults_timezone(monkeypatch, capsys):
         ["3", "", "", "", "", "", "", "n"],
     )
     assert run_setup.call_args.kwargs["timezone_name"] == "Asia/Jakarta"
-    assert "Timezone    : Asia/Jakarta" in capsys.readouterr().out
+    # The summary card pads its label column; match the pair, not the spacing.
+    assert re.search(r"Timezone\s+Asia/Jakarta", capsys.readouterr().out)
 
 
 def test_cli_setup_accepts_custom_timezone(monkeypatch):
@@ -77,7 +79,7 @@ def test_cli_setup_generates_password_when_left_empty(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert run_setup.call_args.kwargs["password"] == ""
-    assert "Admin Pass  : (auto-generated)" in out
+    assert re.search(r"Password\s+\(auto-generated\)", out)
     assert "gen-Pass_123" in out
 
 

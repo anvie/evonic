@@ -246,6 +246,13 @@ class ToolRegistry:
                     }
             skill_id = fn_to_skill.get(function_name)
             plugin_id = fn_to_plugin.get(function_name)
+            if not skill_id and not plugin_id:
+                # use_skill assigns lazy skill tools mid-turn, after the maps were built
+                for tid in ctx.get('assigned_tool_ids', []):
+                    parts = tid.split(':', 2)
+                    if len(parts) == 3 and parts[0] == 'skill' and parts[2] == function_name:
+                        skill_id = parts[1]
+                        break
             # Learned-skill tools are scripts run through bash/runpy, never an
             # in-process module. A global skill with the same id always wins.
             if skill_id:

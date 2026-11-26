@@ -171,12 +171,18 @@ if not _SECRET_KEY_ENV:
             _f.write(f"SECRET_KEY={_SECRET_KEY_ENV}\n")
 
     os.environ["SECRET_KEY"] = _SECRET_KEY_ENV
-    _logger.info("Generated new SECRET_KEY and saved to .env")
-    _logger.warning(
-        "SECRET_KEY was written to .env. Ensure this file is NOT world-readable "
-        "(e.g. chmod 600 .env on Linux) — if leaked, session signing keys and "
-        "all encrypted cookies can be forged."
-    )
+    # The key signs sessions, so keep .env private to the owner. Only warn when
+    # that is not possible (e.g. a filesystem without POSIX permissions).
+    try:
+        os.chmod(_env_path, 0o600)
+        _logger.info("Generated new SECRET_KEY and saved to .env (mode 600)")
+    except OSError:
+        _logger.info("Generated new SECRET_KEY and saved to .env")
+        _logger.warning(
+            "Could not restrict .env to the owner. Make sure it is NOT "
+            "world-readable (e.g. chmod 600 .env) — if leaked, session signing "
+            "keys and all encrypted cookies can be forged."
+        )
 
 
 def cli_api_token():
