@@ -535,6 +535,18 @@ prompt_path() {
     PATH_ADDED=1
 }
 
+# Write SECRET_KEY to .env (mode 600) unless one is already there.
+seed_env() {
+    env_file="$EVONIC_HOME/.env"
+    if [ -f "$env_file" ] && grep -q '^SECRET_KEY=' "$env_file" 2>/dev/null; then
+        return 0
+    fi
+    key="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))' 2>/dev/null)" || return 0
+    [ -n "$key" ] || return 0
+    ( umask 077; printf 'SECRET_KEY=%s\n' "$key" >> "$env_file" )
+    chmod 600 "$env_file" 2>/dev/null || true
+}
+
 # ── Result card ──────────────────────────────────────────────────────────────
 CARD_W=58
 card_top()    { printf '  %s╭%s╮%s\n' "$dim" "$(hline $((CARD_W + 2)))" "$reset"; }
@@ -610,6 +622,11 @@ main() {
     prompt_path
 
     # ── Setup ───────────────────────────────────────────────────────────────
+    # Create the session key up front, readable by the owner only. Older
+    # releases otherwise generate it while the wizard runs and warn about the
+    # file permissions.
+    seed_env
+
     # The super agent has to exist before the dashboard is usable. Do it here
     # in the terminal, or hand over to the browser wizard.
     mode=1
@@ -641,12 +658,14 @@ main() {
         rc=0
         export EVONIC_INSTALLER=1
         printf '\n'
+        # Only warnings and errors from the wizard; its INFO lines are noise here.
         if [ -n "$EVONIC_YES" ]; then
-            "$WRAPPER" setup --non-interactive || rc=$?
+            EVONIC_LOG_LEVEL=WARNING "$WRAPPER" setup --non-interactive || rc=$?
         else
-            "$WRAPPER" setup || rc=$?
+            EVONIC_LOG_LEVEL=WARNING "$WRAPPER" setup || rc=$?
         fi
         if [ "$rc" -eq 0 ]; then
+            printf '\n'
             ask "  ${bold}?${reset} Start Evonic now? ${dim}[Y/n]${reset} "
             case "$REPLY" in
                 [nN]|[nN][oO]) ;;
