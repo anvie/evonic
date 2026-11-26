@@ -161,6 +161,10 @@ from backend.agent_runtime.llm_response_parser import (
     should_nudge_continuation,
 )
 from backend.agent_runtime.llm_tool_executor import MAX_INJECTIONS_PER_LOOP
+from backend.agent_runtime.loop_guard import (
+    PostForceStopSupervisor,
+    POST_FORCE_STOP_MAX_BATCHES,
+)
 from backend.agent_runtime.quality_monitor import (
     QualityMonitor,
     check_empty_response as _qm_check_empty,
@@ -733,9 +737,13 @@ def run_tool_loop(agent: Dict[str, Any],
     # Sliding-window tool+args loop detector (window=10, threshold=5)
     _tool_call_window: collections.deque = collections.deque(maxlen=10)
     _tool_args_force_stop_injected: bool = False
-    # Post-force-stop hard-termination counter
     _any_force_stop_injected: bool = False
-    _post_force_stop_tool_count: int = 0
+    # Post-force-stop supervision, judged once per tool BATCH. Individual calls
+    # are not counted: a parallel batch issues 2-4 calls per round, and an agent
+    # that obeys the stop and starts doing real work must not be killed for it.
+    _post_force_stop_supervisor = PostForceStopSupervisor(POST_FORCE_STOP_MAX_BATCHES)
+    # Keys of the tool calls in the batch currently being processed.
+    _batch_tool_keys: list = []
     # Continuation-nudge tracker
     _continuation_nudge_count: int = 0
     _last_nudged_content: Optional[str] = None  # content of the message that triggered a nudge
@@ -2712,6 +2720,7 @@ def run_tool_loop(agent: Dict[str, Any],
         _parse_failed = {}
         _tool_records = []       # [(tc, fn_name, args, pt)]
         _parallel_indices = set()
+        _batch_tool_keys = []    # keys of THIS batch, for post-force-stop judging
 
         for tc_idx, tc in enumerate(tool_calls):
             fn_name = tc['function']['name']
@@ -2860,6 +2869,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 # Contribute to loop-detection window
                 _tool_call_key = f"{fn_name}|"
                 _tool_call_window.append(_tool_call_key)
+                _batch_tool_keys.append(_tool_call_key)
                 continue
 
             # --- Obtain tool_result ---
@@ -3384,29 +3394,7 @@ def run_tool_loop(agent: Dict[str, Any],
             # Catches loops even when other tools are interleaved between repeats.
             _tool_call_key = f"{fn_name}|{json.dumps(args, sort_keys=True, default=str)}"
             _tool_call_window.append(_tool_call_key)
-            if _post_force_stop_tool_count > 0:
-                _post_force_stop_tool_count += 1
-                if _post_force_stop_tool_count > 3:
-                    _logger.error("LLM still calling tools after force-stop — hard terminating")
-                    error_msg = "LLM Error: Agent continued calling tools after loop-detection force-stop. Terminated."
-                    _pfs_dur = round(time.time() - _loop_start_time, 1)
-                    db.add_chat_message(session_id, 'assistant', error_msg, agent_id=db_agent_id,
-                                        metadata={"error": True, "timeline": timeline,
-                                                  "thinking_duration": _pfs_dur})
-                    chatlog.append({'type': 'error', 'session_id': session_id, 'content': error_msg,
-                                    'metadata': {'error': True, 'thinking_duration': _pfs_dur}})
-                    chatlog.append({'type': 'turn_end', 'session_id': session_id, 'thinking_duration': _pfs_dur})
-                    # Emit final_answer so auto-forward (e.g. sub-agent → parent) still fires
-                    # on this hard-stop exit path, mirroring the LLM-error and duplicate-text
-                    # exits above. Without this, the delegator never learns the sub-agent died.
-                    event_stream.emit('final_answer', {
-                        'agent_id': agent_id, 'session_id': session_id,
-                        'external_user_id': external_user_id, 'channel_id': channel_id,
-                        'answer': error_msg, 'tool_trace': tool_trace, 'timeline': timeline,
-                        'error': True,
-                    })
-                    _end_tool_batch(agent_id, session_id)
-                    return {"text": error_msg, "error": True}, tool_trace, timeline
+            _batch_tool_keys.append(_tool_call_key)
 
             if _tool_call_window.count(_tool_call_key) >= 5 and not _tool_args_force_stop_injected:
                 _logger.warning("Loop detected (%d/10 calls in window: %s) — injecting force-stop",
@@ -3414,18 +3402,32 @@ def run_tool_loop(agent: Dict[str, Any],
                 _qm_loop_msg = _qm_check_loop(
                     _tool_call_window, fn_name, args,
                     monitor=_quality_monitor)
+                _force_stop_text = _qm_loop_msg or (
+                    f"[SYSTEM] URGENT: You have called the tool '{fn_name}' with the same "
+                    f"arguments {_tool_call_window.count(_tool_call_key)} times in the last "
+                    f"{len(_tool_call_window)} tool calls. STOP and revert to the state where "
+                    f"you started. Review your previous results and provide your FINAL answer."
+                )
                 messages.append({
                     "role": "user",
-                    "content": _qm_loop_msg or (
-                        f"[SYSTEM] URGENT: You have called the tool '{fn_name}' with the same "
-                        f"arguments {_tool_call_window.count(_tool_call_key)} times in the last "
-                        f"{len(_tool_call_window)} tool calls. STOP and revert to the state where "
-                        f"you started. Review your previous results and provide your FINAL answer."
-                    ),
+                    "content": _force_stop_text,
                 })
                 _tool_args_force_stop_injected = True
                 _any_force_stop_injected = True
-                _post_force_stop_tool_count = 1
+                # Judge the batch this injection lands in as "not yet answered",
+                # then require the offending key to persist across consecutive
+                # batches before terminating (see loop_guard).
+                _post_force_stop_supervisor.on_force_stop(_tool_call_key)
+                # Persist the injection so the audit trail explains why the turn
+                # was steered (previously it only existed inside `messages`).
+                db.add_chat_message(session_id, 'system', _force_stop_text,
+                                    agent_id=db_agent_id,
+                                    metadata={"force_stop": True,
+                                              "trigger": _tool_call_key})
+                chatlog.append({'type': 'system', 'session_id': session_id,
+                                'content': _force_stop_text,
+                                'metadata': {'force_stop': True,
+                                             'trigger': _tool_call_key}})
 
         # The parallel pool is always cleaned up by the bounded collector.
 
@@ -3433,6 +3435,41 @@ def run_tool_loop(agent: Dict[str, Any],
         # they land after this batch's tool_output rows.
         if _end_tool_batch(agent_id, session_id):
             _logger.debug('Flushed deferred chatlog echoes session=%s', session_id)
+
+        # --- Post-force-stop supervision (batch granularity) ---
+        # The stop instruction is a single LLM message; the model answers it with
+        # a whole new batch (often 2-4 parallel calls). Only a tool|args pattern
+        # that PERSISTS across consecutive batches proves the model ignored the
+        # stop. A batch without any repeated pattern resets the counter, so an
+        # agent that starts doing real work is never terminated for it.
+        # `repeated_keys` keeps the old protection for a loop that simply moved
+        # to a different tool+args after the stop.
+        _repeated_keys = {
+            _k for _k in set(_batch_tool_keys)
+            if _tool_call_window.count(_k) >= 5
+        }
+        if _post_force_stop_supervisor.evaluate_batch(_batch_tool_keys, _repeated_keys):
+            _logger.error("LLM still calling tools after force-stop — hard terminating (%s)",
+                          _post_force_stop_supervisor.describe())
+            error_msg = "LLM Error: Agent continued calling tools after loop-detection force-stop. Terminated."
+            _pfs_dur = round(time.time() - _loop_start_time, 1)
+            db.add_chat_message(session_id, 'assistant', error_msg, agent_id=db_agent_id,
+                                metadata={"error": True, "timeline": timeline,
+                                          "thinking_duration": _pfs_dur,
+                                          "force_stop": _post_force_stop_supervisor.describe()})
+            chatlog.append({'type': 'error', 'session_id': session_id, 'content': error_msg,
+                            'metadata': {'error': True, 'thinking_duration': _pfs_dur}})
+            chatlog.append({'type': 'turn_end', 'session_id': session_id, 'thinking_duration': _pfs_dur})
+            # Emit final_answer so auto-forward (e.g. sub-agent → parent) still fires
+            # on this hard-stop exit path, mirroring the LLM-error and duplicate-text
+            # exits above. Without this, the delegator never learns the sub-agent died.
+            event_stream.emit('final_answer', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': external_user_id, 'channel_id': channel_id,
+                'answer': error_msg, 'tool_trace': tool_trace, 'timeline': timeline,
+                'error': True,
+            })
+            return {"text": error_msg, "error": True}, tool_trace, timeline
 
         # Count this as one tool iteration (what the user sees as "iterations")
         _iteration += 1

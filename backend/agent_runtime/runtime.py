@@ -2291,7 +2291,11 @@ class AgentRuntime:
             """Skip messages that appear in UI but must not enter LLM context."""
             meta = msg.get('metadata') or {}
             return bool(meta.get('busy_ack') or meta.get('busy_rejection')
-                        or meta.get('evonet_offline') or meta.get('bash_exec'))
+                        or meta.get('evonet_offline') or meta.get('bash_exec')
+                        # Loop-detection force-stop instructions are audit rows for
+                        # the turn that was steered; replaying them into later turns
+                        # would ask the model to "revert" work it already finished.
+                        or meta.get('force_stop'))
 
         def _is_slash_command_msg(msg: dict) -> bool:
             """Skip slash command user messages and their assistant responses.
