@@ -1,7 +1,7 @@
 import copy
 
 from backend.agent_runtime.active_context import validate_tool_pairs
-from backend.agent_runtime.request_budget import plan_request
+from backend.agent_runtime.request_budget import _RESULT_STUB, plan_request
 
 
 def _call(call_id, name="read_file"):
@@ -142,3 +142,62 @@ def test_clamped_plan_is_deterministic():
     second = plan_request(messages, [], context_window=64000, max_tokens=64000)
     assert first.fingerprint == second.fingerprint
     assert first.metrics() == second.metrics()
+
+
+def _bash_history(groups, name="bash"):
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "explore"}]
+    for i in range(groups):
+        messages.append({"role": "assistant", "content": "", "tool_calls": [_call(f"g{i}", name)]})
+        messages.append({"role": "tool", "tool_call_id": f"g{i}", "content": f"output {i} " * 400})
+    return messages
+
+
+def _stubbed(plan):
+    return [m["tool_call_id"] for m in plan.messages if m.get("content") == _RESULT_STUB]
+
+
+def test_old_results_of_any_tool_are_stubbed_before_anything_is_removed():
+    messages = _bash_history(8)
+    original = copy.deepcopy(messages)
+    plan = plan_request(messages, [], context_window=8000, max_tokens=500, safety_margin=100)
+    assert plan.fit and plan.stage == "tool_results"
+    assert plan.estimated_tokens <= plan.input_budget
+    assert messages == original
+    validate_tool_pairs(plan.messages)
+    # every call survives, the newest two groups keep their output
+    assert len(plan.messages) == len(messages)
+    stubbed = _stubbed(plan)
+    assert stubbed and stubbed == [f"g{i}" for i in range(len(stubbed))]
+    assert plan.stub_through == stubbed[-1]
+    assert plan.messages[-1] == messages[-1] and plan.messages[-3] == messages[-3]
+
+
+def test_skill_results_are_never_stubbed():
+    plan = plan_request(_bash_history(8, "use_skill"), [], context_window=8000, max_tokens=500,
+                        safety_margin=100)
+    assert not _stubbed(plan)
+
+
+def test_provider_calibration_reduces_a_payload_the_local_estimate_accepts():
+    messages = _bash_history(8)
+    kwargs = dict(context_window=12000, max_tokens=500, safety_margin=100)
+    local = plan_request(messages, [], **kwargs)
+    assert local.stage == "initial" and local.estimated_tokens == local.local_tokens
+    plan = plan_request(messages, [], calibration=1.5, **kwargs)
+    assert plan.fit and plan.stage == "tool_results"
+    assert plan.local_tokens < local.local_tokens
+    assert plan.local_tokens * 1.5 <= plan.input_budget
+    # a ratio below 1 (cached tokens left out of the usage block) never loosens the budget
+    assert plan_request(messages, [], calibration=0.2, **kwargs).estimated_tokens == local.local_tokens
+
+
+def test_stub_cut_is_repeated_so_the_prefix_stays_cacheable():
+    kwargs = dict(context_window=8000, max_tokens=500, safety_margin=100)
+    first = plan_request(_bash_history(8), [], **kwargs)
+    # the next tool iteration appends one more group
+    second = plan_request(_bash_history(9), [], stub_through=first.stub_through, **kwargs)
+    assert second.fit and second.stub_through == first.stub_through
+    assert _stubbed(second) == _stubbed(first)
+    # only the group that left the verbatim tail changed, everything before the cut is identical
+    cut = 2 + 2 * len(_stubbed(first))
+    assert second.messages[:cut] == first.messages[:cut]
