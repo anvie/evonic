@@ -77,6 +77,29 @@ EVONIC_BANNER = (
 )
 
 
+def _display_version():
+    try:
+        from backend.version import get_version
+        return get_version()
+    except Exception:
+        return ""
+
+
+def print_motd():
+    """Banner with live status, shown when `evonic` runs without a command."""
+    from cli import ui
+    pid = _get_pid()
+    running = pid is not None and _is_running(pid)
+    url = None
+    if running:
+        try:
+            import config
+            url = f"http://localhost:{config.PORT}"
+        except Exception:
+            pass
+    print(ui.motd(version=_display_version(), status="running" if running else "stopped", url=url))
+
+
 def _is_setup_done():
     """Check if evonic setup has been completed (super agent exists)."""
     try:
@@ -300,12 +323,13 @@ def start_server(port=None, host=None, debug=None, daemon=False):
     # released automatically by the OS on process exit.
     _write_pid(os.getpid(), pid_lock_fd)
 
-    print(EVONIC_BANNER)
-
-    print(f"Starting server (Ctrl+C to stop)")
-    print(f"Host: {host}")
-    print(f"Port: {port}")
-    print(f"URL: http://{host if host != '0.0.0.0' else 'localhost'}:{port}")
+    from cli import ui
+    shown_url = f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}"
+    print(ui.motd(
+        version=_display_version(), status="running", url=shown_url,
+        extra=[ui.kv("Host", f"{host}:{port}", 6), ui.dim("Press Ctrl+C to stop")],
+        tip=False,
+    ))
 
     app.run(host=host, port=port, debug=debug, use_reloader=False, threaded=True)
 
