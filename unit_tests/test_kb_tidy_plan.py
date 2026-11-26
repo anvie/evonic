@@ -135,7 +135,7 @@ def test_render_plan_lists_batch_neighbours_and_issues(tmp_path):
     batch, nb, reasons = P.plan_batch(docs, {})
     out = P.render_plan(docs, batch, nb, reasons, P.find_issues(docs, batch))
     assert "FOCUS BATCH (1 of 1 docs" in out and "[a] Alpha (new)" in out
-    assert "DETECTED ISSUES" in out and "Missing" in out
+    assert "CANDIDATES TO VERIFY" in out and "Missing" in out
 
 
 def test_dangling_links_are_grouped_per_doc_with_closest_candidates(tmp_path):
