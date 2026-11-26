@@ -173,18 +173,20 @@ def _announce_generated_password(password):
     """Show a generated admin password prominently; no-op when none was made."""
     if not password:
         return
+    import shutil
     from backend.setup import initial_admin_password_path
-    lines = [
-        "Admin dashboard login",
-        f"  Password: {password}",
-        f"  Saved in: {initial_admin_password_path()}",
-        "Change it any time with: evonic pass",
-    ]
-    width = max(len(l) for l in lines) + 4
-    print("\n  +" + "-" * width + "+")
-    for l in lines:
-        print("  |  " + l.ljust(width - 2) + "|")
-    print("  +" + "-" * width + "+\n")
+    from cli import ui
+    # Leave room for the indent, the box edges and the label column.
+    room = shutil.get_terminal_size((100, 24)).columns - 2 - 4 - 11
+    saved_in = ui.fit(ui.home_short(initial_admin_password_path()), room)
+    print()
+    print(ui.card([
+        ui.kv("Password", ui.bold(ui.accent(password))),
+        ui.kv("Saved in", ui.dim(saved_in)),
+        "",
+        ui.dim("Change it any time with ") + ui.accent("evonic pass"),
+    ], title="Admin dashboard login"))
+    print()
 
 
 def start_server(port=None, host=None, debug=None, daemon=False):
@@ -2299,13 +2301,13 @@ def setup_command(non_interactive=False):
     # noise in the middle of the wizard. Warnings and errors still show.
     logging.disable(logging.INFO)
 
+    from cli import ui
+
     print()
-    print("  ╔══════════════════════════════════════════════════╗")
-    print("  ║        Welcome to Evonic Setup Wizard            ║")
-    print("  ╚══════════════════════════════════════════════════╝")
-    print()
-    print("  This wizard will help you configure your first")
-    print("  super agent and default LLM provider.")
+    print(ui.card([
+        ui.dim("Configure your first super agent and default LLM provider."),
+        ui.dim("Press Enter to accept the value in (parentheses)."),
+    ], title="Evonic setup", min_width=56))
     print()
 
     # Rebind stdin to /dev/tty for interactive input when called via wrapper
@@ -2318,17 +2320,19 @@ def setup_command(non_interactive=False):
     from backend.setup import PROVIDER_DEFAULTS
 
     providers = list(PROVIDER_DEFAULTS.keys())
-    print("  Available LLM providers:")
+    print(f"  {ui.bold('LLM provider')}")
+    _label_w = max(len(PROVIDER_DEFAULTS[p]["label"]) for p in providers)
     for i, p in enumerate(providers, 1):
         cfg = PROVIDER_DEFAULTS[p]
-        print(f"    {i}. {cfg['label']} — {cfg['description']}")
+        mark = ui.accent(f"{i:>2}")
+        print(f"   {mark}  {cfg['label'].ljust(_label_w)}  {ui.dim(cfg['description'])}")
 
     if non_interactive:
         provider = "openrouter"
         print(f"\n  [non-interactive] Using default provider: {provider}")
     else:
         try:
-            choice = input(f"\n  Choose provider [1-{len(providers)}] (default: 1): ").strip()
+            choice = input(f"\n  › Provider [1-{len(providers)}] (1): ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n  Setup aborted.")
             return
@@ -2342,7 +2346,7 @@ def setup_command(non_interactive=False):
         provider = providers[idx]
 
     provider_cfg = PROVIDER_DEFAULTS[provider]
-    print(f"  Selected: {provider_cfg['label']}")
+    print(f"  {ui.ok('✓')} {provider_cfg['label']}\n")
 
     # --- API key ---
     api_key = ""
@@ -2352,7 +2356,7 @@ def setup_command(non_interactive=False):
         else:
             try:
                 api_key = getpass.getpass(
-                    f"  {provider_cfg['label']} API key (optional, Enter to add it later): "
+                    f"  › {provider_cfg['label']} API key (optional, Enter to add later): "
                 ).strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n  Setup aborted.")
@@ -2365,7 +2369,7 @@ def setup_command(non_interactive=False):
         print(f"  [non-interactive] Using default model: {model_name}")
     else:
         try:
-            inp = input(f"  Model name (default: {default_model}): ").strip()
+            inp = input(f"  › Model ({default_model}): ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n  Setup aborted.")
             return
@@ -2379,7 +2383,7 @@ def setup_command(non_interactive=False):
         print(f"  [non-interactive] Using default agent name: {agent_name}")
     else:
         try:
-            agent_name = input(f"  Your super agent's name (default: {DEFAULT_SUPER_AGENT_NAME}): ").strip()
+            agent_name = input(f"  › Agent name ({DEFAULT_SUPER_AGENT_NAME}): ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n  Setup aborted.")
             return
@@ -2390,7 +2394,7 @@ def setup_command(non_interactive=False):
         language = "english"
     else:
         try:
-            lang = input("  Language [english/indonesian/adaptive] (default: english): ").strip().lower()
+            lang = input("  › Language [english/indonesian/adaptive] (english): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\n  Setup aborted.")
             return
@@ -2404,7 +2408,7 @@ def setup_command(non_interactive=False):
     else:
         while True:
             try:
-                tz = input(f"  Timezone (default: {timezone_name}): ").strip()
+                tz = input(f"  › Timezone ({timezone_name}): ").strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n  Setup aborted.")
                 return
@@ -2422,16 +2426,16 @@ def setup_command(non_interactive=False):
     if non_interactive:
         print("  [non-interactive] No admin password given — one will be generated")
     else:
-        print("  Admin dashboard password (min 6 characters, leave empty to auto-generate)")
+        print(f"  {ui.dim('Admin password: min 6 characters, leave empty to auto-generate')}")
         while True:
             try:
-                pw1 = getpass.getpass("  Password: ")
+                pw1 = getpass.getpass("  › Password: ")
                 if not pw1:
                     break
                 if len(pw1) < 6:
                     print("  Password must be at least 6 characters — try again.")
                     continue
-                pw2 = getpass.getpass("  Confirm password: ")
+                pw2 = getpass.getpass("  › Confirm: ")
             except (EOFError, KeyboardInterrupt):
                 print("\n  Setup aborted.")
                 return
@@ -2443,18 +2447,19 @@ def setup_command(non_interactive=False):
 
     # --- Confirm ---
     print()
-    print(f"  Summary:")
-    print(f"    Provider    : {provider_cfg['label']}")
-    print(f"    Model       : {model_name}")
-    print(f"    Agent Name  : {agent_name}")
-    print(f"    Language    : {language}")
-    print(f"    Timezone    : {timezone_name}")
-    print(f"    Admin Pass  : {'(set)' if password else '(auto-generated)'}")
+    print(ui.card([
+        ui.kv("Provider", provider_cfg["label"]),
+        ui.kv("Model", model_name),
+        ui.kv("Agent", agent_name),
+        ui.kv("Language", language),
+        ui.kv("Timezone", timezone_name),
+        ui.kv("Password", "(set)" if password else ui.dim("(auto-generated)")),
+    ], title="Summary", min_width=56))
     print()
 
     if not non_interactive:
         try:
-            confirm = input("  Proceed with setup? [Y/n]: ").strip().lower()
+            confirm = input("  › Proceed? [Y/n]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\n  Setup aborted.")
             return
@@ -2507,10 +2512,16 @@ def setup_command(non_interactive=False):
                 _warn(ev["msg"])
                 _info("Run 'evonic evomem install' to retry.")
 
-    _announce_generated_password(_ensure_admin_password())
+    generated_password = _ensure_admin_password()
+    # install.sh sets EVONIC_INSTALLER and shows the password and next steps in
+    # its own closing card, so the wizard stays quiet about them there.
+    from_installer = bool(os.environ.get("EVONIC_INSTALLER"))
+    if not from_installer:
+        _announce_generated_password(generated_password)
 
-    print(f"\n  Setup complete! Super agent '{result['agent_id']}' created.")
-    print(f"  Run 'evonic start -d' to start the platform.")
+    print(f"  {ui.ok('✓')} {ui.bold('Setup complete')} {ui.dim('· super agent')} {result['agent_id']}")
+    if not from_installer:
+        print(f"  {ui.dim('Run')} {ui.accent('evonic start -d')} {ui.dim('to start the platform.')}")
     print()
 
 
