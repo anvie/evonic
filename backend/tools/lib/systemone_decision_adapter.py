@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 import requests
 
+from backend.tools.lib.decision_adapters import BROWSER_USER_AGENT, is_opencode_endpoint
 from backend.tools.lib.decision_models import (
     ContractValidationError, DecisionCandidate, DecisionError, DecisionErrorCode,
     DecisionField, DecisionFieldResult, DecisionInvocation, DecisionResult,
@@ -99,12 +101,20 @@ def _question(field: DecisionField) -> dict[str, Any]:
     return question
 
 
-def lower_questions_request(invocation: DecisionInvocation, model_name: Any = None) -> dict[str, Any]:
-    """Lower a generic invocation into the native, versioned SystemOne shape (Clef's, for a Clef model)."""
+OPENCODE_SYSTEMONE_PATH = "/systemone"
+
+
+def lower_questions_request(invocation: DecisionInvocation, model_name: Any = None,
+                            *, opencode: bool = False) -> dict[str, Any]:
+    """Lower a generic invocation into the native, versioned SystemOne shape.
+
+    Clef models and OpenCode-served TypeSafe models (jev) take the compact shape: ``model``, ``state`` and
+    questions with ``instructions``/``criteria`` only (score levels as an ordered list); no ``context``.
+    """
     clef = clef_model(model_name)
-    if clef:
+    if clef or opencode:
         return {
-            "model": clef,
+            "model": clef or str(model_name or ""),
             "state": json.dumps(invocation.input_context, sort_keys=True, separators=(",", ":")),
             "questions": {field.key: _clef_question(field) for field in invocation.schema.fields},
         }
@@ -201,13 +211,23 @@ class SystemOneQuestionsDecisionAdapter:
         if not endpoint:
             return _error(invocation, DecisionErrorCode.PROVIDER_UNAVAILABLE, "SystemOne provider is not configured.")
         clef = clef_model(self.model.get("model_name"))
-        payload = lower_questions_request(invocation, self.model.get("model_name"))
+        # OpenCode Go/Zen serve SystemOne at <provider base>/systemone (the catalog's inference/systemone
+        # endpoint bills pay-as-you-go credits instead of the subscription). Other providers: endpoint as written.
+        opencode = is_opencode_endpoint(self.model.get("provider"), endpoint)
+        if opencode and not endpoint.endswith(OPENCODE_SYSTEMONE_PATH):
+            endpoint += OPENCODE_SYSTEMONE_PATH
+        compact = bool(clef) or opencode
+        payload = lower_questions_request(invocation, self.model.get("model_name"), opencode=opencode)
         encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         if len(encoded) > MAX_REQUEST_BYTES:
             return _error(invocation, DecisionErrorCode.INVALID_REQUEST, "SystemOne request exceeds the payload limit.")
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.model.get("api_key"):
             headers["Authorization"] = f"Bearer {self.model['api_key']}"
+        if opencode:
+            # Cloudflare in front of OpenCode rejects python-requests UAs; the gateway requires a session id.
+            headers["User-Agent"] = BROWSER_USER_AGENT
+            headers["x-opencode-session"] = uuid.uuid4().hex
         try:
             response = requests.post(endpoint, data=encoded, headers=headers,
                                      timeout=float(self.model.get("timeout") or 60), allow_redirects=False, stream=True)
@@ -242,7 +262,7 @@ class SystemOneQuestionsDecisionAdapter:
                 confidence = _unit(answer.get("confidence"))
                 candidates = _candidates(answer.get("candidates", answer.get("probabilities")))
                 probability = _noul_probability(answer, field)
-                if clef and field.kind is FieldKind.SCORE:
+                if compact and field.kind is FieldKind.SCORE:
                     selected, candidates = _clef_score(answer, field)
                 elif probability is not None:
                     # P(true) decides the value; the confidence is how far it is from a coin flip's other side.

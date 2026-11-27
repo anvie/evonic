@@ -1,6 +1,8 @@
 from typing import Any, Dict
 
 import requests
+
+from backend.tools.lib.decision_adapters import is_opencode_endpoint
 from flask import Blueprint, jsonify, request
 
 from backend.tools.lib.model_route_adapters import DEFAULT_ROUTE_ADAPTER_REGISTRY
@@ -127,6 +129,16 @@ def api_provider_delete_impact(provider_id):
     return jsonify({"success": True, **db.get_provider_delete_impact(provider_id)})
 
 
+def _mark_opencode_systemone(models: list, payload) -> None:
+    """Tag OpenCode catalog entries whose recommended API is SystemOne (e.g. jev decision models)."""
+    raw = payload.get("data") if isinstance(payload, dict) else None
+    systemone = {str(item.get("id")) for item in raw or []
+                 if isinstance(item, dict) and item.get("recommended_api") == "systemone"}
+    for m in models:
+        if m.get("id") in systemone:
+            m["api"] = "systemone"
+
+
 @providers_bp.route("/api/providers/<provider_id>/fetch-models", methods=["POST"])
 def api_fetch_provider_models(provider_id):
     """Fetch available models from a provider's API endpoint."""
@@ -196,6 +208,8 @@ def api_fetch_provider_models(provider_id):
 
         data = resp.json()
         models = adapter.parse_discovered_models(data if isinstance(data, dict) else {})
+        if is_opencode_endpoint(provider.get("id"), base_url):
+            _mark_opencode_systemone(models, data)
 
         # Mark which ones are already added
         existing = {m["model_name"] for m in db.get_models_by_provider(provider_id)}
@@ -322,6 +336,9 @@ def api_add_model_from_provider(provider_id):
         return jsonify({"success": False, "error": "model_name is required"}), 400
 
     display_name = data.get("name") or model_name.split("/")[-1]
+    # OpenCode serves its decision models (recommended_api "systemone") over SystemOne, not chat-completions.
+    opencode_systemone = (data.get("api") == "systemone"
+                          and is_opencode_endpoint(provider_id, provider.get("endpoint") or provider.get("base_url")))
 
     model_data = {
         "name": display_name,
@@ -338,6 +355,9 @@ def api_add_model_from_provider(provider_id):
         "enabled": 1,
         "api_format": provider.get("api_format", "openai"),
     }
+    if opencode_systemone:
+        model_data["type"] = "decision"
+        model_data["api_format"] = "systemone"
     if provider.get("api_format") in ("claude_cli", "anthropic"):
         model_data["vision_supported"] = 1
 

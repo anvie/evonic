@@ -677,7 +677,7 @@ window.settingsModels = {
                 .map(
                     (m) =>
                         `<label class="fetch-model-item flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer" data-model-id="${this._escapeHtml(m.id)}">
-                        <input type="checkbox" class="fetch-model-cb rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" value="${this._escapeHtml(m.id)}" ${m.already_added ? "disabled checked" : ""} />
+                        <input type="checkbox" class="fetch-model-cb rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" value="${this._escapeHtml(m.id)}" data-api="${this._escapeHtml(m.api || "")}" ${m.already_added ? "disabled checked" : ""} />
                         <span class="text-sm text-gray-800 dark:text-gray-200 truncate">${this._escapeHtml(m.id)}</span>
                         ${m.already_added ? '<span class="text-[10px] text-gray-400 ml-auto">added</span>' : ""}
                     </label>`,
@@ -711,7 +711,7 @@ window.settingsModels = {
             try {
                 const result = await apiPost(
                     "/api/providers/" + encodeURIComponent(this._fetchProviderId) + "/add-model",
-                    { model_name: cb.value },
+                    { model_name: cb.value, ...(cb.dataset.api ? { api: cb.dataset.api } : {}) },
                 );
                 if (result.success) added++;
             } catch (e) {
