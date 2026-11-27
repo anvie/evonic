@@ -56,6 +56,7 @@ export class ChatUI {
         this._eventLog = [];       // last 200 TurnEvents
         this.$bus = $('<div>');    // jQuery event bus
         this._lastLiveTurnId = null; // ID of the most-recent live SSE turn, for dup detection
+        this._lastIntermediate = null; // latest intermediate text of the running turn, for ask_user
 
         this._log = log('ui');
         installDiagnostic(this, this._turns, this._eventLog);
@@ -120,6 +121,7 @@ export class ChatUI {
         // ignore every click. The card leaves on its own once its question is resolved.
         this.$container.contents().filter((_, node) => node.id !== 'ask-user-dock').remove();
         this._lastLiveTurnId = null;
+        this._lastIntermediate = null;
     }
 
     // ── Public: turn management ───────────────────────────────────────────────
@@ -229,6 +231,8 @@ export class ChatUI {
         };
 
         for (const entry of (entries || [])) {
+            // A turn boundary invalidates the intermediate text remembered for ask_user.
+            if (entry.type === 'user' || entry.type === 'final' || entry.type === 'error') this.forgetIntermediate();
             if (entry.type === 'user') {
                 if (thinkingTurn) { thinkingTurn.dispose('replay_user'); thinkingTurn = null; }
                 this.appendMessage('user', entry.content || '', { timestamp: entry.ts ? new Date(entry.ts).toISOString() : null });
@@ -240,6 +244,8 @@ export class ChatUI {
                 continue;
             }
             if (entry.type === 'tool_call') {
+                // The question card refers to what the agent wrote just before it: surface that text.
+                if (entry.function === 'ask_user') thinkingTurn = this.revealIntermediate(thinkingTurn);
                 _ensureTurn();
                 thinkingTurn.ingest({ event: 'tool_call_started', data: { tool: entry.function, args: entry.params || {}, param_types: {} }, seq: 0 });
                 continue;
@@ -259,16 +265,17 @@ export class ChatUI {
                 continue;
             }
             if (entry.type === 'intermediate') {
-                // Shown in the chat as its own message, with the thinking bubble split around it.
-                if (thinkingTurn) {
-                    if (thinkingTurn.$timeline.find('.timeline-entry').length) {
-                        thinkingTurn.ingest({ event: 'done', data: {}, seq: 0 });
-                    } else {
-                        thinkingTurn.dispose('replay_intermediate');
-                    }
-                    thinkingTurn = null;
+                const ts = entry.ts || entry.created_at || null;
+                if (entry.metadata && entry.metadata.send_intermediate_responses) {
+                    // That turn forwarded its intermediate text: keep it a chat message.
+                    thinkingTurn = this.splitForIntermediate(thinkingTurn, entry.content || '', ts);
+                    this.forgetIntermediate();
+                } else if (entry.content) {
+                    // Otherwise it stays in the reasoning trail, remembered for ask_user.
+                    _ensureTurn();
+                    thinkingTurn.ingest({ event: 'response_chunk', data: { content: entry.content, is_final: false }, seq: 0 });
+                    this.rememberIntermediate(entry.content, ts);
                 }
-                this.appendMessage('assistant', entry.content || '', { timestamp: entry.ts || entry.created_at || null });
                 continue;
             }
             if (entry.type === 'final') {
@@ -462,6 +469,35 @@ export class ChatUI {
         return this.showThinkingIndicator();
     }
 
+    /**
+     * Remember the latest intermediate text of the running turn. It is not shown in the
+     * chat — it lives in the reasoning trail — but an ask_user card usually refers back to
+     * it, so revealIntermediate() can surface it when the question opens.
+     * @param {string} content
+     * @param {number|string} [timestamp]
+     */
+    rememberIntermediate(content, timestamp) {
+        this._lastIntermediate = content ? { content, timestamp: timestamp || Date.now() } : null;
+    }
+
+    /** Drop the remembered intermediate text: the turn ended, or it is already on screen. */
+    forgetIntermediate() {
+        this._lastIntermediate = null;
+    }
+
+    /**
+     * The agent is asking the user a question. Post the last intermediate text of this turn
+     * as its own message so the question card does not refer to text the user cannot see.
+     * @param {Turn|string|null} turnOrId - current (still open) thinking turn
+     * @returns {Turn|null} the thinking turn to carry on in
+     */
+    revealIntermediate(turnOrId) {
+        const last = this._lastIntermediate;
+        this._lastIntermediate = null;
+        if (!last) return typeof turnOrId === 'string' ? this._turns.get(turnOrId) : turnOrId;
+        return this.splitForIntermediate(turnOrId, last.content, last.timestamp);
+    }
+
     /** @deprecated Use turn.dispose() instead */
     removeThinkingIndicator(turnOrId) {
         const turn = typeof turnOrId === 'string' ? this._turns.get(turnOrId) : turnOrId;
@@ -476,7 +512,7 @@ export class ChatUI {
         if (ev.type === 'thinking')    event = 'thinking';
         if (ev.type === 'tool_call')   event = 'tool_call_started';
         if (ev.type === 'tool_result') event = 'tool_executed';
-        if (ev.type === 'response')    { turn.ingest({ event: 'response_chunk', data: { content: ev.content, is_final: true }, seq: 0 }); return; }
+        if (ev.type === 'response')    { turn.ingest({ event: 'response_chunk', data: { content: ev.content, is_final: ev.is_final !== false }, seq: 0 }); return; }
         if (ev.type === 'retry')       event = 'retry';
         if (ev.type === 'fallback')    event = 'fallback';
         turn.ingest({ event, data: ev, seq: 0 });

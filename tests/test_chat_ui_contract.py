@@ -11,8 +11,9 @@ must not recur:
 
 These tests assert the bundle is exactly what the build script produces, that
 every `chatUI.<method>()` call in the templates resolves to a defined method,
-and that intermediate responses (the answer text an agent writes before a tool
-call) are rendered as chat messages rather than as reasoning-timeline items.
+and that intermediate responses (the text an agent writes before a tool call)
+stay inside the reasoning timeline, except for the last one before an ask_user
+card, which is surfaced as a chat message so the question has visible context.
 """
 
 import importlib.util
@@ -68,14 +69,16 @@ def test_templates_only_call_defined_chatui_methods():
     )
 
 
-def test_intermediate_responses_are_rendered_as_chat_messages():
-    """History replay must post intermediate text as a message, not a timeline row."""
+def test_intermediate_responses_stay_in_the_reasoning_timeline():
+    """History replay must keep intermediate text in the trail, not post it as a message."""
     source = _bundle_text()
 
-    assert re.search(r'(?m)^\s*splitForIntermediate\s*\(', source), (
-        'ChatUI.splitForIntermediate() is missing; the pages call it for every '
-        'response_chunk with is_final=false'
-    )
+    for name in ('splitForIntermediate', 'rememberIntermediate', 'forgetIntermediate',
+                 'revealIntermediate'):
+        assert re.search(r'(?m)^\s*%s\s*\(' % name, source), (
+            f'ChatUI.{name}() is missing; the pages call it on every intermediate '
+            f'response and on every ask_user call'
+        )
 
     # The transport adapter also matches this entry type (it maps it to an event);
     # the history renderer is the last definition in the bundle.
@@ -85,15 +88,48 @@ def test_intermediate_responses_are_rendered_as_chat_messages():
     assert end > start, 'unexpected history replay structure'
     block = source[start:end]
 
-    assert 'appendMessage' in block, (
-        'intermediate history entries must be appended as chat messages'
+    assert 'is_final: false' in block, (
+        'intermediate history entries must be ingested into the reasoning timeline'
     )
-    assert 'response_chunk' not in block, (
-        'intermediate history entries must not be ingested into the reasoning timeline'
+    assert 'rememberIntermediate' in block, (
+        'intermediate history entries must be remembered so an ask_user card can '
+        'surface the last one'
+    )
+    assert "appendMessage('assistant'" not in block, (
+        'intermediate history entries must not be posted as chat messages; only the '
+        'send_intermediate_responses branch may, via splitForIntermediate()'
+    )
+    assert 'send_intermediate_responses' in block, (
+        'turns that forwarded their intermediate text must still replay as messages'
     )
 
 
-def _intermediate_branch(template_name, entry_var):
+def test_ask_user_reveals_the_last_intermediate():
+    """The bundle's replay and both pages must surface the last intermediate on ask_user."""
+    source = _bundle_text()
+    start = source.rfind("if (entry.type === 'tool_call') {")
+    assert start != -1, 'history replay no longer handles tool_call entries'
+    block = source[start:start + 600]
+    assert "ask_user" in block and 'revealIntermediate' in block, (
+        'history replay must call revealIntermediate() when the tool call is ask_user'
+    )
+
+    for template_name in ('sessions.html', 'agent_detail.html'):
+        text = (TEMPLATES / template_name).read_text(encoding='utf-8')
+        reveals = [m.start() for m in re.finditer(r'revealIntermediate', text)]
+        assert reveals, f'{template_name} never surfaces the last intermediate response'
+        # The gate may sit on the enclosing `if`, a couple of lines up.
+        assert all('ask_user' in text[max(0, at - 300):at] for at in reveals), (
+            f'{template_name}: revealIntermediate() must be gated on the ask_user tool'
+        )
+        # Live SSE turn and JSONL history replay — both paths must do it.
+        assert len(reveals) >= 2, (
+            f'{template_name}: expected revealIntermediate() in both the realtime '
+            f'handler and the history renderer'
+        )
+
+
+def _intermediate_branch(template_name):
     """Extract the `type === 'intermediate'` branch of a template's JSONL renderer."""
     text = (TEMPLATES / template_name).read_text(encoding='utf-8')
     start = text.find("type === 'intermediate') {")
@@ -103,14 +139,19 @@ def _intermediate_branch(template_name, entry_var):
     return text[start:end]
 
 
-def test_templates_render_intermediate_history_as_messages():
-    """The pages render JSONL history themselves; intermediates must become messages."""
+def test_templates_render_intermediate_history_in_the_timeline():
+    """The pages render JSONL history themselves; intermediates must stay in the trail."""
     for template_name in ('sessions.html', 'agent_detail.html'):
-        block = _intermediate_branch(template_name, 'entry')
-        assert 'appendMessage' in block, (
-            f'{template_name}: intermediate history entries must be appended as chat messages'
-        )
-        assert "type: 'response'" not in block, (
-            f'{template_name}: intermediate history entries must not be added to the '
+        block = _intermediate_branch(template_name)
+        assert "type: 'response'" in block and 'is_final: false' in block, (
+            f'{template_name}: intermediate history entries must be added to the '
             f'reasoning timeline'
+        )
+        assert 'rememberIntermediate' in block, (
+            f'{template_name}: intermediate history entries must be remembered for ask_user'
+        )
+        assert 'appendMessage' not in block, (
+            f'{template_name}: intermediate history entries must not be posted as chat '
+            f'messages; only the send_intermediate_responses branch may, via '
+            f'splitForIntermediate()'
         )
