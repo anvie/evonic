@@ -210,6 +210,23 @@ def test_prompt_lists_learned_skills_only_when_enabled(skills_root, monkeypatch)
     assert "Learned Skills" not in off
 
 
+def test_disabled_skill_is_unlisted_unloadable_and_toggles_back(skills_root, monkeypatch):
+    _write_skill(skills_root, "agent-a", "make-pdf")
+    monkeypatch.setattr(use_skill.skills_manager, "get_skill", lambda skill_id: None)
+    assert learned_skills.list_skills(AGENT)[0]["enabled"] is True
+
+    assert learned_skills.set_skill_enabled(AGENT, "make-pdf", False)
+    assert learned_skills.list_skills(AGENT)[0]["enabled"] is False
+    assert "make-pdf" not in _static_prompt(
+        monkeypatch, {"id": "agent-a", "system_prompt": "", "learned_skills_enabled": 1})
+    result = use_skill.execute(dict(AGENT), {"id": "make-pdf"})
+    assert result["status"] == "error" and "disabled" in result["message"]
+
+    assert learned_skills.set_skill_enabled(AGENT, "make-pdf", True)
+    assert use_skill.execute(dict(AGENT), {"id": "make-pdf"})["status"] == "success"
+    assert not learned_skills.set_skill_enabled(AGENT, "missing", False)
+
+
 def test_prompt_cache_key_changes_when_a_skill_changes(skills_root):
     agent = {"id": "agent-a", "learned_skills_enabled": 1}
     empty = context._learned_skills_hash(agent)

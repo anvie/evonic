@@ -219,6 +219,33 @@ html:not(.dark) .chat-header-pill button:hover { color: #111827; }
 html:not(.dark) .chat-header-pill button[onclick*="confirmClearHistory"]:hover { color: #dc2626; }
 html:not(.dark) .chat-header-pill .chat-hdr-secondary.w-px { background: rgb(100 116 139 / .45); }
 html:not(.dark) .chat-header-back { color: #4b5563; }
+/* ── Skills tab: System / Learned segmented control + learned detail modal ── */
+.sk-seg { display: inline-flex; padding: .1875rem; gap: .125rem; border-radius: 9999px; background: rgb(148 163 184 / .16); }
+.sk-seg-btn { display: inline-flex; align-items: center; gap: .4rem; padding: .375rem .95rem; border-radius: 9999px; font-size: .8125rem; font-weight: 500; color: #64748b; transition: background-color .15s, color .15s, box-shadow .15s; }
+.sk-seg-btn:hover { color: #1e293b; }
+.sk-seg-btn.is-on { background: #fff; color: #1e293b; box-shadow: 0 1px 2px rgb(15 23 42 / .12); }
+.sk-seg-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 1px; }
+.sk-seg-n { font-size: .6875rem; line-height: 1; padding: .15rem .4rem; border-radius: 9999px; background: rgb(148 163 184 / .25); font-variant-numeric: tabular-nums; }
+.sk-seg-btn.is-on .sk-seg-n { background: #eef2ff; color: #4338ca; }
+html.dark .sk-seg-btn { color: #94a3b8; }
+html.dark .sk-seg-btn:hover { color: #e2e8f0; }
+html.dark .sk-seg-btn.is-on { background: #334155; color: #f1f5f9; box-shadow: none; }
+html.dark .sk-seg-btn.is-on .sk-seg-n { background: rgb(99 102 241 / .3); color: #c7d2fe; }
+#learned-list tr.learned-row { cursor: pointer; }
+#learned-list tr.learned-row.is-off td.tool-name, #learned-list tr.learned-row.is-off td.learned-dim { opacity: .55; }
+.tb-red { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+html.dark .tb-red { background: rgb(239 68 68 / .16); color: #fca5a5; border-color: rgb(239 68 68 / .32); }
+.lm-card { border-radius: 1rem; }
+.lm-sec-t { font-size: .6875rem; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; color: #9ca3af; margin-bottom: .5rem; }
+.lm-tool { border: 1px solid rgb(148 163 184 / .3); border-radius: .75rem; padding: .75rem .875rem; }
+.lm-param { display: inline-flex; align-items: center; gap: .3rem; font-size: .75rem; padding: .125rem .5rem; border-radius: .375rem; background: rgb(148 163 184 / .14); font-family: ui-monospace, monospace; }
+.lm-param i { font-style: normal; color: #94a3b8; }
+.lm-pre { font-size: .75rem; white-space: pre-wrap; background: rgb(148 163 184 / .1); border: 1px solid rgb(148 163 184 / .25); border-radius: .75rem; padding: .875rem; max-height: 260px; overflow: auto; color: #374151; }
+html.dark .lm-card { background: #1e2939; }
+html.dark .lm-card .border-gray-200 { border-color: rgb(148 163 184 / .2) !important; }
+html.dark .lm-card .text-gray-800, html.dark .lm-card .text-gray-700 { color: #e2e8f0 !important; }
+html.dark .lm-card .text-gray-600 { color: #cbd5e1 !important; }
+html.dark .lm-pre { color: #e2e8f0; background: rgb(15 23 42 / .6); }
 /* ── Tools / Skills tables: header that stays readable on hover, icon tiles, pill controls, concentric radius ── */
 .tbl-wrap { overflow-x: auto; border: 1px solid rgb(148 163 184 / .25); border-radius: .875rem; }   /* card is 2.25rem with 1.5rem padding → 1.25rem here */
 .tbl-wrap table { border-collapse: separate; border-spacing: 0; }
@@ -270,8 +297,8 @@ html.dark .tbl-group-ctl select { background-color: #0f172a !important; border-c
 html.dark .tbl-group-ctl select:hover { background-color: #162033 !important; }
 html.dark #tool-filter-panel, html.dark #skill-filter-panel { background: #111827 !important; border-color: #334155 !important; }
 html.dark .tbl-wrap { border-color: rgb(148 163 184 / .22); }
-html.dark :is(#tools-list, #skills-list) > tr + tr > td { border-top-color: rgb(148 163 184 / .14); }
-html.dark :is(#tools-list, #skills-list) tr.tool-row:not(.tool-orphan):hover { background: rgb(99 102 241 / .09); }
+html.dark :is(#tools-list, #skills-list, #learned-list) > tr + tr > td { border-top-color: rgb(148 163 184 / .14); }
+html.dark :is(#tools-list, #skills-list, #learned-list) tr.tool-row:not(.tool-orphan):hover { background: rgb(99 102 241 / .09); }
 /* toolbar controls: pills, like the composer and header pills */
 #tool-filter, #skill-filter { border-radius: 9999px; padding-left: 1.125rem; padding-right: 1.125rem; }
 #tool-adv-filter-btn, #skill-adv-filter-btn { border-radius: 9999px; padding-left: 1rem; padding-right: 1rem; }
@@ -2205,12 +2232,12 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
     <!-- Tools Tab -->
     <style>
         /* Tools tab table + filter popover (kept local: not all utilities exist in the prebuilt tailwind.css) */
-        :is(#tools-list, #skills-list) > tr + tr > td { border-top: 1px solid rgb(229 231 235); }
-        .dark :is(#tools-list, #skills-list) > tr + tr > td { border-top-color: rgb(75 85 99); }
-        :is(#tools-list, #skills-list) tr.tool-orphan { background: rgb(255 251 235 / .6); }
-        .dark :is(#tools-list, #skills-list) tr.tool-orphan { background: rgb(120 53 15 / .3); }
-        :is(#tools-list, #skills-list) tr.tool-row:not(.tool-orphan):hover { background: rgb(249 250 251); }
-        .dark :is(#tools-list, #skills-list) tr.tool-row:not(.tool-orphan):hover { background: rgb(55 65 81 / .6); }
+        :is(#tools-list, #skills-list, #learned-list) > tr + tr > td { border-top: 1px solid rgb(229 231 235); }
+        .dark :is(#tools-list, #skills-list, #learned-list) > tr + tr > td { border-top-color: rgb(75 85 99); }
+        :is(#tools-list, #skills-list, #learned-list) tr.tool-orphan { background: rgb(255 251 235 / .6); }
+        .dark :is(#tools-list, #skills-list, #learned-list) tr.tool-orphan { background: rgb(120 53 15 / .3); }
+        :is(#tools-list, #skills-list, #learned-list) tr.tool-row:not(.tool-orphan):hover { background: rgb(249 250 251); }
+        .dark :is(#tools-list, #skills-list, #learned-list) tr.tool-row:not(.tool-orphan):hover { background: rgb(55 65 81 / .6); }
         .tool-badge { display: inline-flex; align-items: center; gap: .3125rem; font-size: .75rem; line-height: 1rem; padding: .125rem .625rem; border-radius: 9999px; border: 1px solid transparent; white-space: nowrap; }
         .tb-green  { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
         .tb-indigo { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
@@ -2223,10 +2250,10 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
         html.dark .tb-gray   { background: rgb(148 163 184 / .12); color: #cbd5e1; border-color: rgb(148 163 184 / .25); }
         html.dark .tb-amber  { background: rgb(245 158 11 / .16); color: #fcd34d; border-color: rgb(245 158 11 / .32); }
         /* Table chrome: readable text + subtle separators in dark mode */
-        html.dark :is(#tools-list, #skills-list) td { color: #cbd5e1; }
-        html.dark :is(#tools-list, #skills-list) td.tool-name { color: #f1f5f9; }
-        html.dark :is(#tools-list, #skills-list) .tool-id { color: #94a3b8; }
-        :is(#tools-list, #skills-list) .tool-id { color: #6b7280; }
+        html.dark :is(#tools-list, #skills-list, #learned-list) td { color: #cbd5e1; }
+        html.dark :is(#tools-list, #skills-list, #learned-list) td.tool-name { color: #f1f5f9; }
+        html.dark :is(#tools-list, #skills-list, #learned-list) .tool-id { color: #94a3b8; }
+        :is(#tools-list, #skills-list, #learned-list) .tool-id { color: #6b7280; }
         .tools-desc-col { min-width: 16rem; }
         #tool-filter-panel { z-index: 30; width: min(560px, calc(100vw - 2rem)); }
         .tool-filter-grid { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: .5rem; align-items: center; }
@@ -2286,10 +2313,18 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
     <!-- Skills Tab (always rendered; button hidden for super so it's unreachable there) -->
     <div id="tab-skills" class="tab-content hidden flex-1 min-h-0 overflow-y-auto">
         <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
-            <div class="flex items-center gap-2 mb-1">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">Skills</h3>
-                <span id="skills-badge" class="hidden px-2 py-0.5 text-xs font-medium rounded-full bg-gray-200 text-gray-600"></span>
+                <div class="sk-seg" role="tablist" aria-label="Skill source">
+                    <button type="button" role="tab" id="sk-seg-system" class="sk-seg-btn is-on" aria-selected="true" onclick="showSkillsPane('system')">
+                        System <span id="skills-badge" class="sk-seg-n">0</span>
+                    </button>
+                    <button type="button" role="tab" id="sk-seg-learned" class="sk-seg-btn" aria-selected="false" onclick="showSkillsPane('learned')">
+                        Learned <span id="learned-badge" class="sk-seg-n">0</span>
+                    </button>
+                </div>
             </div>
+            <div id="skills-pane-system">
             <p class="text-xs text-gray-400 mb-4">Allow this agent to lazy-load skills via <code class="bg-gray-100 px-1 rounded">use_skill</code>. Eager (non-lazy) skills automatically inject all their tools. For selective tool picking, use the Tools tab.</p>
             <!-- Filter bar -->
             <div class="flex flex-wrap items-center gap-2 mb-4">
@@ -2329,18 +2364,33 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
             </div>
             <div id="skills-empty" class="hidden text-center py-8 text-gray-400 text-sm">No skills found.</div>
             <p id="skills-count" class="text-xs text-gray-400 mt-2"></p>
-        </div>
-        <!-- Learned Skills -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6 mt-4">
-            <div class="flex items-center gap-2 mb-1">
-                <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 flex-1">Learned Skills</h3>
-                <label class="text-xs text-indigo-600 hover:underline cursor-pointer">Import .zip
-                    <input type="file" accept=".zip" class="hidden" onchange="importLearnedSkill(this)">
-                </label>
             </div>
-            <p class="text-xs text-gray-400 mb-4">Skills this agent wrote for itself. They are private to this agent and loaded with <code class="bg-gray-100 px-1 rounded">use_skill</code>. Export one as a zip to import it into another agent. Turn the feature on under Settings.</p>
-            <div id="learned-skills-list" class="space-y-2"></div>
-            <div id="learned-skills-empty" class="hidden text-center py-8 text-gray-400 text-sm">No learned skills yet.</div>
+            <!-- Learned skills pane -->
+            <div id="skills-pane-learned" class="hidden">
+                <p class="text-xs text-gray-400 mb-4">Skills this agent wrote for itself after solving multi-step tasks. They are private to this agent and loaded with <code class="bg-gray-100 px-1 rounded">use_skill</code>. Turn one off to hide it from the agent without deleting it.</p>
+                <div id="learned-off-note" class="hidden mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                    <span>Learning is switched off for this agent, so it will not write new skills or load these. Turn on <strong>Learned Skills</strong> under General &rarr; Advanced.</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mb-4">
+                    <input type="search" id="learned-filter" name="agent_learned_query" placeholder="Search learned skills..." autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"
+                           class="flex-1 min-w-0 w-full sm:w-auto p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400"
+                           style="border-radius:9999px; padding-left:1.125rem; padding-right:1.125rem;"
+                           oninput="renderLearnedList()">
+                    <label class="min-h-[44px] px-4 py-2 inline-flex items-center gap-1.5 border border-gray-300 rounded-full text-xs font-medium text-gray-600 bg-white hover:bg-gray-50 transition-colors cursor-pointer dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>
+                        Import .zip
+                        <input type="file" accept=".zip" class="hidden" onchange="importLearnedSkill(this)">
+                    </label>
+                </div>
+                <div class="tbl-wrap">
+                    <table class="w-full text-sm text-left">
+                        <thead><tr id="learned-thead"></tr></thead>
+                        <tbody id="learned-list"></tbody>
+                    </table>
+                </div>
+                <div id="learned-empty" class="hidden text-center py-10 text-sm text-gray-400"></div>
+                <p id="learned-count" class="text-xs text-gray-400 mt-2"></p>
+            </div>
         </div>
     </div>
 
@@ -2757,6 +2807,35 @@ html.dark #tab-general { --gs-line: rgb(148 163 184 / .22); --gs-surface: rgb(14
                 <button onclick="closeNewFileModal()" class="px-4 py-2 border border-gray-300 rounded-md text-sm text-gray-600 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 dark:border-gray-600">Cancel</button>
                 <button onclick="createNewFile()" class="px-4 py-2 bg-indigo-500 text-white rounded-md text-sm hover:bg-indigo-600">Create</button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Learned Skill Detail Modal -->
+<div id="learned-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50" onclick="if(event.target===this)closeLearnedModal()">
+    <div class="lm-card bg-white dark:bg-gray-800 rounded-xl w-[92%] max-w-[720px] shadow-xl flex flex-col" style="max-height: 86vh;" role="dialog" aria-modal="true" aria-labelledby="lm-title">
+        <div class="flex items-start justify-between gap-3 p-5 border-b border-gray-200">
+            <div class="min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="text-gray-800 font-semibold dark:text-gray-100" id="lm-title"></h3>
+                    <span id="lm-status" class="tool-badge"></span>
+                </div>
+                <code id="lm-id" class="text-xs text-gray-400 font-mono"></code>
+            </div>
+            <button type="button" onclick="closeLearnedModal()" aria-label="Close" class="bg-transparent border-none text-gray-400 text-2xl leading-none cursor-pointer hover:text-gray-800 dark:hover:text-gray-200">&times;</button>
+        </div>
+        <div id="lm-body" class="p-5 flex-1 overflow-y-auto space-y-5"></div>
+        <div class="flex flex-wrap items-center gap-3 p-4 border-t border-gray-200">
+            <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 cursor-pointer select-none">
+                <span class="relative inline-block">
+                    <input type="checkbox" id="lm-toggle" class="sr-only peer" onchange="toggleLearnedFromModal()">
+                    <span class="dyn-toggle"></span>
+                </span>
+                <span id="lm-toggle-label">Enabled</span>
+            </label>
+            <span class="flex-1"></span>
+            <a id="lm-export" class="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-600 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 dark:border-gray-600" href="#">Export</a>
+            <button type="button" onclick="deleteLearnedFromModal()" class="px-3 py-2 border border-red-200 rounded-md text-sm text-red-600 hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/10">Delete</button>
         </div>
     </div>
 </div>
@@ -5760,34 +5839,230 @@ async function saveToolsQuiet() {
 let allSkillsDefs = [];
 let allowedSkillIds = [];
 
-async function loadLearnedSkills() {
-    const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills`);
-    const skills = (await res.json()).skills || [];
-    const list = document.getElementById('learned-skills-list');
-    document.getElementById('learned-skills-empty').classList.toggle('hidden', skills.length > 0);
-    list.innerHTML = skills.map(s => `
-        <details class="border border-gray-200 dark:border-gray-600 rounded-lg" ontoggle="loadLearnedSkillBody(this, '${escapeHtml(s.id)}')">
-            <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none">
-                <div class="flex-1 min-w-0">
-                    <div class="text-sm font-medium text-gray-800 dark:text-gray-100">${escapeHtml(s.name)} <code class="text-xs text-gray-400">${escapeHtml(s.id)}</code></div>
-                    <div class="text-xs ${s.error ? 'text-red-500' : 'text-gray-400'}">${escapeHtml(s.error || s.description || s.brief || '')}</div>
-                </div>
-                <span class="text-xs text-gray-400">${s.tools.length ? escapeHtml(s.tools.join(', ')) : 'instructions only'}</span>
-                <span class="text-xs text-gray-400">${new Date(s.updated_at * 1000).toLocaleString()}</span>
-                <a class="text-xs text-indigo-600 hover:underline" href="/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(s.id)}/export" onclick="event.stopPropagation()">Export</a>
-                <button type="button" class="text-xs text-red-500 hover:underline" onclick="event.preventDefault(); deleteLearnedSkill('${escapeHtml(s.id)}')">Delete</button>
-            </summary>
-            <pre class="learned-skill-body px-4 pb-4 text-xs whitespace-pre-wrap text-gray-600 dark:text-gray-300"></pre>
-        </details>`).join('');
+// ---- Learned skills: second pane of the Skills tab ----
+let learnedSkills = [];
+let learnedSort = { key: 'name', dir: 1 };
+let learnedOpenId = null;
+
+const LEARNED_COLUMNS = [
+    { key: 'toggle',      label: '',            sort: null },
+    { key: 'name',        label: 'Name',        icon: 'tag',      sort: r => r.name },
+    { key: 'id',          label: 'ID',          icon: 'hash',     sort: r => r.id },
+    { key: 'tools',       label: 'Tools',       icon: 'wrench',   sort: r => String(r.tools.length).padStart(4, '0') },
+    { key: 'updated',     label: 'Updated',     icon: 'timer',    sort: r => String(Math.floor(r.updated_at || 0)).padStart(12, '0') },
+    { key: 'status',      label: 'Status',      icon: 'activity', sort: r => learnedState(r) },
+    { key: 'description', label: 'Description', icon: 'text',     sort: r => r.description || r.brief || '' },
+];
+
+function learnedState(r) { return r.error ? 'broken' : (r.enabled ? 'enabled' : 'disabled'); }
+const LEARNED_STATE_META = { enabled: 'tb-green', disabled: 'tb-gray', broken: 'tb-red' };
+
+function showSkillsPane(pane) {
+    const learned = pane === 'learned';
+    document.getElementById('skills-pane-system').classList.toggle('hidden', learned);
+    document.getElementById('skills-pane-learned').classList.toggle('hidden', !learned);
+    [['system', !learned], ['learned', learned]].forEach(([k, on]) => {
+        const b = document.getElementById('sk-seg-' + k);
+        b.classList.toggle('is-on', on); b.setAttribute('aria-selected', on);
+    });
+    if (learned) renderLearnedList();   // re-check the feature toggle in case it changed
 }
 
-async function loadLearnedSkillBody(el, skillId) {
-    const body = el.querySelector('.learned-skill-body');
-    if (!el.open || body.dataset.loaded) return;
-    const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(skillId)}`);
+function _relTime(ts) {
+    if (!ts) return '—';
+    const d = Math.max(0, Date.now() / 1000 - ts);
+    if (d < 60) return 'just now';
+    if (d < 3600) return Math.floor(d / 60) + 'm ago';
+    if (d < 86400) return Math.floor(d / 3600) + 'h ago';
+    if (d < 86400 * 30) return Math.floor(d / 86400) + 'd ago';
+    return new Date(ts * 1000).toLocaleDateString();
+}
+
+async function loadLearnedSkills() {
+    const epoch = window._agentEpoch;
+    try {
+        const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills`);
+        const skills = (await res.json()).skills || [];
+        if (epoch !== window._agentEpoch) return;
+        learnedSkills = skills;
+    } catch (e) {
+        showToast('Failed to load learned skills', 'error');
+    }
+    renderLearnedList();
+}
+
+function renderLearnedList() {
+    const body = document.getElementById('learned-list');
+    if (!body) return;
+    const query = (document.getElementById('learned-filter').value || '').toLowerCase().trim();
+    _tblQ = query;
+    const visible = learnedSkills.filter(r => !query ||
+        [r.name, r.id, r.description, r.brief, r.error || '', r.tools.join(' ')].join(' ').toLowerCase().includes(query));
+    const col = LEARNED_COLUMNS.find(c => c.key === learnedSort.key);
+    if (col && col.sort) {
+        visible.sort((a, b) => String(col.sort(a) ?? '').localeCompare(String(col.sort(b) ?? '')) * learnedSort.dir || a.name.localeCompare(b.name));
+    }
+    document.getElementById('learned-thead').innerHTML = tblHeaderHtml(LEARNED_COLUMNS, learnedSort, 'setLearnedSort');
+
+    body.innerHTML = visible.map(r => {
+        const id = escapeHtml(r.id), st = learnedState(r);
+        const toggle = r.error
+            ? `<span class="tbl-dash" title="Fix the skill files before it can be enabled">—</span>`
+            : `<label class="relative inline-block cursor-pointer" title="${r.enabled ? 'Disable' : 'Enable'}" onclick="event.stopPropagation()">
+                   <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleLearnedSkill('${id}', this.checked)" class="sr-only peer" aria-label="Toggle ${escapeHtml(r.name)}">
+                   <span class="dyn-toggle"></span>
+               </label>`;
+        const desc = r.error || r.description || r.brief || '';
+        return `<tr class="tool-row learned-row ${r.enabled || r.error ? '' : 'is-off'}" tabindex="0" role="button" aria-label="View ${escapeHtml(r.name)}"
+                    onclick="openLearnedModal('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openLearnedModal('${id}')}">
+            <td class="px-3 py-2.5 align-middle">${toggle}</td>
+            <td class="px-3 py-2.5 align-middle font-medium whitespace-nowrap tool-name">${tblNameCell(r, 'skill', false)}</td>
+            <td class="px-3 py-2.5 align-middle font-mono text-xs whitespace-nowrap tool-id learned-dim">${hlq(r.id)}</td>
+            <td class="px-3 py-2.5 align-middle text-xs whitespace-nowrap tbl-src learned-dim">${r.tools.length ? `<span class="tbl-src-in">${r.tools.length}</span>` : '<span class="tbl-dash" title="Instructions only">—</span>'}</td>
+            <td class="px-3 py-2.5 align-middle text-xs whitespace-nowrap tbl-src learned-dim" title="${escapeHtml(new Date((r.updated_at || 0) * 1000).toLocaleString())}">${_relTime(r.updated_at)}</td>
+            <td class="px-3 py-2.5 align-middle"><span class="tool-badge ${LEARNED_STATE_META[st]}">${st}</span></td>
+            <td class="px-3 py-2.5 align-middle text-xs ${r.error ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} tools-desc-col learned-dim">${hlq(desc)}</td>
+        </tr>`;
+    }).join('');
+
+    const empty = document.getElementById('learned-empty');
+    empty.classList.toggle('hidden', visible.length > 0);
+    empty.innerHTML = learnedSkills.length
+        ? 'No learned skills match your search.'
+        : `<div class="font-medium text-gray-500 dark:text-gray-300 mb-1">No learned skills yet</div>
+           After solving a multi-step task, this agent can write a skill for itself. You can also import one exported from another agent.`;
+    document.getElementById('learned-count').textContent = `${visible.length} of ${learnedSkills.length} learned skills`;
+    document.getElementById('learned-badge').textContent = learnedSkills.length;
+    const featureOn = document.getElementById('agent-learned-skills-enabled');
+    document.getElementById('learned-off-note').classList.toggle('hidden', !featureOn || featureOn.checked);
+}
+
+function setLearnedSort(key) {
+    learnedSort = { key, dir: learnedSort.key === key ? -learnedSort.dir : 1 };
+    renderLearnedList();
+}
+
+async function setLearnedEnabled(skillId, enabled) {
+    const skill = learnedSkills.find(s => s.id === skillId);
+    if (!skill) return false;
+    const prev = skill.enabled;
+    skill.enabled = enabled;     // optimistic
+    renderLearnedList();
+    try {
+        const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(skillId)}/enabled`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ enabled })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Failed');
+        showToast(`${skill.name} ${enabled ? 'enabled' : 'disabled'}`, 'success');
+        return true;
+    } catch (e) {
+        skill.enabled = prev;
+        renderLearnedList();
+        showToast(e.message || 'Network error', 'error');
+        return false;
+    }
+}
+
+async function toggleLearnedSkill(skillId, enabled) {
+    await setLearnedEnabled(skillId, enabled);
+    if (learnedOpenId === skillId) syncLearnedModalHeader();
+}
+
+// ---- Detail modal ----
+function syncLearnedModalHeader() {
+    const r = learnedSkills.find(s => s.id === learnedOpenId);
+    if (!r) return;
+    const st = learnedState(r);
+    const badge = document.getElementById('lm-status');
+    badge.className = 'tool-badge ' + LEARNED_STATE_META[st];
+    badge.textContent = st;
+    const tg = document.getElementById('lm-toggle');
+    tg.checked = !!r.enabled; tg.disabled = !!r.error;
+    document.getElementById('lm-toggle-label').textContent = r.error ? 'Cannot enable (broken)' : (r.enabled ? 'Enabled' : 'Disabled');
+}
+
+function _lmSection(title, inner) {
+    return `<section><div class="lm-sec-t">${title}</div>${inner}</section>`;
+}
+
+function _lmToolHtml(td) {
+    const fn = td.function || {};
+    const props = (fn.parameters || {}).properties || {};
+    const req = new Set((fn.parameters || {}).required || []);
+    const params = Object.entries(props).map(([n, sch]) =>
+        `<span class="lm-param" title="${escapeHtml(sch.description || '')}">${escapeHtml(n)}<i>${escapeHtml(sch.type || 'any')}${req.has(n) ? '' : '?'}</i></span>`).join('');
+    return `<div class="lm-tool">
+        <div class="font-mono text-sm font-medium text-gray-800 dark:text-gray-100">${escapeHtml(fn.name || '')}</div>
+        ${fn.description ? `<p class="text-sm text-gray-600 dark:text-gray-300 mt-1">${escapeHtml(fn.description)}</p>` : ''}
+        ${params ? `<div class="flex flex-wrap gap-1.5 mt-2">${params}</div>` : ''}
+    </div>`;
+}
+
+async function openLearnedModal(skillId) {
+    const r = learnedSkills.find(s => s.id === skillId);
+    if (!r) return;
+    learnedOpenId = skillId;
+    document.getElementById('lm-title').textContent = r.name;
+    document.getElementById('lm-id').textContent = r.id;
+    document.getElementById('lm-export').href = `/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(skillId)}/export`;
+    syncLearnedModalHeader();
+    const body = document.getElementById('lm-body');
+    body.innerHTML = '<div class="text-sm text-gray-400">Loading…</div>';
+    document.getElementById('learned-modal').classList.remove('hidden');
+    document.addEventListener('keydown', _learnedModalKey);
+
+    if (r.error) {
+        body.innerHTML = `<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">${escapeHtml(r.error)}</div>
+            <p class="text-xs text-gray-400">This skill cannot be loaded until its files are fixed under <code>/_self/skills/${escapeHtml(r.id)}/</code>. You can still export or delete it.</p>`;
+        return;
+    }
+    try {
+        const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(skillId)}`);
+        const data = await res.json();
+        if (learnedOpenId !== skillId) return;   // closed or switched while loading
+        if (!data.skill) throw new Error(data.error || 'Not found');
+        const sk = data.skill, defs = sk.tool_defs || [];
+        body.innerHTML =
+            (r.description || r.brief ? _lmSection('About', `<p class="text-sm text-gray-700 dark:text-gray-200">${escapeHtml(r.description || r.brief)}</p>
+                ${r.description && r.brief ? `<p class="text-xs text-gray-400 mt-1">Shown to the agent: ${escapeHtml(r.brief)}</p>` : ''}`) : '')
+            + _lmSection(`Tools <span class="normal-case font-normal">(${defs.length})</span>`,
+                defs.length ? `<div class="space-y-2">${defs.map(_lmToolHtml).join('')}</div>`
+                            : '<p class="text-sm text-gray-400">Instructions only. This skill adds no tools.</p>')
+            + _lmSection('Instructions', sk.system_md
+                ? `<pre class="lm-pre">${escapeHtml(sk.system_md)}</pre>`
+                : '<p class="text-sm text-gray-400">No SYSTEM.md, tools only.</p>')
+            + `<p class="text-xs text-gray-400">Updated ${escapeHtml(new Date((r.updated_at || 0) * 1000).toLocaleString())}</p>`;
+    } catch (e) {
+        body.innerHTML = `<div class="text-sm text-red-500">${escapeHtml(e.message || 'Failed to load skill')}</div>`;
+    }
+}
+
+function _learnedModalKey(ev) { if (ev.key === 'Escape') closeLearnedModal(); }
+function closeLearnedModal() {
+    learnedOpenId = null;
+    document.getElementById('learned-modal').classList.add('hidden');
+    document.removeEventListener('keydown', _learnedModalKey);
+}
+
+async function toggleLearnedFromModal() {
+    const id = learnedOpenId;
+    if (!id) return;
+    await setLearnedEnabled(id, document.getElementById('lm-toggle').checked);
+    syncLearnedModalHeader();
+}
+
+async function deleteLearnedFromModal() {
+    const id = learnedOpenId;
+    const r = learnedSkills.find(s => s.id === id);
+    if (!r) return;
+    if (!await showConfirm({title: 'Delete Learned Skill', message: `Delete "${r.name}"? The agent loses this skill and its files. This cannot be undone. Export it first if you may want it back.`, confirmText: 'Delete'})) return;
+    const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(id)}`, { method: 'DELETE' });
     const data = await res.json();
-    body.textContent = data.skill ? (data.skill.system_md || '(no SYSTEM.md, tools only)') : (data.error || '');
-    body.dataset.loaded = '1';
+    if (data.error) { showToast(data.error, 'error'); return; }
+    closeLearnedModal();
+    showToast(`Deleted "${r.name}"`, 'success');
+    loadLearnedSkills();
 }
 
 async function importLearnedSkill(input) {
@@ -5797,21 +6072,13 @@ async function importLearnedSkill(input) {
     input.value = '';
     let res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/import`, { method: 'POST', body: form });
     let data = await res.json();
-    if (res.status === 409 && confirm(`${data.error} Replace it?`)) {
+    if (res.status === 409 && await showConfirm({title: 'Replace Learned Skill', message: `${data.error} Replace it?`, confirmText: 'Replace'})) {
         form.append('force', '1');
         res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/import`, { method: 'POST', body: form });
         data = await res.json();
     }
     if (data.error) { showToast(data.error, 'error'); return; }
     showToast(`Imported learned skill "${data.id}"`, 'success');
-    loadLearnedSkills();
-}
-
-async function deleteLearnedSkill(skillId) {
-    if (!confirm(`Delete learned skill "${skillId}"?`)) return;
-    const res = await fetch(`/api/agents/${AGENT_ID}/learned-skills/${encodeURIComponent(skillId)}`, { method: 'DELETE' });
-    const data = await res.json();
-    if (data.error) { showToast(data.error, 'error'); return; }
     loadLearnedSkills();
 }
 
@@ -5915,7 +6182,7 @@ function renderSkillsList() {
     document.getElementById('skills-count').textContent = `${visible.length} of ${rows.length} skills`;
     const badge = document.getElementById('skills-badge');
     const n = rows.filter(r => r.status === 'assigned').length;
-    badge.textContent = n; badge.classList.toggle('hidden', n === 0);
+    badge.textContent = n;
     const cnt = document.getElementById('skill-adv-filter-count');
     cnt.textContent = active.length; cnt.classList.toggle('hidden', active.length === 0);
 }
