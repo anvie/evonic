@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
@@ -25,6 +26,18 @@ from backend.tools.lib.decision_models import (
 )
 
 SUPPORTED_PRIMITIVES = frozenset(kind.value for kind in FieldKind)
+
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+
+def is_opencode_endpoint(provider: Any, base_url: Any) -> bool:
+    """True for OpenCode Go/Zen gateways, which require x-opencode-session."""
+    p = str(provider or "").lower()
+    return p.startswith("opencode") or "opencode.ai" in str(base_url or "").lower()
+
 
 
 class DecisionCompatibilityError(ValueError):
@@ -164,6 +177,11 @@ class OpenAIStructuredDecisionAdapter(DecisionAdapter):
             headers = {"Content-Type": "application/json"}
             if self.model.get("api_key"):
                 headers["Authorization"] = f"Bearer {self.model['api_key']}"
+            if is_opencode_endpoint(self.model.get("provider"), base_url):
+                # OpenCode Go/Zen reject requests without a session id (MissingSessionID).
+                headers["x-opencode-session"] = uuid.uuid4().hex
+                # Cloudflare in front of OpenCode rejects python-requests user agents (error 1010).
+                headers["User-Agent"] = BROWSER_USER_AGENT
             response = requests.post(f"{base_url}/chat/completions", json=payload, headers=headers, timeout=timeout)
             if response.status_code >= 400:
                 return self._error(invocation, DecisionErrorCode.PROVIDER_UNAVAILABLE, f"Provider returned HTTP {response.status_code}.", retryable=response.status_code >= 500)

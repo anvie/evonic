@@ -52,3 +52,11 @@ The **Playground** and **Activity** destinations are intentionally non-executing
 ## Security
 
 The settings page and profile API require an authenticated administrative session. Decision Profile responses contain model IDs only; provider API keys, OAuth tokens, and other credentials are never shown in profile views or selectors.
+
+## OpenCode (Go and Zen)
+
+OpenCode decision models whose catalog entry has `recommended_api: "systemone"` (for example `jev-1.14`) are served by the **SystemOne** protocol adapter; other OpenCode models (for example `beam-free`) keep the OpenAI chat-completions adapter.
+
+- **Fetch models** reads `recommended_api` from the OpenCode catalog; adding such a model sets it to type **Decision** with the SystemOne protocol. Nothing changes for other providers.
+- For OpenCode only, the request goes to `<provider base URL>/systemone` (e.g. `https://opencode.ai/zen/go/v1/systemone`), so it is billed to the Go/Zen subscription. The catalog's `inference/.../systemone/v1` endpoint bills pay-as-you-go credits instead and is not used.
+- The request uses the TypeSafe shape (`model`, `state`, questions with `instructions`/`criteria`; booleans as `noul`) and carries the `x-opencode-session` and a browser `User-Agent` header that the OpenCode gateway requires.
