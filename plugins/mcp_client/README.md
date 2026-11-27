@@ -70,7 +70,7 @@ starts guessing tool names. `mcp_list_tools` therefore lists compactly by defaul
    }
    ```
 
-   Replies may be plain JSON or an SSE stream. Text content only: images in tool results show as `[image content omitted]`.
+   Replies may be plain JSON or an SSE stream. Images in a tool result (png, jpeg, webp) are saved as session attachments: a model with vision sees them, and any model can read one with `describe_image`. Other non-text content shows as `[... content omitted]`.
 
 3. Assign the `mcp_list_servers`, `mcp_list_tools` and `mcp_call` tools to an agent in the agent's tool settings.
 

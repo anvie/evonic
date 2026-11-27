@@ -72,9 +72,23 @@ def content_to_text(content: List[dict]) -> str:
             label = item.get("name") or item.get("title") or ""
             desc = f" - {item['description']}" if item.get("description") else ""
             parts.append(f"[resource_link {label} {item.get('uri', '')}{desc}]")
+        elif itype == "image" and item.get("data"):
+            # the picture itself travels in the tool result's `images` (see content_images)
+            parts.append(f"[image ({item.get('mimeType') or 'unknown type'}): see images]")
         else:
             parts.append(f"[{itype or 'unknown'} content omitted]")
     return "\n".join(parts)
+
+
+def content_images(content: List[dict], label: str = "") -> List[dict]:
+    """The image blocks of an MCP `content` array, in the shape the runtime takes
+    images from a tool result (`backend.agent_runtime.tool_images`): it saves each
+    as a session attachment and shows it to a model that has vision."""
+    images = []
+    for item in content or []:
+        if isinstance(item, dict) and item.get("type") == "image" and item.get("data"):
+            images.append({"mime": item.get("mimeType") or "", "data": item["data"], "label": label})
+    return images
 
 
 class _MCPServer:
