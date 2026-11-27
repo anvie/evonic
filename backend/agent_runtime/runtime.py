@@ -2027,6 +2027,7 @@ class AgentRuntime:
             'agent_id': agent_id,
             'session_id': ctx.session_id,
             'turn_id': ctx.turn_id,
+            'external_user_id': ctx.external_user_id,
             'ts': int(time.time() * 1000),
         })
         _turn_start = time.time()
