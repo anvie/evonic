@@ -901,7 +901,7 @@ html.dark #chat-room { border-color: var(--color-gray-700, #364153); background:
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=82"></script>
+<script src="{{ url_for('static', filename='js/chat-ui.js') }}?v=83"></script>
 <script src="{{ url_for('static', filename='js/agent-state.js') }}?v=15"></script>
 <script>
 let allSessions = [];
@@ -973,6 +973,7 @@ function _beginSessionTurn(startTs = null, anchor = null) {
 
 function _completeSessionTurn(seq = 0, thinkingDuration = null) {
     if (_sessionTurn.phase === 'complete') return false;
+    chatUI.forgetIntermediate?.();
     _sessionTurn.phase = 'complete';
     _sessionTurn.terminalSeq = Math.max(_sessionTurn.terminalSeq, seq || 0, _sessionTurn.lastSeq);
     showStopBtn(false);
@@ -1002,6 +1003,8 @@ function dispatchSessionEvent(evtName, data, sessionId) {
     } else if (evtName === 'turn_queued') {
         _beginSessionTurn(data.timestamp || null);
     } else if (evtName === 'turn_begin') {
+        // A new turn invalidates the intermediate text remembered for ask_user.
+        chatUI.forgetIntermediate?.();
         _beginSessionTurn(data.ts || null);
     } else if (evtName === 'thinking') {
         _beginSessionTurn();
@@ -1011,6 +1014,8 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         chatUI.appendTimelineEntry(_sseThinkingId, {type: 'thinking', content: data.content});
     } else if (evtName === 'tool_call_started') {
         _beginSessionTurn();
+        // The question card refers to what the agent wrote just before it: surface that text.
+        if (data.tool === 'ask_user') _sseThinkingId = chatUI.revealIntermediate?.(_sseThinkingId) || _sseThinkingId;
         chatUI.appendTimelineEntry(_sseThinkingId, {type: 'tool_call', tool: data.tool, args: data.args, param_types: data.param_types || {}});
     } else if (evtName === 'tool_executed') {
         _beginSessionTurn();
@@ -1030,16 +1035,17 @@ function dispatchSessionEvent(evtName, data, sessionId) {
         document.dispatchEvent(new CustomEvent('evonic:agent-state-changed', {detail: data}));
     } else if (evtName === 'response_chunk') {
         if (data.content && !data.is_final) {
-            // Intermediate response: post it in the chat and continue in a fresh thinking bubble.
             _beginSessionTurn();
-            if (typeof chatUI.splitForIntermediate === 'function') {
+            if (data.send_as_message) {
+                // The agent forwards intermediate responses: post it in the chat and
+                // continue in a fresh thinking bubble.
                 _sseThinkingId = chatUI.splitForIntermediate(_sseThinkingId, data.content, data.timestamp);
+                chatUI.forgetIntermediate?.();
             } else {
-                // The chat-ui bundle is out of date: degrade to a plain bubble instead of
-                // throwing here and dropping the remainder of this SSE turn.
-                if (_sseThinkingId) { chatUI.finalizeThinkingBubble(_sseThinkingId); _sseThinkingId = null; }
-                chatUI.appendMessage('assistant', data.content, { timestamp: data.timestamp });
-                _sseThinkingId = chatUI.showThinkingIndicator();
+                // Otherwise it stays in the reasoning trail, remembered so an ask_user
+                // card can surface it.
+                chatUI.appendTimelineEntry(_sseThinkingId, {type: 'response', content: data.content, is_final: false});
+                chatUI.rememberIntermediate?.(data.content, data.timestamp);
             }
         } else if (data.content && _sseThinkingId) {
             chatUI.appendTimelineEntry(_sseThinkingId, {type: 'response', content: data.content});
@@ -1132,6 +1138,8 @@ function renderEntries(entries) {
     for (const entry of entries) {
         const type = entry.type;
         entryCount++;
+        // A turn boundary invalidates the intermediate text remembered for ask_user.
+        if (type === 'user' || type === 'final' || type === 'turn_end') chatUI.forgetIntermediate?.();
         if (type === 'user') {
             // Skip if this exact message was already optimistically rendered by sendReply
             if (_pendingReplyText !== null && entry.content === _pendingReplyText) {
@@ -1152,6 +1160,8 @@ function renderEntries(entries) {
             if (!thinkingId) thinkingId = chatUI.showThinkingIndicator();
             chatUI.appendTimelineEntry(thinkingId, {type: 'thinking', content: entry.content});
         } else if (type === 'tool_call') {
+            // The question card refers to what the agent wrote just before it: surface that text.
+            if (entry.function === 'ask_user') thinkingId = chatUI.revealIntermediate?.(thinkingId) || thinkingId;
             if (!thinkingId) thinkingId = chatUI.showThinkingIndicator();
             chatUI.appendTimelineEntry(thinkingId, {type: 'tool_call', tool: entry.function, args: entry.params || {}, param_types: {}});
         } else if (type === 'tool_output') {
@@ -1166,11 +1176,16 @@ function renderEntries(entries) {
                 chatUI.appendMessage('system', '', {metadata: {workplace_switch: result.workplace_switch}, timestamp: entry.ts});
             }
         } else if (type === 'intermediate') {
-            // Text the agent wrote before a tool call: it belongs in the chat as its own
-            // message, with the reasoning trail split around it.
-            if (thinkingId) { chatUI.finalizeThinkingBubble(thinkingId); thinkingId = null; }
-            if (entry.content) {
-                chatUI.appendMessage('assistant', entry.content, {timestamp: entry.ts ? new Date(entry.ts).toISOString() : null});
+            // Text the agent wrote before a tool call: it lives in the reasoning trail,
+            // and is remembered so an ask_user card below can surface it.
+            const ts = entry.ts ? new Date(entry.ts).toISOString() : null;
+            if (entry.metadata && entry.metadata.send_intermediate_responses) {
+                thinkingId = chatUI.splitForIntermediate(thinkingId, entry.content || '', ts);
+                chatUI.forgetIntermediate?.();
+            } else if (entry.content) {
+                if (!thinkingId) thinkingId = chatUI.showThinkingIndicator();
+                chatUI.appendTimelineEntry(thinkingId, {type: 'response', content: entry.content, is_final: false});
+                chatUI.rememberIntermediate?.(entry.content, ts);
             }
         } else if (type === 'final') {
             const meta = entry.metadata || {};

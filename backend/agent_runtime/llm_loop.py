@@ -2609,7 +2609,12 @@ def run_tool_loop(agent: Dict[str, Any],
         db.add_chat_message(session_id, 'assistant', content, tool_calls=tool_calls, agent_id=db_agent_id, metadata=_tc_meta)
         # Write intermediate content + individual tool_call entries to chatlog
         if content:
-            chatlog.append({'type': 'intermediate', 'session_id': session_id, 'content': content})
+            _im_entry = {'type': 'intermediate', 'session_id': session_id, 'content': content}
+            # The chat UI keeps intermediate text inside the reasoning trail; this flag
+            # records that the turn forwarded it as a message, so a reload looks the same.
+            if agent.get('send_intermediate_responses'):
+                _im_entry['metadata'] = {'send_intermediate_responses': True}
+            chatlog.append(_im_entry)
         for _tc in tool_calls:
             _fn = _tc.get('function', {})
             try:
