@@ -20,7 +20,7 @@ def execute(agent: dict, args: dict) -> Any:
     if db.get_setting("plugin_enabled:mcp_client") != "1":
         return {"error": "MCP Client plugin is disabled. Enable it in Plugins settings."}
 
-    from ._mcp_lib import MCPError, content_to_text, mcp_manager
+    from ._mcp_lib import MCPError, content_images, content_to_text, mcp_manager
 
     server = args.get("server")
     server = server.strip() if isinstance(server, str) else ""
@@ -70,4 +70,9 @@ def execute(agent: dict, args: dict) -> Any:
 
     if result.get("isError"):
         return {"error": text or "MCP tool reported an error", "server": server, "tool": tool}
-    return {"result": text, "server": server, "tool": tool}
+    out = {"result": text, "server": server, "tool": tool}
+    # Pictures the tool returned (a screenshot, a chart): the runtime stores them and shows them to the model
+    images = content_images(result.get("content"), label=f"{server} {tool}")
+    if images:
+        out["images"] = images
+    return out
