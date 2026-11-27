@@ -451,7 +451,7 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
 
     # Learned skills: written by this agent for itself, loaded the same way.
     if _builtin_tools_on and learned_skills.is_enabled(agent):
-        _learned = learned_skills.list_skills(agent)[:learned_skills.MAX_LISTED]
+        _learned = [s for s in learned_skills.list_skills(agent) if s['enabled']][:learned_skills.MAX_LISTED]
         parts.append("\n## Learned Skills")
         parts.append(
             "Skills you wrote for yourself from earlier work. Load one with "

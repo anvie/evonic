@@ -174,12 +174,39 @@ def list_skills(agent: dict, include_invalid: bool = False) -> List[Dict[str, An
             'description': manifest.get('description', ''),
             'brief': manifest.get('brief', ''),
             'tools': [td['function']['name'] for td in tool_defs],
+            'enabled': manifest.get('enabled', True) is not False,
             'updated_at': _skill_mtime(skill_dir),
         }
         if error:
             entry['error'] = error
         skills.append(entry)
     return skills
+
+
+def is_skill_enabled(agent: dict, skill_id: str) -> bool:
+    """Whether learned skill *skill_id* may be listed and loaded. A skill is on unless switched off."""
+    manifest = _load(agent, skill_id)[0] or {}
+    return manifest.get('enabled', True) is not False
+
+
+def set_skill_enabled(agent: dict, skill_id: str, enabled: bool) -> bool:
+    """Switch a learned skill on or off by writing ``enabled`` into its skill.json."""
+    skill_dir = _skill_dir(agent, skill_id)
+    if not skill_dir:
+        return False
+    path = os.path.join(skill_dir, 'skill.json')
+    try:
+        with open(path, encoding='utf-8') as f:
+            manifest = json.load(f)
+        if enabled:
+            manifest.pop('enabled', None)
+        else:
+            manifest['enabled'] = False
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return False
+    return True
 
 
 def get_skill(agent: dict, skill_id: str) -> Optional[Dict[str, Any]]:

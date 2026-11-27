@@ -35,6 +35,12 @@ def _load_learned(agent: dict, skill_id: str):
             "message": f"Learned skill '{skill_id}' is broken: {error} "
                        f"Fix it under /_self/skills/{skill_id}/."
         }
+    if not learned_skills.is_skill_enabled(agent, skill_id):
+        return {
+            "status": "error",
+            "id": skill_id,
+            "message": f"Learned skill '{skill_id}' is disabled. Ask the user to enable it in the agent's Skills tab."
+        }
     skill = learned_skills.get_skill(agent, skill_id)
     result = {
         "status": "success",

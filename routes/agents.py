@@ -692,6 +692,15 @@ def api_delete_agent_learned_skill(agent_id, skill_id):
     return jsonify({'success': True})
 
 
+@agents_bp.route('/api/agents/<agent_id>/learned-skills/<skill_id>/enabled', methods=['PUT'])
+def api_set_agent_learned_skill_enabled(agent_id, skill_id):
+    from backend import learned_skills
+    enabled = bool((request.get_json(silent=True) or {}).get('enabled'))
+    if not learned_skills.set_skill_enabled({'id': agent_id}, skill_id, enabled):
+        return jsonify({'error': f"Learned skill '{skill_id}' not found."}), 404
+    return jsonify({'success': True, 'enabled': enabled})
+
+
 @agents_bp.route('/api/agents/<agent_id>/learned-skills/<skill_id>/export', methods=['GET'])
 def api_export_agent_learned_skill(agent_id, skill_id):
     import io
